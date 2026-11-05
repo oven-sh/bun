@@ -10,7 +10,7 @@
 
 use crate::fast::{
     AFTER_BLOCK, AFTER_DONE, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX,
-    BLOCK_OBJECT, BLOCK_ODD_PARAMETERS, MEMBER_OF_CLASS, MEMBER_OF_INTERFACE,
+    BLOCK_OBJECT, MEMBER_OF_CLASS, MEMBER_OF_INTERFACE,
 };
 use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
@@ -129,9 +129,9 @@ impl Quick {
                 return Ok(-1);
             }
             // "use strict" in a function whose parameters are more than names
-            if (flags & BLOCK_ODD_PARAMETERS) != 0 {
+            if (flags & BLOCK_FUNCTION) != 0 {
                 let c = self.t.at(self.blanks(end + 2));
-                if c == 34 || c == 39 {
+                if (c == 34 || c == 39) && self.has_odd_parameters(end) {
                     return Ok(-1);
                 }
             }

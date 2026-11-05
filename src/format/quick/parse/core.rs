@@ -12,8 +12,8 @@ use crate::ast::{
 };
 use crate::fast::{
     AFTER_BLOCK, AFTER_REFUSED, BLOCK_ARROW, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_CONSTRUCTOR,
-    BLOCK_DERIVED, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX, BLOCK_OBJECT, BLOCK_ODD_PARAMETERS,
-    JSX_ELEMENT, JSX_REFUSED, MEMBER_OF_CLASS, STARTS_READY, STARTS_READY_MEMBER,
+    BLOCK_DERIVED, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX, BLOCK_OBJECT, JSX_ELEMENT,
+    JSX_REFUSED, MEMBER_OF_CLASS, STARTS_READY, STARTS_READY_MEMBER,
 };
 use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
@@ -1366,19 +1366,19 @@ impl Quick {
         let head_last_length = self.fast.ready_last_length;
         let head_has_lines = self.fast.ready_last_length != self.fast.ready_length;
         // where the blocks are, as the parser would know if it had read the head
-        let outer_scope = self.parse.place.scope;
-        let outer_jumps = self.parse.place.jumps;
         let asks = self.parse.typed != TYPED_TS;
         let is_field = asks && is_class_member && kind == k::ClassProperty;
+        let mut outer_scope = 0;
         if is_field {
+            outer_scope = self.parse.place.scope;
             self.parse.place.scope = SCOPE_FIELD;
         }
-        if asks
+        let is_loop = asks
             && (kind == k::ForStatement
                 || kind == k::ForOfStatement
                 || kind == k::ForInStatement
-                || kind == k::WhileStatement)
-        {
+                || kind == k::WhileStatement);
+        if is_loop {
             self.parse.place.jumps += A_LOOP;
         }
         let mut after: i32;
@@ -1461,9 +1461,9 @@ impl Quick {
                                 self.parse.place.scope = scope;
                                 // see check_directives()
                                 if self.n.at(self.n.at(body + 4)) != 0
-                                    && (flags & BLOCK_ODD_PARAMETERS) != 0
                                     && self.parse.typed != TYPED_TS
                                     && self.has_use_strict(body)
+                                    && self.has_odd_parameters(self.n.at(body + 1))
                                 {
                                     return Err(self.text_refuse());
                                 }
@@ -1531,8 +1531,12 @@ impl Quick {
                 break;
             }
         }
-        self.parse.place.scope = outer_scope;
-        self.parse.place.jumps = outer_jumps;
+        if is_field {
+            self.parse.place.scope = outer_scope;
+        }
+        if is_loop {
+            self.parse.place.jumps -= A_LOOP;
+        }
         let count = (self.arena.ls_pos - list_mark) / 3;
         if after == AFTER_REFUSED {
             let base = self.parse.known_blocks_count;
@@ -2856,30 +2860,36 @@ impl Quick {
         } else {
             0
         };
+        // (nothing of the place is asked about in TypeScript)
+        let asks = self.parse.typed != TYPED_TS;
         let a = self.parse.in_async;
         let g = self.parse.in_generator;
-        self.parse.in_async = if (head & F_ASYNC) != 0 { 1 } else { 0 };
-        self.parse.in_generator = if (head & F_GENERATOR) != 0 { 1 } else { 0 };
         let outer_scope = self.parse.place.scope;
         let is_method = (head & 0xff) == k::ClassMethod || (head & 0xff) == k::ObjectMethod;
         let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
-        self.parse.place.scope = if !is_method {
-            SCOPE_FUNCTION
-        } else if method == M_CONSTRUCTOR
-            && (head & 0xff) == k::ClassMethod
-            && self.parse.place.is_derived
-        {
-            SCOPE_DERIVED_CONSTRUCTOR
-        } else {
-            SCOPE_METHOD
-        };
+        if asks {
+            self.parse.in_async = if (head & F_ASYNC) != 0 { 1 } else { 0 };
+            self.parse.in_generator = if (head & F_GENERATOR) != 0 { 1 } else { 0 };
+            self.parse.place.scope = if !is_method {
+                SCOPE_FUNCTION
+            } else if method == M_CONSTRUCTOR
+                && (head & 0xff) == k::ClassMethod
+                && self.parse.place.is_derived
+            {
+                SCOPE_DERIVED_CONSTRUCTOR
+            } else {
+                SCOPE_METHOD
+            };
+        }
         let params = self.parse_params_of(if (head & 0xff) == k::ClassMethod {
             PARAMETERS_OF.at(((head as u32) >> SUB_SHIFT) as i32 & 3)
         } else {
             PARAMETERS_PLAIN
         })?;
-        self.parse.in_async = a;
-        self.parse.in_generator = g;
+        if asks {
+            self.parse.in_async = a;
+            self.parse.in_generator = g;
+        }
         // a getter has no parameter, a setter has one (TypeScript's parser does not count)
         if (method == M_GET || method == M_SET)
             && self.parse.typed != TYPED_TS
@@ -2905,7 +2915,6 @@ impl Quick {
             && (head & 0xff) == k::ClassMethod
         {
             // an overload, an abstract method, a method of a `declare class`
-            self.parse.place.scope = outer_scope;
             if needs_body {
                 return Err(self.text_refuse());
             }
@@ -2928,8 +2937,10 @@ impl Quick {
             0
         };
         let body = self.parse_function_body(head)?;
-        self.parse.place.scope = outer_scope;
-        self.check_directives(body, params)?;
+        if asks {
+            self.parse.place.scope = outer_scope;
+            self.check_directives(body, params)?;
+        }
         let n = self.function_node(
             head,
             start,
@@ -3180,7 +3191,9 @@ impl Quick {
             } else {
                 self.parse_class_member()?
             };
-            self.check_class_member(v0)?;
+            if self.parse.typed != TYPED_TS {
+                self.check_class_member(v0)?;
+            }
             self.list_push(v0);
         }
         self.parse.place.is_derived = outer.is_derived;
@@ -4386,7 +4399,19 @@ impl Quick {
                         && self.n.at(base + 2) - self.n.at(base + 1) == 5
                         && self.lexer.tok_nl == 0
                         && self.text_is(self.n.at(base + 1), self.n.at(base + 2), b"async");
-                    if maybe_async && self.parse.typed != 0 {
+                    if !maybe_async {
+                        let args = self.parse_arguments()?;
+                        base = self.call_node(
+                            k::CallExpression | chain,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            args,
+                            0,
+                        );
+                        continue;
+                    }
+                    if self.parse.typed != 0 {
                         self.parse.arguments_may_be_parameters = 1;
                     }
                     let suspensions = self.parse.suspensions;
@@ -5298,8 +5323,9 @@ impl Quick {
                 self.set_pos(behind);
                 self.next()?;
             } else {
+                let length = self.lexer.tok_end - self.lexer.tok_start;
                 let v0 = self.parse_object_member()?;
-                if self.is_proto(v0) {
+                if (length == 9 || length == 11) && self.is_proto(v0) {
                     if has_proto {
                         self.parse.place.only_for_patterns += 1;
                     }

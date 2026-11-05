@@ -753,7 +753,8 @@ declare module "bun:jsc" {
    *
    * @param callback The function to profile. It is called immediately, with `args`.
    * @param sampleInterval How often to sample the stack, in microseconds: an integer from 1 to 4294967295.
-   * Defaults to 1000 (once a millisecond).
+   * Defaults to 1000 (once a millisecond). The sampler sleeps for one interval at a time, so after a long
+   * interval, later profiles record no samples until that sleep ends.
    * @param args Arguments to call `callback` with
    * @returns The profile. If `callback` returns a promise, profiling continues until
    * that promise settles, and a promise of the profile is returned instead.
@@ -811,7 +812,8 @@ declare module "bun:jsc" {
    * functions and bytecodes to when the process (or the calling worker) exits.
    * The directory is created if it doesn't exist.
    * @param sampleInterval How often to sample the stack, in microseconds: an integer from 1 to 4294967295.
-   * When omitted, the profiler keeps the interval it already has: 1000 (once a millisecond), unless an earlier call set another.
+   * When omitted, the profiler keeps the interval it already has. That is 1000 (once a millisecond), unless
+   * the `BUN_JSC_sampleInterval` environment variable or an earlier call set another.
    * @throws {RangeError} If `sampleInterval` is a number that is not an integer from 1 to 4294967295.
    * The profiler does not start and the directory is not created.
    */

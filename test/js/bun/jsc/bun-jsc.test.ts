@@ -1053,15 +1053,24 @@ describe.concurrent("port and sampleInterval arguments", () => {
   });
 
   it("startRemoteDebugger accepts an integer port from 1 to 65535", async () => {
-    // 192.0.2.1 (TEST-NET-1) is not an address of this machine: the server cannot bind, and the error names the port it got.
-    // A debug build also logs the failed bind to stderr.
+    // The child holds a port, so the server cannot listen there, and the error names the port that the server got.
+    // The smallest port, the largest and the default go to 192.0.2.1 (TEST-NET-1). Whether or not the machine can
+    // listen there, a port that passes the check does not give a RangeError or a TypeError.
     const { printed, exitCode } = await run(`
-      const ports = [1, 9230, 65535, undefined];
-      console.log(JSON.stringify(ports.map(port => outcome(() => jsc.startRemoteDebugger("192.0.2.1", port)))));
+      const held = Bun.listen({ hostname: "127.0.0.1", port: 0, exclusive: true, socket: { data() {} } });
+      const heldPort = outcome(() => jsc.startRemoteDebugger("127.0.0.1", held.port)).replace(held.port, "<held port>");
+      held.stop(true);
+      const refused = port => {
+        try { jsc.startRemoteDebugger("192.0.2.1", port); return false; }
+        catch (e) { return e instanceof RangeError || e instanceof TypeError; }
+      };
+      console.log(JSON.stringify({ heldPort, refused: [1, 65535, undefined].map(refused) }));
     `);
-    const cannotBind = (port: number) => `Error: Failed to start server "192.0.2.1:${port}". Is port already in use?`;
     expect({ printed, exitCode }).toEqual({
-      printed: [cannotBind(1), cannotBind(9230), cannotBind(65535), cannotBind(9230)],
+      printed: {
+        heldPort: `Error: Failed to start server "127.0.0.1:<held port>". Is port already in use?`,
+        refused: [false, false, false],
+      },
       exitCode: 0,
     });
   });

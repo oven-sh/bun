@@ -3,7 +3,7 @@
 use crate::ast::{F_EXT, F_INEXACT, F_OPTIONAL, k};
 use crate::options::TRAILING_COMMA_NONE;
 use crate::print::statics::{COMMA, ELLIPSIS, LBRACKET, RBRACKET};
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 impl Quick {
     pub(crate) fn is_concisely_printed_array(&self, n: i32) -> bool {
@@ -168,6 +168,9 @@ impl Quick {
                     self.text(COMMA);
                     self.line();
                     if element != 0 && self.is_line_after_element_empty(element) {
+                        if (self.n.at(n) & 0xff) == k::TupleType {
+                            return Err(self.rare(rare::TUPLE));
+                        }
                         self.softline();
                     }
                 }

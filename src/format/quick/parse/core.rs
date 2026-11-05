@@ -1705,6 +1705,9 @@ impl Quick {
                     {
                         let decorators = self.parse_decorators()?;
                         if self.lexer.tok == tk::Export {
+                            if self.lexer.tok_nl == 0 {
+                                return Err(self.rare(rare::DECORATOR));
+                            }
                             let v0 = self.parse_export(start, decorators)?;
                             return self.decorated(v0);
                         }
@@ -1918,6 +1921,7 @@ impl Quick {
                             if is_odd {
                                 return Err(self.text_refuse());
                             }
+                            return Err(self.rare(rare::LET));
                         }
                         kw::Static => {
                             // TypeScript's parser, which reads every file first, takes it for a modifier of what follows, on whatever line
@@ -3950,6 +3954,13 @@ impl Quick {
                 }
                 left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
             } else {
+                if op == tk::Gt
+                    && self.parse.typed == TYPED_TS
+                    && (self.n.at(left) & 0xff) == k::BinaryExpression
+                    && ((self.n.at(left) as u32) >> SUB_SHIFT) as i32 == tk::Lt
+                {
+                    return Err(self.rare(rare::LESS_GREATER));
+                }
                 left = self.node2(
                     k::BinaryExpression | (op << SUB_SHIFT),
                     left_start,

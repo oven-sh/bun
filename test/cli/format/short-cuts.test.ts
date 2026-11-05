@@ -3541,6 +3541,24 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "--print-width=11",
       'f("\u234d\ud83c\udfff", b);\nf("\ud83d\udc4d\ud83c\udfff", b);\nf("\ud83c\uddef\ud83c\uddf5", b);\nf("\ud83c\uddefa", b);\nf("1\ufe0f\u20e3", b);\nf("\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f", b);\nf("\ud83d\udc69\u200d\ud83d\udc67", b);\nf("\ufffda", b);\nf("\u00a9\ufe0f", b);\nf("\u263a", b);\nf("\u263a\ufe0f", b);\n',
     ],
+    // A cell of a table of `each` that is printed on several lines.
+    ["a.js", "", 'it.each`\n  a | b\n  ${{\n    c: 1,\n  }} | ${2}\n`("x", () => {});\n'],
+    // An empty line in a tuple type.
+    ["a.ts", "", "type T = [\n  a,\n\n  b,\n];\n"],
+    // A statement that starts with the name `let`.
+    ["a.js", "--no-semi", "let;\n"],
+    // A decorator on the line of `export`.
+    ["a.ts", "", "@t(1)export class A{}\n"],
+    // What looks like type arguments ends no line.
+    ["a.ts", "--print-width=30", "aaaaaaaaaaaa > bbbbbbbbbbbb < cccccccccccc > dd;\n"],
+    ["a.ts", "--print-width=30", "(aaaaaaaaaaaaaaaaaaa < cccccccccccc) > ddddddd;\n"],
+    ["a.ts", "--tab-width=8 --print-width=30", '8n>{}</i1cript" a-b />te\n'],
+    // A type assertion around what breaks.
+    ["a.ts", "", "x = <T>class {\n  m() {\n    enum b {\n      c = 1,\n    }\n  }\n};\n"],
+    ["a.ts", "", "x = <a>function () {\n  @x class a {}\n};\n"],
+    // A member chain in the parameters of a function that is the last argument.
+    ["a.ts", "--print-width=28", "d=d((y=a.b().c())=>{})\n"],
+    ["a.js", "--print-width=28", "new d((a=d.e().a())=>{})\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

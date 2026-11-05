@@ -18,7 +18,7 @@ use crate::print::statics::{
     QUESTION_DOT, REQUIRE, RPAREN,
 };
 use crate::print::util::is_literal_kind;
-use crate::{Bytes, Quick, R, Words, zeros};
+use crate::{Bytes, Quick, R, Words, rare, zeros};
 
 pub(crate) struct PrintCall {
     // ---------------------------------------------------------------------------------------------------- member chains
@@ -1282,6 +1282,9 @@ impl Quick {
     }
 
     pub(crate) fn print_member_chain(&mut self, n: i32) -> R<()> {
+        if self.doc.remove_lines_depth != 0 {
+            return Err(self.rare(rare::HUGGED_CHAIN));
+        }
         let base = self.print_call.ch_top;
         let plain = self.push_plain_links(n)?;
         if plain != 0 {

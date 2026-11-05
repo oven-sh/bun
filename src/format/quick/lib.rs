@@ -117,6 +117,20 @@ pub(crate) mod rare {
     pub(crate) const SEMICOLON: i32 = 3;
     /// A `,` that starts a line: an empty line behind it is looked for behind the item by one way and behind the comma by the other.
     pub(crate) const COMMA: i32 = 4;
+    /// A cell of the table of `test.each` that takes several lines: the long way prints such a cell on one line where it can.
+    pub(crate) const EACH_TABLE: i32 = 5;
+    /// An empty line between two elements of a tuple type: the long way keeps it, and the type broken.
+    pub(crate) const TUPLE: i32 = 6;
+    /// A statement that starts with the name `let`: it gets parentheses, and a `;` in front of them where there are no semicolons.
+    pub(crate) const LET: i32 = 7;
+    /// A decorator and `export` on one line.
+    pub(crate) const DECORATOR: i32 = 8;
+    /// TypeScript: `a < b > c`. The long way ends no line with what looks like type arguments.
+    pub(crate) const LESS_GREATER: i32 = 9;
+    /// A chain of calls in the default value of a parameter of a function that is hugged: it is indented otherwise.
+    pub(crate) const HUGGED_CHAIN: i32 = 10;
+    /// `<T>` before something that breaks whatever its width.
+    pub(crate) const ASSERTION: i32 = 11;
 }
 
 thread_local! {

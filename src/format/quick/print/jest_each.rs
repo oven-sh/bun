@@ -2,7 +2,7 @@
 
 use crate::ast::{F_CHAIN, k};
 use crate::print::statics::{_BAR_, BACKQUOTE};
-use crate::{Quick, R, Words, zeros};
+use crate::{Quick, R, Words, rare, zeros};
 
 pub(crate) struct PrintJestEach {
     /// Arrays of arrays do not break by themselves in a table.
@@ -213,9 +213,7 @@ impl Quick {
             self.rollback(mark);
             self.push_cell(self.printer.printed_start, self.printer.printed_end);
             if self.has_line_break(self.printer.printed_start, self.printer.printed_end) {
-                self.print_jest_each
-                    .rows
-                    .put(self.print_jest_each.row_top - 1, 1);
+                return Err(self.rare(rare::EACH_TABLE));
             }
             if self.has_line_break(self.n.at(next_quasi + 1), self.n.at(next_quasi + 2)) {
                 self.push_row();

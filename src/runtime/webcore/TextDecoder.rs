@@ -4,6 +4,7 @@ use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use core::mem::MaybeUninit;
 use std::collections::TryReserveError;
 
 use jsc::StringJsc as _;
@@ -223,6 +224,7 @@ impl TextDecoder {
         )
     }
 
+    #[inline]
     fn decode_chunk<'a>(
         &mut self,
         heap: &JsHeap<'a>,
@@ -297,20 +299,11 @@ impl TextDecoder {
                 // https://encoding.spec.whatwg.org/#concept-td-serialize: suppress
                 // at most one LEADING U+FEFF per stream. A strict BOM prefix ("",
                 // EF, EF BB) is still ambiguous; `buffered` carries it to the next chunk.
-                const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
-                let set_bom_seen: bool;
-                let input: &[u8] = if self.ignore_bom || self.bom_seen {
-                    set_bom_seen = false;
-                    joined
-                } else if let Some(rest) = joined.strip_prefix(UTF8_BOM) {
-                    set_bom_seen = true;
-                    rest
-                } else if UTF8_BOM.starts_with(joined) {
-                    set_bom_seen = false;
-                    joined
-                } else {
-                    set_bom_seen = true;
-                    joined
+                let (input, set_bom_seen): (&[u8], bool) = match joined {
+                    _ if self.ignore_bom || self.bom_seen => (joined, false),
+                    [0xef, 0xbb, 0xbf, rest @ ..] => (rest, true),
+                    [] | [0xef] | [0xef, 0xbb] => (joined, false),
+                    _ => (joined, true),
                 };
 
                 // Dispatch the runtime `fatal` bool to a const-generic parameter.
@@ -462,6 +455,7 @@ impl TextDecoder {
         })
     }
 
+    #[inline]
     pub(crate) fn decode<'a>(
         &mut self,
         heap: &JsHeap<'a>,
@@ -503,11 +497,10 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
-    out_utf8_fast_path: *mut bool,
-    out_encoding: *mut EncodingLabel,
+    out_utf8_fast_path: &mut MaybeUninit<bool>,
+    out_encoding: &mut MaybeUninit<EncodingLabel>,
 ) -> *mut TextDecoder {
-    // SAFETY: both out-params are stack locals on the caller's frame.
-    unsafe { *out_utf8_fast_path = false };
+    out_utf8_fast_path.write(false);
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
@@ -532,11 +525,9 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    // SAFETY: as above.
-    unsafe { out_encoding.write(encoding) };
+    out_encoding.write(encoding);
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
-        // SAFETY: as above.
-        unsafe { *out_utf8_fast_path = true };
+        out_utf8_fast_path.write(true);
         return core::ptr::null_mut();
     }
     bun_core::heap::into_raw(Box::new(TextDecoder {
@@ -558,12 +549,8 @@ pub(crate) extern "C" fn TextDecoder__encodingToJS(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
-    if !this.is_null() {
-        // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
-        // freed (the C++ cell clears its pointer before calling).
-        unsafe { bun_core::heap::destroy(this) };
-    }
+pub(crate) extern "C" fn TextDecoder__destroyForStream(this: Option<Box<TextDecoder>>) {
+    drop(this);
 }
 
 /// The TextDecoderStream transform/flush step. `stream = true` for a mid-

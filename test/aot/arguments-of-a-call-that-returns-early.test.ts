@@ -1,4 +1,4 @@
-// A callee may return before it touches an argument that the caller makes for the call: a rest array, an object literal.
+// A callee may return before it needs an argument that is made for the call: a rest array, an object literal, its arguments object.
 // The caller then makes it only on the way that goes on. What the program prints stays the same, and so does every stack.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
@@ -69,10 +69,23 @@ function countsArguments(first) {
   return Array.prototype.slice.call(arguments, 1).join("|");
 }
 
-module.exports = { createLogger, lines, readsSoFar: () => reads, whoIsThis, thisBehindTest, countsArguments };
+const verbs = {
+  read(path) {
+    return "read " + path;
+  },
+};
+["get", "put", "post"].forEach(function (method) {
+  verbs[method] = function (path) {
+    if (method === "get" && arguments.length === 1) return this.read(path);
+    lines.push(method + " " + path + " " + Array.prototype.slice.call(arguments, 1).join("|"));
+    return this;
+  };
+});
+
+module.exports = { createLogger, lines, readsSoFar: () => reads, whoIsThis, thisBehindTest, countsArguments, verbs };
 `;
 
-const main = `import { countsArguments, createLogger as create, lines, readsSoFar, thisBehindTest, whoIsThis } from "./logger.cjs";
+const main = `import { countsArguments, createLogger as create, lines, readsSoFar, thisBehindTest, verbs, whoIsThis } from "./logger.cjs";
 
 type Logger = { (...args: unknown[]): unknown[] | undefined; enabled: boolean; diff?: number };
 const createLogger = create as (namespace: string) => Logger;
@@ -165,6 +178,11 @@ const receiver = { name: "receiver" };
 console.log(whoIsThis.call(receiver, 1, 2), whoIsThis.call(receiver, 1), thisBehindTest.call(receiver, false, 1), JSON.stringify(thisBehindTest.call(receiver, true, 1, 2)), lines.at(-1));
 const counts = countsArguments as (...args: unknown[]) => string;
 console.log(counts("get"), counts("get", 1, 2), counts("put"), counts("put", 7));
+type Verbs = Record<string, (...args: unknown[]) => unknown>;
+const names = ["get", "get", "get", "put"];
+let ones = 0;
+for (let i = 0; i < 40000; i++) if ((verbs as Verbs)[names[i % 4 === 3 && i > 39990 ? 3 : 0]!]!("x") === "read x") ones++;
+console.log(ones, (verbs as Verbs).get!("x", 1, 2) === verbs, (verbs as Verbs).post!("y") === verbs, lines.slice(-3).join(";"));
 
 // Handed around as a value, applied, bound and spread.
 const table = [log, other, viaCall as (...args: unknown[]) => unknown];
@@ -187,6 +205,7 @@ buildBothWays("arguments of a call that returns early", {
       "a b1 xy! 2\n" +
       "object 2 object 1 object [1,2] this object 1+2\n" +
       "one 1|2  7\n" +
+      "39997 true true put x ;get x 1|2;post y \n" +
       ' ["other","5",6] "NaN56" 41\n',
   },
 });
@@ -204,7 +223,7 @@ async function cellsMadeByTheProgram(flags: string[]) {
   expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return readFileSync(counts, "utf8")
     .split("\n")
-    .filter(line => /^refill \S+ main\.ts:\d+ JSCell:/.test(line));
+    .filter(line => /^refill \S+ (main\.ts|logger\.cjs):\d+ JSCell:/.test(line));
 }
 
 describe.concurrent("a logger that is off and a callee that declines make no argument lists or option objects", () => {

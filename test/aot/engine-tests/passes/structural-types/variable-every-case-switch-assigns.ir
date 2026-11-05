@@ -242,16 +242,16 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v32 -> taken b8(| 0), notTaken b9(| 0)
 # CHECK-NEXT: b8(v33: number):
 # CHECK-NEXT: v34: number = Add v28, v33
-# CHECK-NEXT: v35: undefined|null|function = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
+# CHECK-NEXT: v35: undefined|null|function|f22|f23|f24 = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
 # CHECK-NEXT: Jump -> next b11(v34, v35)
 # CHECK-NEXT: b9(v36: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
 # CHECK-NEXT: v37: number|string|bigint = Add v28, v36
-# CHECK-NEXT: v38: undefined|null|function = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
+# CHECK-NEXT: v38: undefined|null|function|f22|f23|f24 = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
 # CHECK-NEXT: v39: boolean = TypeTest v37 testedType=number
 # CHECK-NEXT: Branch v39 -> taken b10(| 0), notTaken b14()
 # CHECK-NEXT: b10(v40: number) frequency=Rare:
 # CHECK-NEXT: Jump -> next b11(v40, v38)
-# CHECK-NEXT: b11(v41: number, v42: undefined|null|function):
+# CHECK-NEXT: b11(v41: number, v42: undefined|null|function|f22|f23|f24):
 # CHECK-NEXT: v43: anything = Call v42 accessSite=8 callees=[]
 # CHECK-NEXT: v44: anything ~ number = Expect v43 expectedType=number
 # CHECK-NEXT: v45: boolean ~ true = TypeTest v44 testedType=number
@@ -316,30 +316,28 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v86: true = Boolean boolean=true
 # CHECK-NEXT: v87: undefined = Undefined
 # CHECK-NEXT: Jump -> next b26(v86, v87, v75)
-# CHECK-NEXT: b26(v88: boolean, v89: undefined|int[-1, 2147483648]|double, v90: int[0, 2147483647]):
-# CHECK-NEXT: v91: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483648]|double = Expect v89 expectedType=number
-# CHECK-NEXT: v92: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483647] = Expect v91 expectedType=i32
-# CHECK-NEXT: v93: undefined|null|string = Call v73, -, v91 calleeName="show" accessSite=9 callees=[f1, ..]
-# CHECK-NEXT: v94: " big" = String string=" big"
-# CHECK-NEXT: v95: string = Add v93, v94
-# CHECK-NEXT: v96: boolean ~ true = TypeTest v92 testedType=i32
-# CHECK-NEXT: Branch v96 -> taken b27(), notTaken b28()
+# CHECK-NEXT: b26(v88: boolean, v89: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483648]|double, v90: int[0, 2147483647]):
+# CHECK-NEXT: v91: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483647] = Expect v89 expectedType=i32
+# CHECK-NEXT: v92: undefined|null|string = Call v73, -, v89 calleeName="show" accessSite=9 callees=[f1, ..]
+# CHECK-NEXT: v93: " big" = String string=" big"
+# CHECK-NEXT: v94: string = Add v92, v93
+# CHECK-NEXT: v95: boolean ~ true = TypeTest v91 testedType=i32
+# CHECK-NEXT: Branch v95 -> taken b27(), notTaken b28()
 # CHECK-NEXT: b27():
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b28() frequency=Unlikely handler=b30():
-# CHECK-NEXT: v97: Array<undefined|boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v92 function=f46 @3533:3 tail
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b29():
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b30() role=CatchHandler:
-# CHECK-NEXT: v98: anything = CatchValue
-# CHECK-NEXT: v99: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v100: boolean = HasInPrototypeChain v98, v99
-# CHECK-NEXT: v101: anything ~ undefined|null|Error = Upcast v98 castType=anything
-# CHECK-NEXT: v102: anything = PropGet v101 key="constructor" accessSite=13
-# CHECK-NEXT: v103: anything ~ undefined|null|function = Expect v102 expectedType=undefined|null|function
-# CHECK-NEXT: v104: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v103 name="name"
-# CHECK-NEXT: v105: anything = PropGet v104 key="name" accessSite=14
+# CHECK-NEXT: v96: anything = CatchValue
+# CHECK-NEXT: v97: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v98: boolean = HasInPrototypeChain v96, v97
+# CHECK-NEXT: v99: anything ~ undefined|null|Error = Upcast v96 castType=anything
+# CHECK-NEXT: v100: anything = PropGet v99 key="constructor" accessSite=13
+# CHECK-NEXT: v101: anything ~ undefined|null|function = Expect v100 expectedType=undefined|null|function
+# CHECK-NEXT: v102: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v101 name="name"
+# CHECK-NEXT: v103: anything = PropGet v102 key="name" accessSite=14
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31():
 # CHECK-NEXT: Jump -> next b20(v88, v90)

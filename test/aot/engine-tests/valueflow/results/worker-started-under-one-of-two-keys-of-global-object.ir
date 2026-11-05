@@ -1,0 +1,33 @@
+# `new Worker("./w.js"); new globalThis[process.argv[2] ? "Blob" : "Worker"](text)`: flow knows both keys and lists the constructor among the callees of the second place, which does not name it.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: worker-start-without-name f0:v16
+
+module m0 path="/$bunfs/root/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Worker" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Worker) flags=[IsExpected]}
+    v3 = String string="./w.js"
+    v4 = Construct v2, -, v3
+    v5 = Builtin builtin=Process
+    v6 = PropGet v5 key="argv"
+    v7 = Integer integer=2
+    v8 = ElemGet v6, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    v10 = String string="Blob"
+    Jump -> next b3(v10)
+  b2():
+    v11 = String string="Worker"
+    Jump -> next b3(v11)
+  b3(v12: anything):
+    v13 = PropGet v0 key="globalThis" [isFreeName]
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v15 = ElemGet v14, v12
+    v16 = Construct v15, -, v8
+    Return
+}

@@ -3,9 +3,9 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary nested blocks.
 pub struct NoLoneBlocks;
 
-const REDUNDANT_BLOCK: Message = Message::new("redundantBlock", "Block is redundant.");
-const REDUNDANT_NESTED_BLOCK: Message =
-    Message::new("redundantNestedBlock", "Nested block is redundant.");
+const REDUNDANT_BLOCK: &Message = &Message::new("redundantBlock", "Block is redundant.");
+const REDUNDANT_NESTED_BLOCK: &Message =
+    &Message::new("redundantNestedBlock", "Nested block is redundant.");
 
 /// `list.len() == 1`, without counting a long list once per element.
 fn has_one<'a>(list: List<'a, Stmt<'a>>) -> bool {

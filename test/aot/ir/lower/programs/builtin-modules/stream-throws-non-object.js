@@ -150,7 +150,7 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsSloppy] length=1 syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[f_4]] flags=[IsExpected]}, {type=undefined|null|[[f_2]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]]|[[L_6]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsSloppy] length=1 syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[f_4]] flags=[IsExpected] variableName="show"}, {type=undefined|null|[[f_2]] flags=[IsExpected] variableName="note"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]]|[[L_6]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_4]], v1: undefined|null|[[f_2]], v2: undefined|null|[[L_5]]|[[L_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -181,7 +181,7 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
 // CHECK-NEXT: Rethrow v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="addAbortSignal"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 captures=[{type=undefined|null|[[f_8]] flags=[IsExpected]}, {type=undefined|null|[[f_9]] flags=[IsExpected]}, {type=undefined|null|[[f_10]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 captures=[{type=undefined|null|[[f_8]] flags=[IsExpected] variableName="Readable"}, {type=undefined|null|[[f_9]] flags=[IsExpected] variableName="addAbortSignal"}, {type=undefined|null|[[f_10]] flags=[IsExpected] variableName="watch"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_8]], v1: undefined|null|[[f_9]], v2: undefined|null|[[f_10]], v3: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -194,7 +194,7 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, IsNamedByComputedKey] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|[[L_13]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, IsNamedByComputedKey] captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=undefined|null|[[L_13]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -207,7 +207,7 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_16]]> flags=[IsExpected]}] functionTypes={{*}}[[f_17]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_16]]> flags=[IsExpected]}] functionTypes={{*}}[[f_17]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -221,7 +221,7 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

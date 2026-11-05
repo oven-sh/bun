@@ -871,7 +871,7 @@ impl Checker<'_, '_> {
         {
             return false;
         }
-        let in_destructuring = self.bound(file).get_assignment_target(hir, node).is_some();
+        let in_destructuring = self.is_assignment_target(file, node);
         // If every name is a literal name and all are distinct, there is nothing to report.
         let mut literal_names: SmallVec<[Atom; 16]> = SmallVec::new();
         let mut has_only_literal_names = true;

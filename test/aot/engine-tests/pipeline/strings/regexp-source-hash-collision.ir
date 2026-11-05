@@ -220,5 +220,5 @@ function f5 name="line" module=m0 position=1592 flags=[IsChecked, HasExplicitNam
 # -- generated: line
 # CHECK-LABEL: function {{*}}name="line"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 138, patchpoints: 15, rare instructions: 106, polls: 1
-# CHECK-NEXT: end of function f5
+# CHECK-NEXT: instructions: 136, patchpoints: 14, rare instructions: 106, polls: 1
+# CHECK-NEXT: end of function f10

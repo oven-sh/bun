@@ -17,7 +17,7 @@ function callsIn(counts, ...besides) {
   return sum;
 }
 // These make the text that is printed, count the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
-const owed = ["operationAOTConcat", "operationAOTConcatenate", "operationAOTToString", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewDictionary"];
+const owed = ["operationAOTObjectAssignWithoutCode", "operationAOTConcat", "operationAOTConcatenate", "operationAOTConcatenatePair", "operationAOTToString", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewDictionary"];
 const first = (source) => Object.assign({}, source);
 const second = (source) => Object.assign({}, source);
 const third = (source) => Object.assign({}, source);

@@ -315,7 +315,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
             innerDepth = jsNumber(d - 1);
         }
     }
-    innerOptions->putDirect(vm, Identifier::fromString(vm, "depth"_s), innerDepth);
+    Bun::putDirectNamed(vm, innerOptions, "depth"_s, innerDepth);
 
     JSValue toJSON = entry->get(lexicalGlobalObject, vm.propertyNames->toJSON);
     RETURN_IF_EXCEPTION(throwScope, {});

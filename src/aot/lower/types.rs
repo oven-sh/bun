@@ -116,8 +116,11 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(crate) fn array_literal_contents(&mut self, literal: ExprId) -> TypeId {
         debug_assert!(
-            matches!(self.hir[literal].kind, ExprKind::Array(_)),
-            "an array literal was expected"
+            matches!(
+                self.hir[literal].kind,
+                ExprKind::Array(_) | ExprKind::New(_)
+            ),
+            "an array literal or `new Array()` was expected"
         );
         let contextual = self.queries.contextual_type(literal).ok().flatten();
         let own = self.queries.expression_type(literal).ok();

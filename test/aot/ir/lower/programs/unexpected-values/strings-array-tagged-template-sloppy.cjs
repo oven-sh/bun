@@ -186,7 +186,7 @@ attempt("a loop at one place", () => {
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="here"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=[[f_5]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=[[f_5]] flags=[IsFromCompiler] variableName="returnsIt"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: [[f_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

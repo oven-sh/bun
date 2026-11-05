@@ -340,7 +340,7 @@ fn compute_star_exports(
     scans: &Scans,
     entries: &[ExportEntries],
     files: &[FileId],
-) -> (Vec<u32>, Vec<StarExports>) {
+) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>) {
     let edges_of = |module: &ExportEntries| -> Vec<u32> {
         let tables = star_targets(scans, module).filter_map(|target| find_table(files, target));
         tables.map(|table| table as u32).collect()
@@ -373,7 +373,7 @@ fn compute_star_exports(
             dynamic_targets,
         });
     }
-    (component_of, star_exports)
+    (component_of, star_exports, edges)
 }
 
 struct FileTable {
@@ -587,6 +587,7 @@ impl ResolutionGraph<'_> {
 fn find_link_failure(
     scans: &Scans,
     importer: FileId,
+    drops_absent_exports: bool,
     entry: ExportEntry,
     resolution: Resolution,
 ) -> Option<PendingFailure> {
@@ -602,6 +603,8 @@ fn find_link_failure(
         return None;
     };
     let kind = match resolution {
+        // A link that misses `default` says that `export *` does not hand it on, whatever the module is written in.
+        Resolution::NotFound if drops_absent_exports && name != known::default => return None,
         Resolution::NotFound => ModuleFailureKind::ExportNotFound { exporter, name },
         Resolution::Ambiguous => ModuleFailureKind::ExportAmbiguous { exporter, name },
         _ => return None,
@@ -664,7 +667,8 @@ pub(super) fn resolve_exports(
     let has_table = |file: &&FileId| modules.table_file(ModuleRef::File(**file)).is_some();
     let files_with_table = modules.record_files.iter().filter(has_table);
     debug_assert!(table_files.iter().eq(files_with_table));
-    let (component_of, star_exports) = compute_star_exports(scans, &entries, &table_files);
+    let (component_of, star_exports, star_tables) =
+        compute_star_exports(scans, &entries, &table_files);
     let mut nodes = NameNodes::default();
     for (module, &component) in entries.iter().zip(&component_of) {
         nodes.add_file(module, &star_exports[component as usize]);
@@ -695,17 +699,19 @@ pub(super) fn resolve_exports(
             failures.extend(find_link_failure(
                 scans,
                 module.file,
+                module.drops_absent_exports,
                 entry,
                 resolved.resolution,
             ));
-            if let ExportEntry::Indirect { site, .. } = entry {
-                indirect_sites.push((node, site));
+            if let ExportEntry::Indirect { site, name, .. } = entry {
+                indirect_sites.push((node, site, name));
             }
         }
     }
     let mut tables = ExportTables {
         files: table_files,
         tables: nodes.tables,
+        star_tables,
         results,
         indirect_sites,
         index: nodes.index,
@@ -728,6 +734,10 @@ pub(super) fn resolve_exports(
     let mut absent_names = Vec::new();
     for written in &commonjs_imports {
         if let Some((pending, imported)) = find_absent_name(&tables, modules, written) {
+            if written.is_dropped_if_absent {
+                tables.dropped_commonjs_names.push(imported);
+                continue;
+            }
             tables.failures.push(pending);
             let order = (written.asked_by.is_none(), written.written.order);
             absent_names.push((imported, order));
@@ -761,9 +771,11 @@ pub(super) fn resolve_exports(
 pub(super) struct ExportTables {
     files: Vec<FileId>,
     tables: Vec<FileTable>,
+    /// Of each table, the tables of the modules that `export *` names there.
+    star_tables: Vec<Vec<u32>>,
     results: Vec<(Atom, ResolvedName)>,
-    /// Of each own name that stands for a name of another module: its place in `results`, and the import site that names the module. Sorted.
-    indirect_sites: Vec<(u32, u32)>,
+    /// Of each own name that stands for a name of another module: its place in `results`, the import site that names the module, and the name there. Sorted.
+    indirect_sites: Vec<(u32, u32, Atom)>,
     index: FxHashMap<NodeKey, u32>,
     failures: Vec<PendingFailure>,
     pub(super) commonjs: CommonJsNames,
@@ -771,6 +783,8 @@ pub(super) struct ExportTables {
     pub(super) commonjs_imports: Vec<CommonJsImport>,
     /// Those that the body of the CommonJS module may end without, by importer, and of each importer in the order in which a link looks for them.
     pub(super) absent_commonjs_names: Vec<(CommonJsImport, FailureOrder)>,
+    /// Those that the body may end without and that the link of the importer does not ask for: the importer exports them, and goes on without the export.
+    pub(super) dropped_commonjs_names: Vec<CommonJsImport>,
     /// The CommonJS files that `import()`, `export *` or an exported namespace name.
     pub(super) commonjs_namespace_loads: Vec<FileId>,
 }
@@ -894,11 +908,51 @@ impl ExportTables {
 
     /// The import site behind one of `names(module)`, by its position there: `export { name } from`, or the import whose name the module exports.
     pub(super) fn find_indirect_site(&self, module: FileId, position: usize) -> Option<u32> {
+        Some(self.find_indirect_name(module, position)?.0)
+    }
+
+    /// The same, with the name that the module at the site has for it.
+    pub(super) fn find_indirect_name(
+        &self,
+        module: FileId,
+        position: usize,
+    ) -> Option<(u32, Atom)> {
         let node = self.table_of(module)?.nodes.start + position as u32;
         let found = self
             .indirect_sites
-            .binary_search_by_key(&node, |&(node, _)| node);
-        found.ok().map(|index| self.indirect_sites[index].1)
+            .binary_search_by_key(&node, |&(node, ..)| node);
+        found.ok().map(|index| {
+            let (_, site, name) = self.indirect_sites[index];
+            (site, name)
+        })
+    }
+
+    /// The module exports what it imports under `name` at the site.
+    pub(super) fn exports_imported_name(&self, module: FileId, site: u32, name: Atom) -> bool {
+        let mut positions = 0..self.own_names(module).len();
+        positions.any(|position| self.find_indirect_name(module, position) == Some((site, name)))
+    }
+
+    /// The files that a link looks into for `name` of `module`: the module first, and wherever the name is not written, those that `export *` names there and that have it.
+    pub(super) fn files_searched_for(&self, module: FileId, name: Atom) -> Vec<FileId> {
+        let start = find_table(&self.files, ModuleRef::File(module));
+        let mut searched: Vec<u32> = start.map(|table| table as u32).into_iter().collect();
+        let mut next = 0;
+        while let Some(&table) = searched.get(next) {
+            next += 1;
+            let node = self.index.get(&(self.files[table as usize], name));
+            if !node.is_some_and(|node| self.tables[table as usize].star_nodes().contains(node)) {
+                continue;
+            }
+            for &target in &self.star_tables[table as usize] {
+                let has_name = (self.index).contains_key(&(self.files[target as usize], name));
+                if has_name && !searched.contains(&target) {
+                    searched.push(target);
+                }
+            }
+        }
+        let searched = searched.into_iter();
+        searched.map(|table| self.files[table as usize]).collect()
     }
 
     pub(super) fn has_dynamic_names(&self, module: ModuleRef) -> bool {
@@ -927,6 +981,21 @@ impl ExportTables {
         let table = find_table(&self.files, ModuleRef::File(file))?;
         Some(&self.tables[table])
     }
+}
+
+/// `export * from "./a"; export * from "./b"`, and both export the name. The module does not export it. The loader of the run time, which links code
+/// that is not compiled to the module, says so in other words than of a name that nobody exports, and looks behind no further star for it.
+pub(super) fn find_ambiguous_names(
+    files: &Files<'_>,
+    tables: &ExportTables,
+    file: FileId,
+) -> Vec<Atom> {
+    let names = tables.names(file).iter();
+    let ambiguous = names.filter(|it| it.1.resolution == Resolution::Ambiguous);
+    let mut ambiguous: Vec<Atom> = ambiguous.map(|it| it.0).collect();
+    let atoms = &files.atoms;
+    ambiguous.shared_sort_unstable_by(|&a, &b| compare_code_units(atoms.bytes(a), atoms.bytes(b)));
+    ambiguous
 }
 
 pub(super) fn finish_exports(

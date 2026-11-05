@@ -19,7 +19,7 @@
 // RUN(RESOLVED): lower
 // RESOLVED-LABEL: function {{*}}name="resolved"
 // RESOLVED-NOT: ResolveDynamic
-// RESOLVED: = ResolveModule module=m{{*}}specifier="./imports/common.cjs"
+// RESOLVED: = String string="{{*}}modules/imports/common.cjs"
 // RESOLVED: Return
 
 // RUN(IMPORTED): lower

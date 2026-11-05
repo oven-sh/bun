@@ -147,7 +147,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
 # -- generated: f0 sumOfSquares f19 attempt
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=0 [isHeldByClosureTable]
 # CHECK-NEXT: v1: f5 = GetModuleVariable variable=g2
@@ -179,34 +179,37 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v24: boolean = AreMembersUnchanged conditions=[{layout=L0 key="pairs"}]
 # CHECK-NEXT: Branch v24 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: 10 = Integer integer=10
-# CHECK-NEXT: v28: anything ~ object = Construct v2, -, v26, v27 calleeName="Span" accessSite=4 callees=[f5]
-# CHECK-NEXT: v29: anything ~ L0 = Expect v28 expectedType=undefined|null|L0
-# CHECK-NEXT: v30: 15 = Integer integer=15
-# CHECK-NEXT: v31: int[0, 15] = BitAnd v10, v30
-# CHECK-NEXT: v32: number = Call v0, -, v29, v31 calleeName="firstOver" accessSite=5 callees=[f3, ..]
-# CHECK-NEXT: v33: int[1, 2000] = Increment v10
-# CHECK-NEXT: Jump -> next b2(v33)
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: v26: 10 = Integer integer=10
+# CHECK-NEXT: v27: anything ~ object = Construct v2, -, v25, v26 calleeName="Span" accessSite=4 callees=[f5]
+# CHECK-NEXT: v28: anything ~ L0 = Expect v27 expectedType=undefined|null|L0
+# CHECK-NEXT: v29: 15 = Integer integer=15
+# CHECK-NEXT: v30: int[0, 15] = BitAnd v10, v29
+# CHECK-NEXT: v31: number = Call v0, -, v28, v30 calleeName="firstOver" accessSite=5 callees=[f3, ..]
+# CHECK-NEXT: v32: int[1, 2000] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v32)
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v34: anything = PropGet v23 key="pairs" accessSite=7 receivers=[]
-# CHECK-NEXT: v35: anything ~ f6 = Upcast v34 castType=anything
-# CHECK-NEXT: v36: anything = Call v35, v23 calleeKey="pairs" calleeName="span.pairs" accessSite=8 callees=[]
+# CHECK-NEXT: v33: anything = PropGet v23 key="pairs" accessSite=7 receivers=[]
+# CHECK-NEXT: v34: anything ~ f6 = Upcast v33 castType=anything
+# CHECK-NEXT: v35: anything = Call v34, v23 calleeKey="pairs" calleeName="span.pairs" accessSite=8 callees=[]
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: 10 = Integer integer=10
-# CHECK-NEXT: v40: anything ~ object = Construct v2, -, v38, v39 calleeName="Span" accessSite=4 callees=[f5]
-# CHECK-NEXT: v41: anything ~ L0 = Expect v40 expectedType=undefined|null|L0
-# CHECK-NEXT: v42: 15 = Integer integer=15
-# CHECK-NEXT: v43: int[0, 15] = BitAnd v10, v42
-# CHECK-NEXT: v44: number = Call v0, -, v41, v43 calleeName="firstOver" accessSite=5 callees=[f3, ..]
-# CHECK-NEXT: v45: int[1, 2000] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v45)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v46: undefined = CallDirect function=f43 accessSite=6
-# CHECK-NEXT: v47: undefined = Undefined
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: 10 = Integer integer=10
+# CHECK-NEXT: v39: anything ~ object = Construct v2, -, v37, v38 calleeName="Span" accessSite=4 callees=[f5]
+# CHECK-NEXT: v40: anything ~ L0 = Expect v39 expectedType=undefined|null|L0
+# CHECK-NEXT: v41: 15 = Integer integer=15
+# CHECK-NEXT: v42: int[0, 15] = BitAnd v10, v41
+# CHECK-NEXT: v43: number = Call v0, -, v40, v42 calleeName="firstOver" accessSite=5 callees=[f3, ..]
+# CHECK-NEXT: v44: int[1, 2000] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v44)
+# CHECK-NEXT: b6() handler=b7():
+# CHECK-NEXT: v45: 0 = CallDirect function=f19 accessSite=9
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v46: undefined = Undefined
+# CHECK-NEXT: Return v46
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sumOfSquares"
 # CHECK: module=m0 position=560 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -226,7 +229,7 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b2(v7)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=1101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a method deleted from the prototype" flags=[OmitsNull, OmitsUndefined]}, {type=f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f19 module=
 # CHECK: m0 position=2454 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -241,15 +244,4 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v8: undefined|null|L0 ~ L0 = AssumeType v7 provenType=undefined|null|L0
 # CHECK-NEXT: v9: 0 = CallDirect v8 function=f2 accessSite=13
 # CHECK-NEXT: ReturnCall v9 casts=[{declared={type=0} resolution=Assume}]
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=1101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4} {
-# CHECK-NEXT: b0() handler=b1():
-# CHECK-NEXT: v2: 0 = CallDirect function=f19 accessSite=9
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b1() role=CatchHandler:
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: Return v3
 # CHECK-NEXT: }

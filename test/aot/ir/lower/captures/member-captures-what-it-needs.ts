@@ -9,10 +9,10 @@
 // CHECK: [[k]] = NewClosure function=
 // CHECK-NEXT: DefineMethod {{*}}, [[k]] {{*}}key="k"
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: captures=[{type=1 site=[[siteOfA]]}] thisType
+// CHECK: captures=[{type=1 site=[[siteOfA]] variableName="a"}] thisType
 // CHECK: b0([[copyOfA]]: 1):
 // CHECK-LABEL: function {{*}}name="n"
-// CHECK: captures=[{type=2 site=[[siteOfB]]}] thisType
+// CHECK: captures=[{type=2 site=[[siteOfB]] variableName="b"}] thisType
 // CHECK: b0([[copyOfB]]: 2):
 // CHECK-LABEL: function {{*}}name="k"
 // CHECK-NOT: captures=

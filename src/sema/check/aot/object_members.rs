@@ -1,6 +1,6 @@
 use super::answers::{
-    CheckedMember, GaveUp, IndexSignature, ListedMember, MemberLookup, MemberName, ObjectMember,
-    PositionTypes, WrittenType,
+    CheckedMember, GaveUp, IndexSignature, ListedMember, MemberLookup, MemberName,
+    MemberTypedOtherwise, ObjectMember, PositionTypes, WrittenType,
 };
 use super::queries::Queries;
 use super::type_shape::{ShapeKind, TypeShape};
@@ -127,6 +127,134 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             has_inferred_member = has_inferred_member || self.is_inferred_member(prop);
         }
         Ok((self.list(&list), has_inferred_member))
+    }
+
+    /// As `compute_checked_members`, in a list that its caller lets go of.
+    pub(super) fn compute_checked_members_for_now(
+        &mut self,
+        ty: TypeId,
+    ) -> Result<Vec<CheckedMember>, GaveUp> {
+        let ty = self.declared_type_of_this(ty);
+        let shape = self.type_shape(ty)?;
+        if !shape.has_members() {
+            return Ok(Vec::new());
+        }
+        let Some(members) = self.c.members(ty) else {
+            return Ok(Vec::new());
+        };
+        let skips_private_names = receiver_kind(shape) == ReceiverKind::Object;
+        let props = &members.shape().props;
+        let mut list = Vec::with_capacity(props.len());
+        for prop in props.iter() {
+            let is_private = matches!(self.member_name(prop.name), MemberName::Private(_));
+            if is_private && skips_private_names {
+                continue;
+            }
+            list.push(self.checked_member_of_prop(prop, members.mapper));
+        }
+        Ok(list)
+    }
+
+    /// `members_typed_otherwise` without the list of either class: the names that the class declares are looked up in
+    /// both, and so are the few that it inherits with another type. `None`: the lists have to be compared.
+    pub(super) fn compute_members_typed_otherwise(
+        &mut self,
+        instance: TypeId,
+        base: TypeId,
+    ) -> Result<Option<Vec<MemberTypedOtherwise>>, GaveUp> {
+        let instance = self.declared_type_of_this(instance);
+        let base = self.declared_type_of_this(base);
+        let (&TypeData::Ref { target: class, .. }, &TypeData::Ref { target: above, .. }) =
+            (self.c.data(instance), self.c.data(base))
+        else {
+            return Ok(None);
+        };
+        let Some((declared, Some(extended))) = self.c.declared_by_plain_class(class) else {
+            return Ok(None);
+        };
+        let Some((typed_by_this, declared_above)) = self
+            .names_typed_by_this(above)
+            .filter(|_| extended == above)
+        else {
+            return Ok(None);
+        };
+        // FOR SPEED: where `this` decides the types of much of what is inherited, as it does for every method without a
+        // return type, the lists say the same for less.
+        if typed_by_this.len() * 4 > declared_above {
+            return Ok(None);
+        }
+        // No class of the row has a type parameter but `this`, so a member that the class inherits has the type it has in
+        // the class above, unless that depends on `this`.
+        let inherited = typed_by_this.iter().copied();
+        let names: Vec<Atom> = (declared.shape.props.iter().map(|prop| prop.name))
+            .chain(inherited.filter(|&name| declared.prop(name).is_none()))
+            .collect();
+        let mut found = Vec::new();
+        for name in names {
+            let Some((in_base, mapper)) = self.c.get_property_of_type_ex(base, name, true) else {
+                continue;
+            };
+            let to = self.checked_member_of_prop(in_base, mapper);
+            let Some((in_class, mapper)) = self.c.get_property_of_type_ex(instance, name, true)
+            else {
+                continue;
+            };
+            let from = self.checked_member_of_prop(in_class, mapper);
+            if let (MemberName::String(_), Ok(from), Ok(checked)) =
+                (to.name, from.checked, to.checked)
+                && from != checked
+            {
+                let Some(place) = self.c.place_in_list_of_plain_class(above, in_base) else {
+                    return Ok(None);
+                };
+                let member = MemberTypedOtherwise {
+                    kind_in_base: to.kind,
+                    checked: from,
+                    in_base: checked,
+                };
+                found.push(((place, self.atom_bytes(name)), member));
+            }
+        }
+        found.sort_unstable_by_key(|member| member.0);
+        Ok(Some(found.into_iter().map(|member| member.1).collect()))
+    }
+
+    /// The names in the list of the plain class `class` under which the type depends on what `this` is. It may name
+    /// more. With it, how many properties `class` and the classes above it declare. `None` if one of them isn't plain,
+    /// or has another type parameter.
+    fn names_typed_by_this(&mut self, class: Sym) -> Option<(&'c [Atom], usize)> {
+        let mut heirs: SmallVec<[Sym; 8]> = SmallVec::new();
+        let (mut names, mut count): (&'c [Atom], usize) = (&[], 0);
+        let mut at = Some(class);
+        while let Some(current) = at {
+            if let Some(&known) = self.memo.names_typed_by_this.get(&current) {
+                (names, count) = known;
+                break;
+            }
+            at = self.c.declared_by_plain_class(current)?.1;
+            heirs.push(current);
+        }
+        while let Some(current) = heirs.pop() {
+            let declared = self.c.declared_by_plain_class(current)?.0;
+            let reference = self.c.declared_type(current);
+            let mapper = self.c.mapper_of_reference(reference, current)?;
+            let mut all = Vec::new();
+            for prop in &declared.shape.props {
+                let with_this = self.checked_member_of_prop(prop, MapperId::IDENTITY);
+                let with_class = self.checked_member_of_prop(prop, mapper);
+                match (with_this.checked, with_class.checked) {
+                    (Ok(with_this), Ok(with_class)) if with_this == with_class => {}
+                    _ => all.push(prop.name),
+                }
+            }
+            if !all.is_empty() || names.iter().any(|&name| declared.prop(name).is_some()) {
+                all.extend((names.iter().copied()).filter(|&name| declared.prop(name).is_none()));
+                names = self.list(&all);
+            }
+            count += declared.shape.props.len();
+            (self.memo.names_typed_by_this).insert(current, (names, count));
+        }
+        Some((names, count))
     }
 
     pub(super) fn compute_find_checked_member(

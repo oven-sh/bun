@@ -151,35 +151,47 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: v6: anything ~ number = GetModuleVariable variable=g1
 # CHECK-NEXT: v7: boolean ~ true = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b4(| 0)
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b7(| 0)
 # CHECK-NEXT: b1(v8: number):
-# CHECK-NEXT: Jump -> next b2(v5)
-# CHECK-NEXT: b2(v9: int|whole):
+# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=i32
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b5(v5)
+# CHECK-NEXT: b2(v10: i32):
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b3(v11: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v11: boolean = Less v9, v8
-# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b7()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v12: boolean = ElemHas v0, v1 accessSite=13
-# CHECK-NEXT: v13: Set<boolean, proven, pristine[Storage, Names]> = CallBuiltin v4, v12 overload=SetPrototypeAdd/0 accessSite=14
-# CHECK-NEXT: v14: int|whole = Increment v9
-# CHECK-NEXT: Jump -> next b2(v14)
-# CHECK-NEXT: b4(v15: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b5(v5)
-# CHECK-NEXT: b5(v16: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v13: boolean = Less v11, v10
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b10()
+# CHECK-NEXT: b4(v14: int[0, 2147483646]):
+# CHECK-NEXT: v15: boolean = ElemHas v0, v1 accessSite=13
+# CHECK-NEXT: v16: Set<boolean, proven, pristine[Storage, Names]> = CallBuiltin v4, v15 overload=SetPrototypeAdd/0 accessSite=14
+# CHECK-NEXT: v17: int[1, 2147483647] = Increment v14
+# CHECK-NEXT: Jump -> next b3(v17)
+# CHECK-NEXT: b5(v18: int|whole ~ 0) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v18: boolean = Less v16, v15
-# CHECK-NEXT: Branch v18 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v20: boolean = Less v18, v8
+# CHECK-NEXT: Branch v20 -> taken b6(), notTaken b10()
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v19: boolean = ElemHas v0, v1 accessSite=13
-# CHECK-NEXT: v20: Set<boolean, proven, pristine[Storage, Names]> = CallBuiltin v4, v19 overload=SetPrototypeAdd/0 accessSite=14
-# CHECK-NEXT: v21: int|whole = Increment v16
-# CHECK-NEXT: Jump -> next b5(v21)
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v22: "" = String string="" @0 tail
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v21: boolean = ElemHas v0, v1 accessSite=13
+# CHECK-NEXT: v22: Set<boolean, proven, pristine[Storage, Names]> = CallBuiltin v4, v21 overload=SetPrototypeAdd/0 accessSite=14
+# CHECK-NEXT: v23: int|whole ~ 1 = Increment v18
+# CHECK-NEXT: Jump -> next b5(v23)
+# CHECK-NEXT: b7(v24: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8(v5)
+# CHECK-NEXT: b8(v25: int|whole) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v27: boolean = Less v25, v24
+# CHECK-NEXT: Branch v27 -> taken b9(), notTaken b10()
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: v28: boolean = ElemHas v0, v1 accessSite=13
+# CHECK-NEXT: v29: Set<boolean, proven, pristine[Storage, Names]> = CallBuiltin v4, v28 overload=SetPrototypeAdd/0 accessSite=14
+# CHECK-NEXT: v30: int|whole = Increment v25
+# CHECK-NEXT: Jump -> next b8(v30)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v31: "" = String string="" @0 tail
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=597 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=function|f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=597 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="arrow after plain functions"|"bound function"}, {type=function|f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="say"
 # CHECK: module=m0 position=597 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=function|f4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} {
 # CHECK-NEXT: b0(v1: function|f4):

@@ -519,10 +519,7 @@ impl AstAlloc {
         v
     }
 
-    /// Move `items` element-wise into a fresh AST-heap allocation. Replaces
-    /// both `VecExt::from_owned_slice` (`Box<[T]>` → `Vec`) and
-    /// `VecExt::from_bump_slice` (leaked `&mut [T]` → `Vec`): in either case
-    /// the source storage is on the wrong heap, so a copy is unavoidable.
+    /// Moves the items of `iter` into a fresh AST-heap allocation.
     #[inline]
     pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(iter: I) -> AstVec<T> {
         let iter = iter.into_iter();

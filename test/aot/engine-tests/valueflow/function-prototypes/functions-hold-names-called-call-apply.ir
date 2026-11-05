@@ -460,43 +460,48 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Jump -> next b1(v27)
 # CHECK-NEXT: b1(v30: int[0, 2147483647] ~ 0):
 # CHECK-NEXT: Jump -> next b2(v30)
-# CHECK-NEXT: b2(v31: int[0, 2147483648] ~ int[0, 2147483647]):
+# CHECK-NEXT: b2(v31: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b3(v31)
+# CHECK-NEXT: b3(v32: int[0, 2147483648] ~ int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v33: 7 = Integer integer=7
-# CHECK-NEXT: v34: boolean ~ true = TypeTest v31 testedType=i32
-# CHECK-NEXT: Branch v34 -> taken b3(| 0), notTaken b4(v31)
-# CHECK-NEXT: b3(v35: int[0, 2147483647]):
-# CHECK-NEXT: v36: int[0, 7] = BitAnd v35, v33
-# CHECK-NEXT: v37: anything ~ object = Construct v28, -, v36 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
-# CHECK-NEXT: v38: undefined = Undefined
+# CHECK-NEXT: v34: 7 = Integer integer=7
+# CHECK-NEXT: v35: boolean ~ true = TypeTest v32 testedType=i32
+# CHECK-NEXT: Branch v35 -> taken b4(| 0), notTaken b7(v32)
+# CHECK-NEXT: b4(v36: int[0, 2147483647]):
+# CHECK-NEXT: v37: int[0, 7] = BitAnd v36, v34
+# CHECK-NEXT: v38: anything ~ object = Construct v28, -, v37 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
 # CHECK-NEXT: v39: 3 = Integer integer=3
-# CHECK-NEXT: v40: int[0, 3] = BitAnd v35, v39
+# CHECK-NEXT: v40: int[0, 3] = BitAnd v36, v39
 # CHECK-NEXT: v41: anything ~ object = Construct v29, -, v40 calleeName="Last" accessSite=14 callees=[f13]
 # CHECK-NEXT: v42: object = AssumeType v41 provenType=object
-# CHECK-NEXT: v43: anything = PropGet v42 key="top" accessSite=15
-# CHECK-NEXT: v44: number|string|bigint = Add v38, v43
-# CHECK-NEXT: v45: int[1, 2147483648] = Increment v35
+# CHECK-NEXT: v43: anything = PropGet v42 key="top" accessSite=15 [asksOnlyTables]
+# CHECK-NEXT: v44: boolean = DidReadAbove v43
+# CHECK-NEXT: Branch v44 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v45: int[1, 2147483648] = Increment v36
 # CHECK-NEXT: v46: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v45 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v46)
-# CHECK-NEXT: b4(v47: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v48: int[0, 7] = BitAnd v47, v33
-# CHECK-NEXT: v49: anything ~ object = Construct v28, -, v48 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
-# CHECK-NEXT: v50: undefined = Undefined
-# CHECK-NEXT: v51: 3 = Integer integer=3
-# CHECK-NEXT: v52: int[0, 3] = BitAnd v47, v51
-# CHECK-NEXT: v53: anything ~ object = Construct v29, -, v52 calleeName="Last" accessSite=14 callees=[f13]
-# CHECK-NEXT: v54: object = AssumeType v53 provenType=object
-# CHECK-NEXT: v55: anything = PropGet v54 key="top" accessSite=15
-# CHECK-NEXT: v56: number|string|bigint = Add v50, v55
-# CHECK-NEXT: v57: int|whole ~ int[1, 2147483648] = Increment v47
+# CHECK-NEXT: Jump -> next b3(v46)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v47: anything = PropGet v42 key="top" accessSite=15
+# CHECK-NEXT: v48: int[1, 2147483648] = Increment v36
+# CHECK-NEXT: Jump -> next b2(v48)
+# CHECK-NEXT: b7(v49: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v50: int[0, 7] = BitAnd v49, v34
+# CHECK-NEXT: v51: anything ~ object = Construct v28, -, v50 calleeName="BelowWithStatic" accessSite=12 callees=[f2]
+# CHECK-NEXT: v52: 3 = Integer integer=3
+# CHECK-NEXT: v53: int[0, 3] = BitAnd v49, v52
+# CHECK-NEXT: v54: anything ~ object = Construct v29, -, v53 calleeName="Last" accessSite=14 callees=[f13]
+# CHECK-NEXT: v55: object = AssumeType v54 provenType=object
+# CHECK-NEXT: v56: anything = PropGet v55 key="top" accessSite=15
+# CHECK-NEXT: v57: int|whole ~ int[1, 2147483648] = Increment v49
 # CHECK-NEXT: v58: int|whole ~ int[1, 2147483647] = Upcast v57 castType=int|whole
 # CHECK-NEXT: v59: boolean ~ true = TypeTest v58 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v59 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v60: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Branch v59 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v60: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b1(v60)
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b4(v58)
+# CHECK-NEXT: Jump -> next b7(v58)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithStatic"
 # CHECK: module=m0 position=397 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|builtin(ArrayPrototypeValues)}] results=[{type=undefined}] functionTypes=[f80] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -616,23 +621,9 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="S"
-# CHECK: module=m0 position=4866 flags=[HasThis, HasExplicitName] length=1 thisType={type=L4} parameters=[{type=25}] results=[{type=undefined}] functionTypes=[f122] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
-# CHECK-NEXT: b0(v0: L4, v1: 25):
-# CHECK-NEXT: v2: f21 = GetModuleVariable variable=g20
-# CHECK-NEXT: v3: anything = PropGet v2 key="call" accessSite=28
-# CHECK-NEXT: v4: undefined|builtin(FunctionPrototypeCall) = AssumeType v3 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=builtin(FunctionPrototypeCall)
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: v8: never = Call v7, v2, v0, v1 calleeKey="call" calleeName="R.call" accessSite=29 callees=[builtin(FunctionPrototypeCall)]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: }
+# CHECK: module=m0 position=4866 flags=[HasThis, HasExplicitName] length=1 thisType={type=L4} parameters=[{type=25}] results=[{type=undefined}] functionTypes=[f122] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4
 # CHECK-LABEL: function f64 module=
-# CHECK: m0 position=4451 kind=Arrow thisType={type=anything} results=[{type=Array<undefined|boolean|number|string, proven, pristine[Storage, Names, Dense]>}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4451 kind=Arrow thisType={type=anything} results=[{type=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: function = GetModuleVariable variable=g28
 # CHECK-NEXT: v1: anything = Call v0 calleeName="bound" accessSite=40
@@ -640,30 +631,19 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v3: f10 = GetModuleVariable variable=g9
 # CHECK-NEXT: v4: boolean = StrictEq v2, v3
 # CHECK-NEXT: v5: anything = PropGet v0 key="name" accessSite=42
-# CHECK-NEXT: v6: anything ~ undefined|null|string = Upcast v5 castType=anything
+# CHECK-NEXT: v6: undefined|string = AssumeType v5 provenType=undefined|string
 # CHECK-NEXT: v7: anything = PropGet v0 key="length" accessSite=43
 # CHECK-NEXT: v8: undefined|number = AssumeType v7 provenType=undefined|number
 # CHECK-NEXT: v9: undefined|number ~ number = Upcast v8 castType=anything
-# CHECK-NEXT: v10: Array<undefined|boolean|number|string> = NewArray v1, v4, v6, v9 contents=undefined|boolean|number|string allocationSite=8 [contentsAreProven]
-# CHECK-NEXT: v11: Array<undefined|boolean|number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|boolean|number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<undefined|boolean|number|string, Contiguous> = NewArray v1, v4, v6, v9 contents=undefined|boolean|number|string allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f66 module=
 # CHECK: m0 position=4982 kind=Arrow thisType={type=anything} results=[{type=L4}] functionTypes=[f123] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f151 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L4 = NewObject layout=L4 allocationClass=4
-# CHECK-NEXT: v1: f21 = GetModuleVariable variable=g20
-# CHECK-NEXT: v2: anything = PropGet v1 key="call" accessSite=28
-# CHECK-NEXT: v3: undefined|builtin(FunctionPrototypeCall) = AssumeType v2 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeCall)
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: 25 = Integer integer=25
-# CHECK-NEXT: v7: never = Call v5, v1, v0, v6 calleeKey="call" calleeName="R.call" accessSite=29 callees=[builtin(FunctionPrototypeCall)]
-# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithStatic"
 # CHECK: module=m0 position=397 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=397 isTailCall=true module=m0}] {
@@ -776,20 +756,16 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="S"
-# CHECK: module=m0 position=4866 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f22}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f22 parameter=2} creator=Entrypoint{target=f22 arguments=Registers takesNewTarget=true} {
+# CHECK: module=m0 position=4866 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f22}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f22 parameter=2} creator=Entrypoint{target=f22 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f22 callPosition=4866 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: f22, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: L4 = NewObject layout=L4 allocationClass=4
-# CHECK-NEXT: v5: 25 = AssumeType v3 provenType=25
-# CHECK-NEXT: v6: undefined = CallDirect v4, v5 function=f22 [isConstruction]
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="S"
-# CHECK: module=m0 position=4866 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f22}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f22} creator=Entrypoint{target=f22 arguments=Registers constructEntrypoint=f143} {
+# CHECK: module=m0 position=4866 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f22}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f22} creator=Entrypoint{target=f22 arguments=Registers constructEntrypoint=f143} inlineFrames=[{}, {callee=f22 callPosition=4866 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f22, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L4 = AssumeType v1 provenType=L4
-# CHECK-NEXT: v4: 25 = AssumeType v2 provenType=25
-# CHECK-NEXT: v5: undefined = CallDirect v3, v4 function=f22
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="AppliesWithStatic"
 # CHECK: module=m0 position=577 role=ConstructBody flags=[HasArgumentCount, HasHiddenRest, HasExplicitName, AllocatesOwnThis] thisType={type=anything} results=[{type=L1}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=1}, {original=2}]} creator=Version{provenVersion=f3} constructedClass=L1

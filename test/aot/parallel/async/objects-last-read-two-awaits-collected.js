@@ -1,4 +1,5 @@
 // Each coroutine holds many values over its first await. Behind it, it makes an object and more values, reads them all, and then collects in a loop that awaits.
+// Todo under ASAN: Not every time: row 3696: `an async generator` prints still held: red in CI's round 7, green in round 6 on the same engine
 const registry = new FinalizationRegistry(markCollected => markCollected());
 const maxRounds = 300;
 

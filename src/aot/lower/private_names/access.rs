@@ -14,6 +14,14 @@ impl StoredValue {
             class: binding.class,
             member,
             holder: binding.holder,
+            written: None,
+        }
+    }
+
+    fn written_as(self, name: Atom) -> StoredValue {
+        StoredValue {
+            written: Some(name),
+            ..self
         }
     }
 }
@@ -40,13 +48,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.strict_eq(object, class_object)
     }
 
-    fn emit_class_object_test(&mut self, class: ClassId, object: ValueId, error: RuntimeErrorKind) {
+    /// `field`: the name of a static field that the program reads or stores here.
+    fn emit_class_object_test(
+        &mut self,
+        class: ClassId,
+        object: ValueId,
+        error: RuntimeErrorKind,
+        field: Option<Atom>,
+    ) {
         let is_class_object = self.emit_class_object_comparison(class, object);
         let admitted = self.create_block();
         let rejected = self.create_unlikely_block();
         self.builder
             .branch(is_class_object, Edge::to(admitted), Edge::to(rejected));
         self.continue_in(rejected);
+        // JSC asks for an object before it looks for the field: `undefined.#s` fails as `undefined.s` does.
+        if let Some(name) = field {
+            let split = self.split_on_type(object, TypeTable::NULLISH);
+            self.builder.switch_to(split.taken);
+            let key = self.file.name_key(name);
+            self.builder.prop_get(split.taken_value, key, false, false);
+            self.builder.unreachable();
+            self.builder.switch_to(split.not_taken);
+        }
         self.emit_throw_runtime_error(error, None);
         self.continue_in(admitted);
     }
@@ -63,7 +87,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let token = self.get_class_slot(class, ClassSlot::ClassToken);
                 self.builder.private_get(object, token, layout, field);
             }
-            PrivateHolder::ClassObject => self.emit_class_object_test(class, object, error),
+            PrivateHolder::ClassObject => self.emit_class_object_test(class, object, error, None),
         }
     }
 
@@ -73,7 +97,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         object: ValueId,
         error: RuntimeErrorKind,
     ) -> ValueId {
-        self.emit_class_object_test(stored.class, object, error);
+        self.emit_class_object_test(stored.class, object, error, stored.written);
         let slot = ClassSlot::StaticField(stored.member);
         let value = self.get_class_slot(stored.class, slot);
         let split = self.split_on_type(value, TypeTable::ABSENT);
@@ -146,10 +170,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// `start_of_access`: JSC reports the call of a getter there, and what it asks of the object behind the object.
     pub(in crate::lower) fn emit_name_get(
         &mut self,
         object: ValueId,
         name: PrivateNameId,
+        start_of_access: u32,
     ) -> ValueId {
         let binding = self.file.resolve_private_name(name);
         let PrivateBinding { class, holder, .. } = binding;
@@ -157,10 +183,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PrivateMembers::AutoAccessor(member) if binding.is_decorated => {
                 self.emit_admission(class, holder, object, RuntimeErrorKind::InvalidPrivateRead);
                 let getter = self.get_decorated_accessor_function(class, member, known::get);
+                self.set_position(start_of_access);
                 call::emit_call(self, getter, Some(object), &[])
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                self.emit_stored_read(StoredValue::of_name(binding, member), object)
+                let written = self.file.bound.private_name(name).name;
+                let stored = StoredValue::of_name(binding, member).written_as(written);
+                self.emit_stored_read(stored, object)
             }
             PrivateMembers::Method(member) => {
                 self.emit_admission(class, holder, object, RuntimeErrorKind::InvalidPrivateBrand);
@@ -172,17 +201,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return self.emit_error(RuntimeErrorKind::PrivateAccessorWithoutGetter);
                 };
                 let getter = self.get_class_slot(class, ClassSlot::PrivateMethod(getter));
+                self.set_position(start_of_access);
                 call::emit_call(self, getter, Some(object), &[])
             }
         }
     }
 
+    /// `start_of_access`: JSC reports the call of a setter there. None where a field is initialized.
     pub(in crate::lower) fn emit_name_set(
         &mut self,
         object: ValueId,
         name: PrivateNameId,
         value: ValueId,
         source: Option<ExprId>,
+        start_of_access: Option<u32>,
     ) {
         let binding = self.file.resolve_private_name(name);
         let PrivateBinding { class, holder, .. } = binding;
@@ -193,7 +225,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 call::emit_call(self, setter, Some(object), &[value]);
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                let stored = StoredValue::of_name(binding, member);
+                let written = self.file.bound.private_name(name).name;
+                let stored = StoredValue::of_name(binding, member).written_as(written);
                 self.emit_stored_write(stored, object, value, source);
             }
             PrivateMembers::Method(_) => {
@@ -207,6 +240,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return;
                 };
                 let setter = self.get_class_slot(class, ClassSlot::PrivateMethod(setter));
+                if let Some(start) = start_of_access {
+                    self.set_position(start);
+                }
                 call::emit_call(self, setter, Some(object), &[value]);
             }
         }

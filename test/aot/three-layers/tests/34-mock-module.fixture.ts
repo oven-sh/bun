@@ -1,0 +1,13 @@
+import { mock } from "bun:test";
+import { check } from "../src/show";
+import { throughSrc, deepThroughSrc, Middle, typedSum } from "../src/middle";
+import * as middle from "../src/middle";
+import { plain, holdAndCall } from "fake-shapes/more";
+import { readBoth, bumpBoth } from "../src/store";
+import { makeUser } from "../src/models";
+const F = "34";
+check(F, "1 before any mock", () => [plain(1, 2), throughSrc(() => 0, 1).length, deepThroughSrc(2, () => 1), new Middle().hello(), typedSum(1, 2), makeUser(1).name]);
+check(F, "2 a package's module is mocked: the app sees it", () => { mock.module("fake-shapes/more", () => ({ plain: () => "mocked plain", holdAndCall: (f: (n: number) => unknown, seed: number) => ["mocked hold", f(seed)], deep: () => -1, Base: class MockBase { who() { return "mock"; } hello() { return "mock hello"; } } })); return [plain(1, 2), holdAndCall(n => n, 5), throughSrc(n => n * 2, 1), deepThroughSrc(2, () => 1), new Middle().hello()]; });
+check(F, "3 a module of the app is mocked", async () => { mock.module("../src/middle", () => ({ ...middle, typedSum: () => "mocked sum", setting: "mocked setting" })); const again = await import("../src/middle"); return [typedSum(1, 2), middle.typedSum(1, 2), again.typedSum(1, 2), again.setting, require("../src/middle").typedSum(1, 2)]; });
+check(F, "4 a typed package is mocked under the app", () => { mock.module("fake-typed", () => ({ counter: 500, increment: () => 501 })); return [readBoth()[0], bumpBoth()[0]]; });
+check(F, "5 a module that does not exist", async () => { mock.module("no-such-package", () => ({ default: "made up", named: 1 })); const m = await import("no-such-package" as string); return [m.default, m.named, require("no-such-package").named]; });

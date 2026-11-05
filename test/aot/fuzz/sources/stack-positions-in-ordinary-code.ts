@@ -1,10 +1,9 @@
-// Fixed seeds of fuzz/stack-positions-in-ordinary-code.ts: programs of ordinary code over several lines, in which each call in turn throws. They print the
-// function, line and column of every frame.
+// A fixed list of seeds of ../stack-positions-in-ordinary-code.ts, which describes the programs.
 import { Random } from "../random";
 import { generate } from "../stack-positions-in-ordinary-code";
 import { family } from "../family";
 
-// Once plain Bun's optimizing compilers have taken a function into its caller, a stack trace there lists it even if it left by a tail call.
+// Once plain Bun's optimizing JIT has inlined a function, a stack trace lists it even if it left by a tail call.
 const plainEnv = { BUN_JSC_useDFGJIT: "0" };
 
 const seeds = (first: number, count: number) => Array.from({ length: count }, (_, index) => first + index);
@@ -17,7 +16,7 @@ const cases = [
 ];
 
 export default family(
-  "a stack trace has the functions, lines and columns that plain Bun shows, whichever call of a program throws",
+  "stack positions in ordinary code",
   cases.map(({ seed, isCommonJs, isBroad }) => ({
     name: `seed ${seed}.`,
     plainEnv,

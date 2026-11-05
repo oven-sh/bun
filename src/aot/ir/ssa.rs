@@ -324,6 +324,25 @@ impl FunctionBuilder {
         };
     }
 
+    pub fn is_undefined_or_null(&self, value: ValueId) -> bool {
+        matches!(
+            self.values[value.index()].definition,
+            PendingDefinition::Operation {
+                opcode: Opcode::Undefined | Opcode::Null,
+                ..
+            }
+        )
+    }
+
+    /// For `x = undefined` and `x = null`, where `x` lives in no environment. Whether or not `x` is read again, no store is left of the assignment.
+    pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
+        let released = self.read_variable(variable);
+        self.write_variable(variable, assigned);
+        if self.is_open() && !self.is_undefined_or_null(released) {
+            self.release_hint(released);
+        }
+    }
+
     fn must_split_before_store(&self, variable: LocalVariable) -> bool {
         let block = &self.blocks[self.current_block.index()];
         let Some(covering) = block.covering else {

@@ -3794,7 +3794,11 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::StringLit { .. }
                 | TypeData::BoolLit { .. }
                 | TypeData::BigIntLit { .. } => true,
-                TypeData::NumberLit { .. } => r.relation.is_subtype(),
+                // Beyond that, a number is only assignable to an enum or to a member of one.
+                TypeData::NumberLit { .. } => {
+                    r.relation.is_subtype()
+                        || self.types().member_flags(target) & tf::ENUM_LIKE == 0
+                }
                 _ => false,
             };
             if r.relation != Relation::Comparable

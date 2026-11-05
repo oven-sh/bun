@@ -2,12 +2,13 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { measureCommandWithMemory } from "./analysis-scaling/measure-check";
 import { withThreads } from "./harness/flags";
+import { reads } from "./harness/reads";
 import type { Program } from "./long-functions-programs";
 
-async function costOfBuild(program: Program) {
+async function costOfBuild(program: Program, flags: readonly string[] = []) {
   using dir = tempDir("aot-long-functions-counted", { "main.js": program.source });
   const cwd = String(dir);
-  const command = [bunExe(), "build", "--compile", "--aot", withThreads(1), "./main.js", "--outfile", "./main"];
+  const command = [bunExe(), "build", "--compile", "--aot", withThreads(1), ...flags, "./main.js", "--outfile", "./main"];
   const cost = await measureCommandWithMemory(cwd, command, 200_000);
   await using ran = Bun.spawn({ cmd: ["./main"], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [output, errors, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
@@ -23,9 +24,11 @@ export async function expectLinearInstructionCount(
   few: number,
   writeProgramOfSize: (size: number) => Program,
   mostGrowth: number,
+  flags: readonly string[] = [],
 ) {
   const programs = [emptyProgram, writeProgramOfSize(few), writeProgramOfSize(4 * few)];
-  const [withNone, withFew, withMany] = (await Promise.all(programs.map(costOfBuild))).map(cost => cost.instructions);
+  const costs = await Promise.all(programs.map(program => costOfBuild(program, flags)));
+  const [withNone, withFew, withMany] = costs.map(cost => cost.instructions);
   if (withNone === undefined || withFew === undefined || withMany === undefined) return;
   expect((withMany - withNone) / (withFew - withNone)).toBeLessThan(mostGrowth);
 }
@@ -53,5 +56,6 @@ export async function expectPeakBytesForEachItem(
     writeProgramOfSize(size),
     peakBytes => (peakBytes - withNone) / size < mostBytesForEachItem,
   );
+  reads(`the peak of a build of ${size} items`, (withAll - withNone) / size, mostBytesForEachItem, "bytes an item");
   expect((withAll - withNone) / size).toBeLessThan(mostBytesForEachItem);
 }

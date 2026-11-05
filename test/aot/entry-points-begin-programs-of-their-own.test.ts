@@ -6,6 +6,7 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
+import type { BuildReport } from "./harness/build-report";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
 import { compileCommand, withProgramOutput } from "./harness/flags";
 import { describe, test } from "./supported";
@@ -106,37 +107,49 @@ describe.concurrent("compile/aot/entry points begin programs of their own", () =
     "starter.ts": starter,
     "starter-of-workers.ts": starterOfWorkers,
   };
-  const build = async (folder: string, entryPoints: string[], name: string) => {
-    built(
-      await spawned(
-        [
-          bunExe(),
-          ...compileCommand,
-          ...carrier,
-          "--root",
-          ".",
-          withProgramOutput(join(folder, name + ".ir")),
-          ...entryPoints,
-          "--outfile",
-          join(folder, name),
-        ],
-        folder,
-        bunEnv,
-      ),
+  /** What each build wrote to stderr, by the path that `build` returns. */
+  const stderrOf = new Map<string, string>();
+  const build = async (folder: string, entryPoints: string[], name: string, flags: string[] = []) => {
+    const ended = await spawned(
+      [
+        bunExe(),
+        ...compileCommand,
+        ...carrier,
+        "--root",
+        ".",
+        withProgramOutput(join(folder, name + ".ir")),
+        `--aot-report=${join(folder, name + ".json")}`,
+        ...flags,
+        ...entryPoints,
+        "--outfile",
+        join(folder, name),
+      ],
+      folder,
+      bunEnv,
     );
+    built(ended);
+    stderrOf.set(join(folder, name), ended.stderr);
     return join(folder, name);
   };
+  /** For what the front end hands over and for the report: nothing runs the executable, so none is written. */
+  const compile = (folder: string, entryPoints: string[], name: string, flags: string[] = []) =>
+    build(folder, entryPoints, name, [...flags, "--aot-testing=NoExecutable"]);
   /** The program of entry point `index`, as the front end hands it to the engine. */
   const programOf = (folder: string, name: string, index: number) =>
     readFileSync(join(folder, name + ".ir" + (index ? "." + index : "")));
   const areEqual = (a: Buffer, b: Buffer) => a.equals(b);
+  /** The limits that the build reports as hit. */
+  const limitsHit = (folder: string, name: string) =>
+    (JSON.parse(readFileSync(join(folder, name + ".json"), "utf8")) as BuildReport).limits
+      .filter(limit => limit.hits)
+      .map(limit => limit.name);
 
   test("each is compiled as it is alone, and they run as in plain Bun", async () => {
     const folder = write(join(root, "together"), files);
     const entryPoints = ["./main.ts", "./worker.ts", "./lib/second.ts", "./lib/third.ts"];
     const executable = await build(folder, entryPoints, "together");
     for (const [index, entryPoint] of entryPoints.entries()) {
-      await build(folder, [entryPoint], "alone");
+      await compile(folder, [entryPoint], "alone");
       expect({
         entryPoint,
         isAsAlone: areEqual(programOf(folder, "together", index), programOf(folder, "alone", 0)),
@@ -162,7 +175,7 @@ describe.concurrent("compile/aot/entry points begin programs of their own", () =
       write(join(root, "loud"), files),
       write(join(root, "quiet"), { ...files, "worker.ts": quietWorker }),
     ];
-    for (const folder of [loud, quiet]) await build(folder, ["./main.ts", "./worker.ts"], "program");
+    for (const folder of [loud, quiet]) await compile(folder, ["./main.ts", "./worker.ts"], "program");
     expect(areEqual(programOf(loud, "program", 0), programOf(quiet, "program", 0))).toBe(true);
     expect(areEqual(programOf(loud, "program", 1), programOf(quiet, "program", 1))).toBe(false);
   }, 600_000);
@@ -257,7 +270,7 @@ worker.onmessage = async event => {
       "named.ts": withOptions(`{ name: "quiet", env: { A: "1" } }`),
       "preloads.ts": withOptions(`{ preload: ["./lib/third.ts"] }`),
     });
-    await build(folder, ["./worker.ts"], "alone");
+    await compile(folder, ["./worker.ts"], "alone");
     const alone = programOf(folder, "alone", 0);
     // The module that is loaded first is the first to send a message.
     for (const [main, isAsAlone, stdout] of [
@@ -283,9 +296,9 @@ worker.onmessage = async event => {
 
   // The files of all programs are read and checked once. Each program is still what it is when it is built alone.
   const expectEachAsAlone = async (folder: string, entryPoints: string[]) => {
-    await build(folder, entryPoints, "together");
+    await compile(folder, entryPoints, "together");
     for (const [index, entryPoint] of entryPoints.entries()) {
-      await build(folder, [entryPoint], "alone");
+      await compile(folder, [entryPoint], "alone");
       expect({
         entryPoint,
         isAsAlone: areEqual(programOf(folder, "together", index), programOf(folder, "alone", 0)),
@@ -361,12 +374,77 @@ worker.onmessage = async event => {
     });
     const executable = await build(folder, ["./main.ts", "./worker.ts"], "shared-files");
     expect(existsSync(join(folder, "shared-files.ir.1"))).toBe(false);
+    expect(limitsHit(folder, "shared-files")).toContain("MaxRepeatedSourceBytes");
     const ran = await spawned([executable], root, bunEnv);
     expect({ stdout: ran.stdout, stderr: ran.stderr, signal: ran.signal }).toEqual({
       stdout: "2\n4\n",
       stderr: "",
       signal: null,
     });
+  }, 600_000);
+
+  const warningsAboutTheCount = (path: string) => stderrOf.get(path)!.match(/TS100074: [^.]*\./g) ?? [];
+
+  test("more entry points than MaxProgramsPerBuild are one program, and the build says so", async () => {
+    const folder = write(join(root, "many"), {
+      "main.ts": `${startsWorkers("./a.ts", "./b.ts")}console.log("main");\n`,
+      "a.ts": `postMessage("a");\n`,
+      "b.ts": `postMessage("b");\n`,
+    });
+    const entryPoints = ["./main.ts", "./a.ts", "./b.ts"];
+    const apart = await compile(folder, entryPoints, "apart");
+    expect(existsSync(join(folder, "apart.ir.2"))).toBe(true);
+    expect(limitsHit(folder, "apart")).not.toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(apart)).toEqual([]);
+    const together = await compile(folder, entryPoints, "together", ["--aot-limit=MaxProgramsPerBuild:2"]);
+    expect(existsSync(join(folder, "together.ir.1"))).toBe(false);
+    expect(limitsHit(folder, "together")).toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(together)).toEqual([
+      "TS100074: 3 entry points are compiled as one program: at most 2 can be compiled separately.",
+    ]);
+  }, 600_000);
+
+  test("129 entry points are one program, and the build says so", async () => {
+    const workers = Array.from({ length: 128 }, (_, i) => `./worker${i}.ts`);
+    const folder = write(join(root, "over-the-limit"), {
+      "main.ts": `${startsWorkers(...workers)}console.log("main");\n`,
+      ...Object.fromEntries(workers.map((name, i) => [name, `postMessage(${i});\n`])),
+    });
+    const together = await compile(folder, ["./main.ts", ...workers], "together");
+    expect(existsSync(join(folder, "together.ir.1"))).toBe(false);
+    expect(limitsHit(folder, "together")).toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(together)).toEqual([
+      "TS100074: 129 entry points are compiled as one program: at most 128 can be compiled separately.",
+    ]);
+  }, 600_000);
+
+  test("129 programs, of which the build finds 128 itself, are compiled as one without compiling each first", async () => {
+    const workers = Array.from({ length: 128 }, (_, i) => `./worker${i}.ts`);
+    const folder = write(join(root, "found-over-the-limit"), {
+      "main.ts": `${startsWorkers(...workers)}console.log("main");\n`,
+      ...Object.fromEntries(workers.map((name, i) => [name, `postMessage(${i});\n`])),
+    });
+    const together = await compile(folder, ["./main.ts"], "together");
+    expect(warningsAboutTheCount(together)).toEqual([
+      "TS100074: 129 entry points are compiled as one program: at most 128 can be compiled separately.",
+    ]);
+    // The main program, where the build finds the files, and then all of them.
+    const report = JSON.parse(readFileSync(join(folder, "together.json"), "utf8")) as BuildReport;
+    expect(report.statistics.EngineRuns).toBe(2);
+  }, 600_000);
+
+  test("the build does not name the count where the entry points are one program anyway", async () => {
+    const folder = write(join(root, "pages"), {
+      "main.ts": `console.log("main");\n`,
+      "a.ts": `console.log("a");\n`,
+      "b.ts": `console.log("b");\n`,
+    });
+    const pages = await compile(folder, ["./main.ts", "./a.ts", "./b.ts"], "pages", [
+      "--aot-limit=MaxProgramsPerBuild:2",
+    ]);
+    expect(existsSync(join(folder, "pages.ir.1"))).toBe(false);
+    expect(limitsHit(folder, "pages")).not.toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(pages)).toEqual([]);
   }, 600_000);
 
   // Pages and plugins are further entry points by the hundred, and all of them are loaded into the one global.

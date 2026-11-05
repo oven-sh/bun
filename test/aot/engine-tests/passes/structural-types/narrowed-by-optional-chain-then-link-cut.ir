@@ -310,8 +310,8 @@ function f42 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Predecessors: #9
 # CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
 # CHECK-NEXT: Int32 b@36 = Load(b@19, offset = 12, ControlDependent|Reads:AOTSlimClosure_word, v8:TypeTest)
-# CHECK-NEXT: Int32 b@37 = Const32(2034237495, v8:TypeTest)
-# CHECK-NEXT: Int32 b@38 = Equal(b@36, $2034237495(b@37), v8:TypeTest)
+# CHECK-NEXT: Int32 b@37 = Const32(2042626056, v8:TypeTest)
+# CHECK-NEXT: Int32 b@38 = Equal(b@36, $2042626056(b@37), v8:TypeTest)
 # CHECK-NEXT: Void b@39 = Branch(b@38, Terminal, v8:TypeTest)
 # CHECK-NEXT: Successors: Then:#5, Else:#6
 # CHECK-NEXT: BB#5: ; frequency = 0.442907
@@ -347,7 +347,7 @@ function f42 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#3: ; frequency = 0.114187
 # CHECK-NEXT: Predecessors: #0, #9
-# CHECK-NEXT: Int64 b@33 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x0, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v7:String)
+# CHECK-NEXT: Int64 b@33 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x0, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}, v7:String)
 # CHECK-NEXT: Void b@34 = Upsilon(b@33, ^21, WritesLocalState)
 # CHECK-NEXT: Void b@35 = Jump(Terminal)
 # CHECK-NEXT: Successors: #8

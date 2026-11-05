@@ -75,6 +75,27 @@ To repeat the simulation for a file F when main moves again in a file of the cut
     git show <old #46528 head>:F > oldbase; git show <cut>:F > mine
     git merge-file ours oldbase mine; echo "conflicts: $?"
 
+Open maintainer PRs against main that touch a file of the cut (looked at 2026-11-05T14:30Z; main
+was still b1007f1177, #46528 still edb9ce8f7a and CONFLICTING). None changes the header queue:
+- #47948 (Dylan Conway, head 9614e6fbf8, MERGEABLE, "Remove 422 unsafe blocks ..."): moves
+  `NqVtable` from src/lsquic_sys/lib.rs to src/runtime/node/quic/ffi.rs, and in stream.rs changes
+  the parameters of `on_close_detached`, `on_new_stream` and `on_stream_read` (`qs: &QuicStream`,
+  `Option<&QuicEndpoint>`). `on_stream_write` is the same text in #46528, main and #47948.
+  Simulated with theirs = #47948: stream.rs and the 6 other files of the cut still merge clean.
+  lib.rs gets ONE conflict for the cut if the maintainer resolves by deleting `NqVtable` from
+  lib.rs (#46528 changes fields of it, so that is a modify/delete conflict on their side): the
+  cut's `SendHeaders` enum sits directly above the deleted struct. Resolution: keep the 7 lines of
+  the enum and the blank line after it, between the `LSQ_DG_*` constants and `unsafe extern "C" {`,
+  and drop the `NqVtable` text that the conflict shows on the cut's side. `send_headers` merges
+  clean, with `self.0.as_ptr()`.
+- #46670 (Dylan Conway, "Replace ls-hpack with safe Rust"): one comment line in quic.c and in
+  node_quic_shim.c (at the `_Static_assert`), a new patches/lsquic/no-lshpack-include.patch, and
+  scripts/build/deps/lsquic.ts (`import { lsxpackDefines } from "./lsqpack.ts"`, two lines above
+  the cut's `export const LSQUIC_COMMIT`, with one unchanged line between: no overlap).
+- #47776 (Dylan Conway, "Remove libuv on Windows"): deletes the `LIBUS_USE_LIBUV` blocks of quic.c
+  (lines 166 to 200 and 643 to 671 on main) and rewords three comments in quic.h. Far from the
+  cut's hunks.
+
 NOT run again on edb9ce8f7a: the release builds and the gdb counts of section 3. Their numbers
 below are of 2026-10-30 on 001958b155. Section 1 to 3 run in full on main after the merge.
 

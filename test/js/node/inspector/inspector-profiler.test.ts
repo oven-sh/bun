@@ -5,23 +5,23 @@ import inspectorPromises from "node:inspector/promises";
 
 const heapSnapshotCleanupFixture = `
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Session } from 'node:inspector/promises';
 import { Session as CallbackSession } from 'node:inspector';
-import path from 'node:path';
-import { writeHeapSnapshot } from 'node:v8';
-const mode = process.argv[1];
+const [mode, capture] = process.argv.slice(1);
 const url = await new Promise((resolve, reject) => {
   process.once('message', resolve);
   process.once('disconnect', () => reject(new Error('parent disconnected before inspector URL')));
 });
 const socket = new WebSocket(url);
 const pending = new Map();
+const notifications = new Map();
 let nextId = 1;
 let closing = false;
 const fail = error => {
   for (const request of pending.values()) request.reject(error);
+  for (const request of notifications.values()) request.reject(error);
   pending.clear();
+  notifications.clear();
 };
 socket.onmessage = event => {
   const message = JSON.parse(event.data);
@@ -29,6 +29,11 @@ socket.onmessage = event => {
   if (request) {
     pending.delete(message.id);
     request.resolve(message);
+  }
+  const notification = notifications.get(message.method);
+  if (notification) {
+    notifications.delete(message.method);
+    notification.resolve(message.params);
   }
 };
 socket.onerror = () => fail(new Error('inspector socket failed'));
@@ -39,6 +44,11 @@ const post = (method, params) => new Promise((resolve, reject) => {
   pending.set(id, { resolve, reject });
   socket.send(JSON.stringify({ id, method, params }));
 });
+const checkedPost = async method => {
+  const response = await post(method);
+  assert.equal(response.error, undefined, JSON.stringify(response));
+  return response.result;
+};
 const actor = mode === 'callback' ? new CallbackSession() : new Session();
 try {
   await new Promise((resolve, reject) => {
@@ -48,18 +58,25 @@ try {
   });
   actor.connect();
   globalThis.snapshotCleanupMarker = 'inspector-snapshot-cleanup-marker';
-  const snapshot = JSON.parse(readFileSync(writeHeapSnapshot(path.join(process.cwd(), 'capture.heapsnapshot')), 'utf8'));
-  const fields = snapshot.snapshot.meta.node_fields;
-  const stride = fields.length;
-  const nameIndex = fields.indexOf('name');
-  const idIndex = fields.indexOf('id');
-  const typeIndex = fields.indexOf('type');
-  const stringType = snapshot.snapshot.meta.node_types[typeIndex].indexOf('string');
+  let snapshotData;
+  if (capture === 'snapshot') {
+    ({ snapshotData } = await checkedPost('Heap.snapshot'));
+  } else {
+    if (capture === 'stopTracking') await checkedPost('Heap.startTracking');
+    const event = capture === 'startTracking' ? 'Heap.trackingStart' : 'Heap.trackingComplete';
+    const notification = new Promise((resolve, reject) => notifications.set(event, { resolve, reject }));
+    await checkedPost('Heap.' + capture);
+    ({ snapshotData } = await notification);
+  }
+  const snapshot = JSON.parse(snapshotData);
+  // JSC snapshot edges are [fromId, toId, typeIndex, nameIndex].
+  const propertyType = snapshot.edgeTypes.indexOf('Property');
+  const nameIndex = snapshot.edgeNames.indexOf('snapshotCleanupMarker');
+  assert(propertyType >= 0 && nameIndex >= 0, 'snapshot did not contain the marker property');
   let heapObjectId;
-  for (let offset = 0; offset < snapshot.nodes.length; offset += stride) {
-    if (snapshot.nodes[offset + typeIndex] === stringType && snapshot.strings[snapshot.nodes[offset + nameIndex]] === globalThis.snapshotCleanupMarker) {
-      // BunV8HeapSnapshotBuilder reserves IDs 1 and 2 for synthetic roots.
-      heapObjectId = snapshot.nodes[offset + idIndex] - 2;
+  for (let offset = 0; offset < snapshot.edges.length; offset += 4) {
+    if (snapshot.edges[offset + 2] === propertyType && snapshot.edges[offset + 3] === nameIndex) {
+      heapObjectId = snapshot.edges[offset + 1];
       break;
     }
   }
@@ -76,7 +93,7 @@ try {
     data: [{ code: -32000, message: 'No heap snapshot' }],
   });
   assert.equal(globalThis.snapshotCleanupMarker, 'inspector-snapshot-cleanup-marker');
-  console.log(JSON.stringify({ mode, trackedBefore: true, snapshotCleared: true, observerConnected: socket.readyState === WebSocket.OPEN }));
+  console.log(JSON.stringify({ mode, capture, trackedBefore: true, snapshotCleared: true, observerConnected: socket.readyState === WebSocket.OPEN }));
 } finally {
   actor.disconnect();
   closing = true;
@@ -300,38 +317,43 @@ describe("node:inspector", () => {
     });
   });
 
-  test.concurrent.each(["callback", "promises"])(
-    "Session.disconnect() releases native snapshot metadata (%s)",
-    async mode => {
-      using directory = tempDir("inspector-heap-snapshot-cleanup", {});
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--inspect=127.0.0.1:0", "-e", heapSnapshotCleanupFixture, mode],
-        env: bunEnv,
-        cwd: String(directory),
-        ipc() {},
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const stderrPromise = (async () => {
-        let stderr = "";
-        let sent = false;
-        for await (const chunk of proc.stderr) {
-          stderr += new TextDecoder().decode(chunk);
-          const url = stderr.match(/ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/)?.[0];
-          if (url && !sent) {
-            sent = true;
-            proc.send(url);
-          }
+  test.concurrent.each([
+    ["callback", "snapshot"],
+    ["promises", "snapshot"],
+    ["callback", "startTracking"],
+    ["promises", "startTracking"],
+    ["callback", "stopTracking"],
+    ["promises", "stopTracking"],
+  ])("Session.disconnect() releases native snapshot metadata (%s, %s)", async (mode, capture) => {
+    using directory = tempDir("inspector-heap-snapshot-cleanup", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--inspect=127.0.0.1:0", "-e", heapSnapshotCleanupFixture, mode, capture],
+      env: bunEnv,
+      cwd: String(directory),
+      ipc() {},
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrPromise = (async () => {
+      let stderr = "";
+      let sent = false;
+      for await (const chunk of proc.stderr) {
+        stderr += new TextDecoder().decode(chunk);
+        const url = stderr.match(/ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/)?.[0];
+        if (url && !sent) {
+          sent = true;
+          proc.send(url);
         }
-        return stderr;
-      })();
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), stderrPromise, proc.exited]);
-      expect({ stdout, exitCode }, stderr).toEqual({
-        stdout: JSON.stringify({ mode, trackedBefore: true, snapshotCleared: true, observerConnected: true }) + "\n",
-        exitCode: 0,
-      });
-    },
-  );
+      }
+      return stderr;
+    })();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), stderrPromise, proc.exited]);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout:
+        JSON.stringify({ mode, capture, trackedBefore: true, snapshotCleared: true, observerConnected: true }) + "\n",
+      exitCode: 0,
+    });
+  });
 
   describe("Profiler", () => {
     let session: inspector.Session;

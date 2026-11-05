@@ -49,11 +49,9 @@ const decorators = "ES Decorators";
 const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
-const writtenAtRunTime =
-  "it imports a module that it writes while it runs, and compiled code loads no code that was not compiled with it";
 
 // path -> test name as `bun test` prints it -> the difference documented in docs/compiler/compatibility.mdx.
-// But for the modules written at run time it is the same one everywhere: a type error stops the build.
+// A type error stops the build.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
   "test/bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
@@ -66,10 +64,6 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${classFields} > false: synthesizes constructor when none is declared`]: "TS2564: the field b has no initializer",
     [`${classFields} > true: keeps native class-field ([[Define]]) semantics`]: fieldOverridesAccessor,
     [`${classFields} > unset: keeps native class-field ([[Define]]) semantics`]: fieldOverridesAccessor,
-  },
-  "test/js/bun/resolve/esModule-annotation.test.js": {
-    "CJS exports the ESM wrapper cannot enumerate > ownKeys trap throws (__esModule: false)": writtenAtRunTime,
-    "CJS exports the ESM wrapper cannot enumerate > ownKeys trap throws (__esModule: true)": writtenAtRunTime,
   },
   "test/bundler/transpiler/es-decorators.test.ts": {
     [`${decorators} > accessor with TypeScript annotations > accessor with optional marker (?)`]:

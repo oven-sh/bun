@@ -4,6 +4,7 @@ use bun_aot::load::source_provider::{Failed, SourceFile};
 use bun_ast::{Loader, Log, Target};
 use bun_core::strings;
 use bun_paths::resolve_path;
+use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 
 use super::paths::{relative_path, report_long_path};
@@ -49,6 +50,34 @@ impl EmbeddedFiles {
             None => files.push(output),
         }
         Ok(())
+    }
+
+    /// No name is made for it: whoever asks for the module finds the file.
+    pub(crate) fn embed_at_module_path(
+        &self,
+        context: &BuildContext,
+        file: &SourceFile<'_>,
+        module_path: &[u8],
+    ) {
+        let module_path = posix_path(module_path);
+        let Some(dest_path) = module_path.strip_prefix(&posix_path(&context.module_prefix)[..])
+        else {
+            return;
+        };
+        let output = OutputFile::init(Options {
+            data: OptionsData::Buffer {
+                data: file.contents.into(),
+            },
+            size: Some(file.contents.len()),
+            output_path: dest_path.into(),
+            input_path: file.path.into(),
+            input_loader: Loader::File,
+            loader: Loader::File,
+            output_kind: OutputKind::Asset,
+            side: Some(Side::Client),
+            ..Default::default()
+        });
+        self.files.lock().push(output);
     }
 
     pub(crate) fn clear(&self) {
@@ -202,7 +231,7 @@ fn print_embedded_name(template: &PathTemplate) -> Vec<u8> {
 
 fn compute_name_order(files: &[OutputFile]) -> Vec<u32> {
     let mut order: Vec<u32> = (0..files.len() as u32).collect();
-    order.sort_by(|&left, &right| {
+    order.shared_sort_by(|&left, &right| {
         let (left, right) = (&files[left as usize], &files[right as usize]);
         left.dest_path
             .cmp(&right.dest_path)

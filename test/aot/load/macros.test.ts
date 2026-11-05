@@ -260,18 +260,23 @@ const result = await Bun.build({
 for (const log of result.logs) console.error(String(log));
 process.exit(result.success ? 0 : 1);
 `,
-  "label.ts": `export function label() {
+  "label.ts": `let calls = 0;
+export function label() {
   return "from the macro";
 }
-`,
-  "Titled.tsx": `import { label } from "./label" with { type: "macro" };
-export function Titled(props: { title: string }) {
-  const lines = [props.title, label()];
-  return <p>{lines.join(" ")}</p>;
+export function countCalls() {
+  return ++calls;
 }
 `,
-  "main.ts": `import { Titled } from "./Titled";
-console.log(Titled({ title: "shown" }));
+  "Titled.tsx": `import { countCalls, label } from "./label" with { type: "macro" };
+export function Titled(props: { title: string }) {
+  const lines = [props.title, label(), countCalls()];
+  return <p>{lines.join(" ")}</p>;
+}
+export const callsBehindTitled = countCalls();
+`,
+  "main.ts": `import { Titled, callsBehindTitled } from "./Titled";
+console.log(Titled({ title: "shown" }), callsBehindTitled);
 `,
 };
 
@@ -321,7 +326,7 @@ describe.concurrent("compile/aot/load/macros", () => {
           const ran = await buildAndRun([bunExe(), "build.ts", program, mode], program, folder, mode === "aot");
           expect({ mode, ...ran }).toEqual({
             mode,
-            stdout: "<p>shown from the macro</p>\n",
+            stdout: "<p>shown from the macro 1</p> 2\n",
             stderr: expect.stringContaining("[react-compiler] a cache of "),
             exitCode: 0,
             signal: null,

@@ -129,7 +129,7 @@ console.log(inABlock(), typeof inABlock);
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="atTheTop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] captures=[{type=env [[L_11]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_12]] flags=[IsExpected]}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy] captures=[{type=env [[L_11]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_12]] flags=[IsExpected]}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: env [[L_11]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

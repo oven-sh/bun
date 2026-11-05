@@ -277,7 +277,7 @@ impl SupportsCondition {
             let _condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
-                    let s = i.expect_ident_cloned()?;
+                    let s = i.expect_ident()?;
                     let found_type: i32 = crate::match_ignore_ascii_case! { s, {
                         b"and" => 1,
                         b"or" => 2,
@@ -359,7 +359,7 @@ impl SupportsCondition {
         input.skip_whitespace();
         let pos = input.position();
         input.expect_no_error_token()?;
-        let value = input.slice_from_cloned(pos);
+        let value = input.slice_from(pos);
         Ok(SupportsCondition::Declaration(Declaration {
             property_id,
             value,
@@ -379,7 +379,7 @@ impl SupportsCondition {
                         i.parse_nested_block(|i2| {
                             let p = i2.position();
                             i2.expect_no_error_token()?;
-                            let s = i2.slice_from_cloned(p);
+                            let s = i2.slice_from(p);
                             Ok(SupportsCondition::Selector(s))
                         })
                     });
@@ -399,7 +399,7 @@ impl SupportsCondition {
 
         input.parse_nested_block(|i| i.expect_no_error_token())?;
 
-        let s = input.slice_from_cloned(pos);
+        let s = input.slice_from(pos);
         Ok(SupportsCondition::Unknown(s))
     }
 }

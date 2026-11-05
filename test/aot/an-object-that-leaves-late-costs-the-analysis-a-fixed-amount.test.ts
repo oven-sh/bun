@@ -20,7 +20,7 @@ function sourceWith(objects: number) {
   let source = `const given = JSON.parse(process.argv[2] ?? "{}");\n`;
   for (let index = 0; index < objects; index++)
     source += `function step${index}() { given.k${index} = { f${index}: ${index}, next: step${index + 1} }; }\n`;
-  return source + `function step${objects}() {}\nstep0();\nprocess.stdout.write(Object.keys(given).join() + "\\n");\n`;
+  return source + `function step${objects}() {}\nstep0();\nprocess.stdout.end(Object.keys(given).join() + "\\n");\n`;
 }
 
 function countsOf(log: string) {

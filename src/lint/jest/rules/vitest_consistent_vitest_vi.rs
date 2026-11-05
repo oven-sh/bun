@@ -11,7 +11,7 @@ pub struct ConsistentVitestVi {
     opposite: &'static str,
 }
 
-const CONSISTENT_VITEST_VI: Message = Message::new("", "The vitest function accessor used is not allowed");
+const CONSISTENT_VITEST_VI: &Message = &Message::new("", "The vitest function accessor used is not allowed");
 
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);

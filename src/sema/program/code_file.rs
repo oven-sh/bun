@@ -4,7 +4,7 @@ use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode, ParsedCodeFile
 use super::*;
 use crate::bind::{BindOptions, RuntimeBindOptions};
 use crate::file_analysis::{FileAnalysis, FileInputs, FoldedAgain, analyze_file, fold_file_again};
-use crate::fold::FoldInputs;
+use crate::fold::{FoldInputs, StoredByMocks};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
@@ -46,8 +46,9 @@ impl<'s> AcceptedTree<'s, '_> {
 
 /// What the rest of the program says about a file.
 #[derive(Copy, Clone, Default)]
-pub(super) struct LoadInputs<'a> {
+pub(super) struct LoadInputs<'a, 's> {
     pub(super) is_called_before_it_runs: bool,
+    pub(super) stored_by_mocks: StoredByMocks<'s>,
     pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
@@ -58,7 +59,7 @@ pub(super) fn load_code_file<'s, 'r>(
     arena: &'s Arena,
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
-    inputs: LoadInputs<'_>,
+    inputs: LoadInputs<'_, 's>,
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -68,6 +69,7 @@ pub(super) fn load_code_file<'s, 'r>(
     } = context;
     let LoadInputs {
         is_called_before_it_runs,
+        stored_by_mocks,
         is_only_imported,
         imported_requires,
         imported_constants,
@@ -107,6 +109,7 @@ pub(super) fn load_code_file<'s, 'r>(
         key,
         settings,
         is_called_before_it_runs,
+        stored_by_mocks,
         is_only_imported,
         &mut tree,
     );
@@ -128,11 +131,17 @@ fn fold_inputs_of<'c, 's: 'c>(
     context: &'c CodeLoadContext<'_, 's, '_>,
     arena: &'s Arena,
     is_called_before_it_runs: bool,
+    stored_by_mocks: StoredByMocks<'s>,
 ) -> &'c FoldInputs<'s> {
-    match is_called_before_it_runs {
-        true => &*arena.alloc(context.inputs.fold.for_file_called_before_it_runs()),
-        false => context.inputs.fold,
+    if !is_called_before_it_runs && stored_by_mocks == StoredByMocks::Nothing {
+        return context.inputs.fold;
     }
+    let fold = context.inputs.fold;
+    let fold = fold.for_file_stored_by_mocks(stored_by_mocks);
+    arena.alloc(match is_called_before_it_runs {
+        true => fold.for_file_called_before_it_runs(),
+        false => fold,
+    })
 }
 
 fn resolve_analyzed_file<'s, 'r>(
@@ -143,7 +152,8 @@ fn resolve_analyzed_file<'s, 'r>(
     specifies_esm: bool,
     payload: Option<HostPayload>,
 ) -> ParsedCodeFile<'s, 'r> {
-    let code = Box::new(resolve_code_imports(context, key, &parse.hir, analyzed));
+    let code = resolve_code_imports(context, key, &parse.hir, &parse.bound, analyzed);
+    let code = Box::new(code);
     summarize_resolved_file(context, key, parse, code, specifies_esm, payload)
 }
 
@@ -201,6 +211,7 @@ pub(super) fn fold_code_file_again<'s, 'r>(
     target: CodeTarget<'r>,
     loaded: ParsedCodeFile<'s, 'r>,
     is_called_before_it_runs: bool,
+    stored_by_mocks: StoredByMocks<'s>,
     imported_constants: &[ImportedConstant],
 ) -> Option<ParsedCodeFile<'s, 'r>> {
     let key = target.key;
@@ -226,7 +237,7 @@ pub(super) fn fold_code_file_again<'s, 'r>(
     } = fold_file_again(
         &parse.hir,
         &parse.bound,
-        fold_inputs_of(context, arena, is_called_before_it_runs),
+        fold_inputs_of(context, arena, is_called_before_it_runs, stored_by_mocks),
         file,
         &previous.analysis,
         &context.atoms,
@@ -234,10 +245,13 @@ pub(super) fn fold_code_file_again<'s, 'r>(
     )?;
     code.analyzed.analysis = analysis;
     code.analyzed.is_called_before_it_runs = is_called_before_it_runs;
+    code.analyzed.stored_by_mocks = stored_by_mocks;
     // The same sites lead where they led. What the host implied comes again when it looks at the file.
     match has_same_import_sites {
         true => code.forget_implied(),
-        false => *code = resolve_code_imports(context, key, &parse.hir, code.analyzed),
+        false => {
+            *code = resolve_code_imports(context, key, &parse.hir, &parse.bound, code.analyzed)
+        }
     }
     Some(summarize_resolved_file(
         context,
@@ -365,6 +379,7 @@ fn analyze<'s, 'r>(
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
     is_called_before_it_runs: bool,
+    stored_by_mocks: StoredByMocks<'s>,
     is_only_imported: bool,
     tree: &mut AcceptedTree<'s, 'r>,
 ) -> (Bound<'s>, Analyzed<'s, 'r>) {
@@ -401,7 +416,7 @@ fn analyze<'s, 'r>(
         host_values: tree.host_values,
         jsx: jsx_mode,
     };
-    let fold = fold_inputs_of(context, arena, is_called_before_it_runs);
+    let fold = fold_inputs_of(context, arena, is_called_before_it_runs, stored_by_mocks);
     let (bound, analysis, host_values) =
         analyze_with_host(context, arena, path, bind, fold, file, tree);
     let analyzed = Analyzed {
@@ -417,6 +432,7 @@ fn analyze<'s, 'r>(
         is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
         import_meta_main,
         is_called_before_it_runs,
+        stored_by_mocks,
         is_only_imported,
     };
     (bound, analyzed)
@@ -468,6 +484,7 @@ fn analyze_with_host<'s>(
                 bound: &bound,
                 analysis: &analysis,
                 settings,
+                import_meta_main: file.import_meta_main,
             };
             match host.transform_tree(arena, atoms, &mut request, &mut tree.payload) {
                 TreeChange::Changed => continue,
@@ -489,13 +506,24 @@ fn jsx_mode_of(jsx: &JsxSettings, atoms: &Interner<'_>) -> JsxMode {
     }
 }
 
-fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> Option<bool> {
+pub(super) fn import_meta_main(
+    context: &CodeLoadContext<'_, '_, '_>,
+    key: LoadKey<'_>,
+) -> Option<bool> {
     if let Some(known) = context.find_loaded_before(key) {
         return known.compiled.import_meta_main;
     }
-    let (is_entry_point, count) = (context.is_entry_point(key), context.entry_points.len());
+    let file = LoadKey {
+        path: context.host.file_of_module(key.path),
+        ..key
+    };
+    let (is_entry_point, count) = (context.is_entry_point(file), context.entry_point_count());
     match (is_entry_point, context.inputs.main_module, count) {
+        (_, MainModule::AnyFile, _) => None,
+        (false, ..) if context.is_main_module_beside_entry_points(file) => None,
         (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
+        // `./main.mjs?again`: `bun run` asks an ES module whether its file is the one that it was started with, and a CommonJS module whether it is `require.main`.
+        (true, MainModule::EntryPoint, 1) if file.path.len() != key.path.len() => None,
         (true, MainModule::EntryPoint, 1) => Some(true),
         (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,
     }

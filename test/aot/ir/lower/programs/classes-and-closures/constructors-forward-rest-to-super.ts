@@ -137,7 +137,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Throw v27
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="go"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=undefined|null|Array flags=[IsExpected]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=undefined|null|Array flags=[IsExpected] variableName="args"}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: env [[L_10]], v1: undefined|null|Array, v2: anything, v3: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

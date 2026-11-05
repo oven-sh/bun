@@ -641,32 +641,32 @@ function f40 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f44 name="next" module=m2 position=7366 role=Library flags=[IsChecked] enclosingRuntimeFunction=43 captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f45 name="return" module=m2 position=7441 role=Library flags=[IsChecked] enclosingRuntimeFunction=43 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f44 name="next" module=m2 position=7366 role=Library flags=[IsChecked] enclosingRuntimeFunction=JSIteratorPrototypeFlatMap captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f45 name="return" module=m2 position=7441 role=Library flags=[IsChecked] enclosingRuntimeFunction=JSIteratorPrototypeFlatMap captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f46 module=m2 role=Signature thisType={type=anything} results=[{type=anything}]
 function f47 module=m2 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: entriesInside noHandler withFinally
 # CHECK-LABEL: function {{*}}name="entriesInside"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 217, patchpoints: 10, rare instructions: 94
+# CHECK-NEXT: instructions: 213, patchpoints: 13, rare instructions: 108
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="entriesInside"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f64
+# CHECK-NEXT: end of function f65
 # CHECK-LABEL: function {{*}}name="noHandler"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 199, patchpoints: 15, rare instructions: 80, polls: 5
+# CHECK-NEXT: instructions: 240, patchpoints: 13, rare instructions: 111, polls: 7
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="noHandler"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f65
+# CHECK-NEXT: end of function f66
 # CHECK-LABEL: function {{*}}name="withFinally"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 193, patchpoints: 4, rare instructions: 112
+# CHECK-NEXT: instructions: 190, patchpoints: 4, rare instructions: 110
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function {{*}}name="withFinally"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f67
+# CHECK-NEXT: end of function f68

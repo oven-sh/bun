@@ -256,7 +256,7 @@ const C = structuredClone({}).constructor;
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

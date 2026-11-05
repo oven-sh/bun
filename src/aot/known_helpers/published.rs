@@ -16,6 +16,15 @@ pub enum Helper {
     CommonJs,
     Esm,
     Require,
+    CopyProperties,
+    ToCommonJs,
+    ToEsModule,
+    ReExport,
+    SetModuleDefault,
+    ImportStar,
+    ImportDefault,
+    DefineProperties,
+    CreateClass,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -48,12 +57,28 @@ pub enum Shape {
     EsmRunsFirstOwnNameOnce,
     EsmRunsFirstOwnNameOnceRethrows,
     RequireFactoryPrefersRequire,
+    CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+    ToCommonJsCopiesOntoNewMarkedObject,
+    ToEsModuleShowsUnmarkedValueAsDefault,
+    ToEsModuleShowsValueWithoutDefaultAsDefault,
+    ReExportCopiesAllButDefault,
+    SetModuleDefaultDefinesValue,
+    SetModuleDefaultStoresValue,
+    ImportStarAnswersMarkedValueOrBindsItsEnumerableNames,
+    ImportStarAnswersMarkedValueOrBindsItsOwnNames,
+    ImportDefaultAnswersMarkedValueOrWrapsIt,
+    DefinePropertiesOfDescriptors,
+    CreateClassDefinesBothSides,
+    CreateClassDefinesBothSidesAndLocksPrototype,
 }
 
 impl Shape {
     pub const fn helper(self) -> Helper {
         match self {
             Shape::ExportStarBindsNamesTheTargetLacks => Helper::ExportStar,
+            Shape::DefinePropertiesOfDescriptors => Helper::DefineProperties,
+            Shape::CreateClassDefinesBothSides => Helper::CreateClass,
+            Shape::CreateClassDefinesBothSidesAndLocksPrototype => Helper::CreateClass,
             Shape::CreateBindingDefinesGetter => Helper::CreateBinding,
             Shape::CreateBindingReusesDescriptor => Helper::CreateBinding,
             Shape::CreateBindingCopiesValue => Helper::CreateBinding,
@@ -81,6 +106,16 @@ impl Shape {
             Shape::EsmRunsFirstOwnNameOnce => Helper::Esm,
             Shape::EsmRunsFirstOwnNameOnceRethrows => Helper::Esm,
             Shape::RequireFactoryPrefersRequire => Helper::Require,
+            Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks => Helper::CopyProperties,
+            Shape::ToCommonJsCopiesOntoNewMarkedObject => Helper::ToCommonJs,
+            Shape::ToEsModuleShowsUnmarkedValueAsDefault => Helper::ToEsModule,
+            Shape::ToEsModuleShowsValueWithoutDefaultAsDefault => Helper::ToEsModule,
+            Shape::ReExportCopiesAllButDefault => Helper::ReExport,
+            Shape::SetModuleDefaultDefinesValue => Helper::SetModuleDefault,
+            Shape::SetModuleDefaultStoresValue => Helper::SetModuleDefault,
+            Shape::ImportStarAnswersMarkedValueOrBindsItsEnumerableNames => Helper::ImportStar,
+            Shape::ImportStarAnswersMarkedValueOrBindsItsOwnNames => Helper::ImportStar,
+            Shape::ImportDefaultAnswersMarkedValueOrWrapsIt => Helper::ImportDefault,
         }
     }
 }
@@ -95,7 +130,51 @@ const DEFINE_PROPERTY: (&str, Reference) = (
     Reference::Global(&["Object", "defineProperty"]),
 );
 
+const GET_OWN_PROPERTY_DESCRIPTOR: (&str, Reference) = (
+    "__getOwnPropDesc",
+    Reference::Global(&["Object", "getOwnPropertyDescriptor"]),
+);
+
+const HAS_OWN_PROPERTY: (&str, Reference) = (
+    "__hasOwnProp",
+    Reference::Global(&["Object", "prototype", "hasOwnProperty"]),
+);
+
+const CREATE: (&str, Reference) = ("__create", Reference::Global(&["Object", "create"]));
+
+const GET_PROTOTYPE_OF: (&str, Reference) = (
+    "__getProtoOf",
+    Reference::Global(&["Object", "getPrototypeOf"]),
+);
+
+const COPY_PROPERTIES: (&str, Reference) =
+    ("__copyProps", Reference::Helper(Helper::CopyProperties));
+
 pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
+    PublishedFunction {
+        shape: Shape::DefinePropertiesOfDescriptors,
+        text: "function(target, props) {\nfor (var i = 0; i < props.length; i++) {\nvar descriptor = props[i];\ndescriptor.enumerable = descriptor.enumerable || false;\ndescriptor.configurable = true;\nif (\"value\" in descriptor) descriptor.writable = true;\nObject.defineProperty(target, descriptor.key, descriptor);\n}\n}",
+        references: &[],
+        origin: "babel 7 before 7.20, swc",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesBothSides,
+        text: "function(Constructor, protoProps, staticProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nif (staticProps) _defineProperties(Constructor, staticProps);\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7 before 7.18, swc",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesBothSidesAndLocksPrototype,
+        text: "function(Constructor, protoProps, staticProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nif (staticProps) _defineProperties(Constructor, staticProps);\nObject.defineProperty(Constructor, \"prototype\", { writable: false });\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.18 and after",
+    },
     PublishedFunction {
         shape: Shape::ExportStarBindsNamesTheTargetLacks,
         text: "function(m, o) {\nfor (var p in m) if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);\n}",
@@ -335,5 +414,110 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "(x) => typeof require < \"u\" ? require : typeof Proxy < \"u\" ? new Proxy(x, {\nget: (a, b) => (typeof require < \"u\" ? require : a)[b]\n}) : x",
         references: &[],
         origin: "esbuild 0.15 to 0.28; bun 1.2.23 to 1.4.2",
+    },
+    PublishedFunction {
+        shape: Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+        text: "(to, from, except, desc) => {\nif (from && typeof from === \"object\" || typeof from === \"function\") {\nfor (let key of __getOwnPropNames(from))\nif (!__hasOwnProp.call(to, key) && key !== except)\n__defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n}\nreturn to;\n}",
+        references: &[
+            GET_OWN_PROPERTY_NAMES,
+            HAS_OWN_PROPERTY,
+            DEFINE_PROPERTY,
+            GET_OWN_PROPERTY_DESCRIPTOR,
+        ],
+        origin: "esbuild 0.21",
+    },
+    PublishedFunction {
+        shape: Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+        text: "(to, from, except, desc) => {\nif (from && typeof from == \"object\" || typeof from == \"function\")\nfor (let key of __getOwnPropNames(from))\n!__hasOwnProp.call(to, key) && key !== except && __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\nreturn to;\n}",
+        references: &[
+            GET_OWN_PROPERTY_NAMES,
+            HAS_OWN_PROPERTY,
+            DEFINE_PROPERTY,
+            GET_OWN_PROPERTY_DESCRIPTOR,
+        ],
+        origin: "esbuild 0.21 where it shortens syntax",
+    },
+    PublishedFunction {
+        shape: Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+        text: "(to, from, except, desc) => {\nif (from && typeof from === \"object\" || typeof from === \"function\") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {\nkey = keys[i];\nif (!__hasOwnProp.call(to, key) && key !== except) __defProp(to, key, {\nget: ((k) => from[k]).bind(null, key),\nenumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable\n});\n}\nreturn to;\n}",
+        references: &[
+            GET_OWN_PROPERTY_NAMES,
+            HAS_OWN_PROPERTY,
+            DEFINE_PROPERTY,
+            GET_OWN_PROPERTY_DESCRIPTOR,
+        ],
+        origin: "rolldown 1.2",
+    },
+    PublishedFunction {
+        shape: Shape::ToCommonJsCopiesOntoNewMarkedObject,
+        text: "(mod) => __copyProps(__defProp({}, \"__esModule\", { value: true }), mod)",
+        references: &[COPY_PROPERTIES, DEFINE_PROPERTY],
+        origin: "esbuild 0.21",
+    },
+    PublishedFunction {
+        shape: Shape::ToEsModuleShowsUnmarkedValueAsDefault,
+        text: "(mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(\nisNodeMode || !mod || !mod.__esModule ? __defProp(target, \"default\", { value: mod, enumerable: true }) : target,\nmod\n))",
+        references: &[CREATE, GET_PROTOTYPE_OF, COPY_PROPERTIES, DEFINE_PROPERTY],
+        origin: "esbuild 0.21; rolldown 1.0",
+    },
+    PublishedFunction {
+        shape: Shape::ToEsModuleShowsValueWithoutDefaultAsDefault,
+        text: "(mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, \"default\") ? __defProp(target, \"default\", {\nvalue: mod,\nenumerable: true\n}) : target, mod))",
+        references: &[
+            CREATE,
+            GET_PROTOTYPE_OF,
+            COPY_PROPERTIES,
+            HAS_OWN_PROPERTY,
+            DEFINE_PROPERTY,
+        ],
+        origin: "rolldown 1.2",
+    },
+    PublishedFunction {
+        shape: Shape::ReExportCopiesAllButDefault,
+        text: "(target, mod, secondTarget) => (__copyProps(target, mod, \"default\"), secondTarget && __copyProps(secondTarget, mod, \"default\"))",
+        references: &[COPY_PROPERTIES],
+        origin: "esbuild 0.21",
+    },
+    PublishedFunction {
+        shape: Shape::SetModuleDefaultDefinesValue,
+        text: "function(o, v) {\nObject.defineProperty(o, \"default\", { enumerable: true, value: v });\n}",
+        references: &[],
+        origin: "typescript 3.9 to 6.0",
+    },
+    PublishedFunction {
+        shape: Shape::SetModuleDefaultStoresValue,
+        text: "function(o, v) {\no[\"default\"] = v;\n}",
+        references: &[],
+        origin: "typescript 3.9 to 6.0",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarAnswersMarkedValueOrBindsItsEnumerableNames,
+        text: "function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k in mod) if (k !== \"default\" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);\n__setModuleDefault(result, mod);\nreturn result;\n}",
+        references: &[
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
+        origin: "typescript 4.0 to 5.6",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarAnswersMarkedValueOrBindsItsOwnNames,
+        text: "function () {\nvar ownKeys = function(o) {\nownKeys = Object.getOwnPropertyNames || function (o) {\nvar ar = [];\nfor (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;\nreturn ar;\n};\nreturn ownKeys(o);\n};\nreturn function (mod) {\nif (mod && mod.__esModule) return mod;\nvar result = {};\nif (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== \"default\") __createBinding(result, mod, k[i]);\n__setModuleDefault(result, mod);\nreturn result;\n};\n}",
+        references: &[
+            ("__createBinding", Reference::Helper(Helper::CreateBinding)),
+            (
+                "__setModuleDefault",
+                Reference::Helper(Helper::SetModuleDefault),
+            ),
+        ],
+        origin: "typescript 5.7 to 6.0",
+    },
+    PublishedFunction {
+        shape: Shape::ImportDefaultAnswersMarkedValueOrWrapsIt,
+        text: "function (mod) {\nreturn (mod && mod.__esModule) ? mod : { \"default\": mod };\n}",
+        references: &[],
+        origin: "typescript 2.7 to 6.0",
     },
 ];

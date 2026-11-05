@@ -336,79 +336,8 @@ function f144 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="row"
-# CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: f31|f32):
-# CHECK-NEXT: v2: undefined = CallDirect v1 function=f154
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function f8 name=
-# CHECK: "#m" module=m0 position=732 kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] thisType={type=f7} parameters=[{type=Array<undefined|Array, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f79] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: f7, v1: Array<undefined|Array, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: "m2 " = String string="m2 "
-# CHECK-NEXT: v3: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v4: undefined|absent = GetModuleVariable variable=g7
-# CHECK-NEXT: v5: undefined = CheckInitialized v4 name="C"
-# CHECK-NEXT: v6: f7 = GetModuleVariable variable=g17
-# CHECK-NEXT: v7: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"the class"|"undefined" = Call v3, -, v0, v6 calleeName="who" accessSite=9 callees=[f3]
-# CHECK-NEXT: v8: " " = String string=" "
-# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v10: string = Strcat v2, v7, v8, v9
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="rows"
-# CHECK: module=m0 position=1298 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f31 = NewClosure function=f31 allocationSite=9 storage=Frame
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f154 accessSite=11
-# CHECK-NEXT: v2: f32 = NewClosure function=f32 allocationSite=10 storage=Frame
-# CHECK-NEXT: v3: undefined = CallDirect v2 function=f154 accessSite=12
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="tagOnThis"
-# CHECK: module=m0 position=3563 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=f7} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f8 callPosition=4294967295 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f7):
-# CHECK-NEXT: v1: fact = Entered function=f8 @0 tail
-# CHECK-NEXT: v2: "m2 " = String string="m2 "
-# CHECK-NEXT: v3: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v4: undefined|absent = GetModuleVariable variable=g7
-# CHECK-NEXT: v5: undefined = CheckInitialized v4 name="C"
-# CHECK-NEXT: v6: f7 = GetModuleVariable fact=v1 variable=g17
-# CHECK-NEXT: v7: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"the class"|"undefined" = Call v3, -, v0, v6 calleeName="who" accessSite=9 callees=[f3]
-# CHECK-NEXT: v8: " " = String string=" "
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: string = Strcat v2, v7, v8, v9
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
-# CHECK-LABEL: function f32 module=
-# CHECK: m0 position=2075 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f8 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined|absent = GetModuleVariable variable=g7
-# CHECK-NEXT: v1: undefined = CheckInitialized v0 name="C"
-# CHECK-NEXT: v2: f7 = GetModuleVariable variable=g17
-# CHECK-NEXT: v3: "m2 " = String string="m2 "
-# CHECK-NEXT: v4: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v5: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"the class"|"undefined" = Call v4, -, v2, v2 calleeName="who" accessSite=9 callees=[f3]
-# CHECK-NEXT: v6: " " = String string=" "
-# CHECK-NEXT: v7: 1 = Integer integer=1
-# CHECK-NEXT: v8: string = Strcat v3, v5, v6, v7
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="rows"
-# CHECK: module=m0 position=1298 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f10, v1: anything) frequency=Rare:
-# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
-# CHECK-NEXT: Throw v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="tagOnThis"
-# CHECK: module=m0 position=3563 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f11}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f11, v1: anything) frequency=Rare:
-# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
-# CHECK-NEXT: Throw v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="row"
-# CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v1: f31|f32):
+# CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="tag arrow"|"tag on this" flags=[OmitsNull, OmitsUndefined]}, {type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: "tag arrow"|"tag on this", v1: f31|f32):
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f32
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1() handler=b4():
@@ -430,4 +359,79 @@ function f144 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v12: undefined = Undefined
 # CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function f8 name=
+# CHECK: "#m" module=m0 position=732 kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] thisType={type=f7} parameters=[{type=Array<undefined|Array, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f79] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f7, v1: Array<undefined|Array, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v2: "m2 " = String string="m2 "
+# CHECK-NEXT: v3: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v4: undefined|absent = GetModuleVariable variable=g7
+# CHECK-NEXT: v5: undefined = CheckInitialized v4 name="C"
+# CHECK-NEXT: v6: f7 = GetModuleVariable variable=g17
+# CHECK-NEXT: v7: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"the class"|"undefined" = Call v3, -, v0, v6 calleeName="who" accessSite=9 callees=[f3]
+# CHECK-NEXT: v8: " " = String string=" "
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v10: string = Strcat v2, v7, v8, v9
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="rows"
+# CHECK: module=m0 position=1298 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 parent=1 module=m0}, {callee=f1 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f31 = NewClosure function=f31 allocationSite=9 storage=Frame
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v1: undefined|null|string = Call v0 calleeName="f" accessSite=5 callees=[f31, f32]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v2: anything = CatchValue
+# CHECK-NEXT: v3: "threw " = String string="threw "
+# CHECK-NEXT: v4: anything ~ undefined|null|Error = Upcast v2 castType=anything
+# CHECK-NEXT: v5: anything = PropGet v4 key="name" accessSite=7
+# CHECK-NEXT: v6: anything ~ undefined|null|string = Expect v5 expectedType=undefined|null|string
+# CHECK-NEXT: v7: string = Add v3, v6
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() handler=b4():
+# CHECK-NEXT: v8: string = CallDirect function=f32 accessSite=5
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v9: anything = CatchValue
+# CHECK-NEXT: v10: "threw " = String string="threw "
+# CHECK-NEXT: v11: anything ~ undefined|null|Error = Upcast v9 castType=anything
+# CHECK-NEXT: v12: anything = PropGet v11 key="name" accessSite=7
+# CHECK-NEXT: v13: anything ~ undefined|null|string = Expect v12 expectedType=undefined|null|string
+# CHECK-NEXT: v14: string = Add v10, v13
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="tagOnThis"
+# CHECK: module=m0 position=3563 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=f7} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f7):
+# CHECK-NEXT: v1: Array = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+# CHECK-NEXT: v2: Array<undefined|Array> = NewArray v1 contents=undefined|Array storage=Frame
+# CHECK-NEXT: v3: Array<undefined|Array, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<undefined|Array, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f8 accessSite=13 @0 tail
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function f32 module=
+# CHECK: m0 position=2075 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined|absent = GetModuleVariable variable=g7
+# CHECK-NEXT: v1: undefined = CheckInitialized v0 name="C"
+# CHECK-NEXT: v2: f7 = GetModuleVariable variable=g17
+# CHECK-NEXT: v3: string = CallDirect v2 function=f11 accessSite=19
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="rows"
+# CHECK: module=m0 position=1298 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f10, v1: anything) frequency=Rare:
+# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="tagOnThis"
+# CHECK: module=m0 position=3563 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f11}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f11, v1: anything) frequency=Rare:
+# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v2
 # CHECK-NEXT: }

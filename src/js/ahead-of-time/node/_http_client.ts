@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b8e7fdc0a588c2421598683b4f021d9563d5094d61082c4141a3d2e68f495eaf.
+// Written against that file with the SHA-256 9c93b772a6d52739dc53cfae4e0a4b02039cbd05e91b2001dc9932bb210d4699.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
@@ -20,7 +20,7 @@ const {
 const { parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const http = require("internal/http");
 const Agent = require("node:_http_agent");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { checkShouldUseProxy } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
@@ -105,10 +105,6 @@ function closeRequest(req: $Node.ClientRequest) {
   if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
   req._closed = true;
   req.emit("close");
-}
-
-function isURLInstance(input: unknown): input is URL {
-  return input != null && typeof input === "object" && input instanceof URL;
 }
 
 // When proxying a HTTP request, the following needs to be done:
@@ -290,7 +286,7 @@ function ClientRequest(
   if (typeof input === "string") {
     const urlStr = input;
     input = urlToHttpOptions(new URL(urlStr));
-  } else if (isURLInstance(input)) {
+  } else if (isURL(input)) {
     // url.URL instance
     input = urlToHttpOptions(input);
   } else {

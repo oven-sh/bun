@@ -159,8 +159,14 @@ console.log("2000 rounds: " + sum);
 // CHECK-NEXT: v9 = Convert v8 declared={type=number} illTypedCause=Assertion
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v10 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v10
+// CHECK-NEXT: v10 = TypeTest v1 testedType=undefined|null
+// CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v11):
+// CHECK-NEXT: v12 = PropGet v11 key="#shared"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v13):
+// CHECK-NEXT: v14 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#count"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
@@ -200,6 +206,12 @@ console.log("2000 rounds: " + sum);
 // CHECK-NEXT: v20 = Undefined
 // CHECK-NEXT: Return v20
 // CHECK-NEXT: b10() frequency=Unlikely:
-// CHECK-NEXT: v21 = NewRuntimeError runtimeError=InvalidPrivateWrite
-// CHECK-NEXT: Throw v21
+// CHECK-NEXT: v21 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v21 -> taken b11(| 0), notTaken b12(| 0)
+// CHECK-NEXT: b11(v22):
+// CHECK-NEXT: v23 = PropGet v22 key="#shared"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b12(v24):
+// CHECK-NEXT: v25 = NewRuntimeError runtimeError=InvalidPrivateWrite
+// CHECK-NEXT: Throw v25
 // CHECK-NEXT: }

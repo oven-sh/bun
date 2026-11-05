@@ -62,6 +62,23 @@ int action_in_place(int n)
 }
 void pthread_sigmask_blocks(int n) { sigset_t set; sigemptyset(&set); sigaddset(&set, n); pthread_sigmask(SIG_BLOCK, &set, 0); }
 void sigprocmask_blocks_all(int n) { sigset_t set; sigfillset(&set); sigprocmask(SIG_SETMASK, &set, 0); }
+void sighold_blocks(int n) { sighold(n); }
+#ifdef __GLIBC__
+void sigblock_blocks(int n) { sigblock(1 << (n - 1)); }
+void sigsetmask_blocks(int n) { sigsetmask(1 << (n - 1)); }
+#else
+void sigblock_blocks(int n) { sighold(n); }
+void sigsetmask_blocks(int n) { sighold(n); }
+#endif
+// One bit for each of the first 32 signals that this thread blocks.
+int blocked_signals(void)
+{
+    sigset_t set;
+    unsigned bits = 0;
+    pthread_sigmask(SIG_BLOCK, 0, &set);
+    for (int n = 1; n <= 32; n++) if (sigismember(&set, n) == 1) bits |= 1u << (n - 1);
+    return (int)bits;
+}
 void raise_it(int n) { raise(n); }
 void read_address_8(int n) { *(volatile int*)8; }
 `;
@@ -70,6 +87,20 @@ const readers = `function readX(point: { x: number } | null): number { return po
 function readXPlusOne(point: { x: number } | null): number { return point!.x + 1; }
 const readers = [readX, readXPlusOne];
 const none: { x: number } | null = JSON.parse("null");
+`;
+
+// The build cannot tell which two of the four are called, and they are handed objects too: a read of theirs stays a load.
+const readersNobodyCanTell = `class Point { constructor(public x: number, public y: number) {} }
+const all: ((point: any) => number)[] = [
+  (point: Point | null) => point!.x,
+  (point: Point | null) => point!.x + 1,
+  (point: Point | null) => point!.x * point!.y,
+  (point: Point | null) => point!.y - 1,
+];
+const first = process.argv.length > 100 ? 2 : 0;
+const readers = [all[first], all[first + 1]];
+const none = JSON.parse("null");
+for (let i = 0; i < 1000; i++) readers[i & 1](new Point(i, i));
 `;
 
 const names = [
@@ -87,6 +118,9 @@ const names = [
   "sysv_signal_default",
   "pthread_sigmask_blocks",
   "sigprocmask_blocks_all",
+  "sighold_blocks",
+  "sigblock_blocks",
+  "sigsetmask_blocks",
   "raise_it",
   "read_address_8",
 ];
@@ -95,11 +129,12 @@ const open = `import { dlopen, FFIType } from "bun:ffi";
 const library = dlopen(process.argv[2], {
   handler_calls: { args: [], returns: FFIType.i32 },
   action_in_place: { args: [FFIType.i32], returns: FFIType.i32 },
+  blocked_signals: { args: [], returns: FFIType.i32 },
 ${names.map(name => `  ${name}: { args: [FFIType.i32], returns: FFIType.void },\n`).join("")}}).symbols as unknown as Record<string, (signal?: number) => number>;
 `;
 
 // Every loop stands at the top level of the module.
-const program = `${open}${readers}const name = process.argv[3] as NodeJS.Signals;
+const program = `${open}${readersNobodyCanTell}const name = process.argv[3] as NodeJS.Signals;
 const signal = name === "SIGBUS" ? ${process.platform === "darwin" ? 10 : 7} : 11;
 const listener = () => console.log("the listener hears", name);
 let caught = 0;
@@ -115,6 +150,14 @@ for (const step of process.argv[4].split(",")) {
 caught = 0;
 for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("in the end", caught, "the library's handler ran", library.handler_calls(), "times");
+`;
+
+// SIGBUS, SIGSEGV and SIGUSR2 on Linux.
+const aLibraryBlocksSignals = `${open}for (const step of ["sighold_blocks", "sigblock_blocks", "sigsetmask_blocks"])
+  for (const signal of [7, 11, 12]) {
+    library[step](signal);
+    console.log(step, signal, (library.blocked_signals() >> (signal - 1)) & 1);
+  }
 `;
 
 const libcByName = `import { dlopen, FFIType } from "bun:ffi";
@@ -155,6 +198,10 @@ ${readers}if (Bun.isMainThread) {
   postMessage("started");
   for (let i = 0; ; i++) try { readers[i & 1](none); } catch {}
 }
+`;
+
+// What the worker above does, ten times, on the first thread.
+const readsAsTheWorkerDoes = `${readers}for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch {}
 `;
 
 const aWorkerStandsInALoop = `${open}const worker = new Worker("./worker.ts");
@@ -334,6 +381,9 @@ const rows: Row[] = [
   ["another_thread_default", "in the end 10 the library's handler ran 0 times"],
   ["pthread_sigmask_blocks", "in the end 10 the library's handler ran 0 times"],
   ["sigprocmask_blocks_all", "in the end 10 the library's handler ran 0 times"],
+  ["sighold_blocks", "in the end 10 the library's handler ran 0 times"],
+  ["sigblock_blocks", "in the end 10 the library's handler ran 0 times"],
+  ["sigsetmask_blocks", "in the end 10 the library's handler ran 0 times"],
   // The library's action is in force for all that is not a null check of compiled code.
   ["signal_counts,raise_it", "in the end 10 the library's handler ran 1 times"],
   ["signal_ignore,raise_it", "in the end 10 the library's handler ran 0 times"],
@@ -388,6 +438,66 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
     },
     120_000,
   );
+
+  // A build that finds out what the readers are handed tests for null in place of the load, and the cases above would hold whatever a library did.
+  test.skipIf(!isLinux)(
+    "and in each of these programs a read of null raises the signal",
+    async () => {
+      using directory = tempDir("aot-reads-of-null-raise-the-signal", {
+        "table.ts": program,
+        "by-name.ts": libcByName,
+        "as-the-worker.ts": readsAsTheWorkerDoes,
+        "library.c": library,
+        "sender.c": sender,
+      });
+      const [table, byName, asTheWorker, path, built] = await Promise.all([
+        build(String(directory), "table.ts"),
+        build(String(directory), "by-name.ts"),
+        build(String(directory), "as-the-worker.ts"),
+        buildLibrary(String(directory)),
+        run([compiler!, "-w", "-o", "sender", "sender.c"], String(directory)),
+      ]);
+      expect(built).toMatchObject({ exitCode: 0 });
+      const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
+      for (const [reads, ...command] of [
+        [20, table, path, "SIGSEGV", "turn"],
+        [20, byName, libc],
+        [10, asTheWorker],
+      ] as const) {
+        const counted = await run([join(String(directory), "sender"), ...command], String(directory));
+        if (counted.exitCode === 126) return console.error("SKIPPED: a process may not be traced here");
+        const raised = Number(counted.stdout.trimEnd().split("\n").at(-1));
+        expect({
+          command,
+          raised,
+          isEnough: raised >= reads / 2 && raised <= reads,
+          exitCode: counted.exitCode,
+        }).toEqual({
+          command,
+          raised,
+          isEnough: true,
+          exitCode: 0,
+        });
+      }
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux)("and a library blocks every other signal, and without --aot these two as well", async () => {
+    using directory = tempDir("aot-a-library-blocks-signals", {
+      "main.ts": aLibraryBlocksSignals,
+      "library.c": library,
+    });
+    const [executable, path] = await Promise.all([
+      build(String(directory), "main.ts"),
+      buildLibrary(String(directory)),
+    ]);
+    const steps = ["sighold_blocks", "sigblock_blocks", "sigsetmask_blocks"];
+    const lines = (blocked: number) =>
+      steps.map(step => `${step} 7 ${blocked}\n${step} 11 ${blocked}\n${step} 12 1\n`).join("");
+    expect(await run([executable, path], String(directory))).toMatchObject({ stdout: lines(0), exitCode: 0 });
+    expect(await run([bunExe(), "main.ts", path], String(directory))).toMatchObject({ stdout: lines(1), exitCode: 0 });
+  });
 
   test.skipIf(!isLinux)(
     "and only then: a signal that a process sends while the program reads a property of an object is no TypeError",

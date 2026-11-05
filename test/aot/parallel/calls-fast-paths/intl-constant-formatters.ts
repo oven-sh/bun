@@ -1,15 +1,15 @@
 // Intl.DateTimeFormat and Intl.NumberFormat with a constant locale and constant options format from a pattern computed at build time. Every result is compared with a formatter whose options are not constants, which goes through ICU.
-// IR+ ^variable (g\d+) name="minute" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-// IR+ ^variable (g\d+) name="localTime" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-// IR+ ^variable (g\d+) name="count" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-// IR- ^variable (g\d+) name="buddhist" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-// IR- ^variable (g\d+) name="compact" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
-// IRT= 1 formatMinute CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatCount CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
-// IRT= 1 formatLocalTime CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
-// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
-// IR= 1 formatNewDate CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+// IR+ ^variable (g\d+) name="minute" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? (?:PutModuleVariable \2|AssumeType \2\b.*\n +PutModuleVariable v\d+) variable=\1\b
+// IR+ ^variable (g\d+) name="localTime" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? (?:PutModuleVariable \2|AssumeType \2\b.*\n +PutModuleVariable v\d+) variable=\1\b
+// IR+ ^variable (g\d+) name="count" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? (?:PutModuleVariable \2|AssumeType \2\b.*\n +PutModuleVariable v\d+) variable=\1\b
+// IR- ^variable (g\d+) name="buddhist" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? (?:PutModuleVariable \2|AssumeType \2\b.*\n +PutModuleVariable v\d+) variable=\1\b
+// IR- ^variable (g\d+) name="compact" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? (?:PutModuleVariable \2|AssumeType \2\b.*\n +PutModuleVariable v\d+) variable=\1\b
+// IR= 1 formatMinute CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatCount CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
+// IR= 1 formatLocalTime CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
+// IRT= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
+// IRT= 1 formatNewDate CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
 function notConstant<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
@@ -234,5 +234,7 @@ function dateWithSideEffect(): Date {
 export function formatResultOfCall(): string {
   return d12.format(dateWithSideEffect());
 }
+// The program gives `d12` a `format` of its own further down, so a call of it is tested, and only code that runs more than once gets a test.
+for (let turn = 0; turn < 3; turn++) console.log(formatRow({ at: new Date(turn * 1000), amount: turn * 1000 }), formatNewDate(turn * 1000));
 console.log(formatRow({ at: new Date(0), amount: 1234 }), formatNewDate(1000), formatResultOfCall(), formatResultOfCall(), formatResultOfCall());
 (globalThis as any).kept = [formatMinute, formatBuddhist, formatLocalTime, formatCount, formatCompact, formatRow, formatNewDate, formatResultOfCall];

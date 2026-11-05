@@ -5,14 +5,14 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=31 function=f0
-runtimefunction id=89 function=f1
-function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+runtimefunction id=ArrayPrototypeEvery function=f0
+runtimefunction id=ArrayPrototypeSome function=f1
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Boolean boolean=true
     Return v3
 }
-function f1 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v2
 }

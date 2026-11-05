@@ -173,7 +173,7 @@ impl KeyframeSelector {
             return Ok(KeyframeSelector::Percentage(p));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if bun_core::eql_case_insensitive_ascii_check_length(ident, b"from") {
             Ok(KeyframeSelector::From)
         } else if bun_core::eql_case_insensitive_ascii_check_length(ident, b"to") {
@@ -325,13 +325,12 @@ const _: () = {
 
         fn parse_value(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
-            // SAFETY: `name` is a sub-slice of the parser input arena; see `src_str`.
             Err(
                 input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(
-                    unsafe { css::css_parser::src_str(name) },
+                    name,
                 ))),
             )
         }

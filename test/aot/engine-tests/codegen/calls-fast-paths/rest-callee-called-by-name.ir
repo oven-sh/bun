@@ -189,5 +189,5 @@ function f3 name="emit" module=m0 position=600 kind=Method flags=[HasRestParamet
 # -- generated: pad
 # CHECK-LABEL: function {{*}}name="pad"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 124, patchpoints: 2, rare instructions: 423, polls: 1
+# CHECK-NEXT: instructions: 123, patchpoints: 2, rare instructions: 420, polls: 1
 # CHECK-NEXT: end of function f1

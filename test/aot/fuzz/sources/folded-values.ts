@@ -1,4 +1,4 @@
-// Values that the compiler has worked out while it built, in every place where a program can use one.
+// A list of programs from ../generators/folded-values.ts, which describes them.
 import { program } from "../generators/folded-values";
 import { family } from "../family";
 

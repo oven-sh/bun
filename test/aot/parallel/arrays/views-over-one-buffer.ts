@@ -3,7 +3,7 @@
 // IR= 3 lengthsOfNewViews IsPristine
 // IR= 1 lengthsOfGivenView IsPristine
 // IR= 1 storedThroughViewNobodyReads PutTypedArrayElement
-// IR= 2 storedThroughOtherView GetTypedArrayElement
+// IRT= 2 storedThroughOtherView GetTypedArrayElement .*isInsideView
 const print = (s: string) => console.log(s);
 export function lengthsOfNewViews(buffer: ArrayBuffer): number {
     const bytes = new Uint8Array(buffer, 1);
@@ -52,7 +52,8 @@ export function outOfRange(buffer: ArrayBuffer, offset: number): string {
 }
 
 const buffer = new ArrayBuffer(8);
-print(String(lengthsOfNewViews(buffer)) + " " + String(lengthsOfGivenView(new Uint8Array(buffer, 3))));
+print(String(lengthsOfNewViews(buffer)));
+for (let offset = 1; offset < 4; offset++) print(String(lengthsOfGivenView(new Uint8Array(buffer, offset))));
 storedThroughViewNobodyReads(buffer, 7);
 print(new Uint8Array(buffer).join(","));
 print(String(storedThroughOtherView(buffer, 9)) + " " + String(storedThroughPart(buffer, 11)) + " " + String(storedThroughDataView(buffer, 513)));

@@ -7,9 +7,19 @@ function show(value: object) { return Reflect.ownKeys(value).map(String).join() 
 function sizes(tagged: Tagged) { return Reflect.ownKeys(tagged).length * 100 + Object.getOwnPropertySymbols(tagged).length * 10 + Object.keys(tagged).length }
 let total = 0
 for (let i = 0; i < 100; i++) total += sizes({ n: i, [kTag]: "t" }) + sizes({ [kTag]: "t", n: i, s: "s" })
-const before = count("operationAOTOwnPropertyKeys")
+// But for the calls that found an allocator without a cell at hand and filled it again: a line "<calls>\trefilled:<name>" in what the shell has counted. How often that is goes by the size of the cells, and with AddressSanitizer it is often.
+declare const aotRuntimeCounters: undefined | (() => string)
+const listed = () => {
+  let calls = count("operationAOTOwnPropertyKeys")
+  for (const line of (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "").split("\n")) {
+    const [refills, refilled] = line.split("\trefilled:")
+    if (refilled === "operationAOTOwnPropertyKeys") calls -= Number(refills)
+  }
+  return calls
+}
+const before = listed()
 for (let i = 0; i < 20000; i++) total += sizes({ n: i, [kTag]: "t" }) + sizes({ [kTag]: "t", n: i, s: "s" })
-console.log(total, count("operationAOTOwnPropertyKeys") - before < 100)
+console.log(total, listed() - before < 100)
 const a: Tagged = { n: 1, [kTag]: "t" }
 console.log(show(a))
 a[kLate] = 2

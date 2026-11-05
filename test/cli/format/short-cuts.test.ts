@@ -5055,11 +5055,20 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A comment before the `in` or the `of` of a loop.
     ["a.ts", "", "for(c//\nin``)z\n"],
     ["a.ts", "", "for(c//\nof``){z()}\n"],
+    // .. or behind it, before a template.
+    ["a.ts", "", "for(c in//\n``)z\n"],
+    ["a.ts", "", "for(c of//\n`a${b}`){z()}\n"],
+    // A comment before the `{` of a class is printed on the line of the first member, whose lines stand as they are written.
+    ["a.ts", "", "class A\n/**/{\n  m() {\n    r(async () => {\n      a = x;\n    });\n  }}\n"],
+    ["a.ts", "", "class A\n\n/* c */ {\n  a = async () => {\n    const a = !x;\n  };\n}\n"],
+    ["a.ts", "", "class A<T> extends B<T> implements C\n/**/{\n  m(): s {\n    b;\n  }}\n"],
     // `<const>x`, which the long way never breaks.
     ["a.ts", "--print-width=12", "a=<const>x\n"],
     // A union that a conditional type among type arguments checks, where it breaks.
     ["a.ts", "--print-width=16", "const a:b<X|Y extends c?d:e>=z\n"],
     ["a.ts", "--print-width=7", "type a=X|Y extends Y?Z:X\n"],
+    ["a.ts", "--print-width=7", "type a=x|{\nT}&x extends y?z:x\n"],
+    ["a.ts", "--print-width=4", "type a={\nT}|x extends y?Z:x\n"],
     // Flow: `<*>`, which the long way does not break.
     ["a.js.flow", "--print-width=18", "async function a():e<*>{z()}\n"],
     // Flow: the name `bool` or a qualified name behind `implements` or `extends`.
@@ -5084,6 +5093,42 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js.flow", "", "type a=interface{}&Y\n"],
     // Flow: the supertype of an opaque type in parentheses.
     ["a.js.flow", "", "opaque type a:(|X)\n"],
+    // A chain of calls as a computed key: only the variant on one line says whether the key can break.
+    ["a.ts", "--print-width=17", "({[x.d().h()]:``})\n"],
+    ["a.ts", "--print-width=17", "({[x.d().h()]:1})\n"],
+    ["a.ts", "--print-width=10", "e,{[a(()=>{},x)]:``}\n"],
+    ["a.ts", "--print-width=13", "h,{[d(()=>{},x)]:class{}}\n"],
+    // A line break in a text is one that counts.
+    ["a.ts", "--print-width=6", "({[`\n`]:``})\n"],
+    ["a.ts", "--print-width=3", "h,{[(`\n`)]:0}\n"],
+    ["a.ts", "--print-width=6", '({["\\\n"]:``})\n'],
+    // The value of an `accessor` is indented like that of no other property.
+    ["a.ts", "--print-width=9", "class a{private accessor b=x&y}\n"],
+    ["a.js", "--print-width=9", "class a{accessor b=x+y;static accessor c=x&&y}\n"],
+    // A namespace has directives.
+    ["a.ts", "", "namespace N{'\\''}\n"],
+    ["a.ts", "", "module\"\"{'\\'';'a';b;'c'}\n"],
+    ["a.ts", "", "declare namespace N{'a'\n\n// c\nb}\n"],
+    ["a.ts", "", "namespace N{('a');'b'}\n"],
+    // A pattern with a type and an arrow function, the object type of an only parameter with decorators, computed keys.
+    ["a.ts", "--print-width=17", "const[]:a<x>=y=>x\n"],
+    ["a.js.flow", "--print-width=17", "const[]:e<e>=e=>a\n"],
+    ["a.ts", "--print-width=14", "class a{d(@h h:{x}){}}\n"],
+    ["a.ts", "--print-width=9", '({["\t"]:l})\n'],
+    ["a.ts", "--print-width=8", "({[ 1 ]:l,[.5]:l})\n"],
+    // An optional call in parentheses at the head of a chain is a call for Babel's tree only.
+    ["a.ts", "--print-width=17", "(a?.()).i.d().l()\n"],
+    ["a.js", "--print-width=17", "(a?.()).i.d().l()\n"],
+    ["a.js.flow", "--print-width=17", "(a?.()).i.d().l()\n"],
+    [
+      "a.ts",
+      "--print-width=17",
+      "((d?.()).l).h().i();\n(a?.())!.i.d().l();\n(a?.())().i.d().l();\n(a?.b()).i.d().l();\n",
+    ],
+    // A comment that names a language, where the long way does not see it.
+    ["a.ts", "", "({[/* GraphQL */`{a}`]:y})\n"],
+    ["a.ts", "", "d&&(/* GraphQL */`{d}`&&h)\n"],
+    ["a.ts", "", "d||(/* HTML */`<a></a>`||h)\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

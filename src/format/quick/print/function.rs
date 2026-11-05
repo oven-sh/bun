@@ -271,7 +271,7 @@ impl Quick {
                 self.text(RPAREN);
             }
             self.group_close(g);
-            self.gives_up_if_broken(g);
+            self.gives_up_where_broken(g)?;
             return Ok(());
         }
         if self.mode.is_flow

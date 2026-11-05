@@ -4,7 +4,7 @@
 //! parts but the first. Here the chain is written in one go: whoever writes the first operand opens the indentation.
 
 use crate::arena::SUB_SHIFT;
-use crate::ast::{F_CHAIN, F_COMPUTED, k};
+use crate::ast::{F_ACCESSOR, F_CHAIN, F_COMPUTED, k};
 use crate::lexer::tk;
 use crate::print::statics::{OPERATOR, SPACE};
 use crate::print::util::should_flatten;
@@ -235,7 +235,7 @@ impl Quick {
                 && self.is_boolean_type_coercion(parent));
         let should_indent_if_inlining = pk == k::AssignmentExpression
             || pk == k::VariableDeclarator
-            || pk == k::ClassProperty
+            || (pk == k::ClassProperty && (self.n.at(parent) & F_ACCESSOR) == 0)
             || pk == k::ObjectProperty;
         let left = self.n.at(n + 4);
         let same_precedence_sub_expression = self.is_binaryish(left)

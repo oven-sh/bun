@@ -404,7 +404,7 @@ impl Quick {
                 || (self.n.at(self.n.at(params + 1)) & KIND_AND_SUB)
                     == (k::KeywordType | (type_keyword::All << SUB_SHIFT)))
         {
-            self.gives_up_if_broken(g);
+            self.gives_up_where_broken(g)?;
         }
         Ok(())
     }
@@ -564,7 +564,7 @@ impl Quick {
             self.dedent_softline();
             self.group_close(g);
             if is_hugged_elsewhere {
-                self.gives_up_if_broken(g);
+                self.gives_up_where_broken(g)?;
             }
             return Ok(());
         }
@@ -581,7 +581,7 @@ impl Quick {
             self.if_break_text(RPAREN, 0, 0);
             self.group_close(g);
             if is_hugged_elsewhere {
-                self.gives_up_if_broken(g);
+                self.gives_up_where_broken(g)?;
             }
             return Ok(());
         }
@@ -606,7 +606,7 @@ impl Quick {
         if is_hugged_elsewhere
             || ((self.n.at(parent) & 0xff) == k::ConditionalType && self.n.at(parent + 4) == n)
         {
-            self.gives_up_if_broken(g);
+            self.gives_up_where_broken(g)?;
         }
         Ok(())
     }

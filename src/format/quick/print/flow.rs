@@ -353,7 +353,7 @@ impl Quick {
                     let g = self.group_open();
                     self.print(key)?;
                     self.group_close(g);
-                    self.gives_up_if_broken(g);
+                    self.gives_up_where_broken(g)?;
                 } else {
                     self.print(key)?;
                 }

@@ -414,9 +414,9 @@ impl Quick {
             k::FunctionType => behind != 46,
             // between the name and the type arguments
             k::TypeReference => behind != 60,
-            // before the `in` or the `of`
+            // before the `in` or the `of`, or before a template
             k::ForInStatement | k::ForOfStatement => {
-                !(form == END_LINE && (behind == 105 || behind == 111))
+                !(form == END_LINE && (behind == 105 || behind == 111 || behind == 96))
             }
             // next to the `=`
             k::JSXAttribute => before != 61 && behind != 61,

@@ -15,7 +15,7 @@
 
 use crate::text::much_larger;
 use crate::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, WIDE};
-use crate::{Bytes, Numbers, Quick, Words, zeros};
+use crate::{Bytes, Numbers, Quick, R, Words, rare, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -913,6 +913,16 @@ impl Quick {
             .put(h, (self.d.at(h) | (G_GIVES_UP << 5)) & !(G_PURE << 5));
     }
 
+    /// The same for a group that the long way prints in another way whenever it is broken, be it by what is in it.
+    #[cold]
+    pub(crate) fn gives_up_where_broken(&mut self, h: i32) -> R<()> {
+        if (self.d.at(h) & (G_BREAK << 5)) != 0 {
+            return Err(self.rare(rare::BROKEN));
+        }
+        self.gives_up_if_broken(h);
+        Ok(())
+    }
+
     /// Closes a group that is printed flat even where it does not fit. Nothing in it may force a break.
     pub(crate) fn force_flat_group_close(&mut self, h: i32) {
         self.group_close_with(h, false, 0);
@@ -1217,7 +1227,9 @@ impl Quick {
         self.doc.es.put(s + 7, self.doc.acc_w);
         // the previous StateClose, to chain them
         self.doc.es.put(s + 8, 0);
-        self.doc.es_pos = s + 9;
+        // after the first state: line_count. `canBreak()` looks at no other state.
+        self.doc.es.put(s + 9, 0);
+        self.doc.es_pos = s + 10;
         self.doc.pending = 0;
         return h;
     }
@@ -1233,7 +1245,7 @@ impl Quick {
 
     pub(crate) fn state_close(&mut self, h: i32) {
         let p = self.doc.d_pos;
-        let s = self.doc.es_pos - 9;
+        let s = self.doc.es_pos - 10;
         // chain the StateCloses through their payload until cond_close knows the end
         self.d.put(p, self.doc.es.at(s + 8));
         self.doc.es.put(s + 8, p);
@@ -1255,9 +1267,11 @@ impl Quick {
             self.doc.es.put(s + 3, self.doc.impure_count);
             self.doc.es.put(s + 4, self.doc.acc_w);
             self.doc.es.put(s + 5, self.doc.pending);
+            self.doc.es.put(s + 9, self.doc.line_count);
         } else {
             self.doc.wb_count = self.doc.es.at(s + 2);
             self.doc.impure_count = self.doc.es.at(s + 3);
+            self.doc.line_count = self.doc.es.at(s + 9);
         }
         // each state is measured from the same start
         self.doc.acc_w = self.doc.es.at(s + 7);
@@ -1266,7 +1280,7 @@ impl Quick {
     }
 
     pub(crate) fn cond_close(&mut self, h: i32, should_break: bool) {
-        let s = self.doc.es_pos - 9;
+        let s = self.doc.es_pos - 10;
         self.doc.es_pos = s;
         let end = self.doc.d_pos;
         let mut c = self.doc.es.at(s + 8);

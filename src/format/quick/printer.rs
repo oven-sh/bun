@@ -1640,8 +1640,10 @@ impl Quick {
                     let len = ((w as u32) >> 5) as i32;
                     let s = self.d.at(pc + 1);
                     if self.d.at(pc + 2) < STANDING_BELOW && pos != (self.d.at(pc + 2) & 4095) {
-                        // standing(), and the lines do not stand where they were expected
-                        if (self.d.at(pc + 2) & (1 << 24)) != 0 {
+                        // standing(), and the lines do not stand where they were expected, or do not start their line
+                        if (self.d.at(pc + 2) & (1 << 24)) != 0
+                            || pos != self.printer.it.at(ind + IT_WIDTH)
+                        {
                             return Err(self.stop(why::REDO));
                         }
                         o = self.print_shifted(s, len, o, pos - (self.d.at(pc + 2) & 4095))?;

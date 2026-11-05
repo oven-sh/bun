@@ -1983,8 +1983,13 @@ impl Quick {
     pub(crate) fn parse_module_block(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         self.expect(tk::BraceL)?;
-        let list_mark = self.arena.ls_pos;
         self.parse_typescript.in_namespace += 1;
+        let directives = self.parse_directives()?;
+        let list_mark = self.arena.ls_pos;
+        if self.parse.pending_statement != 0 {
+            self.list_push(self.parse.pending_statement);
+            self.parse.pending_statement = 0;
+        }
         while self.lexer.tok != tk::BraceR {
             if self.lexer.tok == tk::EOF {
                 return Err(self.unexpected());
@@ -1996,7 +2001,7 @@ impl Quick {
         self.next()?;
         let v1 = self.lexer.prev_end;
         let v2 = self.list_finish(list_mark);
-        return Ok(self.node_ll(k::ModuleBlock, start, v1, 0, v2));
+        return Ok(self.node_ll(k::ModuleBlock, start, v1, directives, v2));
     }
 
     /// The current token is `namespace`, `module` or `global`.

@@ -10,7 +10,7 @@ use crate::holes::{FILTER_BACKTICK, FILTER_END_OF_LINE, FILTER_UNCOOK};
 use crate::lang::{GUEST_BETWEEN_LINES, lang};
 use crate::options::WHITESPACE_IGNORE;
 use crate::print::statics::{BACKQUOTE, SPACE};
-use crate::{Quick, R, Words, why, zeros};
+use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct PrintEmbed {
     /// the docs of the expressions of the literal that is being printed
@@ -1094,6 +1094,17 @@ impl Quick {
         let kind = self.embed_kind_of(n);
         if kind == EMBED_NONE {
             return Ok(-1);
+        }
+        // To the long way a template that is a computed key is no expression, and the comment in
+        // `a && (/* GraphQL */ `b` && c)` leads what is in the parentheses.
+        let parent = self.n.at(n + 3);
+        let pk = self.n.at(parent) & 0xff;
+        if pk == k::LogicalExpression
+            || (pk != k::MemberExpression
+                && (self.n.at(parent) & F_COMPUTED) != 0
+                && self.n.at(parent + 4) == n)
+        {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
         }
         if self.is_registered(guest_of(kind)) {
             let quasis = self.n.at(n + 4);

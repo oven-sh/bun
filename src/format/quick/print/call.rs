@@ -6,8 +6,8 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    F_CHAIN, F_COMMENTS, F_COMPUTED, F_EXPR_BODY, F_OPTIONAL, F_SHORTHAND, P_DEFER, P_MASK,
-    P_SOURCE, k,
+    F_CHAIN, F_COMMENTS, F_COMPUTED, F_EXPR_BODY, F_OPTIONAL, F_PAREN, F_SHORTHAND, P_DEFER,
+    P_MASK, P_SOURCE, k,
 };
 use crate::doc::{LABEL_EMBED, LABEL_MEMBER_CHAIN};
 use crate::lexer::tk;
@@ -1017,8 +1017,7 @@ impl Quick {
             self.print_call.ch.put(self.print_call.ch_top + 1, 0);
             self.print_call.ch_top += 2;
             if self.is_call_expression(cur)
-                && (self.is_memberish(self.n.at(cur + 4))
-                    || self.is_call_expression(self.n.at(cur + 4)))
+                && (self.is_memberish(self.n.at(cur + 4)) || self.is_call_link(self.n.at(cur + 4)))
                 && !self.needs_parens(cur)?
             {
                 if self.should_insert_empty_line_after(cur) {
@@ -1051,6 +1050,13 @@ impl Quick {
         return Ok((self.print_call.ch_top - base) >> 1);
     }
 
+    /// Is the link `n` of a chain a call? The head `(a?.())` is a ChainExpression in the trees of TypeScript's and of Flow's parser.
+    fn is_call_link(&self, n: i32) -> bool {
+        self.is_call_expression(n)
+            && ((self.n.at(n) & (F_PAREN | F_CHAIN)) != (F_PAREN | F_CHAIN)
+                || !(self.mode.is_type_script || (self.mode.is_flow && !self.mode.is_babel_flow)))
+    }
+
     pub(crate) fn is_computed_numeric(&self, n: i32) -> bool {
         return (self.n.at(n) & (0xff | F_COMPUTED)) == (k::MemberExpression | F_COMPUTED)
             && (self.n.at(self.n.at(n + 5)) & 0xff) == k::NumericLiteral;
@@ -1075,7 +1081,7 @@ impl Quick {
             }
             i += 1;
         }
-        if !self.is_call_expression(self.print_call.ch.at(base)) {
+        if !self.is_call_link(self.print_call.ch.at(base)) {
             'l2: while i + 1 < count {
                 'c3: {
                     if self.is_memberish(self.print_call.ch.at(base + i * 2))
@@ -1376,7 +1382,7 @@ impl Quick {
         while i < count {
             'c2: {
                 let node = self.print_call.ch.at(base + i * 2);
-                if !self.is_call_expression(node) {
+                if !self.is_call_link(node) {
                     break 'c2;
                 }
                 calls += 1;
@@ -1456,7 +1462,7 @@ impl Quick {
             while i < count - 1 && !expanded_only {
                 'c7: {
                     let node = self.print_call.ch.at(base + i * 2);
-                    if !self.is_call_expression(node) {
+                    if !self.is_call_link(node) {
                         break 'c7;
                     }
                     let args = self.n.at(node + 5);

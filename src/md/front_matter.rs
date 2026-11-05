@@ -32,12 +32,20 @@ pub struct Block {
 }
 
 /// The block `text` starts with: a line of three markers (blanks can follow) up to the next such line. CR ends a line too.
+#[inline]
 pub fn detect<T: PathByte>(text: &[T], rule: Rule<'_>) -> Option<Block> {
     let first = *text.first()?;
     let marker = *rule
         .markers
         .iter()
         .find(|&&marker| T::from_u8(marker) == first)?;
+    fenced_by(text, marker, rule.blank_first_line)
+}
+
+/// [`detect`] for a text whose first unit is `marker`. Out of line: few documents start with one.
+#[inline(never)]
+fn fenced_by<T: PathByte>(text: &[T], marker: u8, blank_first_line: bool) -> Option<Block> {
+    let fence = [T::from_u8(marker); 3];
     let blanks = [T::from_u8(b' '), T::from_u8(b'\t')];
     let crlf = [T::from_u8(b'\r'), T::from_u8(b'\n')];
     // Where the line that starts at `from` ends, and where the next one starts.
@@ -50,14 +58,14 @@ pub fn detect<T: PathByte>(text: &[T], rule: Rule<'_>) -> Option<Block> {
         (from + len, from + len + line_break)
     };
     let is_fence = |line: &[T]| {
-        line.starts_with(&[first; 3]) && strings::trim_left_t(&line[3..], &blanks).is_empty()
+        line.starts_with(&fence) && strings::trim_left_t(&line[3..], &blanks).is_empty()
     };
 
     let (opening_end, content) = line_at(0);
     if !is_fence(&text[..opening_end]) || opening_end == text.len() {
         return None;
     }
-    if !rule.blank_first_line
+    if !blank_first_line
         && strings::trim_left_t(&text[content..], &blanks)
             .first()
             .is_none_or(|unit| crlf.contains(unit))

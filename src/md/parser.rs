@@ -41,7 +41,7 @@ pub(crate) use super::ref_defs::RefDef;
 pub(crate) struct Parser<'a> {
     pub(crate) text: &'a [u8],
     pub(crate) size: OFF,
-    /// Where the Markdown starts in `text`, which the renderer holds too: see `markdown_start`.
+    /// Where the Markdown starts in `text`, which the renderer holds too: see `markdown_of`.
     pub(crate) doc_start: OFF,
     pub(crate) has_carriage_return: bool,
     pub(crate) flags: Flags,
@@ -318,15 +318,14 @@ impl<'a> Parser<'a> {
         let size = input_size(text)?;
         let track = rend.ptr.wants_source();
         // Who wants to know where things are is told places in `text`, all of it.
-        let doc_start = match track {
-            true => 0,
-            false => markdown_start(text, flags.frontmatter),
+        let markdown = match track {
+            true => text,
+            false => markdown_of(text, flags.frontmatter),
         };
-        let markdown = &text[doc_start..];
         let mut p = Parser {
             text,
             size,
-            doc_start: doc_start as OFF,
+            doc_start: (text.len() - markdown.len()) as OFF,
             has_carriage_return: strings::contains_char(markdown, b'\r'),
             flags,
             renderer: rend,
@@ -494,13 +493,17 @@ impl<'a> Parser<'a> {
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
 
-/// Behind a UTF-8 byte order mark, the front matter if it counts, and a byte order mark right behind that.
-fn markdown_start(text: &[u8], frontmatter: bool) -> usize {
-    let mut rest = strings::without_utf8_bom(text);
-    if frontmatter && let Some(block) = front_matter::detect(rest, front_matter::Rule::MARKDOWN) {
-        rest = strings::without_utf8_bom(&rest[block.end..]);
+/// `text` behind a UTF-8 byte order mark, the front matter if it counts, and a byte order mark right behind that.
+#[inline]
+fn markdown_of(text: &[u8], frontmatter: bool) -> &[u8] {
+    let rest = strings::without_utf8_bom(text);
+    match frontmatter {
+        true => match front_matter::detect(rest, front_matter::Rule::MARKDOWN) {
+            Some(block) => strings::without_utf8_bom(&rest[block.end..]),
+            None => rest,
+        },
+        false => rest,
     }
-    text.len() - rest.len()
 }
 
 // ========================================

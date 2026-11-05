@@ -1808,6 +1808,7 @@ it("an already-open child stdin does not emit open or ready", async () => {
     stdio: ["pipe", "pipe", "pipe"],
   });
   try {
+    expect(child.stdin!.pending).toBe(false);
     const events: string[] = [];
     child.stdin!.on("open", () => events.push("open"));
     child.stdin!.on("ready", () => events.push("ready"));
@@ -1826,3 +1827,35 @@ it("an already-open child stdin does not emit open or ready", async () => {
     child.kill();
   }
 });
+
+it.skipIf(!isPosix).each([false, true])(
+  "destroy after end ignores a closed stdin pipe (explicit error: %s)",
+  async withError => {
+    // Two stdio entries defer the stdin wrapper until the child has closed its fd.
+    const child = spawn(
+      bunExe(),
+      ["-e", 'require("node:fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);'],
+      { env: bunEnv, stdio: ["pipe", "pipe"] },
+    );
+    const exited = once(child, "close");
+    try {
+      await Promise.race([
+        once(child.stdout!, "data"),
+        exited.then(() => {
+          throw new Error("child exited before closing stdin");
+        }),
+      ]);
+      const stdin = child.stdin!;
+      const events: string[] = [];
+      const closed = new Promise<void>(resolve => stdin.once("close", resolve));
+      stdin.on("error", err => events.push(err.message));
+      stdin.end("hello");
+      stdin.destroy(withError ? new Error("boom") : undefined);
+      await closed;
+      expect(events).toEqual(withError ? ["boom"] : []);
+    } finally {
+      child.kill();
+      await exited;
+    }
+  },
+);

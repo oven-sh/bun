@@ -923,9 +923,17 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
 writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err!);
+    // Before 'finish', Node reports the explicit destroy error instead of an end() write failure.
+    const onEndFailure: ErrorCallback = this._writableState.finished ? cb : () => cb(err);
+    let end: ReturnType<FileSink["end"]>;
+    try {
+      end = sink.end(err!);
+    } catch (e) {
+      onEndFailure(e as Error);
+      return;
+    }
     if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
+      end.then(() => cb(err), onEndFailure);
       return;
     }
   }
@@ -976,7 +984,10 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 
 Object.defineProperty(writeStreamPrototype, "pending", {
   get(this: $Node.WriteStream) {
-    return this.fd === null;
+    if (this.fd !== null) return false;
+    // An open child stdin sink needs no asynchronous open or ready event.
+    const sink = this[kWriteStreamFastPath];
+    return sink === undefined || sink === true || this.destroyed;
   },
   configurable: true,
 });

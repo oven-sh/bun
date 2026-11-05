@@ -126,7 +126,7 @@ fn comments_make_name_long<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     !comments.leading.is_empty() || !comments.trailing.is_empty()
 }
 
-/// See [`computed_key_width`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`,
+/// See [`computed_key_width`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `yield`, `yield a`, `a as T`,
 /// `a<T>`. Not `a.b`, `a()`, `` `a` ``, `[]`.
 fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
     let mut width = 0;
@@ -170,6 +170,17 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
             ExprKind::Await(argument) => {
                 width += "await ".len();
                 argument
+            }
+            ExprKind::Yield { value, star } => {
+                width += "yield".len() + usize::from(star);
+                match value {
+                    Some(argument) if has_comments(argument, f) => return None,
+                    Some(argument) => {
+                        width += 1;
+                        argument
+                    }
+                    None => return Some(width),
+                }
             }
             ExprKind::As { .. } | ExprKind::AsConst(_) if current.is_angle_bracket_assertion() => {
                 return None;

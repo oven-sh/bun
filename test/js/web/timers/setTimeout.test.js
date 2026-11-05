@@ -975,14 +975,14 @@ describe("a delay of 0", () => {
       import { test } from "bun:test";
       test("waits", async () => {
         const median = await (${medianWait})(resolve => setTimeout(resolve, 0));
-        console.log(JSON.stringify({ file: import.meta.file, inWorker: "BUN_TEST_WORKER_ID" in process.env, median }));
+        console.log(JSON.stringify({ file: import.meta.file, pid: process.pid, median }));
       });
     `;
     const dir = tempDirWithFiles("set-timeout-0", { "a.test.js": file, "b.test.js": file });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", flag],
       cwd: dir,
-      env: { ...bunEnv, BUN_TEST_WORKER_ID: undefined },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -993,7 +993,11 @@ describe("a delay of 0", () => {
       .filter(line => line.startsWith("{"))
       .map(line => JSON.parse(line))
       .sort((a, b) => a.file.localeCompare(b.file))
-      .map(({ median, ...file }) => ({ ...file, median: median < 1 ? "under 1 ms" : median }));
+      .map(({ file, pid, median }) => ({
+        file,
+        inWorker: pid !== proc.pid,
+        median: median < 1 ? "under 1 ms" : median,
+      }));
     expect({ waits, counts: stderr.match(/^ \d+ (pass|fail)$/gm), exitCode }).toEqual({
       waits: [
         { file: "a.test.js", inWorker, median: "under 1 ms" },

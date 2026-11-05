@@ -2129,7 +2129,8 @@ describe.concurrent("Testing Library does not wait 1 ms for a setTimeout() of 0"
     // All the packages of the test suite: React and Testing Library beside the two DOMs.
     symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", flag],
+      // In a debug build the 50 rounds take 1 s, and more than the default 5 s when 20 such processes share 4 cores.
+      cmd: [bunExe(), "test", flag, "--timeout=60000"],
       cwd: String(dir),
       // CI sets BUN_GARBAGE_COLLECTOR_LEVEL=1, with which every expect() asks for a collection. On Windows the next
       // turn of the event loop runs it, and that turn is the wait.

@@ -289,8 +289,12 @@ describe.concurrent("bunshell cp options", () => {
       "cp -rR d e": tree,
       "cp -rf d e": tree,
       "cp -nr d e": tree,
+      "cp -Rv d e": treeVerbose,
+      "cp -vR d e": treeVerbose,
       "cp -rv d e": treeVerbose,
       "cp -vr d e": treeVerbose,
+      "cp -nrv d e": treeVerbose,
+      "cp -frv d e": treeVerbose,
       "cp -rv a b": verbose,
 
       "cp --recursive d e": tree,
@@ -317,6 +321,8 @@ describe.concurrent("bunshell cp options", () => {
       // After R, v or n, an option that cp does not implement is ignored, as in the released versions.
       "cp -Rp a b": overwritten,
       "cp -RH a b": overwritten,
+      "cp -RL a b": overwritten,
+      "cp -RP a b": overwritten,
       "cp -Ri a b": overwritten,
       "cp -Rz a b": overwritten,
       "cp -Ra d e": tree,

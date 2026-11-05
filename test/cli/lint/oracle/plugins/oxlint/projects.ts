@@ -4933,6 +4933,7 @@ const hand: Project[] = [
         `/*\t* noinspection Tab */`,
         `// x noinspection Late`,
         `// pragma`,
+        `// late x`,
         `a();`,
       ),
       // The lines are joined with `\n`, a final line break starts no line, and a `\r` stays unless a `\n` follows it.

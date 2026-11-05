@@ -1938,6 +1938,7 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
       "// pragma",
       "/* tail x */",
       "/*tail x*/",
+      "// late x",
       "export const x = 1;",
       "",
     ].join("\n");

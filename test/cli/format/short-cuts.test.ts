@@ -2862,3 +2862,43 @@ describe("templates in another language", () => {
     ["--html-whitespace-sensitivity=ignore"],
   ]);
 });
+
+describe("JavaScript that is deep, long or full of comments", () => {
+  // What is written behind a deep nest or a long chain has to find room in the buffers: nothing of the output may be missing.
+  const nest = (open: string, middle: string, close: string, depth: number) =>
+    `x = ${open.repeat(depth)}${middle}${close.repeat(depth)};\n`;
+  describe("nests and chains", () =>
+    expectSame(
+      "a.jsx",
+      [
+        nest("", "a", "()", 7000),
+        nest("", "a", "(b)", 5000),
+        nest("", "a", ".b()", 5000),
+        nest("", "a", "[0]", 7000),
+        nest("{a:", "1", "}", 2700),
+        nest("[", "", "]", 2700),
+        nest("<a>", "", "</a>", 2700),
+        nest("f(", "", ")", 2700),
+        nest("a ? b : ", "c", "", 5000),
+        nest("", "a", ".b", 20000),
+      ],
+      [["--use-tabs"]],
+    ));
+
+  // Where a comment belongs is asked of what stands next to it, comments aside, whatever separates them.
+  const ascii = [" ", "\t", "\n", "\r\n", "\r", "\x0b", "\x0c", "", ",", ";", " , "];
+  const beyondAscii = ["\u00a0", "\u2028", "\u2029", "\ufeff", "\u3000"];
+  const rows = (separators: string[], count: number) =>
+    separators.flatMap(separator => [
+      `a(${`/* c */${separator}`.repeat(count)}b);\n`,
+      `a;\n${`/* c */${separator}`.repeat(count)}\n`,
+      `function f() ${`/* c */${separator}`.repeat(count)}{}\n`,
+      `x = [${`/* c */${separator}`.repeat(count)}];\n`,
+    ]);
+  describe("rows of comments", () =>
+    expectSame(
+      "a.js",
+      [3, 511, 513, 3000].flatMap(count => rows(ascii, count)).concat([513, 3000].flatMap(count => rows(beyondAscii, count))),
+      [[]],
+    ));
+});

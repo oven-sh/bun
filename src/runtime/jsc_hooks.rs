@@ -821,6 +821,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     let n = unsafe { &*vm }.preload.len();
     // SAFETY: per fn contract; these scalar fields are immutable during loading.
     let require_start = unsafe { &*vm }.preload_require_start;
+    // SAFETY: as above; this call only reads the live VM's preload count.
     let require_end = require_start.saturating_add(unsafe { &*vm }.preload_require_count);
     for i in 0..n {
         // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
@@ -837,13 +838,13 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
-            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-            // singleton field.
             let import_kind = if i >= require_start && i < require_end {
                 ImportKind::Require
             } else {
                 ImportKind::Stmt
             };
+            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+            // singleton field.
             let mut result = match unsafe {
                 (*vm).transpiler.resolver.resolve_and_auto_install(
                     &*top_level_dir,

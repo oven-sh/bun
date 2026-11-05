@@ -36,7 +36,7 @@ const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
 const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
 const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
 const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
-/// `--aot-allow-executable-memory`. 256 is left for what another change of the header takes.
+/// `--aot-allow-executable-memory`. 256 is `HAS_ASSETS_NAMED_AT_ROOT` in #47605.
 const ALLOWS_EXECUTABLE_MEMORY: u32 = 512;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();

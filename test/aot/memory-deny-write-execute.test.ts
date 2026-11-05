@@ -34,11 +34,21 @@ const libc = dlopen(${JSON.stringify(isLinux ? libcPathForDlopen() : "")}, {
 const getMDWE = 66, read = 1, write = 2, execute = 4, isPrivate = 2, isAnonymous = 0x20;
 const bits = libc.symbols.prctl(getMDWE, 0, 0, 0, 0);
 const page = Number(libc.symbols.mmap(null, 4096, read | write, isPrivate | isAnonymous, -1, 0));
-// mov eax, 42; ret
-new Uint8Array(toArrayBuffer(page, 0, 4096)).set([0xb8, 42, 0, 0, 0, 0xc3]);
+// x64: mov eax, 42; ret. arm64: mov w0, #42; ret
+const returns42 = process.arch === "arm64" ? [0x40, 0x05, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6] : [0xb8, 42, 0, 0, 0, 0xc3];
+new Uint8Array(toArrayBuffer(page, 0, 4096)).set(returns42);
+// On arm64 the instruction cache doesn't see the written bytes until it's told of them.
+let isFlushed = process.arch !== "arm64";
+try {
+  if (!isFlushed) {
+    dlopen("libgcc_s.so.1", { __clear_cache: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void } }).symbols.__clear_cache(page, page + 4096);
+    isFlushed = true;
+  }
+} catch {}
 const protect = libc.symbols.mprotect(page, 4096, read | execute);
 console.log(JSON.stringify({ bits, protect }));
-console.log(new CFunction({ ptr: page, returns: FFIType.i32, args: [] })());
+if (protect === 0 && !isFlushed) console.log("not run");
+else console.log(new CFunction({ ptr: page, returns: FFIType.i32, args: [] })());
 `;
 
 const child = `const { stdout } = Bun.spawnSync({ cmd: [process.argv[2], "-e", "console.log(1 + 1)"], stdout: "pipe" });
@@ -129,6 +139,11 @@ test.skipIf(isHardened)("--aot-allow-executable-memory requires --aot", async ()
     stderr: "error: --aot-allow-executable-memory requires --aot\n",
     exitCode: 1,
   });
+  const runs = await runCommand([bunExe(), "--aot-allow-executable-memory", "program.ts"], String(dir));
+  expect({ stderr: runs.stderr, exitCode: runs.exitCode }).toEqual({
+    stderr: "error: --aot-allow-executable-memory requires --aot\n",
+    exitCode: 1,
+  });
   const key = await runCommand([bunExe(), "build.ts"], String(dir), { ...bunEnv, NO_COLOR: "1" });
   expect({ stdout: key.stdout, exitCode: key.exitCode }).toEqual({
     stdout: "compile.allowExecutableMemory requires compile.aot: true\n",
@@ -136,7 +151,7 @@ test.skipIf(isHardened)("--aot-allow-executable-memory requires --aot", async ()
   });
 });
 
-test.skipIf(!isLinux || isHardened || isASAN || process.arch !== "x64")(
+test.skipIf(!isLinux || isHardened || isASAN)(
   "a crash in code that the denial kept from becoming executable says so",
   async () => {
     using dir = tempDir("aot-mdwe-crash", { "jumps.ts": jumps });
@@ -157,7 +172,7 @@ test.skipIf(!isLinux || isHardened || isASAN || process.arch !== "x64")(
     } else {
       expect({ protect: state.protect, rest, stderr, exitCode }).toEqual({
         protect: 0,
-        rest: ["42", ""],
+        rest: [process.arch === "arm64" ? expect.stringMatching(/^(42|not run)$/) : "42", ""],
         stderr: "",
         exitCode: 0,
       });

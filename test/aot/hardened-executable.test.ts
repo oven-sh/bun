@@ -250,4 +250,30 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
     },
     120_000,
   );
+
+  test("refuses to leave writable and executable memory to the program", async () => {
+    using dir = tempDir("hardened-refuses-executable-memory", {
+      "program.ts": program,
+      "build.ts": `try {
+  await Bun.build({ entrypoints: ["./program.ts"], compile: { aot: true, allowExecutableMemory: true, outfile: "./program" } });
+} catch (error) {
+  console.log((error as Error).message);
+}
+`,
+    });
+    const refused =
+      "--aot-allow-executable-memory is not available in this build of Bun. Its executables never create executable memory";
+    for (const cmd of [
+      [bunExe(), "build", "--compile", "--aot", "--aot-allow-executable-memory", "program.ts", "--outfile", "program"],
+      [bunExe(), "--aot", "--aot-allow-executable-memory", "program.ts"],
+    ]) {
+      const { stdout, stderr, exitCode } = await runCommand(cmd, String(dir), { ...bunEnv, NO_COLOR: "1" });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: `error: ${refused}\n`, exitCode: 1 });
+    }
+    const { stdout, exitCode } = await runCommand([bunExe(), "build.ts"], String(dir), { ...bunEnv, NO_COLOR: "1" });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: refused.replace("--aot-allow-executable-memory", "compile.allowExecutableMemory") + "\n",
+      exitCode: 0,
+    });
+  });
 });

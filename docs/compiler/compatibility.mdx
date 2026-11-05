@@ -248,7 +248,7 @@ A variable that nothing in your program can read is removed. So is an object tha
 
 ## Native code that generates machine code
 
-On Linux 6.7 and later, the executable asks the kernel to deny it writable and executable memory when it starts (`prctl(PR_SET_MDWE)`). Nothing in the executable generates machine code at run time, so nothing of Bun's needs it. A native library that does, such as Mesa's software Vulkan driver, LuaJIT or the JIT of PCRE2, fails when it tries: `mprotect()` and `mmap()` return `EACCES`, and a library that doesn't check for that crashes. So does [`cc()` from `bun:ffi`](/runtime/c-compiler), which throws `ERR_FFI_CC_DISABLED`.
+On Linux 6.7 and later, the executable asks the kernel to deny it writable and executable memory when it starts (`prctl(PR_SET_MDWE)`). The executable has no JIT, so Bun's runtime never needs such memory. Code that generates machine code at run time does: [`cc()` from `bun:ffi`](/runtime/c-compiler) throws `ERR_FFI_CC_DISABLED`, and a native library such as Mesa's software Vulkan driver, LuaJIT or the JIT of PCRE2 gets `EACCES` from `mprotect()` and `mmap()`. A library that doesn't check for that crashes.
 
 Build with `--aot-allow-executable-memory` to leave that request out:
 
@@ -256,15 +256,15 @@ Build with `--aot-allow-executable-memory` to leave that request out:
 bun compile ./app.ts --outfile app --aot-allow-executable-memory
 ```
 
-The flag doesn't lift a denial that the process inherits, for example from systemd's `MemoryDenyWriteExecute=yes`. Child processes aren't restricted either way, so a library that generates machine code can also run in one. macOS and Windows have no such request.
+The flag doesn't lift a denial that the process inherits, for example from systemd's `MemoryDenyWriteExecute=yes`. Without the flag, compile a C file when you build and load it with `dlopen()`, or run the library that generates machine code in a child process: child processes aren't restricted. macOS and Windows have no such request.
 
 ## Not supported
 
-| Feature                                     | Instead                                    |
-| ------------------------------------------- | ------------------------------------------ |
-| `--target` for another platform             | Build on that platform, or pass `--no-aot` |
-| `--preload`, `--import` in `BUN_OPTIONS`    | Import the file from your entry point      |
-| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT` | Build with `--compile-inspector`           |
-| Breakpoints and `debugger`                  | `bun --inspect-brk ./app.ts`               |
-| `cc()` from `bun:ffi`, on Linux             | Build with `--aot-allow-executable-memory` |
-| Over 32 GB of objects in a thread           | `--aot-huge-heap`                          |
+| Feature                                     | Instead                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------- |
+| `--target` for another platform             | Build on that platform, or pass `--no-aot`                                |
+| `--preload`, `--import` in `BUN_OPTIONS`    | Import the file from your entry point                                     |
+| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT` | Build with `--compile-inspector`                                          |
+| Breakpoints and `debugger`                  | `bun --inspect-brk ./app.ts`                                              |
+| `cc()` from `bun:ffi`, on Linux             | `dlopen()` a compiled file, or build with `--aot-allow-executable-memory` |
+| Over 32 GB of objects in a thread           | `--aot-huge-heap`                                                         |

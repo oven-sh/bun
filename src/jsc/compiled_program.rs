@@ -672,14 +672,15 @@ mod write_execute {
     }
 
     /// Kernels before 6.7 reject `PR_MDWE_NO_INHERIT`, and child processes may need a JIT.
+    /// Whether this call made the kernel deny it.
     #[cfg(not(bun_hardened))]
-    pub(super) fn deny() {
+    pub(super) fn deny() -> bool {
         if is_denied_by_the_kernel() {
-            return;
+            return false;
         }
         let bits = PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT;
         // SAFETY: the request takes and returns integers only.
-        unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) == 0 }
     }
 
     /// Child processes inherit it. Whoever started this process may have set it already.
@@ -721,7 +722,9 @@ mod write_execute {
         false
     }
 
-    pub(super) fn deny() {}
+    pub(super) fn deny() -> bool {
+        false
+    }
 }
 
 pub fn is_write_execute_memory_denied() -> bool {
@@ -957,8 +960,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         }
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
-        if !program.allows_executable_memory {
-            write_execute::deny();
+        if !program.allows_executable_memory && write_execute::deny() {
+            bun_crash_handler::note_write_execute_memory_denied();
         }
         #[cfg(bun_hardened)]
         {

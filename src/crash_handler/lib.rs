@@ -631,34 +631,15 @@ mod draft {
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
 
     /// The crashing thread tried to run code on a mapped page that is not executable.
-    #[cfg(target_os = "linux")]
     static RAN_MEMORY_THAT_IS_NOT_EXECUTABLE: AtomicBool = AtomicBool::new(false);
+    /// This executable asked the kernel to deny it writable and executable memory, and the kernel did.
+    static DENIES_WRITE_EXECUTE_MEMORY: AtomicBool = AtomicBool::new(false);
 
     /// A native library that generates machine code fails this way where the process denies itself
     /// writable and executable memory: `mprotect(PROT_EXEC)` is refused and the library runs the page anyway.
-    #[cfg(target_os = "linux")]
     fn ran_code_that_write_execute_denial_refused() -> bool {
-        const PR_GET_MDWE: c_int = 66;
-        const PR_MDWE_REFUSE_EXEC_GAIN: c_int = 1;
-        if !RAN_MEMORY_THAT_IS_NOT_EXECUTABLE.load(Ordering::Relaxed) {
-            return false;
-        }
-        // SAFETY: the request takes and returns integers only.
-        let bits = unsafe {
-            libc::prctl(
-                PR_GET_MDWE,
-                0 as libc::c_ulong,
-                0 as libc::c_ulong,
-                0 as libc::c_ulong,
-                0 as libc::c_ulong,
-            )
-        };
-        bits > 0 && bits & PR_MDWE_REFUSE_EXEC_GAIN != 0
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn ran_code_that_write_execute_denial_refused() -> bool {
-        false
+        RAN_MEMORY_THAT_IS_NOT_EXECUTABLE.load(Ordering::Relaxed)
+            && DENIES_WRITE_EXECUTE_MEMORY.load(Ordering::Relaxed)
     }
 
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
@@ -3507,6 +3488,12 @@ mod draft {
     pub fn suppress_reporting() {
         suppress_core_dumps_if_necessary();
         SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
+    }
+
+    /// An executable built with `bun compile` calls this once `prctl(PR_SET_MDWE)` has succeeded, so that a
+    /// crash in code that the denial kept from becoming executable is reported as that.
+    pub fn note_write_execute_memory_denied() {
+        DENIES_WRITE_EXECUTE_MEMORY.store(true, Ordering::Relaxed);
     }
 
     // src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths

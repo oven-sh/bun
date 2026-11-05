@@ -733,6 +733,7 @@ pub(crate) fn stands_on_library_of_this_bun(ctx: &ContextData) -> bool {
     };
     let is_compiled_as_always = aot.heap == HeapSize::Standard
         && !aot.reports_type_mismatches
+        && !aot.allows_executable_memory
         && aot.option_words.is_empty();
     #[cfg(unix)]
     {

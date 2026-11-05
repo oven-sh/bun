@@ -1038,7 +1038,7 @@ impl FFI {
                 .err(
                     ErrorCode::FFI_CC_DISABLED,
                     format_args!(
-                        "Cannot compile C code because this process can't create executable memory (PR_SET_MDWE). An executable built with bun compile turns that on when it starts."
+                        "Cannot compile C code because this process can't create executable memory (PR_SET_MDWE). An executable built with bun compile turns that on when it starts, unless it was built with --aot-allow-executable-memory."
                     ),
                 )
                 .throw());

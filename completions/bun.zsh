@@ -805,6 +805,7 @@ _bun_compile_completion() {
         '--aot-log-type-mismatches[Log every value that does not match its declared type]' \
         '--aot-huge-heap[Remove the 32 GB heap limit per thread]' \
         '--aot-allow-code-from-disk[Let import() and require() load code from disk at run time]' \
+        '--aot-allow-executable-memory[Let a native library generate machine code on Linux]' \
         '--obfuscate[Strip function names and source locations from the executable and write them to a source map]' \
         '--compile-inspector[Let a debugger attach to the executable]' \
         '--compile-in-place[Keep modules at their paths on disk. The executable only runs on the machine that built it]' \

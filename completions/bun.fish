@@ -234,6 +234,7 @@ complete -c bun -n "__fish_seen_subcommand_from compile" -l "explain" -d "List t
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-log-type-mismatches" -d "Log every value that does not match its declared type"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-huge-heap" -d "Remove the 32 GB heap limit per thread"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-allow-code-from-disk" -d "Let import() and require() load code from disk at run time"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-allow-executable-memory" -d "Let a native library generate machine code on Linux"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "obfuscate" -d "Strip function names and source locations from the executable and write them to a source map"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-inspector" -d "Let a debugger attach to the executable"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-in-place" -d "Keep modules at their paths on disk. The executable only runs on the machine that built it"

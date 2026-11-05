@@ -104,7 +104,7 @@ const rejected: [string[], string][] = [
   ],
   [
     ["compile", "--aot-type-errors=warn"],
-    "unknown flag --aot-type-errors. The --aot flags for this command are --aot, --aot-allow-code-from-disk, --aot-huge-heap, --aot-log-type-mismatches",
+    "unknown flag --aot-type-errors. The --aot flags for this command are --aot, --aot-allow-code-from-disk, --aot-allow-executable-memory, --aot-huge-heap, --aot-log-type-mismatches",
   ],
   [["compile", "--explain=nonsense"], invalidExplain("nonsense")],
   [["compile", "--explain=json", "--explain=allocation"], invalidExplain("allocation")],
@@ -113,11 +113,24 @@ const rejected: [string[], string][] = [
 ];
 
 const publicFlags: Record<string, string[]> = {
-  "": ["--aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches"],
-  run: ["--aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches"],
+  "": ["--aot", "--aot-allow-code-from-disk", "--aot-allow-executable-memory", "--aot-log-type-mismatches"],
+  run: ["--aot", "--aot-allow-code-from-disk", "--aot-allow-executable-memory", "--aot-log-type-mismatches"],
   test: ["--aot", "--aot-log-type-mismatches", "--aot-memory-limit"],
-  build: ["--aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches", "--aot-huge-heap"],
-  compile: ["--aot", "--no-aot", "--aot-allow-code-from-disk", "--aot-log-type-mismatches", "--aot-huge-heap"],
+  build: [
+    "--aot",
+    "--aot-allow-code-from-disk",
+    "--aot-allow-executable-memory",
+    "--aot-log-type-mismatches",
+    "--aot-huge-heap",
+  ],
+  compile: [
+    "--aot",
+    "--no-aot",
+    "--aot-allow-code-from-disk",
+    "--aot-allow-executable-memory",
+    "--aot-log-type-mismatches",
+    "--aot-huge-heap",
+  ],
 };
 
 describe.concurrent("bun compile", () => {

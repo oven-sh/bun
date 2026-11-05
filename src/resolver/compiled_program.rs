@@ -103,6 +103,8 @@ pub struct CompiledProgram {
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
     pub allows_code_from_disk: bool,
+    /// Built with `--aot-allow-executable-memory`: the process does not deny itself writable and executable memory.
+    pub allows_executable_memory: bool,
     /// The last folders of the root directory where the program writes a path that goes up out of them and comes back.
     root_folders_spelled: &'static [u8],
     /// By entry point: the image of the program that begins there, a part of `image`. Empty: `image` is one image, of one program with all entry points.
@@ -385,6 +387,7 @@ impl CompiledProgram {
             root_on_build_machine: None,
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
+            allows_executable_memory: false,
             root_folders_spelled: b"",
             images: Box::new([]),
             start: None,
@@ -425,6 +428,11 @@ impl CompiledProgram {
 
     pub fn with_code_from_disk(mut self, allows_code_from_disk: bool) -> CompiledProgram {
         self.allows_code_from_disk = allows_code_from_disk;
+        self
+    }
+
+    pub fn with_executable_memory(mut self, allows_executable_memory: bool) -> CompiledProgram {
+        self.allows_executable_memory = allows_executable_memory;
         self
     }
 

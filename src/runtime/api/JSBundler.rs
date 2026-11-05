@@ -472,6 +472,7 @@ pub(crate) mod js_bundler {
         obfuscates: bool,
         admits_inspector: bool,
         allows_code_from_disk: bool,
+        allows_executable_memory: bool,
         removes_unused: bool,
         allow: Vec<Vec<u8>>,
         remove: Vec<Vec<u8>>,
@@ -498,6 +499,9 @@ pub(crate) mod js_bundler {
                     .unwrap_or(false),
                 allows_code_from_disk: compile
                     .get_boolean_loose(global_this, "allowCodeFromDisk")?
+                    .unwrap_or(false),
+                allows_executable_memory: compile
+                    .get_boolean_loose(global_this, "allowExecutableMemory")?
                     .unwrap_or(false),
                 ..Default::default()
             };
@@ -596,6 +600,7 @@ pub(crate) mod js_bundler {
                 has_external_source_map: source_map == options::SourceMapOption::External,
                 admits_inspector: self.admits_inspector,
                 allows_code_from_disk: self.allows_code_from_disk,
+                allows_executable_memory: self.allows_executable_memory,
                 trim: TrimFlags {
                     removes_unused: self.removes_unused,
                     allow: self.allow.iter().map(Vec::as_slice).collect(),

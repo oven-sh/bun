@@ -103,6 +103,7 @@ const RUN_FLAGS: FlagGroup = FlagGroup {
     flags: &[
         "--aot",
         "--aot-allow-code-from-disk",
+        "--aot-allow-executable-memory",
         "--aot-log-type-mismatches",
     ],
     other_commands: "bun build",
@@ -113,6 +114,7 @@ const BUILD_FLAGS: FlagGroup = FlagGroup {
     flags: &[
         "--aot",
         "--aot-allow-code-from-disk",
+        "--aot-allow-executable-memory",
         "--aot-huge-heap",
         "--aot-log-type-mismatches",
     ],
@@ -133,6 +135,7 @@ pub(crate) enum OptionName {
     ExternalSourceMap,
     Inspector,
     CodeFromDisk,
+    ExecutableMemory,
     ExecArgv,
     Trim,
     TrimWithout,
@@ -183,6 +186,7 @@ pub(crate) struct CompileFlags<'a> {
     pub has_external_source_map: bool,
     pub admits_inspector: bool,
     pub allows_code_from_disk: bool,
+    pub allows_executable_memory: bool,
     pub trim: TrimFlags<'a>,
     pub developer_words: Vec<(&'static str, Option<&'a [u8]>)>,
     pub is_cross_compile: bool,
@@ -206,6 +210,7 @@ pub(crate) enum OptionError<'a> {
     BothAotAndNoAot,
     CrossCompile,
     HardenedBunRunsOnlyCompiledCode,
+    HardenedBunDeniesExecutableMemory,
     InvalidValue {
         option: OptionName,
         value: &'a [u8],
@@ -264,6 +269,8 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Inspector, BuildApi) => "compile.inspector",
         (Name::CodeFromDisk, BuildFlag | CompileCommand) => "--aot-allow-code-from-disk",
         (Name::CodeFromDisk, BuildApi) => "compile.allowCodeFromDisk",
+        (Name::ExecutableMemory, BuildFlag | CompileCommand) => "--aot-allow-executable-memory",
+        (Name::ExecutableMemory, BuildApi) => "compile.allowExecutableMemory",
         (Name::ExecArgv, BuildFlag | CompileCommand) => "--compile-exec-argv",
         (Name::ExecArgv, BuildApi) => "compile.execArgv",
         (Name::CodeGenerationFromStrings, BuildFlag | CompileCommand) => {
@@ -332,6 +339,12 @@ impl OptionError<'_> {
                 write_spelling(OptionName::CodeFromDisk, origin, out);
                 out.extend_from_slice(
                     b" is not available in this build of Bun. Its executables only run code that was compiled into them",
+                );
+            }
+            OptionError::HardenedBunDeniesExecutableMemory => {
+                write_spelling(OptionName::ExecutableMemory, origin, out);
+                out.extend_from_slice(
+                    b" is not available in this build of Bun. Its executables never create executable memory",
                 );
             }
             OptionError::InvalidValue { option, value } => {
@@ -427,6 +440,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         code_generation_from_strings: embedded.code_generation_from_strings,
         admits_inspector,
         loads_code_from_disk: flags.allows_code_from_disk,
+        allows_executable_memory: flags.allows_executable_memory,
         runs_in_place: flags.is_in_place,
         ..Default::default()
     };
@@ -487,6 +501,8 @@ fn check_requires_aot<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a
         OptionName::Inspector
     } else if flags.allows_code_from_disk {
         OptionName::CodeFromDisk
+    } else if flags.allows_executable_memory {
+        OptionName::ExecutableMemory
     } else if let Some(&(key, _)) = flags.developer_words.first() {
         OptionName::Developer(key)
     } else {
@@ -504,6 +520,9 @@ fn check_aot_combination<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError
     }
     if flags.allows_code_from_disk && cfg!(bun_hardened) {
         return Err(OptionError::HardenedBunRunsOnlyCompiledCode);
+    }
+    if flags.allows_executable_memory && cfg!(bun_hardened) {
+        return Err(OptionError::HardenedBunDeniesExecutableMemory);
     }
     Ok(())
 }
@@ -851,6 +870,7 @@ fn read_build_flags<'c>(
         has_external_source_map: args.option(b"--sourcemap") == Some(b"external"),
         admits_inspector: args.flag(b"--compile-inspector"),
         allows_code_from_disk: args.flag(b"--aot-allow-code-from-disk"),
+        allows_executable_memory: args.flag(b"--aot-allow-executable-memory"),
         trim: TrimFlags {
             removes_unused: args.flag(b"--trim"),
             remove_internal: split_at_commas(args.options(b"--trim-without"))
@@ -952,6 +972,7 @@ pub(crate) fn parse_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: 
         || args.flag(b"--debug-aot")
         || args.flag(b"--aot-log-type-mismatches")
         || args.flag(b"--aot-allow-code-from-disk")
+        || args.flag(b"--aot-allow-executable-memory")
         || args.flag(b"--aot-huge-heap");
     if has_aot_flag {
         apply_runtime_flags(cmd, args, ctx);
@@ -987,15 +1008,25 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         );
     }
     let loads_code_from_disk = args.flag(b"--aot-allow-code-from-disk");
+    let allows_executable_memory = args.flag(b"--aot-allow-executable-memory");
     if !(args.flag(b"--aot") || compiles) {
         if loads_code_from_disk {
             exit_with_message(b"--aot-allow-code-from-disk requires --aot");
+        }
+        if allows_executable_memory {
+            exit_with_message(b"--aot-allow-executable-memory requires --aot");
         }
         return;
     }
     if loads_code_from_disk && cfg!(bun_hardened) {
         exit_with_error(
             &OptionError::HardenedBunRunsOnlyCompiledCode,
+            RequestOrigin::BuildFlag,
+        );
+    }
+    if allows_executable_memory && cfg!(bun_hardened) {
+        exit_with_error(
+            &OptionError::HardenedBunDeniesExecutableMemory,
             RequestOrigin::BuildFlag,
         );
     }
@@ -1064,6 +1095,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         // A test writes a module at run time and imports it, as under plain `bun test`.
         loads_code_from_disk: loads_code_from_disk
             || (cmd == Tag::TestCommand && compiles && !cfg!(bun_hardened)),
+        allows_executable_memory,
         ..Default::default()
     }));
 }

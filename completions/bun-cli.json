@@ -4705,6 +4705,13 @@
           "multiple": false
         },
         {
+          "name": "aot-allow-executable-memory",
+          "description": "With --aot: don't deny the executable writable and executable memory on Linux, so a native library loaded with bun:ffi or as an addon can generate machine code",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "no-compile-function-source",
           "description": "With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws",
           "hasValue": false,

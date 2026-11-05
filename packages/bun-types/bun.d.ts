@@ -3977,6 +3977,19 @@ declare module "bun" {
      */
     allowCodeFromDisk?: boolean;
     /**
+     * With `aot`: don't deny the executable writable and executable memory when it starts.
+     * On Linux 6.7 and later, an executable built with `aot` sets `PR_SET_MDWE`, so a native
+     * library that generates machine code at run time, such as a JIT loaded through `bun:ffi` or
+     * as an addon, fails or crashes in it. This option leaves that request out. It doesn't lift a
+     * denial that the process inherits from its parent, such as systemd's
+     * `MemoryDenyWriteExecute=yes`. It has no effect on macOS and Windows.
+     *
+     * Equivalent CLI flag: `--aot-allow-executable-memory`
+     *
+     * @default false
+     */
+    allowExecutableMemory?: boolean;
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`

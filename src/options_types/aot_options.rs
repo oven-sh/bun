@@ -129,6 +129,8 @@ pub struct AotOptions {
     pub admits_inspector: bool,
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
+    /// `--aot-allow-executable-memory`: the executable does not deny itself writable and executable memory on Linux, so a native library loaded at run time can generate machine code.
+    pub allows_executable_memory: bool,
     /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
     /// The last entry point stands in for them.
     pub host_runs_files_from_disk: bool,
@@ -421,6 +423,7 @@ impl Default for AotOptions {
             omits_foreign_calls: false,
             admits_inspector: false,
             loads_code_from_disk: false,
+            allows_executable_memory: false,
             host_runs_files_from_disk: false,
             main_modules_beside_entry_points: Vec::new(),
             entry_points_only_imported_from_above: Vec::new(),
@@ -568,6 +571,7 @@ mod tests {
             omits_foreign_calls,
             admits_inspector,
             loads_code_from_disk,
+            allows_executable_memory,
             host_runs_files_from_disk,
             main_modules_beside_entry_points,
             entry_points_only_imported_from_above,
@@ -621,6 +625,7 @@ mod tests {
         assert!(!omits_foreign_calls);
         assert!(!admits_inspector);
         assert!(!loads_code_from_disk);
+        assert!(!allows_executable_memory);
         assert!(!host_runs_files_from_disk);
         assert!(main_modules_beside_entry_points.is_empty());
         assert!(entry_points_only_imported_from_above.is_empty());

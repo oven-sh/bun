@@ -237,6 +237,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--aot-allow-code-from-disk        With --aot: let import() and require() load code from disk that wasn't compiled. The build takes longer"
     ),
     parse_param!(
+        "--aot-allow-executable-memory     With --aot: don't deny the process writable and executable memory on Linux, so a native library can generate machine code"
+    ),
+    parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
@@ -484,6 +487,10 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         ),
         (
             Long(b"aot-allow-code-from-disk"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (
+            Long(b"aot-allow-executable-memory"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (Long(b"smol"), Nothing),
@@ -747,6 +754,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--aot-allow-code-from-disk       With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+        ),
+        parse_param!(
+            "--aot-allow-executable-memory    With --aot: don't deny the executable writable and executable memory on Linux, so a native library loaded with bun:ffi or as an addon can generate machine code"
         ),
         parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"

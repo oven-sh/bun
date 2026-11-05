@@ -630,6 +630,37 @@ mod draft {
     /// things that affect crash reporting. See suppressReporting() for intended usage.
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
 
+    /// The crashing thread tried to run code on a mapped page that is not executable.
+    #[cfg(target_os = "linux")]
+    static RAN_MEMORY_THAT_IS_NOT_EXECUTABLE: AtomicBool = AtomicBool::new(false);
+
+    /// A native library that generates machine code fails this way where the process denies itself
+    /// writable and executable memory: `mprotect(PROT_EXEC)` is refused and the library runs the page anyway.
+    #[cfg(target_os = "linux")]
+    fn ran_code_that_write_execute_denial_refused() -> bool {
+        const PR_GET_MDWE: c_int = 66;
+        const PR_MDWE_REFUSE_EXEC_GAIN: c_int = 1;
+        if !RAN_MEMORY_THAT_IS_NOT_EXECUTABLE.load(Ordering::Relaxed) {
+            return false;
+        }
+        // SAFETY: the request takes and returns integers only.
+        let bits = unsafe {
+            libc::prctl(
+                PR_GET_MDWE,
+                0 as libc::c_ulong,
+                0 as libc::c_ulong,
+                0 as libc::c_ulong,
+                0 as libc::c_ulong,
+            )
+        };
+        bits > 0 && bits & PR_MDWE_REFUSE_EXEC_GAIN != 0
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn ran_code_that_write_execute_denial_refused() -> bool {
+        false
+    }
+
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
     #[derive(Clone, Copy)]
     pub enum CrashReason<'a> {
@@ -1175,6 +1206,12 @@ mod draft {
                                 if writer.write_all(
                                 b"Bun has run out of memory.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                             ).is_err() { abort(); }
+                            } else if matches!(reason, CrashReason::SegmentationFault(_))
+                                && ran_code_that_write_execute_denial_refused()
+                            {
+                                if writer.write_all(
+                                b"Bun has crashed while running code in memory that isn't executable.\n\nThis process denies itself writable and executable memory (PR_SET_MDWE), so a native library that generates machine code can't make it executable. Build the executable with --aot-allow-executable-memory, or run that library in a child process.\n\nIf that isn't the cause, please file a GitHub issue using the link below:\n\n",
+                            ).is_err() { abort(); }
                             } else {
                                 if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
@@ -1666,6 +1703,15 @@ mod draft {
         // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
         // SAFETY: kernel provides a valid siginfo_t.
         let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
+        #[cfg(target_os = "linux")]
+        {
+            const SEGV_ACCERR: c_int = 2;
+            // SAFETY: kernel provides a valid siginfo_t.
+            if sig == libc::SIGSEGV && unsafe { (*info).si_code } == SEGV_ACCERR && pc == Some(addr)
+            {
+                RAN_MEMORY_THAT_IS_NOT_EXECUTABLE.store(true, Ordering::Relaxed);
+            }
+        }
         let entered = match sig {
             libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
             libc::SIGTRAP | libc::SIGILL => pc,

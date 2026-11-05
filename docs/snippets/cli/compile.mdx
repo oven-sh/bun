@@ -55,6 +55,11 @@ bun compile [flags] [entry point]
   Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-allow-executable-memory" type="boolean">
+  Don't deny the executable writable and executable memory on Linux, so a native library loaded with{" "}
+  <code>bun:ffi</code> or as an addon can generate machine code
+</ParamField>
+
 ### Size
 
 <ParamField path="--trim" type="boolean">

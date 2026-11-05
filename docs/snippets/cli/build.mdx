@@ -242,6 +242,11 @@ bun build <entry points>
   from disk at run time. Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-allow-executable-memory" type="boolean">
+  With <code>--aot</code>: don't deny the executable writable and executable memory on Linux, so a native library loaded
+  with <code>bun:ffi</code> or as an addon can generate machine code
+</ParamField>
+
 <ParamField path="--compile-in-place" type="boolean">
   With <code>--aot</code>: keep modules at their paths on disk and load anything that wasn't compiled from there. The
   executable only runs on the machine that built it

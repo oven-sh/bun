@@ -39,6 +39,17 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { aot: true, allowCodeFromDisk: true, allowExecutableMemory: true },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, allowExecutableMemory: "yes" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   // @ts-expect-error
   compile: { aot: true, aotExplain: "decline" },
 });

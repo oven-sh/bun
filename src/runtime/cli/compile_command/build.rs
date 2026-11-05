@@ -240,6 +240,7 @@ fn write_product(
                 false => &build.root_folders_spelled,
             },
             allows_code_from_disk: options.loads_code_from_disk,
+            allows_executable_memory: options.allows_executable_memory,
             preserves_source_paths: options.runs_in_place,
             symbols: build.engine.symbols(),
         }),

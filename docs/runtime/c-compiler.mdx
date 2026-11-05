@@ -211,3 +211,5 @@ bun --no-ffi-cc ./app.ts
 ```
 
 Workers inherit the setting from their parent. A Worker can also set it for itself with `execArgv: ["--no-ffi-cc"]`. Standalone executables can bake it in with `bun build --compile --compile-exec-argv="--no-ffi-cc"`.
+
+An executable built with [`bun compile`](/compiler/aot) on Linux denies itself executable memory, so `cc()` throws `ERR_FFI_CC_DISABLED` there. Build it with [`--aot-allow-executable-memory`](/compiler/compatibility#native-code-that-generates-machine-code) to keep `cc()`.

@@ -6,7 +6,7 @@ description: "What bun compile does with your code and your types, and what ends
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-`bun compile` type checks your whole program, compiles it to machine code at build time, and puts that code into a copy of the Bun runtime. The executable has no JIT, so nothing is compiled while your program runs.
+`bun compile` type checks your whole program, compiles it to machine code at build time, and puts that code into a copy of the Bun runtime. The executable has no JIT, so nothing is compiled while your program runs. On Linux it also denies itself executable memory, unless it's built with [`--aot-allow-executable-memory`](/compiler/compatibility#native-code-that-generates-machine-code).
 
 You don't need this page to [use `bun compile`](/compiler/aot). Read it if you want to know what to expect from the code it generates.
 

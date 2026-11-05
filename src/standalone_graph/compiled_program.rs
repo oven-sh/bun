@@ -36,6 +36,8 @@ const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
 const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
 const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
 const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
+/// `--aot-allow-executable-memory`. 256 is left for what another change of the header takes.
+const ALLOWS_EXECUTABLE_MEMORY: u32 = 512;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -113,6 +115,8 @@ pub struct CompiledProgramInput<'a> {
     pub root_below_working_directory: Option<&'a [u8]>,
     /// `--aot-allow-code-from-disk`
     pub allows_code_from_disk: bool,
+    /// `--aot-allow-executable-memory`
+    pub allows_executable_memory: bool,
     /// `CompiledProgram::root_folders_spelled`. Empty where the program spells none.
     pub root_folders_spelled: &'a [u8],
     /// `CompiledProgram::root_from_executable`
@@ -268,6 +272,7 @@ pub(crate) fn append_record(
             | (u32::from(input.root_below_working_directory.is_some())
                 * HAS_ROOT_BELOW_WORKING_DIRECTORY)
             | (u32::from(input.allows_code_from_disk) * ALLOWS_CODE_FROM_DISK)
+            | (u32::from(input.allows_executable_memory) * ALLOWS_EXECUTABLE_MEMORY)
             | (u32::from(!input.root_folders_spelled.is_empty()) * HAS_ROOT_FOLDERS_SPELLED)
             | (u32::from(input.root_from_executable.is_some()) * HAS_ROOT_FROM_EXECUTABLE)
             | (u32::from(input.root_on_build_machine.is_some()) * HAS_ROOT_ON_BUILD_MACHINE)
@@ -668,6 +673,7 @@ fn try_read(
     let program = program.with_package_names(package_names);
     let program = program.with_root_below_working_directory(root_below_working_directory);
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
+    let program = program.with_executable_memory(header.flags & ALLOWS_EXECUTABLE_MEMORY != 0);
     let program = program.with_root_folders_spelled(root_folders_spelled);
     let program = program.with_root_from_executable(root_from_executable);
     let program = program.with_root_on_build_machine(root_on_build_machine);
@@ -1213,6 +1219,7 @@ pub(crate) mod tests {
             path_aliases: &[],
             root_below_working_directory: None,
             allows_code_from_disk: false,
+            allows_executable_memory: false,
             root_folders_spelled: b"",
             root_from_executable: None,
             root_on_build_machine: None,

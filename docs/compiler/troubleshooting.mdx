@@ -56,7 +56,8 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `--preload can't be used with this executable`   | Import the file from your entry point                                             |
 | `BUN_INSPECT can't be used with this executable` | Build with `--compile-inspector`                                                  |
 | `... can have 256 JSCallbacks open at a time`    | `close()` the callbacks you're done with                                          |
-| `Cannot compile C code ... (PR_SET_MDWE)`        | Compile the C file first, then `dlopen()`                                         |
+| `Cannot compile C code ... (PR_SET_MDWE)`        | Build with `--aot-allow-executable-memory`                                        |
+| `... code in memory that isn't executable`       | Build with `--aot-allow-executable-memory`                                        |
 
 If your error tracker shows new groups after you switch, that's because [some messages are shorter](/compiler/compatibility#error-messages).
 

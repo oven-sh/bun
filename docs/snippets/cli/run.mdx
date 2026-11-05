@@ -86,6 +86,11 @@ bun run <file or script>
   compiled. The build takes longer
 </ParamField>
 
+<ParamField path="--aot-allow-executable-memory" type="boolean">
+  With <code>--aot</code>: don't deny the process writable and executable memory on Linux, so a native library can
+  generate machine code
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

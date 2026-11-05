@@ -5,7 +5,7 @@ description: "What behaves differently in an executable built with bun compile, 
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-Most programs behave the same under [`bun compile`](/compiler/aot) as under `bun run`. The language, every `node:` and `bun:` module, Workers, native addons, macros, `Bun.build` plugins and nearly all npm packages work. A value that doesn't match its TypeScript type [is slower, not wrong](/compiler/types#when-a-value-doesnt-match-its-type).
+Most programs behave the same under [`bun compile`](/compiler/aot) as under `bun run`. The language, every `node:` and `bun:` module, Workers, native addons, macros, `Bun.build` plugins and nearly all npm packages work. A native library that generates machine code needs [a flag](#native-code-that-generates-machine-code). A value that doesn't match its TypeScript type [is slower, not wrong](/compiler/types#when-a-value-doesnt-match-its-type).
 
 What differs: [built-in objects are read-only](#built-in-objects-are-read-only), [code from a string is interpreted](#code-from-strings), [a dynamic import only finds what the build found](#dynamic-imports), [nothing can hook the module loader](#loader-hooks-and-the-module-cache), [packages are bundled](#packages), and [a store to `undefined` or `null` throws before its key is converted](#a-store-to-undefined-or-null). The build also checks your types, and [a type error stops it](/compiler/aot#type-errors-stop-the-build).
 
@@ -246,6 +246,18 @@ Keep a `FinalizationRegistry` at module level, or somewhere your program reads i
 
 A variable that nothing in your program can read is removed. So is an object that only that variable held, unless your program could notice that it's gone, for example through a `WeakRef`. A [heap snapshot](/compiler/debugging#profiles) doesn't list what was removed.
 
+## Native code that generates machine code
+
+On Linux 6.7 and later, the executable asks the kernel to deny it writable and executable memory when it starts (`prctl(PR_SET_MDWE)`). Nothing in the executable generates machine code at run time, so nothing of Bun's needs it. A native library that does, such as Mesa's software Vulkan driver, LuaJIT or the JIT of PCRE2, fails when it tries: `mprotect()` and `mmap()` return `EACCES`, and a library that doesn't check for that crashes. So does [`cc()` from `bun:ffi`](/runtime/c-compiler), which throws `ERR_FFI_CC_DISABLED`.
+
+Build with `--aot-allow-executable-memory` to leave that request out:
+
+```bash terminal icon="terminal"
+bun compile ./app.ts --outfile app --aot-allow-executable-memory
+```
+
+The flag doesn't lift a denial that the process inherits, for example from systemd's `MemoryDenyWriteExecute=yes`. Child processes aren't restricted either way, so a library that generates machine code can also run in one. macOS and Windows have no such request.
+
 ## Not supported
 
 | Feature                                     | Instead                                    |
@@ -254,5 +266,5 @@ A variable that nothing in your program can read is removed. So is an object tha
 | `--preload`, `--import` in `BUN_OPTIONS`    | Import the file from your entry point      |
 | `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT` | Build with `--compile-inspector`           |
 | Breakpoints and `debugger`                  | `bun --inspect-brk ./app.ts`               |
-| `cc()` from `bun:ffi`, on Linux             | Compile the C file first, then `dlopen()`  |
+| `cc()` from `bun:ffi`, on Linux             | Build with `--aot-allow-executable-memory` |
 | Over 32 GB of objects in a thread           | `--aot-huge-heap`                          |

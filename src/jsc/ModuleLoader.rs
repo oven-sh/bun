@@ -122,14 +122,14 @@ pub struct TranspileArgs<'a> {
     pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,
-    /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
-    pub extra: *mut TranspileExtra<'a>,
+    pub extra: &'a TranspileExtra<'a>,
 }
 
 pub struct TranspileExtra<'a> {
     pub path: bun_resolver::fs::Path<'a>,
-    pub loader: bun_ast::Loader,
-    pub module_type: bun_bundler::options::ModuleType,
+    /// `Cell`s so the `.wasm` re-entry can change them and recurse.
+    pub loader: core::cell::Cell<bun_ast::Loader>,
+    pub module_type: core::cell::Cell<bun_bundler::options::ModuleType>,
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
     pub source_code_printer: *mut bun_js_printer::BufferPrinter,
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.

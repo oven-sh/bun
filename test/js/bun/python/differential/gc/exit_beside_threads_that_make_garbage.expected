@@ -1,0 +1,26 @@
+status: 0
+script: f6f534b0f368c5ca
+---
+makers_that_collect: status 0
+    main ends
+    atexit callback
+makers: status 0
+    main ends
+    atexit callback
+sys_exit_beside_makers: status 5
+    main ends
+atexit_callback_makes_garbage: status 0
+    main ends
+    atexit callback
+    finalizer of what the callback made
+makers_of_weak_references: status 0
+    main ends
+    atexit callback
+finalizers_that_write: status 0
+    main ends
+    atexit callback
+thread_that_waits_has_dropped: status 0
+    main ends
+    atexit callback; finalized by then: ['empties the box', 'held by it', 'held by what was in the box', 'in the box']
+collect_pays_for_a_thread_that_waits: status 0
+    after gc.collect(): ['empties the box', 'held by it', 'held by what was in the box', 'in the box']

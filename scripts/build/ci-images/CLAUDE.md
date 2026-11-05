@@ -82,7 +82,7 @@ A pin has to name something its publisher keeps: a bake that asks for a version 
 - **Debian gives a user who is not root no sbin directory on PATH.** The test runner calls `sysctl` as the agent's user; the core-dumps tool puts `/sbin` on the job PATH.
 - **Linux machines have the SSH client and no server.** Every base image comes with the server; the `ssh-client` tool removes it, and the bake ends by failing if it is there.
 - **Starting a service during a bake can leave machine identity in the image** (sshd writes host keys). Remove it before the image is taken.
-- **A push cancels the branch's running build**, bakes included. A Linux bake takes 5 to 15 minutes and its snapshot another 20 to 35 to become available; a Windows bake takes about an hour.
+- **A push cancels the branch's running build**, bakes included. Do not hold commits because they would cancel builds/bakes. A Linux bake takes 5 to 15 minutes and its snapshot another 20 to 35 to become available; a Windows bake takes about an hour.
 
 ## Testing a change before CI does
 

@@ -707,8 +707,9 @@ const otherInstances: Candidate[] = [
   pristine("invalid:Date", () => new Date(NaN)),
   pristine("early:Date", () => new Date(-8.64e15)),
   instrumented("loggingPrototype:Date", (log, operand) => withLoggingPrototype(log, operand, new Date(0))),
-  pristine("filled:Error", (log, operand) => new Error("message", { cause: createContent(log, operand, "Property", "cause") })),
-  pristine("filled:TypeError", () => new TypeError("message")),
+  ...[Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError].map(errorClass =>
+    pristine(`filled:${errorClass.name}`, (log, operand) => new errorClass("message", { cause: createContent(log, operand, "Property", "cause") })),
+  ),
   pristine("filled:AggregateError", (log, operand) => new AggregateError(createContents(log, operand, "Element"), "message")),
   customized("subclass:Error", () => new (class extends Error {})("message")),
   pristine("boxed:Number", () => new Number(1.5)),

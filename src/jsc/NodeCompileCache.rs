@@ -40,10 +40,6 @@ struct CacheState {
     entries: HashMap<u64, Entry, IdentityContext<u64>>,
 }
 
-// SAFETY: `CacheState` is only reached through the global `STATE` mutex; the
-// `sys::Dir` fd is just an integer handle.
-unsafe impl Send for CacheState {}
-
 struct Entry {
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,
@@ -1213,17 +1209,14 @@ pub fn persist_now() {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-/// # Safety
-/// `dir` is null or a live `BunString`; both out-params are valid for write.
-pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
-    dir: *const BunString,
+pub extern "C" fn Bun__NodeCompileCache__enable(
+    dir: Option<&BunString>,
     // -1 = not specified (fall back to NODE_COMPILE_CACHE_PORTABLE).
     portable: i32,
-    out_directory: *mut BunString,
-    out_message: *mut BunString,
+    out_directory: &mut core::mem::MaybeUninit<BunString>,
+    out_message: &mut core::mem::MaybeUninit<BunString>,
 ) -> i32 {
-    // SAFETY: C++ passes null or a live BunString plus valid out-params.
-    let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
+    let dir_utf8 = dir.map(|d| d.to_utf8());
     let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
     let result = enable(
         dir_slice,
@@ -1234,12 +1227,10 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
         },
     );
     if let Some(directory) = result.directory {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { out_directory.write(BunString::clone_utf8(&directory)) };
+        out_directory.write(BunString::clone_utf8(&directory));
     }
     if let Some(message) = result.message {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { out_message.write(BunString::clone_utf8(message.as_bytes())) };
+        out_message.write(BunString::clone_utf8(message.as_bytes()));
     }
     result.status
 }

@@ -299,7 +299,7 @@ for (const [label, make] of Object.entries(makers)) {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=undefined|number flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=undefined|number flags=[IsExpected] variableName="c"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: undefined|number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -307,7 +307,7 @@ for (const [label, make] of Object.entries(makers)) {
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=number flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=number flags=[IsExpected] variableName="c"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -325,7 +325,7 @@ for (const [label, make] of Object.entries(makers)) {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=undefined|number flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=undefined|number flags=[IsExpected] variableName="c"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: undefined|number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -333,7 +333,7 @@ for (const [label, make] of Object.entries(makers)) {
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=number flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=number flags=[IsExpected] variableName="c"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

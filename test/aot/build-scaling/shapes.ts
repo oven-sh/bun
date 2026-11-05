@@ -22,6 +22,8 @@ export type Shape = {
   flags?: string[];
   /** Not an entry point of the build of all shapes. */
   isExcludedFromCombinedBuild?: true;
+  /** `entry` is a test file: `bun test --aot` builds it and runs it, so what a test run does in front of its build is counted too. Not an entry point of the build of all shapes. */
+  isTestRun?: true;
   /** Statistics of the build's report that count steps of work. Their growth is held as that of the instructions is, also where instructions cannot be counted. */
   counts?: string[];
   write(size: number): Record<string, string>;
@@ -38,6 +40,9 @@ function modulesInARow(size: number, first: string, next: (index: number) => str
   files[mainName] = main(size);
   return files;
 }
+
+const aFloat64Array = (size: number) =>
+  `const list = new Float64Array(${size + 1});\nfor (let i = 0; i < list.length; i++) list[i] = i % 3 ? i % 5 : i % 5 + 0.5;\n`;
 
 const commonJSModulesInARow = (size: number) =>
   modulesInARow(
@@ -79,6 +84,43 @@ function functionsOfTheHost(count: number) {
       if (typeof property.value === "function") named.push(`${holder}.${name}`);
     }
   }
+  return upTo(count, index => named[index % named.length]);
+}
+
+function functionsOfTheLanguage(count: number) {
+  const holders: [string, object][] = [
+    ["Math", Math],
+    ["Object", Object],
+    ["Reflect", Reflect],
+    ["Array.prototype", Array.prototype],
+    ["String.prototype", String.prototype],
+    ["Date.prototype", Date.prototype],
+    ["Map.prototype", Map.prototype],
+    ["Set.prototype", Set.prototype],
+    ["RegExp.prototype", RegExp.prototype],
+    ["Promise.prototype", Promise.prototype],
+    ["Number.prototype", Number.prototype],
+    ["Object.prototype", Object.prototype],
+    ["Function.prototype", Function.prototype],
+    ["DataView.prototype", DataView.prototype],
+    ["ArrayBuffer.prototype", ArrayBuffer.prototype],
+    ["WeakMap.prototype", WeakMap.prototype],
+    ["WeakSet.prototype", WeakSet.prototype],
+    ["Atomics", Atomics],
+    ["JSON", JSON],
+    ["Array", Array],
+    ["Number", Number],
+    ["String", String],
+    ["Promise", Promise],
+  ];
+  const named: string[] = [];
+  for (const [holder, object] of holders) {
+    for (const name of Object.getOwnPropertyNames(object).sort()) {
+      if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name) || name === "constructor") continue;
+      if (typeof Object.getOwnPropertyDescriptor(object, name)!.value === "function") named.push(`${holder}.${name}`);
+    }
+  }
+  if (named.length <= 256) throw new Error(`only ${named.length} functions of the language: a type once listed 256 built-in objects, and the shape is to pass that`);
   return upTo(count, index => named[index % named.length]);
 }
 
@@ -148,6 +190,26 @@ export const packagesWithOwnCompilerOptions: Shape = {
   }),
 };
 
+function recordTypesParsedFromTexts(size: number) {
+  const recordsInModule = 100;
+  const modules = Math.ceil(size / recordsInModule);
+  const files: Record<string, string> = { "tsconfig.json": withoutLibraryTypes };
+  for (let module = 0; module < modules; module++) {
+    const indexes = upTo(Math.min(recordsInModule, size - module * recordsInModule), index => module * recordsInModule + index);
+    files[`part${module}.ts`] =
+      indexes.map(index => `interface Taken${index} { field${index}: number; name: string }\nfunction take${index}(taken: Taken${index}): number { return taken.field${index} + taken.name.length; }\n`).join("") +
+      `export function run${module}(texts: string[]): number {\n  let sum = 0;\n` +
+      indexes.map(index => `  sum += take${index}({ field${index}: ${index}, name: "n" }) + take${index}(JSON.parse(texts[${index}]) as Taken${index});\n`).join("") +
+      `  return sum;\n}\n`;
+  }
+  files["main.ts"] =
+    declaredConsole +
+    lines(modules, module => `import { run${module} } from "./part${module}.ts";`) +
+    `const texts: string[] = [];\nfor (let index = 0; index < ${size}; index++) texts.push('{"field' + index + '":1,"name":"x"}');\n` +
+    `console.log(${upTo(modules, module => `run${module}(texts)`).join(" + ") || 0});\n`;
+  return files;
+}
+
 export const shapes: Shape[] = [
   {
     name: "ES modules that import one another in a row",
@@ -184,6 +246,125 @@ export const shapes: Shape[] = [
         ]),
       ),
       "main.ts": `${declaredConsole}${size ? `import { run${size - 1} } from "./m${size - 1}.ts";\nconsole.log(run${size - 1}({ id: 1, name: "n", tags: [] }, { kind: "a", value: 2 }));\n` : "console.log(0);\n"}`,
+    }),
+  },
+  // A tsconfig.json that names no files lists all that lies below it: tests, scripts, other programs. The build looks at each for what it declares for
+  // every file and lets it go. Held all at once, the texts of a large repository were gigabytes for a program of one line.
+  {
+    name: "files of the project that nothing imports",
+    counted: "files",
+    size: 2000,
+    entry: "app/main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "app/main.ts": `${declaredConsole}console.log(1 + 1);\n`,
+      ...Object.fromEntries(
+        upTo(size, index => [
+          `other/f${index}.ts`,
+          `export const v${index}: number = ${index};\n` +
+            lines(200, line => `export function f${index}_${line}(x: number, y: string): number { return x + y.length + v${index} + ${line}; }`),
+        ]),
+      ),
+    }),
+  },
+  // `new Worker(holder.path)` is followed to what is stored under `path`, whichever object has it. Each store that holds a read of `path` led to one more
+  // walk over all the stores: the load of a large application's tests took minutes on one thread.
+  {
+    name: "stores under the name that the file of a Worker is read from",
+    counted: "stores",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        lines(size, index => `function f${index}(given) { return { path: given.path }; }`) +
+        `function spawn(holder) { return new Worker(holder.path); }\n` +
+        `const given = { path: new URL("./w.js", import.meta.url).href };\n` +
+        `console.log(typeof spawn, [${upTo(size, index => `f${index}`).join(", ")}].filter(f => f(given).path === given.path).length);\n`,
+    }),
+  },
+  // `function spawn(file) { return new Worker(file); }` is followed to what each caller passes, and from a caller's parameter to what its callers pass.
+  // Each parameter on the way cost a walk over every expression of the file.
+  {
+    name: "functions that hand on the file of a Worker",
+    counted: "functions",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        `function spawn(file) { return new Worker(file); }\n` +
+        lines(size, index => `function f${index}(file) { return spawn(file); }`) +
+        `const file = new URL("./w.js", import.meta.url).href;\n` +
+        `if (process.argv.length > 9) {\n${lines(size, index => `  f${index}(file);`)}}\n` +
+        `console.log(typeof spawn);\n`,
+    }),
+  },
+  // The same functions, each also held in a list: who calls such a function is sought by every way that leads to it, beginning at the mentions of its name.
+  // Finding those cost a walk over every expression of the file for each function.
+  {
+    name: "functions in a list that hand on the file of a Worker",
+    counted: "functions",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        `function spawn(file) { return new Worker(file); }\n` +
+        lines(size, index => `function f${index}(file) { return spawn(file); }`) +
+        `const file = new URL("./w.js", import.meta.url).href;\n` +
+        `const all = [${upTo(size, index => `f${index}`).join(", ")}];\n` +
+        `if (process.argv.length > 9) {\n${lines(size, index => `  f${index}(file);`)}}\n` +
+        `console.log(typeof spawn, all.length);\n`,
+    }),
+  },
+  // A package reads the file of its Worker out of an options object. Other packages, which never get to that one, store under the same name, and what they
+  // store is read from more such names. Each start led through every such store of the program: starts x stores.
+  {
+    name: "files that store under the names that the files of Workers are read from",
+    counted: "files",
+    size: 1200,
+    entry: "main.js",
+    write: size => {
+      const files: Record<string, string> = { "w.js": `postMessage("up");\n` };
+      const named = upTo(size, index => (index % 4 === 0 ? `start${index}` : `make${index}`));
+      for (let index = 0; index < size; index++) {
+        files[`p/p${index}.js`] =
+          index % 4 === 0
+            ? `export const start${index} = options => new Worker(options.filename);\n`
+            : `export const make${index} = given => [\n${lines(10, () => `  { filename: given.name, name: given.description, description: given.args, args: given.options, options: given.filename },`)}];\n`;
+      }
+      files["main.js"] =
+        lines(size, index => `import { ${named[index]} } from "./p/p${index}.js";`) +
+        `const all = [${named.join(", ")}];\n` +
+        `if (process.argv.length > 9) all[0]({ filename: new URL("./w.js", import.meta.url).href });\n` +
+        `console.log(all.length);\n`;
+      return files;
+    },
+  },
+  // A test run reads every file in front of its build, to find what the tests replace. `p.mark = 1` asks there what `p` is: some built-in object, perhaps. The way back runs through what a constant
+  // is made of and what the callers pass for a parameter, and through `a.b`, `||` and `&&` there. Each write walked that way anew, through every name in front of it: writes x names.
+  // It took two minutes over six large package files.
+  {
+    name: "writes to members of names that are made of the names before them, in a package of a test run",
+    counted: "names",
+    size: 3000,
+    entry: "a.test.js",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "node_modules/big/package.json": `{ "name": "big", "version": "1.0.0", "type": "module", "main": "index.js" }\n`,
+      "node_modules/big/index.js":
+        `const a0 = { next: null, mark: -1 };\n` +
+        lines(
+          size,
+          index =>
+            `const a${index + 1} = a${index}.next || a${index};\na${index + 1}.mark = ${index};\n` +
+            `function g${index}(p) { p.mark = ${index}; }\ng${index}((a${index + 1} && a${index + 1}.next) || a${index + 1});`,
+        ) +
+        `export const last = a${size}.mark;\n`,
+      "a.test.js": `import { expect, test } from "bun:test";\nimport { last } from "big";\ntest("it loads", () => { expect(last).toBe(${size - 1}); });\n`,
     }),
   },
   {
@@ -315,6 +496,18 @@ export const shapes: Shape[] = [
       "main.ts": `${declaredConsole}async function large(o: any, r: any[]) {\n${lines(size, index => `  r.push(await o.p(${index}));`)}}\n${operand}const out: any[] = [];\nlarge(o, out).then(() => console.log(out.length));\n`,
     }),
   },
+  // Each suspension listed every value that lives across it, and every pass walked those lists.
+  {
+    name: "awaits in a row, each of a function that is declared before the first",
+    counted: "awaits",
+    size: 1000,
+    entry: "main.mjs",
+    write: size => ({
+      "main.mjs":
+        lines(size, index => `async function a${index}(x) { return x + ${index}; }`) +
+        `let sum = 0;\n${lines(size, index => `sum += await a${index}(sum & 7);`)}console.log(sum);\n`,
+    }),
+  },
   // A join "paid" while any join that takes its object was still a candidate, so a row of merge blocks was given up from its far end, one parameter for each analysis of the whole function.
   {
     name: "a row of branches that hand one new object on",
@@ -347,20 +540,42 @@ export const shapes: Shape[] = [
       "main.js": `function each(list, callback) { let sum = 0; for (let i = 0; i < list.length; i++) sum += callback(list[i], i); return sum; }\nconst list = [1, 2, 3];\nlet sum = 0;\n${lines(size, index => `sum += each(list, (x, i) => x * ${index} + i);`)}console.log(sum);\n`,
     }),
   },
+  ...(
+    [
+      ["functions that call one another at random", 600, undefined],
+      // What takes a step for each function on the way each time the way leads back to one of them shows from here on.
+      ["very many functions that call one another at random", 4800, true],
+    ] as const
+  ).map(
+    ([name, smallerSize, isExcludedFromCombinedBuild]): Shape => ({
+      name,
+      counted: "functions",
+      size: smallerSize,
+      entry: "main.js",
+      isExcludedFromCombinedBuild,
+      write: size => {
+        let seed = 7;
+        const next = () => (seed = (seed * 48_271) % 2_147_483_647) % Math.max(size, 1);
+        return {
+          "main.js":
+            lines(size, index => `function f${index}(node, depth) {\n${[0, 1, 2].map(tag => `  if (node.tag === ${tag}) return f${next()}(node.next, depth + ${tag});`).join("\n")}\n  return node.value;\n}`) +
+            `console.log(${size ? "f0({ tag: 9, value: 1, next: null }, 0)" : "1"});\n`,
+        };
+      },
+    }),
+  ),
   {
-    name: "functions that call one another at random",
+    // Whoever follows the calls from one function to the next by recursion runs out of stack on the way round.
+    name: "functions that each call the next, and the last the first",
     counted: "functions",
-    size: 600,
+    size: 9600,
     entry: "main.js",
-    write: size => {
-      let seed = 7;
-      const next = () => (seed = (seed * 48_271) % 2_147_483_647) % Math.max(size, 1);
-      return {
-        "main.js":
-          lines(size, index => `function f${index}(node, depth) {\n${[0, 1, 2].map(tag => `  if (node.tag === ${tag}) return f${next()}(node.next, depth + ${tag});`).join("\n")}\n  return node.value;\n}`) +
-          `console.log(${size ? "f0({ tag: 9, value: 1, next: null }, 0)" : "1"});\n`,
-      };
-    },
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(size, index => `function f${index}(node, depth) {\n  if (node.tag === 0) return f${(index + 1) % size}(node.next, depth + 1);\n  return node.value;\n}`) +
+        `console.log(${size ? "f0({ tag: 9, value: 1, next: null }, 0)" : "1"});\n`,
+    }),
   },
   {
     name: "a union of object types that is told apart by a tag",
@@ -383,6 +598,23 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `const table = {\n${lines(size, index => `  name${index}: ${index},`)}};\nlet sum = 0;\n${lines(size, index => `sum += table.name${index};`)}console.log(sum);\n`,
+    }),
+  },
+  // What lies under a name also lies under every name that it is stored again under. Lists of the functions under each name would hold 1, 2, 3 .. of them.
+  {
+    name: "names that are each stored again under the next",
+    counted: "names",
+    size: 3000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(
+          size,
+          index =>
+            `function step${index}() {\n  const made = {};\n  made.name${index} = function (x) { return x + ${index}; };\n  const handedOn = {};\n  handedOn.name${index + 1} = made.name${index};\n  return handedOn;\n}`,
+        ) +
+        `let last = { name0: x => x };\nfor (const step of [${upTo(size, index => `step${index}`).join(", ")}]) last = step();\nconsole.log(last.name${size}(1));\n`,
     }),
   },
   {
@@ -413,6 +645,40 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `function run(list) {\n  let sum = 0;\n${lines(size, index => `  for (let i = 0; i < list.length; i++) sum = (sum + list[i] * ${index}) | 0;`)}  return sum;\n}\nconsole.log(run([1, 2, 3]));\n`,
+    }),
+  },
+  // Whether an access is split by the parts of its receiver's type goes by what all the accesses of that receiver would gain. That was counted anew at each of them, and each count
+  // looked the name up among the fields: 3,200 names read off one object took the pass 9.2 s where 1,600 took 1.8.
+  {
+    name: "names that one loop reads off one object of two layouts",
+    counted: "names",
+    size: 800,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `let notes = 0;\nfunction note(v) { notes += v; }\nfunction run(o, n) {\n  let s = 0;\n  for (let i = 0; i < n; i++) {\n${lines(size, index => `    s = (s + o.table${index}[i & 3]) | 0;\n    if (s === ${-7 - 0} - ${index}) note(s);`)}  }\n  return s;\n}\nconst fields = () => ({ ${upTo(size, index => `table${index}: [1, 2, 3, ${index}]`).join(", ")} });\nconst holders = [fields(), Object.assign(Object.create(null), fields(), { more: 1 })];\nlet t = 0;\nfor (let r = 0; r < 40; r++) t += run(holders[r & 1], 50);\nconsole.log(t, notes);\n`,
+    }),
+  },
+  // A hot loop gets a copy for its unlikely paths, which is entered wherever one of them leaves. What the loop has made by then joins what the copy makes there. With n sums, each with a
+  // path that leaves, that is n x n parameters. Behind a limit on the size of the loop nobody saw it; without the limit 1,280 sums took 28 s where 640 took 6.
+  {
+    name: "sums that one hot loop carries",
+    counted: "sums",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function run(a, n) {\n${lines(size, index => `  let s${index} = 0;`)}  for (let i = 0; i < n; i++) {\n${lines(size, index => `    s${index} += (i ^ ${index}) + a[(i + ${index}) & 7];`)}  }\n  return 0${upTo(size, index => ` + s${index}`).join("")};\n}\nconst a = [1, 2, 3, 4, 5, 6, 7, 8];\nlet t = 0;\nfor (let r = 0; r < 50; r++) t += run(a, 200);\nconsole.log(t);\n`,
+    }),
+  },
+  // Each read and each `%` has a call on a rare path, and every value lives across thousands of them. A live range is split around the calls that it crosses, with a value of its own for
+  // each call. On rare paths that costs next to nothing by the frequencies, so the register allocator walked all the calls for each value and register, and made 2,000,000 values for 8,000.
+  // 34,000 values took 354 s and 3.6 GB where 27 s and 1.1 GB do, and on arm64 the list of values passed 4 GB.
+  {
+    name: "values that live across calls on rare paths",
+    counted: "values",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const a = new Float64Array(${size + 1}), b = new Int32Array(${size + 1});\nfor (let i = 0; i < ${size}; i++) { a[i] = i + 0.5; b[i] = i * 3; }\nfunction mix(s, v) { return (s * 33 + v) % 1000000007; }\nfunction run(a, b) {\n  let s = 1;\n${lines(size, index => `  const v${index} = ${index & 1 ? "a" : "b"}[${index}];`)}${lines(size, index => `  s = mix(s, v${index} * 2);`)}  return s;\n}\nconsole.log(run(a, b));\n`,
     }),
   },
   // A read of a variable passes every earlier compound assignment to it, and at each of them the checker walked to the start of the function to see whether the place can be reached.
@@ -488,6 +754,82 @@ export const shapes: Shape[] = [
         `class C0 {\n  m0() {\n    return 0;\n  }\n}\n` +
         lines(size, index => `class C${index + 1} extends C${index} {\n  m${index + 1}() {\n    return ${index + 1};\n  }\n}`) +
         `console.log(new C${size}().m0());\n`,
+    }),
+  },
+  // What a function returns is proven once that is proven of the function whose result it returns: a turn a function, and no turn may look at all of them.
+  {
+    name: "functions that each return what the next returns, and one more",
+    counted: "functions",
+    size: 2000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        lines(size, index => `function f${index}(x) { return f${index + 1}(x) + 1; }`) +
+        `function f${size}(x) { return x | 0; }\nconsole.log(f0(1));\n`,
+    }),
+  },
+  {
+    name: "classes with a field and a method each that extend one another in a row",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class C0 { f0 = 0; m() { return 0; } }\n` +
+        lines(size, index => `class C${index + 1} extends C${index} { f${index + 1} = ${index + 1}; m() { return super.m() + 1; } }`) +
+        `console.log(new C${size}().m());\n`,
+    }),
+  },
+  {
+    name: "methods of one name that each call the method above, up a row of classes",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class C0 { m() { return 0; } }\n` +
+        lines(size, index => `class C${index + 1} extends C${index} { m() { return super.m() + 1; } }`) +
+        `console.log(new C${size}().m());\n`,
+    }),
+  },
+  // What lies above a class is found link by link, and each link that is found is one more object above every class further down.
+  // A store to `this` may run into an accessor of any class above. Each class of a row asked its whole row, so 4,000 classes cost a third more than they do.
+  {
+    name: "classes that each store to this and extend one another in a row",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js": `class C0 { constructor() { this.f0 = 0; } }\n${lines(Math.max(size - 1, 0), index => `class C${index + 1} extends C${index} { constructor() { super(); this.f${(index + 1) % 50} = ${index + 1}; } }`)}console.log(Object.keys(new C${Math.max(size - 1, 0)}()).length);\n`,
+    }),
+  },
+  // The same below a class with an accessor: whether a store runs into it was asked by a walk up the whole row from every class.
+  {
+    name: "classes that each store to this, in a row below a class with an accessor",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js": `class C0 { set size(v) { this.kept = v; } get size() { return this.kept; } constructor() { this.f0 = 0; } }\n${lines(Math.max(size - 1, 0), index => `class C${index + 1} extends C${index} { constructor() { super(); this.f${(index + 1) % 50} = ${index + 1}; } }`)}const o = new C${Math.max(size - 1, 0)}();\nconsole.log(Object.keys(o).length, o.size, o.kept);\n`,
+    }),
+  },
+  {
+    name: "classes without members that extend one another in a row",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js": `class C0 {}\n` + lines(size, index => `class C${index + 1} extends C${index} {}`) + `console.log(new C${size}() instanceof C0);\n`,
     }),
   },
   // What the objects of a class hold is listed class by class up the row: a field counts where no class further down has one of its name.
@@ -960,6 +1302,514 @@ export const shapes: Shape[] = [
         `let sum = 0;\nlet current = null;\n` +
         lines(size, index => `class Kind${index} { weigh() { return ${index}; } }\nif ((sum & ${index}) == 0) current = new Kind${index}();\nsum += current.weigh();`) +
         `console.log(sum);\n`,
+    }),
+  },
+  {
+    name: "statements that store a text under one name of one object",
+    counted: "statements",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const held = {};\nlet last = "";\nheld.value = "";\n${lines(size, index => `held.value = last = "text${index}";`)}console.log(held.value.length, last.length);\n`,
+    }),
+  },
+  {
+    name: "statements that store a text under one name of exports",
+    counted: "statements",
+    size: 5000,
+    entry: "main.cjs",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.cjs": `let last = "";\nexports.value = "";\n${lines(size, index => `exports.value = last = "text${index}";`)}console.log(exports.value.length, last.length);\n`,
+    }),
+  },
+  {
+    name: "statements of a method that store a text under one name of this",
+    counted: "statements",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `class Held {\n  fill() {\n    let last = "";\n    this.value = "";\n${lines(size, index => `    this.value = last = "text${index}";`)}    return last;\n  }\n}\nconst held = new Held();\nconsole.log(held.fill().length, held.value.length);\n`,
+    }),
+  },
+  {
+    name: "statements that store a text under one name of a function, in a typed file",
+    counted: "statements",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function held() {}\nlet last = "";\nheld.value = "";\n${lines(size, index => `held.value = last = "text${index}";`)}console.log(held.value.length, last.length);\n`,
+    }),
+  },
+  {
+    name: "template literals that each name the constant before",
+    counted: "constants",
+    size: 4000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const name0 = "node:path";\n${lines(size, index => `const name${index + 1} = \`\${name${index}}\`;`)}console.log(require(name${size}).sep);\n`,
+    }),
+  },
+  {
+    name: "cases of one switch that each return another number",
+    counted: "cases",
+    size: 4000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function kind(x: number) {\n  switch (x) {\n${lines(size, index => `    case ${index}:\n      return ${3 * index + 1};`)}    default:\n      return -5;\n  }\n}\nlet sum = 0;\nfor (let i = -2; i < ${size} + 2; i++) sum += kind(i);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "objects with a method each that one object literal holds under names of their own",
+    counted: "objects",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const table = {\n${lines(size, index => `  key${index}: { id: ${index}, name: "text${index}", run(a) { return a + ${index}; } },`)}};\nconsole.log(Object.keys(table).length);\n`,
+    }),
+  },
+  {
+    name: "texts of one union type, each a case of one switch",
+    counted: "texts",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}type Kind = ${upTo(Math.max(size, 1), index => `"text${index}"`).join(" | ")};\nconst all: Kind[] = [${upTo(size, index => `"text${index}"`).join(", ")}];\n` +
+        `function weigh(kind: Kind): number {\n  switch (kind) {\n${lines(size, index => `    case "text${index}":\n      return ${index};`)}  }\n  return -1;\n}\nlet sum = 0;\nfor (const kind of all) sum += weigh(kind);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "members of one enum, each a case of one switch",
+    counted: "members",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}enum Kind {\n${lines(size, index => `  M${index} = ${index},`)}  Last,\n}\n` +
+        `function name(kind: Kind): string {\n  switch (kind) {\n${lines(size, index => `    case Kind.M${index}:\n      return "text${index}";`)}  }\n  return "";\n}\nconsole.log(name(Kind.Last).length);\n`,
+    }),
+  },
+  {
+    name: "list literals that each hold what was read from the one before, in front of one branch",
+    counted: "literals",
+    size: 4000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const v0 = 1;\n${lines(size, index => `const v${index + 1} = [v${index}][0];`)}if (v${size}) console.log(1);\nelse console.log(2);\n`,
+    }),
+  },
+  {
+    name: "objects with a method each in the array literal that a function makes",
+    counted: "objects",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function make(x) {\n  return [\n${lines(size, index => `    { id: x, run() { return ${index}; } },`)}  ];\n}\nconsole.log(make(1).length);\n`,
+    }),
+  },
+  {
+    name: "names of one object literal that a function fills with its argument",
+    counted: "names",
+    size: 10000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function make(x) {\n  return {\n${lines(size, index => `    key${index}: x,`)}  };\n}\nconsole.log(Object.keys(make(1)).length);\n`,
+    }),
+  },
+  {
+    name: "lines that each add a number and a text to one text, all of them known",
+    counted: "lines",
+    size: 10000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length);\n`,
+    }),
+  },
+  {
+    name: "lines that each add a number and a text to one text, all of them known, and hand it to a function",
+    counted: "lines",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}let seen = 0;\nfunction use(text: string) {\n  seen += text.length;\n}\nfunction atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n  use(s);\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length, seen);\n`,
+    }),
+  },
+  {
+    name: "names stored on one object that are each read and stored again on another",
+    counted: "names",
+    size: 6000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `const made = {};\nconst copied = {};\n` +
+        lines(size, index => `made.name${index} = function (x) { return x + ${index}; };\ncopied.name${index + 1} = made.name${index};`) +
+        `console.log(${size ? `copied.name${size}(1)` : 0});\n`,
+    }),
+  },
+  // Code from disk may write half of the objects, so little is known about what a read finds, and the one large block is full of tests and of writers that end them.
+  {
+    name: "objects made at top level, half of them handed to code from disk, and read by names of their own",
+    counted: "objects",
+    size: 3000,
+    entry: "main.cjs",
+    // Without Bun's own modules, which such a program would hold all of: they are most of the build and none of the question.
+    flags: ["--aot-allow-code-from-disk", "--no-builtin-modules"],
+    write: size => ({
+      "main.cjs":
+        `const kept = [], handedOut = [];\nlet sum = 0;\nfunction use(value) { sum += typeof value === "number" ? value : 0; }\n` +
+        lines(size, index => `const object${index} = { own${index}: ${index} }; ${index & 1 ? "kept" : "handedOut"}.push(object${index});`) +
+        `globalThis.handedOut = handedOut;\ntry { require(process.argv[2]); } catch {}\n` +
+        `function pick(which) { return which & 1 ? kept[(which >> 1) % kept.length] : handedOut[(which >> 1) % handedOut.length]; }\n` +
+        lines(Math.ceil(size / 10), index => `use(pick(${index * 10 + 1}).own${index * 10 + 1});`) +
+        `console.log(sum);\n`,
+    }),
+  },
+  // An array that grows by push has the union of what was pushed for its element type, and each push reduces that union anew: the new member is held against all the others.
+  {
+    name: "classes with the same fields, an object of each pushed into one array",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        lines(size, index => `class C${index} {\n  constructor() {\n${lines(8, field => `    this.field${field} = ${index} + ${field};`)}  }\n}`) +
+        `const all = [];\n` +
+        lines(size, index => `all.push(new C${index}());`) +
+        `let sum = 0;\nfor (const one of all) sum += one.field0 + one.field7;\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "entry points that a pattern finds",
+    counted: "entry points",
+    size: 1000,
+    entry: "main.ts",
+    flags: ["./pages/*.ts"],
+    write: size => ({
+      "main.ts": `console.log("main");\n`,
+      "pages/first.ts": `console.log("first");\n`,
+      ...Object.fromEntries(upTo(size, index => [`pages/page${index}.ts`, `console.log(${index});\n`])),
+    }),
+  },
+  {
+    // What a parameter without a type is used as is what the next function uses it as, and so on down the chain: a tree as high as the chain is long, up to the
+    // limit on such a tree. Two of them are merged in every function.
+    name: "untyped functions in a row that each hand their parameters and a member of one to the next",
+    counted: "functions",
+    size: 1500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `${lines(size, index => `function f${index}(p, q) { p.mark = 0; return f${index + 1}(p.next || q, q && p); }`)}function f${size}(p, q) { return p; }\nconsole.log(typeof f0({ next: null }, { next: null }));\n`,
+    }),
+  },
+  {
+    name: "a chain of conditional types",
+    counted: "conditional types",
+    size: 10000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}type Chain<X> = ${upTo(size, index => `X extends ${index} ? ${index} : `).join("")}never;\nconst one: Chain<1> | 0 = 0;\nconsole.log(one);\n`,
+    }),
+  },
+  {
+    name: "operands of one && that are parameters, numbers and conversions to int32",
+    counted: "operands",
+    size: 4000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => {
+      // In no regular order, and with a conversion first: each parameter is then tested again and again.
+      let seed = 1;
+      const draw = (below: number) => (seed = (seed * 48271) % 2147483647) % below;
+      const operands = upTo(size, index => (draw(4) ? ["a", "b", "c", "(a | 0)", "(b >>> 0)"][draw(5)] : `${index}${draw(2) ? ".5" : ""}`));
+      return { "main.js": `function all(a, b, c) {\n  return ${operands.join(" && ") || "a"};\n}\nconsole.log(all(1, 2, 3), all(2147483647, -2147483648, 1), all(0.5, -0, null), all(-0, -0, -0));\n` };
+    },
+  },
+  {
+    name: "parts that two loops join to the key of a table",
+    counted: "parts",
+    size: 4000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => {
+      const key = ['""', ...upTo(size, index => (index % 7 === 6 ? `"p${index}"` : ["i", "`${b}`", '":"', "a.slice(1)", "b", '"-"', "a", "(i % 3)"][index % 8]))].join(" + ");
+      return {
+        "tsconfig.json": withoutLibraryTypes,
+        "main.ts": `${declaredConsole}function look(a: any, b: any) {\n  const table: any = {};\n  for (let i = 0; i < 40; i++) table[${key}] = i;\n  let found = 0;\n  for (let i = 0; i < 40; i++) found += table[${key}] ?? -100;\n  return found;\n}\nconsole.log(look("xy", "z"), look("", ""));\n`,
+      };
+    },
+  },
+  {
+    name: "loops nested in one another",
+    counted: "loops",
+    size: 200,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function run() {\n  let sum = 0;\n` +
+        lines(size, index => `for (let i${index} = 0; i${index} < 1; i${index}++) {`) +
+        `sum++;\n${"}\n".repeat(size)}  return sum;\n}\nconsole.log(run());\n`,
+    }),
+  },
+  {
+    name: "loops that test at their end, nested in one another",
+    counted: "loops",
+    size: 200,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function run() {\n  let sum = 0;\n` +
+        lines(size, index => `let i${index} = 0; do {`) +
+        `sum++;\n` +
+        lines(size, index => `} while (++i${size - 1 - index} < 1);`) +
+        `  return sum;\n}\nconsole.log(run());\n`,
+    }),
+  },
+  {
+    name: "try statements with a finally block, nested in one another",
+    counted: "try statements",
+    size: 150,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function run(): number {\n  let sum = 0;\n${"try {\n".repeat(size)}sum++;\n${"} finally { sum++; }\n".repeat(size)}  return sum;\n}\nconsole.log(run());\nexport {};\n`,
+    }),
+  },
+  {
+    name: "fields of one class that methods read and store, in a build without the results of the analysis",
+    counted: "fields",
+    size: 500,
+    entry: "main.ts",
+    // Without Bun's own modules, which such a build holds all of.
+    flags: [buildFlags.withoutFlowResults, buildFlags.withoutBuiltinModules],
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}function add(list: number[]): number {\n  let sum = 0;\n  for (const n of list) sum += n;\n  return sum;\n}\nclass Large {\n` +
+        lines(size, index => `  n${index}: number;`) +
+        `  o: { x: number } = { x: 1 };\n  constructor() {\n` +
+        lines(size, index => `    this.n${index} = ${index} + 0.5;`) +
+        `  }\n  sum(): number {\n    return add([\n` +
+        lines(size, index => `      this.n${index},`) +
+        `      this.o.x,\n    ]);\n  }\n  bump(): void {\n` +
+        lines(size, index => `    this.n${index} += 1;`) +
+        `  }\n}\nconst large = new Large();\nlarge.bump();\nconsole.log(large.sum());\nexport {};\n`,
+    }),
+  },
+  {
+    name: "objects that a generator is sent, in one array literal",
+    counted: "yields",
+    size: 1000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function* all() {\n  return [${upTo(size, index => `yield ${index}`).join(", ")}];\n}\n` +
+        `let count = 0;\nconst steps = all();\nlet step;\nwhile (!(step = steps.next({ count })).done) count++;\nconsole.log(count, step.value.length);\n`,
+    }),
+  },
+  {
+    name: "awaited calls in one array literal",
+    counted: "awaits",
+    size: 1000,
+    entry: "main.mjs",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.mjs":
+        `function make(x) {\n  return globalThis.asText ? String(x) : { x };\n}\n` +
+        `async function all() {\n  return [${upTo(size, index => `await make(${index})`).join(", ")}];\n}\nconsole.log((await all()).length);\n`,
+    }),
+  },
+  // The variable of the loop holds one more of the objects each time the analysis goes round, and what is read off it is asked for anew.
+  {
+    name: "objects that each hold the one before, walked by a loop",
+    counted: "objects",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `let head = null;\n${lines(size, index => `head = { next: head, v${index % 7}: ${index} };`)}let count = 0;\nfor (let at = head; at; at = at.next) count++;\nconsole.log(count);\n`,
+    }),
+  },
+  {
+    name: "objects that each hold the one before, walked by a loop that stores into them",
+    counted: "objects",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `let head = null;\n${lines(size, index => `head = { next: head, v${index % 7}: ${index} };`)}let count = 0;\nfor (let at = head; at; at = at.next) at.place = count++;\nconsole.log(count, head?.place);\n`,
+    }),
+  },
+  {
+    name: "object literals nested in one another, walked by a loop",
+    counted: "levels",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const outmost = ${"{ inner: ".repeat(size)}1${" }".repeat(size)};\nlet depth = 0;\nfor (let at = outmost; typeof at === "object"; at = at.inner) depth++;\nconsole.log(depth);\n`,
+    }),
+  },
+  {
+    name: "object literals nested in one another, each beside smaller literals",
+    counted: "levels",
+    size: 800,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const unit = { width: 1 };\nconst outmost = ${"{ small: { x: unit.width }, list: [unit.width, { y: 2 }], inner: ".repeat(size)}1${" }".repeat(size)};\nlet depth = 0;\nfor (let at = outmost; typeof at === "object"; at = at.inner) depth++;\nconsole.log(depth);\n`,
+    }),
+  },
+  {
+    name: "object literals nested in one another, handed to a generic function",
+    counted: "levels",
+    size: 800,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.ts": `function same<T>(value: T): T {\n  return value;\n}\nconst outmost = same(${"{ inner: ".repeat(size)}1${" }".repeat(size)});\nconsole.log(typeof outmost);\n`,
+    }),
+  },
+  // Data nests 2,000 levels deep at the most: code builds the levels around that.
+  {
+    name: "object literals nested in one another, more deeply than data may be",
+    counted: "levels",
+    size: 1600,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const outmost = ${"{ inner: ".repeat(size)}1${" }".repeat(size)};\nconsole.log(typeof outmost.inner);\n`,
+    }),
+  },
+  {
+    name: "literals that each spread the one before",
+    counted: "literals",
+    size: 500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const o0 = { a: 0 };\n${lines(size, index => `const o${index + 1} = { ...o${index}, a: ${index} };`)}console.log(o${size}.a);\n`,
+    }),
+  },
+  {
+    name: "record types that typed functions take, each parsed from a text",
+    counted: "record types, and as many calls of JSON.parse",
+    size: 300,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    counts: ["FlowReaders"],
+    write: recordTypesParsedFromTexts,
+  },
+  {
+    name: "branches in a row that each assign another function to one variable",
+    counted: "branches",
+    size: 3000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(size + 1, index => `function f${index}() { return ${index}; }`) +
+        `function pick(n) {\n  let picked = f0;\n${lines(size, index => `  if (n > ${index + 1}) picked = f${index + 1};`)}  return picked;\n}\nconsole.log(pick(process.argv.length)());\n`,
+    }),
+  },
+  {
+    name: "cases of one switch that each assign another text to one variable",
+    counted: "cases",
+    size: 3000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function pick(n) {\n  let picked = "t";\n  switch (n) {\n${lines(size, index => `    case ${index}: picked = "t${index}"; break;`)}  }\n  return picked;\n}\nconsole.log(pick(process.argv.length));\n`,
+    }),
+  },
+  {
+    name: "branches in a row that each assign another function of the language to one variable",
+    counted: "branches",
+    size: 3000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => {
+      const named = functionsOfTheLanguage(size + 1);
+      return {
+        "main.js": `function pick(n) {\n  let picked = ${named[0]};\n${lines(size, index => `  if (n > ${index + 1}) picked = ${named[index + 1]};`)}  return picked;\n}\nconsole.log(typeof pick(process.argv.length));\n`,
+      };
+    },
+  },
+  {
+    name: "lines that each add an element to one sum and truncate it, in a loop that carries the sum as an integer",
+    counted: "lines",
+    size: 1000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function run(list, turns) {\n  let bits = 0, sum = 0;\n  for (let turn = 0; turn < turns; turn++) {\n` +
+        lines(size, index => `    sum += list[${index}]; bits ^= sum & 7;`) +
+        `    sum = sum | 0;\n  }\n  return bits + sum;\n}\n${aFloat64Array(size)}console.log(run(list, 3));\n`,
+    }),
+  },
+  {
+    name: "calls that each parse a text by one record type of 250 parts, each part in a list",
+    counted: "calls",
+    size: 100,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        lines(250, index => `interface Part${index} { a${index}: number }`) +
+        `interface Whole { id: number;\n${lines(250, index => `  part${index}: Part${index}[];`)}}\n` +
+        `function use(whole: Whole): number { return whole.id; }\nconst texts: string[] = ['{"id":1}'];\nlet sum = 0;\n` +
+        lines(size, () => "sum += use(JSON.parse(texts[0]));") +
+        "console.log(sum);\n",
+    }),
+  },
+  {
+    // A step of the register allocator that was asked for one value at a time and walked and sorted the blocks each time: 16 s became 207 s at 20,000 sums, on x64 alone,
+    // where no register that holds a fraction outlives a call.
+    name: "sums of fractions that one loop adds to, all alive past the calls behind it",
+    counted: "sums",
+    size: 2500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `const a = [], b = [];\nfor (let i = 0; i <= ${size}; i++) { a.push(i + 0.25); b.push(i * 7); }\n` +
+        "function mix(s, v) { return (s * 33 + v) % 1000000007; }\nfunction big(a, b) {\n  let s = 1;\n" +
+        lines(size, index => `  let v${index} = 0;`) +
+        "  for (let turn = 0; turn < 3; turn++) {\n" +
+        lines(size, index => `    v${index} = v${index} + ${index % 3 === 2 ? "b" : "a"}[${index + 1}];`) +
+        "    s = mix(s, turn);\n  }\n" +
+        lines(size, index => `  s = mix(s, v${index} * 4);`) +
+        "  return s;\n}\nconsole.log(big(a, b));\n",
     }),
   },
 ];

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""microtask-order.py <seed> [<scenes>]: THE ORDER OF MICROTASKS IS LAW: every scene starts several async functions at once, beside chains of `.then` that count the ticks, and writes down who ran when. What is awaited or returned: plain values of every kind, promises settled | pending | rejected, promises of a subclass, promises whose `then` or `constructor` was replaced, thenables (own then, a getter, one that throws, one that calls back twice or late), other async functions (direct, through a variable, a method), async arrows, async generators and for await, Promise.all | race | allSettled | any; with try | catch | finally round the await, returns inside them, throws before and after the first await, awaits in loops, in arguments, in conditions. Every line as plain Bun's."""
+"""microtask-order.py <seed> [<scenes>]: The order of microtasks. Every scene starts several async functions at once,
+beside chains of `.then` that count ticks, and logs who ran when. Awaited or returned: plain values, native promises,
+subclasses, thenables ..
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 40
 R = random.Random(seed)

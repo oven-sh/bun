@@ -432,3 +432,50 @@ fn runtime_members() {
         }
     });
 }
+
+#[test]
+fn long_lists_lie_in_one_block_in_order() {
+    let mut file = FileBuilder::default();
+    let (object, index) = add_index(&mut file, ExprId(0));
+    add_function(&mut file, FnBody::None, false);
+    let (expr_count, fn_count) = (file.exprs.len(), file.fns.len());
+    with_file(file, |hir| {
+        assert!(hir.owns_its_lists());
+        assert_eq!((hir.exprs.len(), hir.fns.len()), (expr_count, fn_count));
+        assert!(matches!(hir[object].kind, ExprKind::Ident(name) if name == known::this));
+        assert!(matches!(hir[index].kind, ExprKind::Index { obj, .. } if obj == object));
+        let exprs = hir.exprs.as_ptr_range();
+        let fns = hir.fns.as_ptr_range();
+        let gap = fns.start as usize - exprs.end as usize;
+        assert!(gap < 1024, "nothing but the other lists lies between them");
+    });
+}
+
+#[test]
+fn freed_long_lists_are_empty() {
+    let mut file = FileBuilder::default();
+    add_ident(&mut file);
+    with_file(file, |hir| {
+        hir.free_long_lists();
+        assert!(hir.exprs.is_empty() && !hir.owns_its_lists());
+    });
+}
+
+#[test]
+fn file_without_nodes_owns_no_block() {
+    with_file(FileBuilder::default(), |hir| assert!(!hir.owns_its_lists()));
+}
+
+#[test]
+fn narrow_ids_come_back_from_a_block() {
+    let session = Session::new();
+    let arena = session.arena();
+    for last in [7, u32::from(u16::MAX)] {
+        let ids = vec![ExprId(0), ExprId::NONE, ExprId(last)];
+        let mut block = ListBlock::new_in(arena, Narrow::room_for(&ids));
+        let narrow = Narrow::moved_into(&mut block, arena, &mut ids.clone());
+        let read: Vec<ExprId> = (0..ids.len()).filter_map(|at| narrow.id_at(at)).collect();
+        assert_eq!(read, ids);
+        assert_eq!(narrow.id_at(ids.len()), None);
+    }
+}

@@ -62,7 +62,7 @@ Bun.gc(true);
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="db"
 // CHECK-NEXT: v3 = NewTemplateObject templateStrings=[{cooked="SELECT id, parentId, body, login FROM comments ORDER BY id" raw="SELECT id, parentId, body, login FROM comments ORDER BY id"}]
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="db"
+// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="db" expectedResult=x0
 // CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_3]]|Promise flags=[IsExpected]}
 // CHECK-NEXT: v6 = Await v5
 // CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|[[L_4]]> site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen

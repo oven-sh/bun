@@ -188,7 +188,7 @@ impostors.forEach(function (pair) {
 // CHECK-NEXT: ReturnCall v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="_isNativeReflectConstruct"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=undefined|boolean flags=[IsExpected]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=undefined|boolean flags=[IsExpected] variableName="t"}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

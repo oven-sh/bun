@@ -55,7 +55,6 @@ const loadsNativeCode = {
           ...featuresOf("sql", "redis", "s3", "fetch", "sockets", "http3", "websocket"),
           featureNamed("Tls"),
           featureNamed("TlsSockets"),
-          featureNamed("SystemCaCertificates"),
         ]
       : []),
   ],

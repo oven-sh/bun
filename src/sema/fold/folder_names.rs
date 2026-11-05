@@ -1,6 +1,8 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
-use super::inputs::{DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind};
+use super::inputs::{
+    DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
+};
 use super::run_order::{ReadOrder, RunOrder};
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
@@ -8,8 +10,9 @@ use crate::bind::{
     Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, ScopeKind, SymbolId,
 };
 use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
+use crate::hir_from_data::DataValue;
 use crate::import_sites::is_in_with_scope;
-use crate::module_format::main_module_operand;
+use crate::module_format::settled_main_module_operand;
 
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_ident(&mut self, e: ExprId, name: Atom) -> Folded {
@@ -127,7 +130,7 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn find_main_module_equality(&self, comparison: ExprId) -> Option<bool> {
         let is_main = self.file.import_meta_main?;
-        main_module_operand(self.hir, self.bound, comparison).map(|_| is_main)
+        settled_main_module_operand(self.hir, self.bound, comparison).map(|_| is_main)
     }
 
     pub(super) fn find_const_initializer(&self, ident: ExprId) -> Option<ExprId> {
@@ -150,10 +153,54 @@ impl<'s> Folder<'_, 's> {
         match bound.binding_initializer(self.hir, symbol) {
             BindingInitializer::Expression(init) if init < ident => {
                 let is_read_behind = kind != BindingKind::Var || self.is_read_behind(ident, init);
-                is_read_behind.then_some(init)
+                let holds_initializer = is_read_behind
+                    && (!self.is_stored_by_mocks(symbol)
+                        || self.is_inlined_by_bun_run(symbol, init));
+                holds_initializer.then_some(init)
             }
             _ => None,
         }
+    }
+
+    fn is_stored_by_mocks(&self, symbol: SymbolId) -> bool {
+        match self.inputs.stored_by_mocks {
+            // A mock of a module of Bun's own stands in its place. Nothing is stored in the variables of its code.
+            _ if self.file.is_library => false,
+            StoredByMocks::Nothing => false,
+            StoredByMocks::Variables(variables) => variables.binary_search(&symbol).is_ok(),
+            StoredByMocks::EveryExport => self.is_exported_variable(symbol),
+        }
+    }
+
+    /// `export const a = 1`, and `const a = 1; export { a as b }`. `export default a` copies the value.
+    fn is_exported_variable(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let variables = self.exported_variables.get_or_init(|| {
+            let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+            let declarations = exports.iter().flat_map(|it| bound.symbol(it.1).decls);
+            let mut variables: Vec<SymbolId> = declarations
+                .filter_map(|&declaration| match declaration {
+                    Decl::Var(_) => Some(bound.declared_symbol(declaration)),
+                    Decl::ExportSpec(spec) if !hir[hir[spec].export].has_module_specifier => {
+                        match bound.exported_binding(spec) {
+                            Binding::Symbol(local) => Some(local),
+                            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
+            variables.sort_unstable();
+            variables
+        });
+        variables.binary_search(&symbol).is_ok()
+    }
+
+    fn is_inlined_by_bun_run(&self, symbol: SymbolId, init: ExprId) -> bool {
+        self.bound.binding_kind(symbol) == BindingKind::Const
+            && self.can_be_const_value(init)
+            && self.is_folded_by_bun_run(init)
+            && self.is_in_constant_prefix(init)
     }
 
     fn is_read_behind(&self, ident: ExprId, init: ExprId) -> bool {
@@ -181,12 +228,7 @@ impl<'s> Folder<'_, 's> {
             return Folded::UNKNOWN;
         };
         let is_const = self.bound.binding_kind(symbol) == BindingKind::Const;
-        let is_primitive = matches!(self.folded(init).value, Value::Known(_));
-        let is_inlined_by_bun_run = is_const
-            && is_primitive
-            && self.is_folded_by_bun_run(init)
-            && self.is_in_constant_prefix(init);
-        if !is_inlined_by_bun_run {
+        if !self.is_inlined_by_bun_run(symbol, init) {
             self.mark_folded_by_build_alone(ident);
         }
         match self.folded_value(init) {
@@ -219,13 +261,20 @@ impl<'s> Folder<'_, 's> {
             return None;
         }
         let constant_globals = [known::undefined, known::NaN, known::Infinity];
-        if !matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name)) {
+        let is_constant_global =
+            matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name));
+        if !is_constant_global && !self.inputs.is_user_defined(state) {
             self.mark_folded_by_build_alone(e);
         }
         Some(match value {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),
             DefineValue::GlobalPath(path) => self.decide(e, Decision::GlobalPath(path)),
-            DefineValue::Data(data) => self.decide(e, Decision::of_data(data)),
+            DefineValue::Data(data) => {
+                if let DataValue::Array(_) | DataValue::Object(_) = data {
+                    self.conditions.insert(e, true);
+                }
+                self.decide(e, Decision::of_data(data))
+            }
             DefineValue::RuntimeValue(_) => {
                 let folded = self.note_loader_value(e);
                 self.effects[e.idx()] = self.effects_of_path(e);

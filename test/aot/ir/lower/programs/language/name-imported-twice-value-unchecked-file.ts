@@ -1,10 +1,17 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: TS2300 6
+// CHECK: CheckInitialized {{*}} name="named"
+// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"second"
+// CHECK: CheckInitialized {{*}} name="byDefault"
+// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"first"
+// CHECK: CheckInitialized {{*}} name="star"
+// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"second"
+// CHECK: CheckInitialized {{*}} name="once"
+// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"first"
 
 // FILE: main.ts
 // @ts-nocheck
-// Each of the first three names is imported twice as a value, so it is declared twice in one scope. One import of the last pair is gone when the program runs.
+// `bun run` drops an import whose name is imported again further down.
 import { first as named } from "./other";
 import { second as named } from "./other";
 import byDefault from "./other";

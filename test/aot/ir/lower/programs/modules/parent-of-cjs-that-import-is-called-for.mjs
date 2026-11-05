@@ -87,7 +87,7 @@ exports.children = () => module.children.map(nameOf).join();
 // CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
 // CHECK-NEXT: v14 = PropGet v13 key="parent"
 // CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = Call v15, v13 calleeKey="parent" calleeName="parent"
+// CHECK-NEXT: v16 = Call v15, v13 calleeKey="parent" calleeName="(await asked).parent"
 // CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v18 = Call v10, v8, v11, v17 calleeKey="log" calleeName="console.log"
 // CHECK-NEXT: v19 = ImportModule module=[[m_5]] referrer=[[m_0]]

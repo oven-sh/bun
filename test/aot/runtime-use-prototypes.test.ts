@@ -124,6 +124,14 @@ describe.concurrent("a class of the host of which the program makes no instance"
     ).toBe(false);
   });
 
+  test("nor does text evaluated at run time keep bun:test, or what bun:test uses", async () => {
+    const { lines } = await of(`console.log(new Function(process.argv[3])());`);
+    const kept = ["Test", "RuntimeTranspiler", "DeepEquals", "Events", "AbortSignal"].filter(name =>
+      retainsFeature(lines, name),
+    );
+    expect(kept).toEqual([]);
+  });
+
   test("a program that calls expectTypeOf() keeps bun:test", async () => {
     expect(await retainsTest(`import { expectTypeOf } from "bun:test";\nconsole.log(expectTypeOf(1).not);`)).toBe(true);
   });

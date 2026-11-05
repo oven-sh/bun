@@ -47,6 +47,7 @@ pub fn parse_for_compile<'s>(
         },
         attach_comments: false,
         compiles: true,
+        reads_as_bun_run: true,
         keeps_function_directives: options.keeps_function_directives,
         skips_function_blocks: false,
         reads_module_statements_alone: false,

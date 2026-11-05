@@ -14,6 +14,7 @@ use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
     Request, ScriptKind,
 };
+use bun_threading::ResetEvent;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
@@ -245,17 +246,18 @@ pub(crate) fn working_directory() -> Vec<u8> {
     }
 }
 
-/// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
-/// user to notice.
-fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
+/// Displays `progress` on stderr until `is_done`, starting after `initial_delay`. Sets
+/// `first_frame` once the line is on the screen.
+fn show_progress(
+    progress: &Progress,
+    is_done: &AtomicBool,
+    style: &Style,
+    initial_delay: Duration,
+    first_frame: &ResetEvent,
+) {
     const BETWEEN: Duration = Duration::from_millis(80);
     // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool.
     Output::Source::configure_thread_no_js();
-    let initial_delay = Duration::from_millis(
-        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
-            .get()
-            .unwrap_or(300),
-    );
     let began = std::time::Instant::now();
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {
@@ -264,6 +266,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);
             Output::flush();
+            first_frame.set();
             tick += 1;
         }
         std::thread::park_timeout(BETWEEN);
@@ -316,8 +319,21 @@ fn run<R>(
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(cwd, Some(true), Destination::stderr(), false);
+    // Long enough for a user to notice.
+    let initial_delay = Duration::from_millis(
+        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
+            .get()
+            .unwrap_or(300),
+    );
+    let first_frame = ResetEvent::default();
     std::thread::scope(|scope| {
-        let progress_thread = scope.spawn(|| show_progress(&progress, &is_done, &style));
+        let progress_thread = scope.spawn(|| {
+            show_progress(&progress, &is_done, &style, initial_delay, &first_frame);
+        });
+        // Without a delay, the check starts once the line is drawn, however late its thread runs.
+        if initial_delay.is_zero() {
+            first_frame.wait();
+        }
         let progress = Some(&progress);
         run_quietly(
             cwd,

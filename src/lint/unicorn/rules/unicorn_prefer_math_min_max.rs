@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Prefers use of `Math.min()` and `Math.max()` instead of ternary expressions when performing simple comparisons.
 pub struct PreferMathMinMax;
 
-const PREFER_MATH_MIN_MAX: Message =
-    Message::new("", "Prefer `Math.min()` and `Math.max()` over ternaries for simple comparisons.");
+const PREFER_MATH_MIN_MAX: &Message =
+    &Message::new("", "Prefer `Math.min()` and `Math.max()` over ternaries for simple comparisons.");
 
 /// A number, or `-a`, `typeof a` and the like.
 fn is_number_or_unary(e: Expr) -> bool {

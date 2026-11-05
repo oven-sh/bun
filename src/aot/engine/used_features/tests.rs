@@ -224,7 +224,6 @@ fn every_engine_cause_maps() {
             EngineCause::OptionAdmitsCode,
             UnseenCodeCause::OptionAdmitsCode,
         ),
-        (EngineCause::LimitReached, UnseenCodeCause::FlowGaveUp),
         (
             EngineCause::FlowResultDisabled,
             UnseenCodeCause::FlowResultDisabled,
@@ -250,9 +249,9 @@ fn every_engine_cause_maps() {
 #[test]
 fn causes_follow_section() {
     let records = [
-        unseen_code(EngineCause::LimitReached),
+        unseen_code(EngineCause::FlowResultDisabled),
         unseen_code(EngineCause::EvaluatesText),
-        unseen_code(EngineCause::LimitReached),
+        unseen_code(EngineCause::FlowResultDisabled),
     ];
     let cause = |cause, index| UnseenCode {
         cause,
@@ -261,9 +260,9 @@ fn causes_follow_section() {
     assert_eq!(
         from_records(&[], &records, &[], &text_of).causes,
         [
-            cause(UnseenCodeCause::FlowGaveUp, 0),
+            cause(UnseenCodeCause::FlowResultDisabled, 0),
             cause(UnseenCodeCause::EvaluatesText, 1),
-            cause(UnseenCodeCause::FlowGaveUp, 2),
+            cause(UnseenCodeCause::FlowResultDisabled, 2),
         ]
     );
 }

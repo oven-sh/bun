@@ -18,6 +18,8 @@ pub struct RuntimeUses {
     /// What native code reads off the others. A module that is in neither list is only evaluated.
     pub exports_read: Box<[(RuntimeModule, &'static str)]>,
     pub functions: Box<[RuntimeFunction]>,
+    /// Those of `functions` that Bun's own code calls by `$name`. Such a call finds its function in the program of the caller.
+    pub linked_functions: Box<[RuntimeFunction]>,
 }
 
 struct Collected {
@@ -25,6 +27,7 @@ struct Collected {
     modules_read_whole: DynamicBitSet,
     exports_read: Vec<(RuntimeModule, &'static str)>,
     functions: DynamicBitSet,
+    linked_functions: DynamicBitSet,
     has_startup_loads: bool,
 }
 
@@ -40,6 +43,7 @@ struct Collector {
     /// Whether an entry brings along what native code runs only for a program that names such an entry.
     follows_names: bool,
     is_of_program: bool,
+    is_served_by_other_images: bool,
 }
 
 const UNKNOWN_MODULE_LOADERS: BuiltinFlags =
@@ -74,6 +78,23 @@ fn is_called_without_a_name(role: RuntimeFunctionRole) -> bool {
         role,
         RuntimeFunctionRole::CompilerFunction | RuntimeFunctionRole::Model
     )
+}
+
+// No object of a realm holds them: the compiler writes the calls, and puts the body in their place.
+fn functions_without_object() -> &'static [bool] {
+    static FUNCTIONS: OnceLock<Box<[bool]>> = OnceLock::new();
+    FUNCTIONS.get_or_init(|| {
+        let mut functions = vec![false; RuntimeFunction::COUNT as usize];
+        let of_compiler = table::runtime_functions().iter();
+        let of_compiler = of_compiler.filter(|data| is_called_without_a_name(data.role));
+        let helpers = BuiltinId::ALL.iter().copied().map(table::entry);
+        let helpers = helpers.filter(|it| it.flags.contains(BuiltinFlags::IS_COMPILER_HELPER));
+        let behind_helpers = helpers.flat_map(|entry| entry.implemented_by());
+        for function in of_compiler.map(|data| &data.function).chain(behind_helpers) {
+            functions[function.to_wire() as usize] = true;
+        }
+        functions.into_boxed_slice()
+    })
 }
 
 fn is_of_language(id: BuiltinId) -> bool {
@@ -157,6 +178,7 @@ impl Collected {
             modules_read_whole: create_id_set(RuntimeModule::COUNT),
             exports_read: Vec::new(),
             functions: create_id_set(RuntimeFunction::COUNT),
+            linked_functions: create_id_set(RuntimeFunction::COUNT),
             has_startup_loads: false,
         }
     }
@@ -171,11 +193,14 @@ impl Collected {
             .retain(|(module, _)| !is_read_whole(module));
         self.exports_read.shared_sort_unstable();
         self.exports_read.dedup();
-        let functions = table::runtime_functions()
-            .iter()
-            .filter(|data| data.platforms.contains(platform))
-            .filter(|data| self.functions.is_set(data.function.to_wire() as usize))
-            .map(|data| data.function);
+        let functions_of = |set: &DynamicBitSet| -> Box<[RuntimeFunction]> {
+            table::runtime_functions()
+                .iter()
+                .filter(|data| data.platforms.contains(platform))
+                .filter(|data| set.is_set(data.function.to_wire() as usize))
+                .map(|data| data.function)
+                .collect()
+        };
         RuntimeUses {
             modules: modules.collect(),
             modules_read_whole: RuntimeModule::ALL
@@ -183,7 +208,8 @@ impl Collected {
                 .filter(is_read_whole)
                 .collect(),
             exports_read: self.exports_read.clone().into(),
-            functions: functions.collect(),
+            functions: functions_of(&self.functions),
+            linked_functions: functions_of(&self.linked_functions),
         }
     }
 }
@@ -200,6 +226,7 @@ impl Collector {
             has_unknown_module_loader: false,
             follows_names: false,
             is_of_program: false,
+            is_served_by_other_images: false,
         }
     }
 
@@ -230,6 +257,12 @@ impl Collector {
                 .exports_read
                 .extend(names.iter().map(|&name| (module, name))),
             None => collected.modules_read_whole.set(module.to_wire() as usize),
+        }
+    }
+
+    fn add_functions_that_native_code_calls(&mut self, functions: &[RuntimeFunction]) {
+        if !self.is_served_by_other_images {
+            self.add_functions(functions);
         }
     }
 
@@ -269,7 +302,7 @@ impl Collector {
     // Native code calls them for whatever is of the class.
     fn add_calls_for_class_of(&mut self, id: BuiltinId) {
         for object in objects_of_class_of(id) {
-            self.add_functions(table::entry(object).calls());
+            self.add_functions_that_native_code_calls(table::entry(object).calls());
         }
     }
 
@@ -305,7 +338,7 @@ impl Collector {
             return;
         }
         for listed in table::entry(id).calls_for_texts() {
-            self.add_functions(listed.calls);
+            self.add_functions_that_native_code_calls(listed.calls);
         }
     }
 
@@ -324,7 +357,7 @@ impl Collector {
                 collector.add_load(load.module, load.exports_read);
             });
         }
-        self.add_functions(entry.calls());
+        self.add_functions_that_native_code_calls(entry.calls());
         self.add_functions(entry.implemented_by());
         self.guess(true, |collector| {
             collector.add_functions(entry.guessed_functions());
@@ -372,6 +405,7 @@ impl Collector {
             .set_union(&guessed.modules_read_whole);
         all.exports_read.extend(guessed.exports_read);
         all.functions.set_union(&guessed.functions);
+        all.linked_functions.set_union(&guessed.linked_functions);
         all.finish(self.platform)
     }
 }
@@ -406,6 +440,30 @@ pub fn reaches_unknown_module_loader(
     collector.has_unknown_module_loader
 }
 
+/// Whether code that names `mentioned` and lets `exposed` out of sight can get at the table of loaded modules: `require.cache`, `Module._cache`.
+pub fn reaches_module_cache(
+    mentioned: &[BuiltinId],
+    exposed: &[BuiltinId],
+    platform: Platforms,
+) -> bool {
+    let tables = [
+        BuiltinId::ModuleRequireCache,
+        BuiltinId::ModuleRequirePrototypeCache,
+        BuiltinId::NodeModule_cache,
+    ]
+    .map(table::canonical_id);
+    if (mentioned.iter()).any(|&id| tables.contains(&table::canonical_id(id))) {
+        return true;
+    }
+    if exposed.is_empty() {
+        return false;
+    }
+    let mut collector = Collector::new(platform);
+    collector.work_stack.extend_from_slice(exposed);
+    collector.add_reachable_entries();
+    (tables.iter()).any(|&id| collector.visited.is_set(id.to_wire() as usize))
+}
+
 /// What a piece of source says of the built-ins.
 #[derive(Copy, Clone, Default)]
 pub struct Mentions<'a> {
@@ -425,8 +483,12 @@ pub struct Mentions<'a> {
     pub has_generator: bool,
     /// An async function, `await` or `import()`.
     pub makes_promise: bool,
+    /// `import()`
+    pub imports_by_call: bool,
     /// No code of Bun's own.
     pub is_of_program: bool,
+    /// `AotOptions::imports_are_in_other_images`: native code takes what it calls of Bun's own code from the first of those images.
+    pub is_served_by_other_images: bool,
 }
 
 const DECORATOR_HELPERS: &[BuiltinId] = &[
@@ -488,19 +550,27 @@ impl Collector {
             iterates,
             has_generator,
             makes_promise,
+            imports_by_call,
             is_of_program,
+            is_served_by_other_images,
         } = *mentions;
         let names_nothing = mentioned.is_empty()
             && exposed.is_empty()
             && linked_functions.is_empty()
             && members_read.is_empty()
-            && !(has_decorator || disposes_resource || iterates || has_generator || makes_promise);
+            && !(has_decorator
+                || disposes_resource
+                || iterates
+                || has_generator
+                || makes_promise
+                || imports_by_call);
         if names_nothing {
             return None;
         }
         let mut collector = Collector::new(platform);
         collector.follows_names = true;
         collector.is_of_program = is_of_program;
+        collector.is_served_by_other_images = is_served_by_other_images;
         for &id in mentioned {
             match called_with_other_texts.binary_search(&id) {
                 Ok(_) => collector.add_entry_called_with_other_texts(id),
@@ -526,6 +596,10 @@ impl Collector {
             (iterates, &[BuiltinId::ArrayIteratorPrototypeNext]),
             (has_generator, METHODS_OF_GENERATORS),
             (makes_promise, &[BuiltinId::Promise]),
+            (
+                imports_by_call,
+                &[BuiltinId::CompilerHelpersImportRejectedByLoader],
+            ),
         ];
         for (_, helpers) in helpers.into_iter().filter(|it| it.0) {
             for &helper in helpers {
@@ -533,6 +607,10 @@ impl Collector {
             }
         }
         collector.add_functions(linked_functions);
+        for function in linked_functions {
+            let linked = &mut collector.certain.linked_functions;
+            linked.set(function.to_wire() as usize);
+        }
         collector.work_stack.extend_from_slice(exposed);
         collector.add_reachable_entries();
         Some(collector)
@@ -585,6 +663,14 @@ impl RuntimeUses {
         self.modules.is_empty() && self.functions.is_empty()
     }
 
+    /// Those of its functions that a caller finds in its own program alone. The others are in objects of the realm, whichever program holds them.
+    pub fn functions_held_with_caller(&self) -> impl Iterator<Item = RuntimeFunction> + '_ {
+        let without_object = functions_without_object();
+        self.functions.iter().copied().filter(|function| {
+            without_object[function.to_wire() as usize] || self.linked_functions.contains(function)
+        })
+    }
+
     /// What it says of the modules that `is_wanted` holds of.
     pub fn of_modules(&self, is_wanted: impl Fn(RuntimeModule) -> bool) -> RuntimeUses {
         let wanted = |modules: &[RuntimeModule]| {
@@ -597,6 +683,7 @@ impl RuntimeUses {
             modules_read_whole: wanted(&self.modules_read_whole),
             exports_read: exports_read.filter(|it| is_wanted(it.0)).collect(),
             functions: Box::default(),
+            linked_functions: Box::default(),
         }
     }
 
@@ -612,6 +699,20 @@ impl RuntimeUses {
         join(&mut self.modules_read_whole, &further.modules_read_whole);
         join(&mut self.exports_read, &further.exports_read);
         join(&mut self.functions, &further.functions);
+        join(&mut self.linked_functions, &further.linked_functions);
+    }
+
+    /// Every module of the library and every function behind a built-in.
+    pub fn of_whole_library(platform: Platforms) -> RuntimeUses {
+        let mut collector = Collector::new(platform);
+        collector.add_startup_loads();
+        for module in RuntimeModule::ALL {
+            collector.add_load(module, None);
+        }
+        for data in table::runtime_functions() {
+            collector.add_functions(&[data.function]);
+        }
+        collector.finish()
     }
 
     /// What code that the build does not see may get at without a name that the build sees.

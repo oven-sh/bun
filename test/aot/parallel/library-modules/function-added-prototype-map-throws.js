@@ -1,4 +1,5 @@
 // A function without parameters that a program adds to Map.prototype throws: what the first and the second require of node:stream do.
+// The body of the module runs again at each require.
 Map.prototype.toJSON = function () {
   throw new Error("thrown by toJSON");
 };
@@ -15,3 +16,8 @@ try {
 } catch (error) {
   console.log(error.message);
 }
+/* Output:
+1 thrown by toJSON
+2 thrown by toJSON
+function
+*/

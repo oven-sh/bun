@@ -334,7 +334,8 @@ function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9():
 # CHECK-NEXT: v16: anything = PropGet v64 key="h" accessSite=1 receivers=[L2]
-# CHECK-NEXT: v17: anything ~ i32 = Upcast v16 castType=anything
+# CHECK-NEXT: v67: undefined = AssumeType v16 provenType=undefined
+# CHECK-NEXT: v17: undefined = Upcast v67 castType=anything
 # CHECK-NEXT: v18: 0 = Integer
 # CHECK-NEXT: v19: i32 = BitOr v17, v18
 # CHECK-NEXT: v20: int[-2147483648, 2147483648] = Add v19, v15
@@ -373,23 +374,30 @@ function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: v46: 1 = Integer integer=1
 # CHECK-NEXT: v47: int[0, 2147483647] = URShift v65, v46
 # CHECK-NEXT: v48: anything = PropGet v64 key="a" accessSite=4 receivers=[L2]
+# CHECK-NEXT: v68: undefined = AssumeType v48 provenType=undefined
 # CHECK-NEXT: v49: anything = PropGet v64 key="b" accessSite=5 receivers=[L2]
-# CHECK-NEXT: v50: number|string|bigint = Add v48, v49
-# CHECK-NEXT: v67: int|whole = AssumeType v50 provenType=int|whole
+# CHECK-NEXT: v69: undefined = AssumeType v49 provenType=undefined
+# CHECK-NEXT: v50: number = Add v68, v69
+# CHECK-NEXT: v70: int|whole = AssumeType v50 provenType=int|whole
 # CHECK-NEXT: v51: anything = PropGet v64 key="c" accessSite=6 receivers=[L2]
-# CHECK-NEXT: v52: number|string|bigint = Add v67, v51
-# CHECK-NEXT: v68: int|whole = AssumeType v52 provenType=int|whole
+# CHECK-NEXT: v71: undefined = AssumeType v51 provenType=undefined
+# CHECK-NEXT: v52: number = Add v70, v71
+# CHECK-NEXT: v72: int|whole = AssumeType v52 provenType=int|whole
 # CHECK-NEXT: v53: anything ~ number = PropGet v64 key="d" accessSite=7 receivers=[L2]
-# CHECK-NEXT: v54: number|string|bigint ~ number = Add v68, v53
-# CHECK-NEXT: v69: int|whole = AssumeType v54 provenType=int|whole
+# CHECK-NEXT: v73: undefined = AssumeType v53 provenType=undefined
+# CHECK-NEXT: v54: number = Add v72, v73
+# CHECK-NEXT: v74: int|whole = AssumeType v54 provenType=int|whole
 # CHECK-NEXT: v55: anything ~ number = PropGet v64 key="e" accessSite=8 receivers=[L2]
-# CHECK-NEXT: v56: number|string|bigint ~ number = Add v69, v55
-# CHECK-NEXT: v70: int|whole = AssumeType v56 provenType=int|whole
+# CHECK-NEXT: v75: undefined = AssumeType v55 provenType=undefined
+# CHECK-NEXT: v56: number = Add v74, v75
+# CHECK-NEXT: v76: int|whole = AssumeType v56 provenType=int|whole
 # CHECK-NEXT: v57: anything = PropGet v64 key="f" accessSite=9 receivers=[L2]
-# CHECK-NEXT: v58: number|string|bigint = Add v70, v57
-# CHECK-NEXT: v71: int|whole = AssumeType v58 provenType=int|whole
+# CHECK-NEXT: v77: undefined = AssumeType v57 provenType=undefined
+# CHECK-NEXT: v58: number = Add v76, v77
+# CHECK-NEXT: v78: int|whole = AssumeType v58 provenType=int|whole
 # CHECK-NEXT: v59: anything = PropGet v64 key="g" accessSite=10 receivers=[L2]
-# CHECK-NEXT: v60: number|string|bigint = Add v71, v59
+# CHECK-NEXT: v79: undefined = AssumeType v59 provenType=undefined
+# CHECK-NEXT: v60: number = Add v78, v79
 # CHECK-NEXT: v61: undefined = Undefined
 # CHECK-NEXT: Return v61
 # CHECK-NEXT: }
@@ -408,9 +416,10 @@ function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: v10: anything ~ object = Construct v8, -, v5, v9 calleeName="Large" accessSite=18 callees=[f2]
 # CHECK-NEXT: v16: L2 = AssumeType v10 provenType=L2
 # CHECK-NEXT: v11: anything = PropGet v16 key="g" accessSite=19 receivers=[L2]
-# CHECK-NEXT: v12: number|string|bigint = Add v15, v11
-# CHECK-NEXT: v17: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: v13: int|whole = Upcast v17 castType=number|string|bigint
+# CHECK-NEXT: v17: undefined = AssumeType v11 provenType=undefined
+# CHECK-NEXT: v12: number = Add v15, v17
+# CHECK-NEXT: v18: int|whole = AssumeType v12 provenType=int|whole
+# CHECK-NEXT: v13: int|whole = Upcast v18 castType=number|string|bigint
 # CHECK-NEXT: v14: int|whole = Increment v5
 # CHECK-NEXT: Jump -> next b1(v13, v14)
 # CHECK-NEXT: }
@@ -419,11 +428,13 @@ function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L8 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: L8 = Upcast v0 castType=anything
-# CHECK-NEXT: v6: L8 = AssumeType v1 provenType=undefined|L8
-# CHECK-NEXT: v2: f7 = PropGet v6 key="makesLarge" accessSite=24 receivers=[L8]
-# CHECK-NEXT: v7: f7 = AssumeType v2 provenType=f7
-# CHECK-NEXT: v3: 100000 = Integer integer=100000
-# CHECK-NEXT: v4: anything ~ number = Call v7, v6, v3 calleeKey="makesLarge" calleeName="m.makesLarge" accessSite=25 callees=[f7]
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v7: L8 = AssumeType v1 provenType=undefined|L8
+# CHECK-NEXT: v2: f7 = PropGet v7 key="makesLarge" accessSite=24 receivers=[L8]
+# CHECK-NEXT: v8: f7 = AssumeType v2 provenType=f7
+# CHECK-NEXT: v3: f7 = Upcast v8 castType=anything
+# CHECK-NEXT: v9: f7 = AssumeType v3 provenType=f7
+# CHECK-NEXT: v4: 100000 = Integer integer=100000
+# CHECK-NEXT: v5: anything ~ number = Call v9, v7, v4 calleeKey="makesLarge" calleeName="m.makesLarge" accessSite=25 callees=[f7]
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }

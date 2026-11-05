@@ -476,12 +476,209 @@ fn the_helper_of_swc_defines_names_only_where_each_getter_returns_one() {
         "function later() { _export(exports, { a: function() { return a; } }); } later();",
         "console.log(_export(exports, { a: function() { return a; } }));",
         "_export(exports, { a: function() { return a; } }, 1);",
-        // The binding gets another value.
-        "_export(exports, { a: function() { return c; } }); let c = 1; c = 2;",
     ] {
         let module = format!("{SWC_HELPER}{names}\nconst a = 1;\nfunction b() {{ return a; }}\n");
         assert_eq!(shape_with(READS_A, &module), Shape::Value, "{names}");
     }
+}
+
+#[test]
+fn a_getter_that_returns_a_binding_that_is_stored_again_is_that_binding() {
+    let names = "_export(exports, { a: function() { return c; } }); let c = 1; c = 2;";
+    let module = format!("{SWC_HELPER}{names}\n");
+    ask(READS_A, &module, |exports, module, a| {
+        assert_eq!(exports.shape(module), Shape::Names);
+        let member = exports.member_named(module, a);
+        assert!(matches!(member, Some(Member::Binding(_))), "{member:?}");
+    });
+}
+
+const ESBUILD_HELPERS: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+"#;
+
+const ESBUILD_NAMES: &str = "var all = {};\n__export(all, { a: () => a, b: () => b });\nmodule.exports = __toCommonJS(all);\n";
+
+const ESBUILD_BODY: &str = "const a = 1;\nfunction b() { return a; }\n";
+
+#[test]
+fn text_as_esbuild_emits_it() {
+    let module = format!("{ESBUILD_HELPERS}{ESBUILD_NAMES}{ESBUILD_BODY}");
+    let main = "var m = require('./module.cjs'); console.log((0, m.b)(), m.a, m.__esModule);";
+    let files = [("main.cjs", main), ("module.cjs", module.as_str())];
+    with_exports(&files, |exports, input| {
+        let module = module_named(input, "module.cjs");
+        assert_eq!(exports.shape(module), Shape::Names);
+        assert_eq!(exports.marker(module), Some(true));
+        for name in ["a", "b"] {
+            let member = exports.member_named(module, atom(input, name));
+            assert!(
+                matches!(member, Some(Member::Binding(_))),
+                "{name}: {member:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn the_copy_of_esbuild_gives_names_only_where_nobody_else_gets_the_copied_object() {
+    for names in [
+        // Somebody else gets the object, or it is no new empty object.
+        "var all = {};\n__export(all, { a: () => a });\nconsole.log(all);\nmodule.exports = __toCommonJS(all);",
+        "var all = {};\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);\nconsole.log(all);",
+        "var all = {};\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);\nfunction later() { return all; }",
+        "var all = {};\n__export(all, { a: () => a });\nall.c = 1;\nmodule.exports = __toCommonJS(all);",
+        "var all = { c: 1 };\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);",
+        "var all = {};\nall = {};\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);",
+        "__export(all, { a: () => a });\nvar all = {};\nmodule.exports = __toCommonJS(all);",
+        // The names come behind the copy, or on some runs.
+        "var all = {};\nmodule.exports = __toCommonJS(all);\n__export(all, { a: () => a });",
+        "var all = {};\nif (Math.random()) __export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);",
+        "var all = {};\n__export(all, { a: () => a });\nif (Math.random()) module.exports = __toCommonJS(all);",
+        // More than the copy is stored, or it is stored elsewhere too.
+        "var all = {};\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all, 1);",
+        "var all = {};\n__export(all, { a: () => a });\nvar kept = module.exports = __toCommonJS(all);",
+        "var all = {};\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);\nmodule.exports = __toCommonJS(all);",
+        "var all = {};\n__export(all, { a: () => a });\nexports.c = 1;\nmodule.exports = __toCommonJS(all);",
+        // A getter that does more than return a name.
+        "var all = {};\n__export(all, { a: () => a + 1 });\nmodule.exports = __toCommonJS(all);",
+        "var all = {};\n__export(all, { a: () => a, a: () => b });\nmodule.exports = __toCommonJS(all);",
+        "var all = {};\n__export(all, { a: () => a, constructor: () => b });\nmodule.exports = __toCommonJS(all);",
+    ] {
+        let module = format!("{ESBUILD_HELPERS}{names}\n{ESBUILD_BODY}");
+        assert_eq!(shape_with(READS_A, &module), Shape::Value, "{names}");
+    }
+}
+
+#[test]
+fn a_function_that_only_looks_like_a_helper_of_esbuild_gets_the_object() {
+    for (from, to) in [
+        ("{ value: true }), mod)", "{ value: false }), mod)"),
+        (
+            "{ value: true }), mod)",
+            "{ value: true, enumerable: true }), mod)",
+        ),
+        ("\"__esModule\"", "\"__esmodule\""),
+        ("__defProp({}, ", "__defProp({ c: 1 }, "),
+        ("get: () => from[key]", "get: () => to[key]"),
+        (
+            "get: () => from[key]",
+            "get: () => from[key], configurable: true",
+        ),
+        ("key !== except", "key != except"),
+        (
+            "!__hasOwnProp.call(to, key)",
+            "!__hasOwnProp.call(from, key)",
+        ),
+        ("__getOwnPropNames(from)", "__getOwnPropNames(to)"),
+        ("return to;", "return from;"),
+        ("|| desc.enumerable", "&& desc.enumerable"),
+        (
+            "var __getOwnPropNames = Object.getOwnPropertyNames;",
+            "var __getOwnPropNames = Object.keys;",
+        ),
+        (
+            "var __toCommonJS = (mod) =>",
+            "var __toCommonJS = (mod) => console.log(mod) ||",
+        ),
+    ] {
+        assert!(ESBUILD_HELPERS.contains(from), "{from}");
+        let helpers = ESBUILD_HELPERS.replace(from, to);
+        let module = format!("{helpers}{ESBUILD_NAMES}{ESBUILD_BODY}");
+        assert_eq!(shape_with(READS_A, &module), Shape::Value, "{to}");
+    }
+}
+
+#[test]
+fn whoever_sees_a_module_half_evaluated_finds_the_copy_that_its_head_stores() {
+    let main = "exports.look = () => require('./module.cjs').a; require('./module.cjs');";
+    let looks = "require('./main.cjs').look();\n";
+    let in_head = format!("{ESBUILD_HELPERS}{ESBUILD_NAMES}{looks}{ESBUILD_BODY}");
+    assert_eq!(shape_with(main, &in_head), Shape::Names);
+    let behind_a_call = format!("{ESBUILD_HELPERS}{looks}{ESBUILD_NAMES}{ESBUILD_BODY}");
+    assert_eq!(shape_with(main, &behind_a_call), Shape::Value);
+}
+
+#[test]
+fn a_name_of_esbuild_stands_for_a_name_of_a_file_that_is_required_behind_the_copy() {
+    let names = "var all = {};\n__export(all, { a: () => inner.b });\nmodule.exports = __toCommonJS(all);\nvar inner = require('./inner.cjs');\n";
+    let module = format!("{ESBUILD_HELPERS}{names}");
+    assert_eq!(shapes_beside(&module, "exports.b = 1;"), [Shape::Names; 2]);
+    let sometimes = names.replace(
+        "var inner = require",
+        "if (Math.random()) var inner = require",
+    );
+    let module = format!("{ESBUILD_HELPERS}{sometimes}");
+    assert_eq!(shapes_beside(&module, "exports.b = 1;")[0], Shape::Value);
+}
+
+const TYPESCRIPT_IMPORT_HELPERS: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+"#;
+
+#[test]
+fn the_import_helpers_of_typescript_answer_a_marked_module_itself() {
+    let marked = "Object.defineProperty(exports, '__esModule', { value: true });\nexports.a = 1;\nexports.default = 2;\n";
+    for reads in [
+        "const m = __importStar(require('./module.cjs')); console.log(m.a, m.default);",
+        "const m = __importDefault(require('./module.cjs')); console.log(m.default);",
+    ] {
+        let main = format!("{TYPESCRIPT_IMPORT_HELPERS}{reads}");
+        assert_eq!(shape_with(&main, marked), Shape::Names, "{reads}");
+        // Without the marker the helper makes another object of the one that it is handed.
+        assert_eq!(shape_with(&main, "exports.a = 1;"), Shape::Value, "{reads}");
+    }
+    for reads in [
+        "const m = __importStar(require('./module.cjs')); console.log(m);",
+        "const m = __importStar(require('./module.cjs'), 1); console.log(m.a);",
+        "let m = __importStar(require('./module.cjs')); m = 1;",
+        "console.log(__importStar(require('./module.cjs')));",
+    ] {
+        let main = format!("{TYPESCRIPT_IMPORT_HELPERS}{reads}");
+        assert_eq!(shape_with(&main, marked), Shape::Value, "{reads}");
+    }
+    let other = TYPESCRIPT_IMPORT_HELPERS.replace("return mod;", "return console.log(mod);");
+    let main = format!("{other}const m = __importStar(require('./module.cjs')); console.log(m.a);");
+    assert_eq!(shape_with(&main, marked), Shape::Value);
 }
 
 #[test]

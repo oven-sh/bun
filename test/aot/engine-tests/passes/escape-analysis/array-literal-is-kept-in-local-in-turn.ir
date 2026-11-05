@@ -110,11 +110,11 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v23: anything = ElemGet v4, v22 accessSite=3 receivers=[]
 # CHECK-NEXT: v24: anything = PropGet v4 key="length" accessSite=4 receivers=[]
 # CHECK-NEXT: v25: anything ~ number = Upcast v24 castType=anything
-# CHECK-NEXT: v35: int = AssumeType v21 provenType=int
-# CHECK-NEXT: v36: int = AssumeType v23 provenType=int
-# CHECK-NEXT: v37: int = AssumeType v25 provenType=int
-# CHECK-NEXT: v26: Array<int, Double> = NewArray v3, v35, v36, v37 contents=int allocationSite=1 arrayStorage=Double [contentsAreProven]
-# CHECK-NEXT: v32: Array<int, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<int, proven, Double, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v35: 0 = AssumeType v21 provenType=0
+# CHECK-NEXT: v36: 0 = AssumeType v23 provenType=0
+# CHECK-NEXT: v37: 0 = AssumeType v25 provenType=0
+# CHECK-NEXT: v26: Array<0, Int32> = NewArray v3, v35, v36, v37 contents=0 allocationSite=1 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v32: Array<0, proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<0, proven, Int32, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v27: anything = PropGet v32 key="join" accessSite=5
 # CHECK-NEXT: v33: builtin(ArrayPrototypeJoin) = AssumeType v27 provenType=builtin(ArrayPrototypeJoin)
 # CHECK-NEXT: v28: builtin(ArrayPrototypeJoin) = Upcast v33 castType=anything

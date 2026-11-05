@@ -229,7 +229,7 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="factor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=anything variableName="at"}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected] variableName="replacement"}] thisType={type=anything} results=[{type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: env [[L_2]], v1: anything, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

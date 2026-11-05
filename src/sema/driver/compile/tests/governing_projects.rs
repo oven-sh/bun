@@ -93,6 +93,49 @@ const SOLUTION: [TestFile; 7] = [
 ];
 
 #[test]
+fn configuration_of_most_entry_points_is_that_of_the_program() {
+    let files = &[
+        ("small/first.ts", "export const first = 1;"),
+        (
+            "small/tsconfig.json",
+            r#"{ "compilerOptions": { "strict": false } }"#,
+        ),
+        ("b.ts", "export const b = 1;"),
+        ("c.ts", "export const c = 1;"),
+        (CONFIG, r#"{ "compilerOptions": { "strict": true } }"#),
+    ];
+    let is_governed = |entry_points: &[&str]| {
+        with_program(files, entry_points, 1, |program| {
+            ["small/first.ts", "b.ts"].map(|path| governing_options(program, path).is_some())
+        })
+    };
+    assert_eq!(
+        is_governed(&["./small/first.ts", "./b.ts", "./c.ts"]),
+        [true, false]
+    );
+    assert_eq!(is_governed(&["./small/first.ts", "./b.ts"]), [false, true]);
+    assert_eq!(is_governed(&["./b.ts", "./small/first.ts"]), [true, false]);
+}
+
+#[test]
+fn entry_points_without_a_configuration_do_not_choose_that_of_the_program() {
+    let files = &[
+        ("node_modules/p/index.js", "export const p = 1;"),
+        ("node_modules/q/index.js", "export const q = 1;"),
+        ("b.ts", "export const b = 1;"),
+        (CONFIG, "{}"),
+    ];
+    let has_config_file = |entry_points: &[&str]| {
+        with_program(files, entry_points, 1, |program| {
+            program.files().options.has_config_file
+        })
+    };
+    let packages = ["./node_modules/p/index.js", "./node_modules/q/index.js"];
+    assert!(has_config_file(&[packages[0], packages[1], "./b.ts"]));
+    assert!(!has_config_file(&packages));
+}
+
+#[test]
 fn referenced_project_that_has_a_file_governs_it_under_references_alone() {
     let files: Vec<TestFile> = SOLUTION.into_iter().chain([A]).collect();
     with_program(&files, ENTRY_POINTS, 1, |program| {

@@ -116,7 +116,7 @@ self.onmessage = event => {
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|[[L_6]] flags=[IsExpected]}, {type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_10]] flags=[IsExpected]}, {type=undefined|null|[[f_11]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|[[L_6]] flags=[IsExpected] variableName="w"}, {type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined] variableName="text"}] thisType={type=anything} parameters=[{type=undefined|null|[[f_10]] flags=[IsExpected]}, {type=undefined|null|[[f_11]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_6]], v1: undefined|null|string, v2: undefined|null|[[f_10]], v3: undefined|null|[[f_11]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -132,7 +132,7 @@ self.onmessage = event => {
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|[[L_6]] flags=[IsExpected]}, {type=undefined|null|[[f_10]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_17]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_18]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|[[L_6]] flags=[IsExpected] variableName="w"}, {type=undefined|null|[[f_10]] flags=[IsExpected] variableName="resolve"}] thisType={type=anything} parameters=[{type=undefined|null|[[f_17]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_18]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_6]], v1: undefined|null|[[f_10]], v2: undefined|null|[[f_17]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -147,7 +147,7 @@ self.onmessage = event => {
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|[[f_11]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_20]]|Event flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_21]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|[[f_11]] flags=[IsExpected] variableName="reject"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_20]]|Event flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_21]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_11]], v1: undefined|null|[[L_20]]|Event):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

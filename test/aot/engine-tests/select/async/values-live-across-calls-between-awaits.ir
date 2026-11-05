@@ -387,5 +387,5 @@ function f12 name="main" module=m0 position=3843 flags=[IsAsync, HasThis, IsChec
 # CHECK-NEXT: end of function f11
 # CHECK-LABEL: function {{*}}name="callerThatKeepsValues"
 # CHECK: role=ResultWorker
-# CHECK-NEXT: instructions: 198, patchpoints: 11, rare instructions: 24
+# CHECK-NEXT: instructions: 195, patchpoints: 11, rare instructions: 11
 # CHECK-NEXT: end of function f14

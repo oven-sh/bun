@@ -392,18 +392,6 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
     }
 }
 
-/// Drains the thread's BoringSSL error queue on scope exit, whichever way the
-/// scope is left.
-struct ClearErrorQueue(bool);
-
-impl Drop for ClearErrorQueue {
-    fn drop(&mut self) {
-        if self.0 {
-            boringssl_sys::ERR_clear_error();
-        }
-    }
-}
-
 /// The extra `SystemError` ref taken for the promise. `to_error_instance*`
 /// consumes one ref of every string, so the promise needs its own copy; this
 /// releases that copy on the paths that never build an error out of it.
@@ -3517,7 +3505,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get()
             .as_ref()
             .is_some_and(|handlers| handlers.mode == SocketMode::Server);
-        let groups: *mut bun_jsc::rare_data::SocketGroups = if accepted {
+        let groups = if accepted {
             // In its listener's own group: the listener's context.
             let listener_context = self
                 .handlers
@@ -3527,13 +3515,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             let vm = VirtualMachine::get();
             let context =
                 listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
-            core::ptr::from_mut(vm.as_mut().client_socket_groups_in(context))
+            vm.as_mut().client_socket_groups_in(context)
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
         };
-        // SAFETY: a boxed set that outlives this call; JS thread.
-        let groups = unsafe { &mut *groups };
         let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
@@ -3554,7 +3540,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             Some(s) => s,
             None => {
                 let err = boringssl_sys::ERR_get_error();
-                let _clear_err = ClearErrorQueue(err != 0);
                 // `deref` runs `Drop`, which drops the owned_ctx
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
                 tls.get().deref();
@@ -4715,6 +4700,14 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
         SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
         SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
         SocketHandle::Ignored(_) => 0,
+    }
+}
+
+pub(crate) fn has_pending_read(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Tls(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Ignored(_) => false,
     }
 }
 

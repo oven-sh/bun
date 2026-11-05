@@ -2,30 +2,33 @@ use core::cmp::Reverse;
 use core::mem::{replace, take};
 use core::ops::Range;
 
+use bun_core::strings::{last_index_of, last_index_of_char, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
     self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId,
-    MemberKey, MemberKind, ModifierKind, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
+    MemberKey, MemberKind, ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
     VarDeclId, VarKind,
 };
-use bun_sema::import_sites::ImportSiteKind;
-use bun_sema::module_format::{ThisPositions, evaluates_own_this};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::module_format::{ModuleFormat, ThisPositions, evaluates_own_this};
 use bun_sema::program::{CodeAnswer, FileId, Files, Sym};
-use bun_sema::resolve::DeclaredSideEffects;
+use bun_sema::resolve::{DeclaredSideEffects, join};
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
 use super::removable::{ClassChecks, Removable};
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
-use crate::ir::generated::ModuleRequestKind;
+use crate::builtins::table::{self, BuiltinId, MemberLookup};
+use crate::ir::generated::{ImportPhase, ModuleRequestKind};
 use crate::ir::{InParallel, for_each_mut};
+use crate::known_helpers::{self, Helper, KnownHelpers, resolve_callee};
 use crate::load::Sources;
 use crate::load::named_loads::gives_unknown_name_to_imported_loader;
-use crate::load::sources::{SourceKind, parsed_source};
+use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
@@ -39,12 +42,27 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub sources: &'a Sources,
     pub graph: &'a ModuleGraph,
+    pub known_helpers: &'a KnownHelpers,
     pub removable: RemovableOptions,
     pub limits: &'a LimitValues,
     /// `LoadOptions::reads_main_module_without_its_name`
     pub reads_main_module_without_its_name: bool,
+    /// `LoadOptions::stores_path_of_main_module`
+    pub stores_path_of_main_module: bool,
+    /// `LoadOptions::stores_loader_functions`
+    pub stores_loader_functions: bool,
+    /// `LoadOptions::runs_tests`: there a `require` of a constant name asks the loader functions that the program has stored, which may answer with any file.
+    pub asks_loader_functions_once_stored: bool,
     /// `LoadOptions::ways_read_out_of_sight`
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
+    /// Code that the build has not seen names files: `AotOptions::loads_code_from_disk`. So do the helpers of a test suite: `LoadOptions::runs_tests`.
+    pub any_file_is_named_at_run_time: bool,
+    /// `--external` with `AotOptions::loads_code_from_disk` or `AotOptions::runs_in_place`
+    pub code_on_disk_names_files: bool,
+    /// `LoadOptions::mocks_any_module`
+    pub mocks_any_module: bool,
+    /// `AotOptions::host_runs_files_from_disk`
+    pub host_runs_files_from_disk: bool,
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -67,7 +85,7 @@ struct Piece {
     enclosing: Option<u32>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Interest {
     Unit(u32),
     Binding(Sym),
@@ -99,6 +117,8 @@ enum Interest {
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     // A loader is given a name that the build does not know.
     LoadByUnknownName,
+    // The same, where the answer of the load is read under this name and looked at no further.
+    NameReadFromLoadByUnknownName(Atom),
     // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
     KnownMember(Sym),
     // A read of a variable of a module of data. The value stands for it.
@@ -109,6 +129,15 @@ enum Interest {
     HandedOnObject(Sym),
     // Another piece of the enum whose piece the region is.
     Piece(u32),
+    StoreOfLoaderFunction,
+    RequestThatLoaderFunctionsAnswer,
+}
+
+fn is_loader_function(builtin: BuiltinId) -> bool {
+    matches!(
+        table::canonical_id(builtin),
+        BuiltinId::NodeModule_resolveFilename | BuiltinId::NodeModulePrototypeRequire
+    )
 }
 
 // What of a unit that is not reached the program does without.
@@ -1314,14 +1343,11 @@ impl<'a, 's> FileScan<'a, 's> {
             if request.kind == ModuleRequestKind::Require {
                 continue;
             }
-            let is_asked_for_nothing = match request.target {
-                ModuleRef::File(target) | ModuleRef::Face(target) => {
-                    graph.has_record(target) && graph.has_no_side_effects(target)
-                }
-                ModuleRef::Inner { .. } | ModuleRef::Check(_) => false,
-                ModuleRef::Runtime(_) | ModuleRef::External { .. } => true,
-            };
-            if !is_asked_for_nothing {
+            // A read of the object of the file runs it later, with all that it asks for.
+            if request.phase == ImportPhase::Defer {
+                self.add_file_loaded_by_call(request.target);
+            }
+            if runs_when_imported(graph, request.target) {
                 self.units.interests[TOP_LEVEL as usize].push(Interest::Request(request.target));
             }
         }
@@ -1341,6 +1367,11 @@ impl<'a, 's> FileScan<'a, 's> {
                 let interest = Interest::RequiredName(exporter, required.name);
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
+        }
+        // The link goes from table to table.
+        for &(exporter, name) in graph.names_searched_behind_stars(self.file) {
+            let interest = Interest::RequiredName(exporter, name);
+            self.units.interests[TOP_LEVEL as usize].push(interest);
         }
         // A file that the host loads for a call in this one, as for a worker.
         let implied = self
@@ -1430,11 +1461,76 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    // `(await import(x)).name`, `require(x).name` and `const { name } = await import(x)`, with the name of the load at the position.
+    fn find_names_read_from_load_at(&self, position: u32) -> Option<SmallVec<[Atom; 4]>> {
+        let hir = self.hir;
+        let at_position = (0..hir.exprs.len() as u32)
+            .map(ExprId)
+            .filter(|&it| hir[it].pos == position);
+        let mut calls = at_position.filter_map(|it| match self.bound.parent_of_expr(it) {
+            Parent::Expr(call)
+                if matches!(
+                    hir[call].kind,
+                    ExprKind::Call(_) | ExprKind::ImportCall { .. }
+                ) =>
+            {
+                Some(call)
+            }
+            _ => None,
+        });
+        let call = calls.next()?;
+        if calls.next().is_some_and(|other| other != call) {
+            return None;
+        }
+        let (holder, is_awaited) = match self.bound.parent_of_expr(call) {
+            Parent::Expr(awaited) if matches!(hir[awaited].kind, ExprKind::Await(_)) => {
+                (awaited, true)
+            }
+            _ => (call, false),
+        };
+        let mut names = SmallVec::new();
+        if is_awaited {
+            names.push(known::then);
+        }
+        if let Some((member, name)) = self.find_member_read_from(holder) {
+            // The function finds the object, and so every other member, in `this`.
+            if self.is_called(member) {
+                return None;
+            }
+            names.push(name);
+            return Some(names);
+        }
+        let Parent::VarInit(declaration) = self.bound.parent_of_expr(holder) else {
+            return None;
+        };
+        let PatKind::Object(properties) = hir[hir[declaration].pat].kind else {
+            return None;
+        };
+        for property in properties.iter() {
+            match hir[property].key {
+                PropKey::Name(name) if !hir[property].is_rest => names.push(name),
+                _ => return None,
+            }
+        }
+        Some(names)
+    }
+
     fn add_loads_by_unknown_names(&mut self) {
         let files = self.input.files;
         let source = parsed_source(files, self.file);
         let positions = source.map_or(&[][..], |source| &source.unknown_names_at);
         for &position in positions {
+            match self.find_names_read_from_load_at(position) {
+                Some(names) => {
+                    for name in names {
+                        self.add_interest(position, Interest::NameReadFromLoadByUnknownName(name));
+                    }
+                }
+                None => self.add_interest(position, Interest::LoadByUnknownName),
+            }
+        }
+        // What the load answers with says nothing of what the text on disk imports.
+        for &position in source.map_or(&[][..], |source| &source.files_missing_at_build_at) {
             self.add_interest(position, Interest::LoadByUnknownName);
         }
         if source.is_none_or(|source| source.builtins.loads_unknown_modules())
@@ -1464,6 +1560,26 @@ impl<'a, 's> FileScan<'a, 's> {
                         continue;
                     }
                     (None, false)
+                }
+                // A mock loads nothing, and is stored under every name of the module.
+                ImportSiteKind::MockModule(call) => {
+                    if analysis.decisions.is_dead_expr(call) {
+                        continue;
+                    }
+                    let interests = self.region_of(self.hir[call].pos) as usize;
+                    let interests = &mut self.units.interests[interests];
+                    match graph.find_site_answer(self.file, site.kind) {
+                        Some(SiteAnswer::Module(target)) => {
+                            interests.push(Interest::EveryExport(target));
+                        }
+                        Some(SiteAnswer::Computed(_)) => {
+                            let files = self.input.files.compiled_files().iter();
+                            let modules = files.map(|&file| ModuleRef::File(file));
+                            interests.extend(modules.map(Interest::EveryExport));
+                        }
+                        Some(SiteAnswer::Failed(_) | SiteAnswer::Erased) | None => {}
+                    }
+                    continue;
                 }
                 // A path that is asked for is there to be loaded.
                 ImportSiteKind::ImportCall(call)
@@ -1572,6 +1688,151 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    fn skip_variables(&self, expression: ExprId, seen: &mut SmallVec<[SymbolId; 4]>) -> ExprId {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut current = hir.skip_type_assertions(expression);
+        loop {
+            if !matches!(hir[current].kind, ExprKind::Ident(_))
+                || bound
+                    .dynamic_lookup_scope(NodeData::Expr(current))
+                    .is_some()
+            {
+                return current;
+            }
+            let Binding::Symbol(symbol) = bound.binding(current) else {
+                return current;
+            };
+            let BindingInitializer::Expression(initializer) =
+                bound.binding_initializer(hir, symbol)
+            else {
+                return current;
+            };
+            if seen.contains(&symbol) {
+                return current;
+            }
+            seen.push(symbol);
+            current = hir.skip_type_assertions(initializer);
+        }
+    }
+
+    fn find_value_shown_as_default(
+        &self,
+        object: ExprId,
+        seen: &mut SmallVec<[SymbolId; 4]>,
+    ) -> Option<ExprId> {
+        let hir = self.hir;
+        let ExprKind::Call(call) = hir[self.skip_variables(object, seen)].kind else {
+            return None;
+        };
+        let helpers = self.input.known_helpers;
+        let input = known_helpers::ResolveInput {
+            files: self.input.files,
+            modules: self.input.graph,
+            helpers,
+        };
+        let callee = resolve_callee(&input, self.file, hir[call].callee)?;
+        match callee.helper(helpers)? {
+            Helper::ToEsModule | Helper::ImportStar | Helper::ImportDefault => {
+                hir.ids(hir[call].args).next()
+            }
+            _ => None,
+        }
+    }
+
+    fn find_builtin_behind(
+        &self,
+        source: &ParsedSource,
+        expression: ExprId,
+        seen: &mut SmallVec<[SymbolId; 4]>,
+    ) -> Option<BuiltinId> {
+        let hir = self.hir;
+        let written = hir.skip_type_assertions(expression);
+        if let Some(builtin) = source.builtins.builtin_of_expression(written) {
+            return Some(builtin);
+        }
+        let held = self.skip_variables(written, seen);
+        if let Some(builtin) = source.builtins.builtin_of_expression(held) {
+            return Some(builtin);
+        }
+        let (object, MemberKey::Name(name)) = hir.member_key(held)? else {
+            return None;
+        };
+        if name == known::default
+            && let Some(value) = self.find_value_shown_as_default(object, seen)
+        {
+            return self.find_builtin_behind(source, value, seen);
+        }
+        let holder = table::canonical_id(self.find_builtin_behind(source, object, seen)?);
+        let name = table::find_name(self.input.files.atoms.bytes(name))?;
+        match table::member(holder, name) {
+            MemberLookup::Found(member) => Some(member),
+            MemberLookup::Unknown | MemberLookup::Absent => None,
+        }
+    }
+
+    fn add_stores_of_loader_functions(&mut self) {
+        let (files, hir) = (self.input.files, self.hir);
+        if self.input.stores_loader_functions {
+            return;
+        }
+        let Some(source) = parsed_source(files, self.file) else {
+            return;
+        };
+        let mut mentioned = source.builtins.mentioned().iter();
+        if !mentioned.any(|&builtin| table::canonical_id(builtin) == BuiltinId::NodeModule) {
+            return;
+        }
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Assign { target, .. } = hir[expression].kind else {
+                continue;
+            };
+            let stored = self.find_builtin_behind(source, target, &mut SmallVec::new());
+            if stored.is_some_and(is_loader_function) && !self.is_folded_away(expression) {
+                self.add_interest(hir[expression].pos, Interest::StoreOfLoaderFunction);
+            }
+        }
+    }
+
+    // `require` and `require.resolve` wherever the build has not bound the call to a module of the image: the host answers there.
+    fn add_requests_that_loader_functions_answer(&mut self) {
+        let (files, graph, hir) = (self.input.files, self.input.graph, self.hir);
+        if graph.kind(self.file) != ModuleKind::CommonJs {
+            return;
+        }
+        let Some(source) = parsed_source(files, self.file) else {
+            return;
+        };
+        let mut bound_callees: FxHashSet<ExprId> = FxHashSet::default();
+        for site in files.analysis(self.file).import_sites {
+            let is_bound = match graph.find_site_answer(self.file, site.kind) {
+                Some(SiteAnswer::Module(target)) => !matches!(target, ModuleRef::External { .. }),
+                Some(SiteAnswer::Erased) => true,
+                Some(SiteAnswer::Computed(_) | SiteAnswer::Failed(_)) | None => false,
+            };
+            if let (true, Some(call)) = (is_bound, site.kind.call())
+                && let ExprKind::Call(call) = hir[call].kind
+            {
+                bound_callees.insert(hir.skip_type_assertions(hir[call].callee));
+            }
+        }
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let builtin = source.builtins.builtin_of_expression(expression);
+            if !matches!(
+                builtin.map(table::canonical_id),
+                Some(BuiltinId::ModuleRequire | BuiltinId::ModuleRequireResolve)
+            ) || bound_callees.contains(&expression)
+                || self.find_member_read_from(expression).is_some()
+                || self.is_folded_away(expression)
+            {
+                continue;
+            }
+            self.add_interest(
+                hir[expression].pos,
+                Interest::RequestThatLoaderFunctionsAnswer,
+            );
+        }
+    }
+
     fn scan(mut self) -> FileUnits {
         self.find_sites();
         self.collect_units();
@@ -1589,8 +1850,29 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_loads();
         self.add_loads_by_unknown_names();
         self.add_module_objects();
+        self.add_stores_of_loader_functions();
+        self.add_requests_that_loader_functions_answer();
+        self.drop_repeated_interests();
         self.units.this_positions = ThisPositions::of(self.hir);
         self.units
+    }
+
+    // A region names most of what it uses more than once, and one thread follows what is listed here.
+    fn drop_repeated_interests(&mut self) {
+        let mut seen: FxHashSet<Interest> = FxHashSet::default();
+        for interests in &mut self.units.interests {
+            if interests.len() < 2 {
+                continue;
+            }
+            seen.clear();
+            // Each mention of a module object is counted.
+            interests.retain(|&interest| {
+                matches!(
+                    interest,
+                    Interest::ModuleObject(..) | Interest::RequestThatLoaderFunctionsAnswer
+                ) || seen.insert(interest)
+            });
+        }
     }
 }
 
@@ -1614,6 +1896,17 @@ impl HandedOn {
     }
 }
 
+// Whether an import runs the module even if nothing of it is used.
+fn runs_when_imported(graph: &ModuleGraph, module: ModuleRef) -> bool {
+    match module {
+        ModuleRef::File(file) | ModuleRef::Face(file) => {
+            !graph.has_record(file) || !graph.has_no_side_effects(file)
+        }
+        ModuleRef::Inner { .. } | ModuleRef::Check(_) => true,
+        ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
+    }
+}
+
 // A file that exports a binding or a name of another file, or the object of a module.
 #[derive(Copy, Clone)]
 struct Exporter {
@@ -1627,6 +1920,8 @@ struct Walk<'a, 's> {
     exporters: FxHashMap<HandedOn, SmallVec<[Exporter; 2]>>,
     is_barrel: Vec<bool>,
     is_run_by_call: Vec<bool>,
+    // An import of a program takes a name of the file, also through a file that does not run.
+    is_named_by_import: Vec<bool>,
     names_awaiting_exporter: FxHashMap<FileId, Vec<Atom>>,
     followed_imports: FxHashSet<(FileId, HandedOn)>,
     names_read_from_objects: FxHashSet<(FileId, Atom)>,
@@ -1650,21 +1945,39 @@ struct Walk<'a, 's> {
     out_of_sight: FxHashSet<ModuleRef>,
     // One that `children` or `parent` has led to, or that a binding holds, goes there too.
     lets_related_object_out_of_sight: bool,
+    // Reached code takes an entry out of `require.cache`, which lists every file of a test run.
+    takes_entries_out_of_cache: bool,
     // `process` goes where nothing follows it, under an entry point that has a module object.
     lets_process_out_of_sight: bool,
+    stores_loader_functions: bool,
+    files_asking_loader_functions: Vec<FileId>,
     // The files that only test their own `module.parent`. There is one to find where the files that require them have objects.
     tests_own_parent: FxHashSet<ModuleRef>,
     // The files in which reached code names a way from one such object to another.
     files_naming_ways: Vec<ModuleRef>,
+    // `require.main.filename`: they name a way if somebody holds the object of the entry point.
+    files_reading_fields_of_main: Vec<ModuleRef>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
     // By a module: the modules that have a call of `require` for it. Made when something asks.
     requirers: Option<FxHashMap<ModuleRef, Vec<ModuleRef>>>,
     reaches_load_by_unknown_name: bool,
+    // The folders of the packages in which a load by an unknown name is reached.
+    packages_loading_by_unknown_name: FxHashSet<&'a [u8]>,
+    // What the loads by unknown names read of what they find: every export, or these names.
+    a_load_looks_at_every_export: bool,
+    names_read_from_loads: Vec<Atom>,
+    files_found_by_name: Vec<ModuleRef>,
+    // How many of them there were when the first module object was followed since the walk last asked.
+    files_found_when_objects_were_followed: Option<usize>,
+    is_found_by_name: FxHashSet<ModuleRef>,
     objects_handed_on: FxHashSet<Sym>,
     // By an enum that is not handed on: the files that read members of it whose values the build knows.
     files_reading_members: FxHashMap<Sym, SmallVec<[FileId; 2]>>,
     // By an enum, the enums whose members are made of its members.
     enums_relying_on: FxHashMap<Sym, SmallVec<[Sym; 2]>>,
+    // In their order. What test files share has thousands of entry points, and each of them may ask for these.
+    commonjs_files_that_may_be_main: Vec<FileId>,
+    other_files_that_may_be_main: Vec<FileId>,
 }
 
 impl<'a, 's> Walk<'a, 's> {
@@ -1752,12 +2065,28 @@ impl<'a, 's> Walk<'a, 's> {
         }
         let is_barrel = find_barrels(input, &files);
         let is_run_by_call = find_files_run_by_calls(input, &files);
+        let is_named_by_import = vec![false; files.len()];
+        let entry_points = input.sources.entry_points().iter();
+        let files_of_program = input.graph.record_files().iter().copied();
+        let files_that_may_be_main: Vec<FileId> = match input.stores_path_of_main_module {
+            true => files_of_program
+                .filter(|&file| !input.graph.is_library(file))
+                .collect(),
+            false => entry_points.map(|entry_point| entry_point.file).collect(),
+        };
+        let (commonjs_files_that_may_be_main, mut other_files_that_may_be_main): (Vec<_>, Vec<_>) =
+            (files_that_may_be_main.into_iter())
+                .partition(|&file| input.graph.kind(file) == ModuleKind::CommonJs);
+        if !input.stores_path_of_main_module {
+            other_files_that_may_be_main.clear();
+        }
         Walk {
             input,
             files,
             exporters,
             is_barrel,
             is_run_by_call,
+            is_named_by_import,
             names_awaiting_exporter: FxHashMap::default(),
             followed_imports: FxHashSet::default(),
             names_read_from_objects: FxHashSet::default(),
@@ -1773,15 +2102,27 @@ impl<'a, 's> Walk<'a, 's> {
             follows_parents: false,
             out_of_sight: FxHashSet::default(),
             lets_related_object_out_of_sight: false,
+            takes_entries_out_of_cache: false,
             lets_process_out_of_sight: false,
+            stores_loader_functions: input.stores_loader_functions,
+            files_asking_loader_functions: Vec::new(),
             tests_own_parent: FxHashSet::default(),
             files_naming_ways: Vec::new(),
+            files_reading_fields_of_main: Vec::new(),
             required: FxHashSet::default(),
             requirers: None,
             reaches_load_by_unknown_name: false,
+            packages_loading_by_unknown_name: FxHashSet::default(),
+            a_load_looks_at_every_export: false,
+            names_read_from_loads: Vec::new(),
+            files_found_by_name: Vec::new(),
+            files_found_when_objects_were_followed: None,
+            is_found_by_name: FxHashSet::default(),
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
             enums_relying_on: FxHashMap::default(),
+            commonjs_files_that_may_be_main,
+            other_files_that_may_be_main,
         }
     }
 
@@ -1879,9 +2220,24 @@ impl<'a, 's> Walk<'a, 's> {
                     || !graph.has_no_side_effects(target)
                     || self.is_run_by_call[target.idx()]
                 {
+                    self.is_named_by_import[target.idx()] = true;
                     self.evaluate(request.target);
+                } else {
+                    self.reach_imports_of_skipped_file(target);
                 }
                 self.reach_files_between(target, handed_on);
+            }
+        }
+    }
+
+    // The body of `file` does not run: a name only passes through it by `export *`. Its importers take over its imports, and those with side effects run.
+    fn reach_imports_of_skipped_file(&mut self, file: FileId) {
+        let graph = self.input.graph;
+        for request in graph.requests(file) {
+            if request.kind != ModuleRequestKind::Require
+                && runs_when_imported(graph, request.target)
+            {
+                self.evaluate(request.target);
             }
         }
     }
@@ -1931,6 +2287,7 @@ impl<'a, 's> Walk<'a, 's> {
         if exporters
             .any(|exporter| exporter.file == file && (!exporter.is_by_star || is_run_by_call))
         {
+            self.is_named_by_import[file.idx()] = true;
             self.evaluate(module);
         }
         self.reach_files_between(file, handed_on);
@@ -2013,8 +2370,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // A loader that is given a name which the build does not know finds a module of data by its path.
-    fn hand_on_every_data_object(&mut self) {
+    fn hand_on_data_objects(&mut self) {
         let known = KnownMemberValues::default();
         let members = self.input.known_objects(&known);
         let files = self.input.files.compiled_files().iter();
@@ -2023,6 +2379,62 @@ impl<'a, 's> Walk<'a, 's> {
             .collect();
         for object in objects {
             self.hand_on_object(object);
+        }
+    }
+
+    // A loader that is given a name which the build does not know finds a module of data by its path, and a file with code that may be named that way.
+    fn hand_on_files_found_by_name(&mut self, loading: FileId, name_read: Option<Atom>) {
+        let package = package_of(self.input.files.module(loading).file_name());
+        let is_first = self.packages_loading_by_unknown_name.is_empty();
+        let is_new_package = self.packages_loading_by_unknown_name.insert(package);
+        if is_first {
+            self.hand_on_data_objects();
+        }
+        match name_read {
+            Some(name) if !self.input.any_file_is_named_at_run_time => {
+                if !self.names_read_from_loads.contains(&name) {
+                    self.names_read_from_loads.push(name);
+                    if !self.a_load_looks_at_every_export {
+                        for module in self.files_found_by_name.clone() {
+                            self.reach_name_read_from_load(module, name);
+                        }
+                    }
+                }
+            }
+            _ => {
+                if !replace(&mut self.a_load_looks_at_every_export, true) {
+                    for module in self.files_found_by_name.clone() {
+                        self.reach_every_export(module);
+                    }
+                }
+            }
+        }
+        if !is_new_package || (!is_first && self.input.any_file_is_named_at_run_time) {
+            return;
+        }
+        for file in find_files_named_at_run_time(self.input, package) {
+            let module = ModuleRef::File(file);
+            if !self.is_found_by_name.insert(module) {
+                continue;
+            }
+            self.files_found_by_name.push(module);
+            self.evaluate(module);
+            if self.a_load_looks_at_every_export {
+                self.reach_every_export(module);
+            } else {
+                for name in self.names_read_from_loads.clone() {
+                    self.reach_name_read_from_load(module, name);
+                }
+            }
+        }
+    }
+
+    // A loader answers with the object of a CommonJS file, so the file has one, and the object has every name.
+    fn reach_name_read_from_load(&mut self, module: ModuleRef, name: Atom) {
+        if self.has_stored_names(module_with_code(module)) {
+            self.reach_every_export(module);
+        } else {
+            self.reach_export(module, name);
         }
     }
 
@@ -2039,29 +2451,47 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Each of these says whether what it reached can look at the object that it is called on.
     fn reach_binding(&mut self, defined: Sym) -> bool {
-        self.hand_on_object(defined);
         if let Some(&can_read_this) = self.reached_bindings.get(&defined) {
             return can_read_this;
         }
+        self.hand_on_object(defined);
         let can_read_this = self.reach_new_binding(defined);
         self.reached_bindings.insert(defined, can_read_this);
         can_read_this
     }
 
+    fn note_named_by_import(&mut self, module: ModuleRef) {
+        if let ModuleRef::File(file) | ModuleRef::Face(file) = module {
+            self.is_named_by_import[file.idx()] = true;
+        }
+    }
+
+    fn note_named_by_export(&mut self, exporter: FileId, binding: ExportBinding) {
+        if let ExportBinding::Variable(defined) = binding {
+            self.is_named_by_import[defined.file.idx()] |= defined.file != exporter;
+        }
+    }
+
     fn reach_new_binding(&mut self, defined: Sym) -> bool {
         let Sym { file, id } = defined;
         match self.input.graph.import_binding(file, id) {
-            ImportBinding::Local => {}
+            // The import statement fills a variable of the file, which is what an export of the name shows.
+            ImportBinding::Local
+            | ImportBinding::Builtin(_)
+            | ImportBinding::BuiltinMember { .. } => {}
             ImportBinding::Variable(elsewhere) if elsewhere != defined => {
+                self.is_named_by_import[elsewhere.file.idx()] = true;
                 self.evaluate(ModuleRef::File(file));
                 self.reach_files_between(file, HandedOn::Variable(elsewhere));
                 return self.reach_binding(elsewhere);
             }
             ImportBinding::Namespace { module, .. } => {
+                self.note_named_by_import(module);
                 self.reach_every_export(module);
                 return false;
             }
             ImportBinding::NamespaceRead { module, name } => {
+                self.note_named_by_import(module);
                 return self.reach_export(module, name);
             }
             ImportBinding::Synthetic(export) => {
@@ -2189,6 +2619,9 @@ impl<'a, 's> Walk<'a, 's> {
             .find_export(module, name, &self.input.files.atoms)
         {
             ExportLookup::Found(binding) => {
+                if let ModuleRef::File(file) = module {
+                    self.note_named_by_export(file, binding);
+                }
                 self.reach_exporter(module, binding);
                 self.reach_export_binding(binding)
             }
@@ -2220,6 +2653,10 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn reach_every_export(&mut self, module: ModuleRef) {
         self.evaluate(module);
+        self.look_at_all_of(module);
+    }
+
+    fn look_at_all_of(&mut self, module: ModuleRef) {
         self.look_at(module);
         // A module of data has no units: whoever looks at it gets hold of its value.
         if let ModuleRef::File(file) = module_with_code(module)
@@ -2252,6 +2689,7 @@ impl<'a, 's> Walk<'a, 's> {
             return;
         }
         for export in graph.exports(file) {
+            self.note_named_by_export(file, export.binding);
             if let Some(handed_on) = HandedOn::of(export.binding) {
                 self.reach_files_between(file, handed_on);
             }
@@ -2373,7 +2811,7 @@ impl<'a, 's> Walk<'a, 's> {
             }
             SiteAnswer::Computed(Candidates::All) | SiteAnswer::Failed(_) | SiteAnswer::Erased => {}
         });
-        // A require under a name that the build cannot follow finds an entry point.
+        // A require under a name that the build cannot follow finds an entry point, and a file that may be named that way.
         if self.requires_under_computed_name(module) {
             let entry_points = self.input.sources.entry_points();
             found.extend(
@@ -2381,6 +2819,7 @@ impl<'a, 's> Walk<'a, 's> {
                     .iter()
                     .map(|entry_point| ModuleRef::File(entry_point.file)),
             );
+            found.extend_from_slice(&self.files_found_by_name);
         }
         found
     }
@@ -2432,6 +2871,7 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Which object a read of `children` or `parent` is made on is not followed: every object that is handed out may be the one.
     fn follow_module_object(&mut self, module: ModuleRef) {
+        (self.files_found_when_objects_were_followed).get_or_insert(self.files_found_by_name.len());
         let is_out_of_sight = self.out_of_sight.contains(&module);
         let read = self.input.ways_read_out_of_sight;
         let mut related = Vec::new();
@@ -2459,10 +2899,9 @@ impl<'a, 's> Walk<'a, 's> {
         object_use: ModuleObjectUse,
     ) {
         // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined, as they do in a program that names no way.
-        let (entry_points, graph) = (self.input.sources.entry_points(), self.input.graph);
-        let is_commonjs = |file: FileId| graph.kind(file) == ModuleKind::CommonJs;
         if owner == ModuleObjectOwner::EntryPoint
-            && !entry_points.iter().any(|it| is_commonjs(it.file))
+            && self.commonjs_files_that_may_be_main.is_empty()
+            && self.other_files_that_may_be_main.is_empty()
         {
             return;
         }
@@ -2480,8 +2919,13 @@ impl<'a, 's> Walk<'a, 's> {
             ModuleObjectUse::Field(ModuleField::Id) if self.find_commonjs_main().is_none() => {
                 return self.files_naming_ways.push(ModuleRef::File(file));
             }
-            // The record of the module answers these.
-            ModuleObjectUse::Field(_) => return,
+            // The record of the module answers these, as long as nobody holds the object, who could store into it: `try_lower_module_field`.
+            ModuleObjectUse::Field(_) => {
+                if owner == ModuleObjectOwner::EntryPoint {
+                    (self.files_reading_fields_of_main).push(ModuleRef::File(file));
+                }
+                return;
+            }
             // The host answers whether there is such an object, and it answers undefined in a program that names no way.
             ModuleObjectUse::Tested => return self.files_naming_ways.push(ModuleRef::File(file)),
             ModuleObjectUse::Object => (false, false),
@@ -2517,26 +2961,48 @@ impl<'a, 's> Walk<'a, 's> {
         if names_way || owner == ModuleObjectOwner::EntryPoint {
             self.files_naming_ways.push(ModuleRef::File(file));
         }
-        let mut keep = |module: ModuleRef| match object_use {
-            ModuleObjectUse::HandedOn => self.let_module_object_out_of_sight(module),
-            _ => self.keep_module_object(module),
+        let keep = |walk: &mut Self, file: FileId| match object_use {
+            ModuleObjectUse::HandedOn => walk.let_module_object_out_of_sight(ModuleRef::File(file)),
+            _ => walk.keep_module_object(ModuleRef::File(file)),
         };
         match owner {
-            ModuleObjectOwner::OwnFile => keep(ModuleRef::File(file)),
+            ModuleObjectOwner::OwnFile => keep(self, file),
             ModuleObjectOwner::EntryPoint => {
-                for entry_point in entry_points.iter().filter(|it| is_commonjs(it.file)) {
-                    keep(ModuleRef::File(entry_point.file));
+                let files = take(&mut self.commonjs_files_that_may_be_main);
+                for &file in &files {
+                    keep(self, file);
                 }
+                self.commonjs_files_that_may_be_main = files;
+                let files = take(&mut self.other_files_that_may_be_main);
+                for &file in &files {
+                    self.look_at_all_of(ModuleRef::File(file));
+                }
+                self.other_files_that_may_be_main = files;
             }
             // Whatever led to the object has been counted.
             ModuleObjectOwner::Related => {}
+            ModuleObjectOwner::ListedInCache => self.takes_entries_out_of_cache = true,
         }
+    }
+
+    fn is_ready_for_loader_functions(&self) -> bool {
+        if self.files_asking_loader_functions.is_empty() {
+            return true;
+        }
+        let names_way = !self.input.ways_read_out_of_sight.is_empty();
+        (!names_way || !self.files_naming_ways.is_empty())
+            && self.files_asking_loader_functions.iter().all(|&file| {
+                let module = ModuleRef::File(file);
+                self.find_module(module).is_none() || self.out_of_sight.contains(&module)
+            })
     }
 
     fn loads_by_unknown_name_outside_units(&self, file: FileId) -> bool {
         self.files[file.idx()].is_none()
             && parsed_source(self.input.files, file).is_none_or(|source| {
-                source.loads_by_unknown_name || !source.unknown_names_at.is_empty()
+                source.loads_by_unknown_name
+                    || !source.unknown_names_at.is_empty()
+                    || !source.files_missing_at_build_at.is_empty()
             })
     }
 
@@ -2545,9 +3011,12 @@ impl<'a, 's> Walk<'a, 's> {
             Interest::Unit(unit) => self.reach_region(file, unit + 1),
             Interest::Piece(unit) => self.run_region(file, unit + 1),
             Interest::LoadByUnknownName => {
-                if !replace(&mut self.reaches_load_by_unknown_name, true) {
-                    self.hand_on_every_data_object();
-                }
+                self.reaches_load_by_unknown_name = true;
+                self.hand_on_files_found_by_name(file, None);
+            }
+            Interest::NameReadFromLoadByUnknownName(name) => {
+                self.reaches_load_by_unknown_name = true;
+                self.hand_on_files_found_by_name(file, Some(name));
             }
             Interest::KnownVariable(variable) => {
                 self.reach_files_between(file, HandedOn::Variable(variable));
@@ -2572,15 +3041,18 @@ impl<'a, 's> Walk<'a, 's> {
                 }
             }
             Interest::Lookup(enumeration) => {
+                self.is_named_by_import[enumeration.file.idx()] |= enumeration.file != file;
                 self.reach_files_between(file, HandedOn::Variable(enumeration));
                 self.look_up_in(enumeration);
             }
             Interest::HandedOnObject(enumeration) => self.hand_on_object(enumeration),
             Interest::Binding(defined) => {
+                self.is_named_by_import[defined.file.idx()] |= defined.file != file;
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 self.reach_binding(defined);
             }
             Interest::CalledBinding(defined, accessed) => {
+                self.is_named_by_import[defined.file.idx()] |= defined.file != file;
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 if self.reach_binding(defined) {
                     self.reach_every_export(accessed);
@@ -2648,19 +3120,76 @@ impl<'a, 's> Walk<'a, 's> {
             Interest::ModuleObject(owner, object_use) => {
                 self.reach_module_object(file, owner, object_use);
             }
+            Interest::StoreOfLoaderFunction => {
+                self.stores_loader_functions = true;
+                if self.input.asks_loader_functions_once_stored {
+                    self.hand_on_files_found_by_name(file, None);
+                }
+            }
+            Interest::RequestThatLoaderFunctionsAnswer if self.input.stores_loader_functions => {
+                let (owner, object_use) = (ModuleObjectOwner::OwnFile, ModuleObjectUse::HandedOn);
+                self.reach_module_object(file, owner, object_use);
+            }
+            Interest::RequestThatLoaderFunctionsAnswer => {
+                self.files_asking_loader_functions.push(file);
+            }
         }
     }
 
     fn run(&mut self) {
-        let mut compiled_files = self.input.files.compiled_files().iter();
-        if compiled_files.any(|&file| self.loads_by_unknown_name_outside_units(file)) {
-            self.hand_on_every_data_object();
+        // A file that the host runs finds a module of data by its path.
+        if self.input.host_runs_files_from_disk {
+            self.hand_on_data_objects();
         }
+        if self.input.code_on_disk_names_files {
+            for file in self.input.graph.importers_of_uncompiled_code() {
+                self.hand_on_files_found_by_name(file, None);
+            }
+        }
+        let is_known_to_ask =
+            self.input.stores_loader_functions && self.input.asks_loader_functions_once_stored;
+        for &file in self.input.files.compiled_files() {
+            if is_known_to_ask || self.loads_by_unknown_name_outside_units(file) {
+                self.hand_on_files_found_by_name(file, None);
+            }
+            // A mock is stored under every name of the module. A file that runs again does so as code that the build has not seen, and links to the names it imports.
+            let module = ModuleRef::File(file);
+            if self.input.mocks_any_module || self.input.graph.is_every_export_asked_for(module) {
+                self.reach_every_export(module);
+            }
+        }
+        // `(0, eval)("const os = process.mainModule.require('node:os')")`: the build reads the text and leaves it to the interpreter, which does with the object what it likes.
+        let files = self.input.files.compiled_files().iter();
+        let is_named_in_text_left_to_run_time = files
+            .filter_map(|&file| parsed_source(self.input.files, file))
+            .any(|source| source.names_main_module_in_text_left_to_run_time);
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
-            if self.input.reads_main_module_without_its_name {
+            if self.input.reads_main_module_without_its_name || is_named_in_text_left_to_run_time {
                 let owner = ModuleObjectOwner::EntryPoint;
                 self.reach_module_object(entry_point.file, owner, ModuleObjectUse::HandedOn);
+            }
+        }
+        // Source text that the program evaluates has no units, so all of it counts as reached.
+        for &file in self.input.files.compiled_files() {
+            if self.input.sources.kind(file) != SourceKind::EvaluatedText {
+                continue;
+            }
+            // `new Function('return import("dep")')`: whoever gets the object sees all of it.
+            for site in self.input.files.analysis(file).import_sites {
+                if let Some(SiteAnswer::Module(target)) =
+                    self.input.graph.find_site_answer(file, site.kind)
+                {
+                    self.reach_every_export(target);
+                }
+            }
+            let Some(source) = parsed_source(self.input.files, file) else {
+                continue;
+            };
+            for mention in source.builtins.module_object_mentions() {
+                if mention.owner == ModuleObjectOwner::EntryPoint {
+                    self.reach_module_object(file, mention.owner, mention.object_use);
+                }
             }
         }
         loop {
@@ -2679,14 +3208,211 @@ impl<'a, 's> Walk<'a, 's> {
                 self.follow_look(module);
             } else if let Some(module) = self.newly_handed_out.pop() {
                 self.follow_module_object(module);
+            } else if (self.files_found_when_objects_were_followed.take())
+                .is_some_and(|found| found < self.files_found_by_name.len())
+            {
+                // A file that is found by name is a child of every module that requires under a name which the build cannot follow, also of one that was followed
+                // before the file was found. Once for all the files found since, not once a file.
+                self.requirers = None;
+                (self.newly_handed_out).clone_from(&self.modules_with_objects);
+            } else if take(&mut self.takes_entries_out_of_cache) {
+                // A CommonJS file without a module object to hand out is shown neither as a child nor as a parent.
+                for &file in self.input.files.compiled_files() {
+                    let format = self.input.files.analysis(file).module_format;
+                    if format == ModuleFormat::CommonJs {
+                        self.let_module_object_out_of_sight(ModuleRef::File(file));
+                    }
+                }
             } else {
                 break;
             }
         }
+        // Then the field is read off what `require.main` answers, and the host answers undefined in a program that names no way.
+        let mut mains = self.commonjs_files_that_may_be_main.iter();
+        if mains.any(|&main| self.has_module_object.contains(&ModuleRef::File(main))) {
+            (self.files_naming_ways).append(&mut self.files_reading_fields_of_main);
+        }
     }
 }
 
+fn without_extension(path: &[u8]) -> &[u8] {
+    let name = last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+    match last_index_of_char(&path[name..], b'.') {
+        Some(dot) if dot > 0 => &path[..name + dot],
+        _ => path,
+    }
+}
+
+fn directory_of(path: &[u8]) -> &[u8] {
+    &path[..last_index_of_char(path, b'/').unwrap_or(0)]
+}
+
+// The folder of the package that holds the file: `../node_modules/name` or `../node_modules/@scope/name`. Nothing for a file of the program itself.
+fn package_of(path: &[u8]) -> &[u8] {
+    const FOLDER: &[u8] = b"/node_modules/";
+    let Some(at) = last_index_of(path, FOLDER) else {
+        return b"";
+    };
+    let name = at + FOLDER.len();
+    let parts = if path.get(name) == Some(&b'@') { 2 } else { 1 };
+    let slashes = (name..path.len()).filter(|&index| path[index] == b'/');
+    &path[..slashes.take(parts).last().unwrap_or(path.len())]
+}
+
+// The files with code that a load in the package may find under a name the build does not follow to it: any file where code comes from disk,
+// else those that a relative path spells which a file writes as a string. The path comes from the package, from a file that imports from it, or from a package that one of those imports.
+// The extension may differ, and a folder stands for its index file.
+// Whether a call of `import()` that is not dead is given the path of a file with a query, as far as the build knows its argument: each query is an instance of its own, which only code
+// from disk can be. A query that reaches the call through a parameter or a call shows nowhere: flow has no strings. That load is refused with an error that names the option.
+pub(crate) fn imports_file_with_query(files: &Files<'_>, sources: &Sources) -> bool {
+    let holds_query =
+        |text: Atom| bun_core::strings::index_of_char(files.atoms.bytes(text), b'?').is_some();
+    files.compiled_files().iter().any(|&file| {
+        if sources.kind(file) != SourceKind::Program {
+            return false;
+        }
+        let analysis = files.analysis(file);
+        analysis.import_sites.iter().any(|site| {
+            let ImportSiteKind::ImportCall(call) = site.kind else {
+                return false;
+            };
+            !analysis.decisions.is_dead_expr(call)
+                && analysis.alternatives_of(&site.specifier).iter().any(
+                    |specifier| match *specifier {
+                        ImportSpecifier::Constant(text) => holds_query(text),
+                        ImportSpecifier::Pattern { prefix, suffix } => {
+                            holds_query(prefix) || holds_query(suffix)
+                        }
+                        ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
+                    },
+                )
+        })
+    })
+}
+
+// The last folders of the root directory that a path in the program goes up out of and comes back through: "../app/a.ts" in a file of the root directory
+// `/work/app`. Such a path names a file of the executable, and the executable knows no more of where it was built than the program writes itself.
+pub(crate) fn find_root_folders_spelled(
+    files: &Files<'_>,
+    sources: &Sources,
+    root_directory: &[u8],
+) -> Vec<u8> {
+    let root_directory = root_directory.strip_suffix(b"/").unwrap_or(root_directory);
+    let folders_of_root: Vec<&[u8]> = split(root_directory, b"/").collect();
+    let mut longest: Vec<u8> = Vec::new();
+    for &file in files.compiled_files() {
+        if sources.kind(file) != SourceKind::Program {
+            continue;
+        }
+        let directory = directory_of(files.module(file).file_name());
+        let Some(below_root) = directory.strip_prefix(root_directory) else {
+            continue;
+        };
+        let depth = split(below_root, b"/")
+            .filter(|part| !part.is_empty())
+            .count();
+        for expression in &files.hir(file).exprs {
+            let ExprKind::String(text) = expression.kind else {
+                continue;
+            };
+            let text = files.atoms.bytes(text);
+            if !text.starts_with(b"../") {
+                continue;
+            }
+            let parts: Vec<&[u8]> = split(text, b"/").collect();
+            let ups = parts.iter().take_while(|part| **part == b"..").count();
+            let Some(above) = ups.checked_sub(depth).filter(|&above| above > 0) else {
+                continue;
+            };
+            let Some(start) = folders_of_root.len().checked_sub(above) else {
+                continue;
+            };
+            let spelled = &folders_of_root[start..];
+            if parts.len() > ups + above && parts[ups..ups + above] == *spelled {
+                let folders = spelled.join(&b"/"[..]);
+                if folders.len() > longest.len() {
+                    longest = folders;
+                }
+            }
+        }
+    }
+    longest
+}
+
+fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>, package: &[u8]) -> Vec<FileId> {
+    let files = input.files;
+    let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
+    let code_files = || files.compiled_files().iter().filter(is_code).copied();
+    if input.any_file_is_named_at_run_time {
+        return code_files().collect();
+    }
+    let mut files_by_spelling: FxHashMap<&[u8], SmallVec<[FileId; 2]>> = FxHashMap::default();
+    for file in code_files() {
+        let spelling = without_extension(files.module(file).file_name());
+        files_by_spelling.entry(spelling).or_default().push(file);
+        if spelling.ends_with(b"/index") {
+            let folder = directory_of(spelling);
+            files_by_spelling.entry(folder).or_default().push(file);
+        }
+    }
+    let package_of_file = |file: FileId| package_of(files.module(file).file_name());
+    let imported_files = |file: FileId| {
+        let requests = input.graph.requests(file).iter();
+        requests.filter_map(|it| match it.target {
+            ModuleRef::File(target) | ModuleRef::Face(target) => Some(target),
+            _ => None,
+        })
+    };
+    let mut packages: FxHashSet<&[u8]> = FxHashSet::default();
+    packages.insert(package);
+    for file in code_files() {
+        if package_of_file(file) == package
+            || imported_files(file).any(|it| package_of_file(it) == package)
+        {
+            packages.insert(package_of_file(file));
+            packages.extend(imported_files(file).map(package_of_file));
+        }
+    }
+    let mut found = Vec::new();
+    for file in code_files() {
+        if !packages.contains(package_of_file(file)) {
+            continue;
+        }
+        let directory = directory_of(files.module(file).file_name());
+        let sites = files.analysis(file).import_sites.iter();
+        let resolved: FxHashSet<ExprId> = sites.map(|site| site.specifier_node).collect();
+        let decisions = &files.analysis(file).decisions;
+        for (index, expression) in files.hir(file).exprs.iter().enumerate() {
+            let ExprKind::String(text) = expression.kind else {
+                continue;
+            };
+            // `feature ? require("./a.js") : null`, where the build has decided: nothing runs it.
+            if decisions.is_dead_expr(ExprId(index as u32)) {
+                continue;
+            }
+            let text = files.atoms.bytes(text);
+            let names_something = split(text, b"/").any(|part| !matches!(part, b"" | b"." | b".."));
+            // `import.meta.dir + "/a.ts"`
+            if !(text.starts_with(b"./") || text.starts_with(b"../") || text.starts_with(b"/"))
+                || !names_something
+                || resolved.contains(&ExprId(index as u32))
+            {
+                continue;
+            }
+            let path = join(directory, text.strip_prefix(b"/").unwrap_or(text));
+            let path = path.strip_suffix(b"/").unwrap_or(&path);
+            for spelling in [path, without_extension(path)] {
+                found.extend(files_by_spelling.get(spelling).into_iter().flatten());
+            }
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
 // The decisions of the bundler (src/bundler/barrel_imports.rs): a barrel is a file of a package with `"sideEffects": false`, no entry point, that defines none of the names it exports, and that no file exports with `export *`.
+// With --ignore-dce-annotations the load still leaves out what no import names, and all that is loaded runs: no request waits.
 fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) -> Vec<bool> {
     let graph = input.graph;
     let hands_on_all_it_exports = |file: FileId| {
@@ -2705,6 +3431,8 @@ fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) 
     let mut is_barrel: Vec<bool> = scanned_files
         .map(|(file, units)| {
             units.is_some()
+                && graph.has_record(file)
+                && graph.has_no_side_effects(file)
                 && matches!(
                     input.files.declared_side_effects(file),
                     DeclaredSideEffects::None
@@ -2724,6 +3452,7 @@ fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) 
 }
 
 // In a bundle a file that `require()` or `import()` loads, and all that it asks for, is a function: a used import and every `export *` call it whatever "sideEffects" says.
+// So it is with a file that `import defer` names: what reads its object finds the object of that very file.
 fn find_files_run_by_calls(
     input: &ProgramReachInput<'_, '_>,
     files: &[Option<FileUnits>],
@@ -2844,8 +3573,16 @@ pub(crate) struct ReachedModules {
     pub ways_followed_for_their_names: WaysBetweenModuleObjects,
     // `process` goes where nothing follows it, and nothing has been kept for whoever reads `mainModule` there.
     pub lets_process_out_of_sight: bool,
+    pub stores_loader_functions: bool,
+    pub is_ready_for_loader_functions: bool,
     // Modules that are written inside a file and that nothing calls.
     pub left_out_inner_modules: Vec<ModuleRef>,
+    // A load under a name that the build does not follow may find the file.
+    pub found_by_name: Vec<ModuleRef>,
+    // The same of the files of data. Such a load may come before any module that imports the file has run.
+    pub data_found_by_name: Vec<ModuleRef>,
+    // A file that does not run hands its imports to its importers, but not these. In order.
+    pub brought_by_calls: Vec<FileId>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
 }
 
@@ -2855,6 +3592,26 @@ impl ReachedModules {
         request.kind != ModuleRequestKind::Require
             || self.required.contains(&(referrer, request.target))
     }
+}
+
+// What the file exports may come out of a file whose names only the run shows, so no import can be seen to take them.
+fn has_names_found_at_run_time(graph: &ModuleGraph, file: FileId) -> bool {
+    let mut seen = FxHashSet::default();
+    let mut pending = vec![file];
+    while let Some(file) = pending.pop() {
+        if !seen.insert(file) {
+            continue;
+        }
+        for request in graph.requests(file) {
+            if request.is_dynamic_star_export {
+                return true;
+            }
+            if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target {
+                pending.push(target);
+            }
+        }
+    }
+    false
 }
 
 // A literal text that is evaluated is compiled like a file. It goes with the file that evaluates it, which may be such a text.
@@ -2906,6 +3663,23 @@ fn find_ways_named(files: &Files<'_>, left_out: &[FileId]) -> WaysBetweenModuleO
 // Whether anybody reads `children` or `parent` of a module object that is out of sight is the engine's to say, behind its flow analysis, and what it says may start the build over.
 // Where a file names the member the engine most often says yes, so the way is followed at once.
 pub(crate) fn find_left_out_code(
+    input: &ProgramReachInput<'_, '_>,
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    in_parallel: InParallel<'_>,
+) -> (LeftOutCode, ReachedModules) {
+    let found =
+        find_left_out_code_with_ways_named(input, ways_named_that_nobody_reads, in_parallel);
+    if found.1.is_ready_for_loader_functions || !found.1.stores_loader_functions {
+        return found;
+    }
+    let input = ProgramReachInput {
+        stores_loader_functions: true,
+        ..*input
+    };
+    find_left_out_code_with_ways_named(&input, ways_named_that_nobody_reads, in_parallel)
+}
+
+fn find_left_out_code_with_ways_named(
     input: &ProgramReachInput<'_, '_>,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     in_parallel: InParallel<'_>,
@@ -2997,6 +3771,18 @@ fn find_left_out_code_following(
         }
     }
     leave_out_texts_of_left_out_files(input.sources, &mut left_out.files);
+    // Of the files that say nothing is lost without them, the ones in the program that no import takes a name of: a call has brought them.
+    reached_modules.brought_by_calls = (0..walk.files.len())
+        .map(|index| FileId(index as u32))
+        .filter(|&file| {
+            input.graph.has_record(file)
+                && input.graph.has_no_side_effects(file)
+                && input.graph.shape(ModuleRef::File(file)) == Shape::EsModule
+                && !walk.is_named_by_import[file.idx()]
+                && walk.is_run_by_call[file.idx()]
+                && !has_names_found_at_run_time(input.graph, file)
+        })
+        .collect();
     let is_evaluated = |module: &ModuleRef| {
         walk.find_module(*module)
             .is_some_and(|found| walk.is_body_reached(found))
@@ -3008,8 +3794,17 @@ fn find_left_out_code_following(
         .filter(is_evaluated)
         .collect();
     reached_modules.required = take(&mut walk.required);
+    reached_modules.stores_loader_functions = walk.stores_loader_functions;
+    reached_modules.is_ready_for_loader_functions = walk.is_ready_for_loader_functions();
     let leads_on = walk.find_ways_that_lead_on_out_of_sight();
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
+    reached_modules.found_by_name = take(&mut walk.files_found_by_name);
+    if !walk.packages_loading_by_unknown_name.is_empty() || input.host_runs_files_from_disk {
+        let is_data = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Data;
+        let data_files = input.files.compiled_files().iter().filter(is_data);
+        reached_modules.data_found_by_name =
+            data_files.map(|&file| ModuleRef::File(file)).collect();
+    }
     reached_modules.lets_process_out_of_sight = walk.lets_process_out_of_sight;
     let read = input.ways_read_out_of_sight;
     reached_modules.ways_not_followed_out_of_sight = WaysBetweenModuleObjects {

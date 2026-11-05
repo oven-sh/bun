@@ -9,23 +9,23 @@ use smallvec::SmallVec;
 /// Disallow useless backreferences in regular expressions.
 pub struct NoUselessBackreference;
 
-const NESTED: Message = Message::new(
+const NESTED: &Message = &Message::new(
     "nested",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} from within that group.",
 );
-const FORWARD: Message = Message::new(
+const FORWARD: &Message = &Message::new(
     "forward",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which appears later in the pattern.",
 );
-const BACKWARD: Message = Message::new(
+const BACKWARD: &Message = &Message::new(
     "backward",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which appears before in the same lookbehind.",
 );
-const DISJUNCTIVE: Message = Message::new(
+const DISJUNCTIVE: &Message = &Message::new(
     "disjunctive",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which is in another alternative.",
 );
-const INTO_NEGATIVE_LOOKAROUND: Message = Message::new(
+const INTO_NEGATIVE_LOOKAROUND: &Message = &Message::new(
     "intoNegativeLookaround",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which is in a negative lookaround.",
 );
@@ -53,7 +53,7 @@ fn as_lookaround(node: regex::Node<'_>) -> Option<Lookaround> {
 }
 
 /// Returns the reason why `group` can't have captured anything when `bref`, which refers to it, is matched.
-fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Message> {
+fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<&'static Message> {
     // Only `bref`'s ancestors span its whole range.
     let contains_bref =
         |node: regex::Node<'r>| node.start() <= bref.start() && bref.end() <= node.end() && node != bref;
@@ -121,7 +121,7 @@ fn check_pattern<'a>(
         let RegexKind::Backreference { resolved, .. } = bref.kind() else {
             continue;
         };
-        let mut problems: SmallVec<[(Message, regex::Node<'_>); 2]> = SmallVec::new();
+        let mut problems: SmallVec<[(&'static Message, regex::Node<'_>); 2]> = SmallVec::new();
         problems.extend(resolved.iter().map_while(|group| Some((problem_of(bref, group)?, group))));
         if problems.len() != resolved.len() {
             continue;

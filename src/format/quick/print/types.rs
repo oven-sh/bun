@@ -23,7 +23,7 @@ use crate::print::statics::{
     RBRACE, RBRACKET, READONLY, READONLY_, RENDERS_, RENDERS_MAYBE_, RENDERS_STAR_, RPAREN, SEMI,
     SET_, SPACE, STATIC_, TYPE_, TYPEOF_, UNIQUE_,
 };
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 pub(crate) struct PrintTypes {
     /// What the printer of a body tells the printer of a member: is it the last one, and which one follows. A member reads this
@@ -861,6 +861,9 @@ impl Quick {
         h = self.detach_open();
         self.print(expression)?;
         let printed = self.detach_close(h);
+        if self.doc_will_break(printed) {
+            return Err(self.rare(rare::ASSERTION));
+        }
         let c = self.cond_open();
         let mut st = self.state_open();
         self.call(cast);

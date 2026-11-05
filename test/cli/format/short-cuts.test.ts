@@ -2259,6 +2259,222 @@ describe.skipIf(!hasFlag)("Vue", () => {
   });
 });
 
+describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
+  const template = "<template>\n  <div :a=\"b\">\n    <p>{{ c }}</p>\n  </div>\n</template>\n";
+  const script = '<script setup lang="ts">\nimport { a } from "a";\nconst b   = a<number>(1)\n</script>\n';
+  const style = "<style scoped>\n.a{color:red}\n\n\n.b {\n  color: blue;\n}\n</style>\n";
+  const inputs = [
+    template,
+    script,
+    style,
+    `${template}\n${script}\n${style}`,
+    `${script}\n${template}\n${style}`,
+    `${script}${template}${style}`,
+    `${script}\n\n\n${template}\n\n\n\n${style}\n\n`,
+    `${template}\n${script}\n${style}`.trimEnd(),
+    `${template}\n${script}`.trimEnd(),
+    `\n${template}\n${script}`,
+    `﻿${template}\n${script}`,
+    `---\na:   1\n---\n\n${template}\n${script}`,
+    `<!-- a -->\n${template}\n<!-- b -->\n${script}<!-- c -->\n`,
+    // A comment that somebody reads.
+    `${template}\n<!-- prettier-ignore -->\n${script}\n<!-- display: inline -->\n${style}`,
+    // With one of these, the text is HTML.
+    `<!doctype html>\n${template}\n${script}`,
+    `${template}\n${script}\n<html></html>\n`,
+    // Other blocks, and what is no block.
+    `${template}\n<i18n>\n{ "a":1 }\n</i18n>\n\n${script}`,
+    `${template}\n<i18n lang="json">\n{ "a":1 }\n</i18n>\n\n${script}`,
+    `<docs>\n<div>\n</docs>\n\n${template}\n${script}`,
+    `${template}\ntext\n${script}`,
+    `${template}\n{{ a }}\n${script}`,
+    `${template}\n<br>\n${script}`,
+    `<div>\n  <p>a</p>\n</div>\n\n${script}`,
+    // What is on the line of a tag.
+    `${template.trimEnd()} ${script}`,
+    `${template.trimEnd()}a\n${script}`,
+    `${script.trimEnd()}<b></b>\n${template}`,
+    // A `<template>` that is not broken, is empty, is in another language, has attributes.
+    "<template>a</template>\n",
+    "<template>\n  a\n</template>\n",
+    "<template>\n  {{ a }}\n</template>\n",
+    "<template>\n  <!-- a -->\n</template>\n",
+    "<template>\n  <b>a</b> c\n</template>\n",
+    "<template>\n  <b>a</b>\n</template>\n",
+    "<template><div></div></template>\n",
+    "<template>\n  <div></div></template>\n",
+    "<template><div></div>\n</template>\n",
+    "<template></template>\n",
+    "<template>\n</template>\n",
+    "<template />\n",
+    "<template>\n<div></div>\n    <p>a</p>\n</template>\n",
+    "<template>\n  <template>\n    <p>a</p>\n  </template>\n  <template #a>b</template>\n</template>\n",
+    '<template lang="pug">\ndiv\n  p a\n</template>\n',
+    '<template lang="html">\n  <div></div>\n</template>\n',
+    "<template functional>\n  <div></div>\n</template>\n",
+    "<template>\n  <div></div>\n</template >\n",
+    "<Template>\n  <div></div>\n</Template>\n",
+    "<template>\n  <div></div>\n",
+    "<template>\n  <div v-pre>{{ a  }}</div>\n</template>\n",
+    // Whether an expression is TypeScript is a matter of a `<script>`, wherever it is.
+    `<template>\n  <div :a="b as c" @d="(e: f) => g!"></div>\n</template>\n\n<script lang="ts">\na;\n</script>\n`,
+    `<script lang="ts">\na;\n</script>\n\n<template>\n  <div :a="b as c" @d="(e: f) => g!"></div>\n</template>\n`,
+    `<script lang="typescript">\na;\n</script>\n\n<template>\n  <div :a="b as c"></div>\n</template>\n`,
+    `<script lang="tsx">\na;\n</script>\n\n<template>\n  <div :a="b as c"></div>\n</template>\n`,
+    `<script>\na;\n</script>\n\n<template>\n  <div :a="b as c"></div>\n</template>\n`,
+    // The attributes of a block.
+    ...[
+      "",
+      " setup",
+      ' lang="ts"',
+      ' lang="tsx"',
+      ' lang="js"',
+      ' lang="jsx"',
+      ' lang="typescript"',
+      ' lang="coffee"',
+      ' lang="json"',
+      ' lang=""',
+      " lang",
+      " lang='ts'",
+      " lang=ts",
+      ' LANG="ts"',
+      ' lang="ts" lang="js"',
+      '  setup   lang="ts"',
+      '\n  setup\n  lang="ts"\n',
+      ' setup="props"',
+      ' setup="{ a,b }"',
+      ' lang="ts" generic="T extends  U"',
+      ' type="module"',
+      ' src="./a.js"',
+      " src",
+      ' :a="b"',
+      ' class="b  a"',
+      ` setup lang="ts" name="${"a".repeat(70)}"`,
+      ` setup ${"a".repeat(40)} ${"b".repeat(40)}`,
+    ].map(attributes => `<script${attributes}>\nconst a   = <T,>(b: T) => b\n</script>\n\n${template}`),
+    ...[
+      "",
+      " scoped",
+      " module",
+      ' lang="css"',
+      ' lang="scss"',
+      ' lang="less"',
+      ' lang="postcss"',
+      ' lang="stylus"',
+      ' lang="sass"',
+      ' lang="ts"',
+      ' module="a"',
+      ' vars="{a,b}"',
+      ' src="a.css"',
+      ' scoped=""',
+    ].map(attributes => `${template}\n<style${attributes}>\n.a{.b{color:red}}\n// c\n</style>\n`),
+    // What is in a `<script>`.
+    ...[
+      "",
+      "\n",
+      " ",
+      "a",
+      "\na",
+      "a\n",
+      "\n\n\na\n\n\n",
+      "\n  a;\n  b;\n",
+      "\na;  \n",
+      "\na(\n",
+      "\n// prettier-ignore\na  =  1;\n",
+      "\nconst a = `\n  b\n`;\n",
+      "\n/*\n a\n  */\n",
+      "\n<!-- a\n",
+      "\n// @flow\na;\n",
+      '\nconst a = "</script";\n',
+      '\nconst a = "<script>";\n',
+      "\na </ b;\n",
+      "\na;\r\nb;\r\n",
+      "\na;\f\n",
+      "\n﻿a;\n",
+      '\nconst a = "中";\n',
+      "\nconst a = css`\n  a {\n  }\n`;\n",
+      "\nreturn a;\n",
+      "\nawait a;\n",
+      "\nconst a = <div />;\n",
+      `\nconst ${"a".repeat(30)} = ${"b".repeat(30)}(${"c".repeat(30)}, ${"d".repeat(30)});\n`,
+    ].flatMap(code => [`<script>${code}</script>\n`, `${template}\n<script lang="ts">${code}</script>\n`]),
+    "<script>\na;\n</script >\n",
+    "<script>\na;\n</SCRIPT>\n",
+    "<script>\na;\n</script\n>\n",
+    "<script>\na;\n",
+    "<script />\n",
+    // What is in a `<style>`.
+    ...[
+      "",
+      "\n",
+      "a{}",
+      "\n  a {\n    b: c;\n  }\n",
+      "\n/*\n a  \n  */\n",
+      "\n/* a */  \n",
+      '\na {\n  b: "c\\\nd";\n}\n',
+      "\na {\n",
+      "\n}\n",
+      "\na {\n  b: c;\r\n}\n",
+      "\n/* prettier-ignore */\na  {\n}\n",
+      "\n---\na: 1\n---\na {\n}\n",
+      "\na {\n  b: v-bind('c.d');\n}\n",
+      `\n${"a".repeat(30)}, ${"b".repeat(30)}, ${"c".repeat(30)} {\n  d: e;\n}\n`,
+      "\n</styl>\n",
+    ].flatMap(code => [`<style>${code}</style>\n`, `${template}\n<style lang="scss">${code}</style>\n`]),
+  ];
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--vue-indent-script-and-style"],
+    ["--vue-indent-script-and-style", "--use-tabs"],
+    ["--vue-indent-script-and-style", "--tab-width=0"],
+    ["--vue-indent-script-and-style", "--embedded-language-formatting=off"],
+    ["--embedded-language-formatting=off"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--html-whitespace-sensitivity=ignore"],
+    ["--print-width=20"],
+    ["--print-width=1", "--tab-width=4"],
+    ["--end-of-line=crlf"],
+    ["--end-of-line=cr", "--vue-indent-script-and-style"],
+    ["--no-semi", "--single-quote", "--use-tabs"],
+    ["--bracket-same-line"],
+    ["--single-attribute-per-line", "--print-width=30"],
+    ["--insert-pragma"],
+    ["--require-pragma"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+
+  test("a file that is read from the bytes is formatted", async () => {
+    const { short, long } = await bothWays({ "a.vue": `${script}\n\n\n${template}${style}` }, []);
+    expect(short).toEqual(long);
+    expect(short.written["a.vue"]).toMatchInlineSnapshot(`
+      "<script setup lang="ts">
+      import { a } from "a";
+      const b = a<number>(1);
+      </script>
+
+      <template>
+        <div :a="b">
+          <p>{{ c }}</p>
+        </div>
+      </template>
+      <style scoped>
+      .a {
+        color: red;
+      }
+
+      .b {
+        color: blue;
+      }
+      </style>
+      "
+    `);
+  });
+});
+
 describe.skipIf(!hasFlag)("where lines are written without a document", () => {
   /** Formats `files` with `flags`, and returns what they are afterwards. */
   async function format(files: Record<string, string>, flags: string[]) {
@@ -3425,6 +3641,7 @@ describe("TypeScript that the long way rejects", () => {
     "class A { declare constructor() }",
     "class A { static async constructor() {} }",
     "class A { @a constructor() {} }",
+    "class A { 'constructor'<T>(public a) {} }",
     "class A {\n  constructor;\n}\n",
     "class A {\n  constructor: T;\n  a: T;\n}\n",
     "class A {\n  async constructor() {\n    a;\n  }\n}\n",
@@ -3456,6 +3673,11 @@ describe("TypeScript that the long way rejects", () => {
     "interface A { set a }",
     "interface A { get a?(): T }",
     "interface A { a b }",
+    "interface A {\n  accessor\n  get a(b): T\n}",
+    "interface A { get a(): T {}; }",
+    "interface A {\n  in\n  get a()\n}\n",
+    "interface A {\n  out\n  get a()\n}\n",
+    "type A = {\n  const\n  set a(b)\n}\n",
     "interface A {\n  public a: T;\n}\n",
     "interface A {\n  readonly a(): T;\n}\n",
     "interface A {\n  x: T;\n  static a: T;\n}\n",
@@ -3570,6 +3792,8 @@ describe("TypeScript that the long way rejects", () => {
     "class A implements implements {}",
     "class A extends implements {}",
     "class A extends <T>B {}",
+    "class A extends {} ! {}",
+    "class A extends {} <T> {}",
     "interface A extends 1 {}",
     "interface A extends B() {}",
     "interface A extends (B) {}",
@@ -3681,6 +3905,8 @@ describe("TypeScript that the long way rejects", () => {
     "a.\nb instanceof c",
     "a?.\nb in c",
     "@a.\nb class A {}",
+    "@a.\n#b class A {}",
+    "class A { @a.\nb #a }",
     "let x: a.\nb extends c ? 1 : 2",
     // what is assigned to
     "a as b = 1",
@@ -3707,6 +3933,21 @@ describe("TypeScript that the long way rejects", () => {
     "async (a?)",
     "async (a: b)",
     "async (a?: b)",
+    "a < keyof > (c)",
+    "a < keyof, b > (c)",
+    "a < [infer] > (c)",
+    "a < [,] > (c)",
+    "a < typeof [] > (c)",
+    "a < new {} > (c)",
+    "a < < {} > (c)",
+    "a < import(b) > (c)",
+    "<T>a++ ()",
+    "<T>a.b++ !",
+    "x = async <T>(a) : T",
+    "a<{b: c(d)}>`e`",
+    "f<{a: b>({c: 'd'})}(e => {})",
+    "x = a as const < b",
+    "type A = typeof B<<T>(a) => U>",
     // `as` between operators
     "x = 1 + 1 as number * 2",
     "x = 1 + 1 as any as number * 2",
@@ -3715,6 +3956,52 @@ describe("TypeScript that the long way rejects", () => {
     // a type assertion where only a left-hand side expression can stand
     "++<T>a",
     "--<T>a.b",
+    // parentheses before a block
+    "(a)\n{}",
+    "x = (a)\n{}",
+    "x = (a, b)\n{}",
+    "x = ({a})\n{}",
+    "async (a)\n{}",
+    "if (x) (a)\n{}",
+    // a line break that TypeScript does not see, or sees
+    "function f(): asserts a\nis",
+    "class A {\n  a(): asserts b\n  is\n}\n",
+    "export * from 'b'\nwith { a: 'b' }",
+    "export {a} from 'b'\nwith { a: 'b' }",
+    "a < b & new c > (d)",
+    // `enum`, `await` and `yield` as names in TypeScript's own places
+    "let a: [enum]",
+    "let a: B<enum>",
+    "let a: B[enum]",
+    "let a: B<enum[]>",
+    "type A = [enum, b];\n",
+    "class A {\n  a: B<C, enum>;\n}\n",
+    "let a: (enum: T) => void",
+    "interface A {\n  a: (enum: T) => void;\n}\n",
+    "function f(): enum is T {}",
+    "let a: asserts enum",
+    "let a: { [enum in T]: U }",
+    "import enum = b",
+    "import type enum = require('m')",
+    "import { type enum } from 'm'",
+    "import { type a as enum } from 'm'",
+    "import { type as enum } from 'm'",
+    "import { type as as if } from 'm'",
+    "export {}; type await = 1",
+    "type await = 1; export {}",
+    "export {}; interface await {}",
+    "export {}; enum await {}",
+    "export {}; namespace await {}",
+    "export {}; function f<await>() {}",
+    "function* g() { f<yield>(a) }",
+    "function* g() {\n  f<yield>(a);\n}\n",
+    "async function g() { f<await>(a) }",
+    "class A { m(@a(await) b) {} }",
+    "class A { *m(@yield b) {} }",
+    "async function f() { import await = b.c }",
+    "import.meta; await",
+    "x = import.meta.url;\nawait;\n",
+    "type A = [if: T];\nawait",
     // the head of a `for`
     "for (var a = 1 in b);",
     "for (let a = 1 of b);",
@@ -3784,6 +4071,8 @@ describe("TypeScript that the long way rejects", () => {
     "<></>.a",
     "x = <a />.b",
     "f(<a />.b)",
+    "<a /><T>",
+    "<a /> < b",
     // `</` is one token
     "<a>< /a>",
     "<>< />",
@@ -3795,10 +4084,36 @@ describe("TypeScript that the long way rejects", () => {
     "x = a <// c\nb",
     // what looks like type parameters
     "<const x={} />",
+    "x = <const a='b' />",
+    "const x = <const a='b' />;\n",
     "<T,>a</T>",
     "<T extends U>a</T>",
     "<a<> />",
   ]);
+  describe("what looks like it and is printed", () =>
+    expectSame(
+      "a.ts",
+      [
+        "interface A {\n  x: T;\n  new();\n  new(): T;\n  y: T;\n}\n",
+        "x;\na < keyof \nb > (c);\ny;\n",
+        "x;\nconst a = b < c\nd > (e);\n",
+        "x = a < (b + c) && a > (d);\n",
+        "x = a < !b;\n",
+        "if (a < (b = c)) {\n}\n",
+        "x = a < b!.c ? d : e;\n",
+        "class A extends (B) {}\n",
+        "type A = (| typeof b)[number];\n",
+        "export interface ScrollResponderEvent extends NativeSyntheticEvent<& NativeTouchEvent> {}\n",
+        "[{...a as T}!] = x;\n",
+        "({ a: <T>{...a as T} } = x);\n",
+        "<T>class A { m() { @a class B {} } };\n",
+        "x = a as const\n< b;\n",
+        "x = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.b < cccccccccccccccccccccccc()) > dddddddddddddddddddddddd[0];\n",
+        "import a from 'b'\nwith { a: 'b' }\n",
+        "interface A {\n  in: T;\n  out: T;\n  const: T;\n}\n",
+      ],
+      [[]],
+    ));
 });
 
 describe("what the quick way for scripts is asked about, and what is done around it", () => {
@@ -3946,6 +4261,94 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js", "", "const {\n  A\n  ,\n\n  B,\n} = c;\n"],
     ["a.js", "", "foo = {a\n\n  ,\n  b: 'b'};\n"],
     ["a.js.flow", "", "type A = {|\n  a: number\n  ,\n\n  b: boolean,\n|};\n"],
+    // A member expression as a computed key is no plain text: what follows it is measured anew.
+    [
+      "a.ts",
+      "--tab-width=64",
+      "export const rate = {\n  a() {\n    return {\n      [user.id]: user,\n    };\n  },\n};\n",
+    ],
+    // Some trees have a node around an optional chain, so that its last member is no direct child of the assignment.
+    ["a.ts", "--print-width=8", "aaaa!?.cccc = vvvv;\n"],
+    ["a.ts", "--print-width=8", "aaaa()?.cccc = vvvv;\n"],
+    ["a.tsx", "--print-width=8", "aaaa!?.cccc! = vvvv;\n"],
+    ["a.js.flow", "--print-width=8", "aaaa?.cccc[0] = vvvv;\n"],
+    ["a.ts", "--print-width=8", "aaaa()?.cccc! = vvvv;\n"],
+    // The width of sequences: a modifier behind what is no base for it, flags, keycaps, tags, joiners, the replacement character.
+    [
+      "a.js",
+      "--print-width=11",
+      'f("\u234d\ud83c\udfff", b);\nf("\ud83d\udc4d\ud83c\udfff", b);\nf("\ud83c\uddef\ud83c\uddf5", b);\nf("\ud83c\uddefa", b);\nf("1\ufe0f\u20e3", b);\nf("\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f", b);\nf("\ud83d\udc69\u200d\ud83d\udc67", b);\nf("\ufffda", b);\nf("\u00a9\ufe0f", b);\nf("\u263a", b);\nf("\u263a\ufe0f", b);\n',
+    ],
+    // A cell of a table of `each` that is printed on several lines.
+    ["a.js", "", 'it.each`\n  a | b\n  ${{\n    c: 1,\n  }} | ${2}\n`("x", () => {});\n'],
+    // An empty line in a tuple type.
+    ["a.ts", "", "type T = [\n  a,\n\n  b,\n];\n"],
+    // A statement that starts with the name `let`.
+    ["a.js", "--no-semi", "let;\n"],
+    // A decorator on the line of `export`.
+    ["a.ts", "", "@t(1)export class A{}\n"],
+    // What looks like type arguments ends no line.
+    ["a.ts", "--print-width=30", "aaaaaaaaaaaa > bbbbbbbbbbbb < cccccccccccc > dd;\n"],
+    ["a.ts", "--print-width=30", "(aaaaaaaaaaaaaaaaaaa < cccccccccccc) > ddddddd;\n"],
+    ["a.ts", "--tab-width=8 --print-width=30", '8n>{}</i1cript" a-b />te\n'],
+    // A type assertion around what breaks.
+    ["a.ts", "", "x = <T>class {\n  m() {\n    enum b {\n      c = 1,\n    }\n  }\n};\n"],
+    ["a.ts", "", "x = <a>function () {\n  @x class a {}\n};\n"],
+    // A member chain in the parameters of a function that is the last argument.
+    ["a.ts", "--print-width=28", "d=d((y=a.b().c())=>{})\n"],
+    ["a.js", "--print-width=28", "new d((a=d.e().a())=>{})\n"],
+    // `declare type` is no `type`: its function type keeps the parentheses of the only parameter.
+    ["a.js.flow", "--arrow-parens=avoid", "declare type A = (B) => C;\n"],
+    // A union as the key of an indexer that breaks.
+    [
+      "a.js.flow",
+      "--print-width=22",
+      'const filteredSections: {\n  ["apis" | "components"]: Array<SectionData<RNTesterModuleInfo>>,\n} = {};\n',
+    ],
+    // A comment that starts where another one ends.
+    ["a.js", "", "/**\n * a\n *//**\n * b\n */\n"],
+    // A comment next to an optional chain.
+    ["a.ts", "", "if (sockets[name]?.length === // c\n0) delete sockets[name];\n"],
+    ["a.ts", "", "const code\n// c\n= (error as { code?: string } | null)?.code;\n"],
+    ["a.tsx", "", 'a = typeof option === "object" && !! // c\n(option as Segmented)?.icon;\n'],
+    // A comment in a `declare type`.
+    ["a.js.flow", "", "declare type A = // c\n// d\nB | C;\n"],
+    // A comment before the separator of the member that it follows.
+    ["a.js.flow", "", "declare class A {\n  a: () => void\n// c\n;\n\n  b: number;\n}\n"],
+    // A comment behind the last property of a pattern that has a type.
+    ["a.js.flow", "", "const A = ({\n  a,\n/* c */}: {\n  a: string,\n}) => `x`;\n"],
+    // A comment in the empty braces of an object type.
+    ["a.js.flow", "", "function f(props: {\n// c\n}): R {}\n"],
+    // A comment between the key of a method and its parameters, or on the line of their `(`.
+    ["a.ts", "", "class A {\n  override visit\n// c\n(sourceFile: B) {}\n}\n"],
+    ["a.ts", "", "a = {\n  fn( // c\nargs) {},\n};\n"],
+    // A comment before the `:` of a type.
+    [
+      "a.js.flow",
+      "",
+      "export default function useWindowDimensions() // c\n:\n  | DisplayMetrics\n  | DisplayMetricsAndroid {}\n",
+    ],
+    // A comment between the name of a function and its parameters.
+    [
+      "a.js.flow",
+      "",
+      "export default function useWindowDimensions // c\n():\n  | DisplayMetrics\n  | DisplayMetricsAndroid {}\n",
+    ],
+    // A comment in a member expression whose object is no call.
+    ["a.js", "", 'a = {\n  parser: require\n// c\n.resolve("hermes-eslint"),\n};\n'],
+    // A block comment with a line break in it and code on its lines.
+    [
+      "a.mjs",
+      "--use-tabs --tab-width=4",
+      "const getCertdataURL = version => {\n  const certdataURL /* c\n c */= `https://hg.mozilla.org/projects/nss/raw-file/${tag}/lib/ckfw/builtins/certdata.txt`;\n};\n",
+    ],
+    // A comment before the `...` of a rest parameter of a function type.
+    ["a.js.flow", "", "declare var console: {\n  error: (\n// c\n...data: $ReadOnlyArray<mixed>) => void,\n};\n"],
+    // Comments in places where real code has none.
+    ["a.ts", "", "function f(): Element[/* c\n c */] | null {}\n"],
+    ["a.ts", "", 'describe("x", () /* a */ /* b */=> {\n  f();\n});\n'],
+    ["a.jsx", "", "a = <T><b>Log<\n// c\n/b>: {m}</T>;\n"],
+    ["a.ts", "", "a = {\n  [b]:\n// c\n(value: number) => isNumber(value),\n};\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

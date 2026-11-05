@@ -578,10 +578,10 @@ impl Quick {
     }
 
     pub(crate) fn is_keyword_token(&mut self, t: i32) -> R<bool> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = self.lexer.tok == t && self.is_word();
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -925,13 +925,13 @@ impl Quick {
                 }
                 let mut is_labeled = variance != 0;
                 if !is_labeled && self.is_word() {
-                    self.save();
+                    let saved = self.save();
                     self.next()?;
                     if self.lexer.tok == tk::Question {
                         self.next()?;
                     }
                     is_labeled = self.lexer.tok == tk::Colon;
-                    self.restore();
+                    self.restore(saved);
                 }
                 if is_labeled {
                     self.not_in_babel()?;
@@ -1723,10 +1723,10 @@ impl Quick {
     }
 
     pub(crate) fn peek_is_as(&mut self) -> R<bool> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = self.is_kw(kw::As);
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -2595,10 +2595,10 @@ impl Quick {
     /// A statement that only Flow has, if one starts at the current token, which is a name; else 0.
     /// The current token is a word that starts a declaration if another word follows. If that one stands on the next line, the parsers do not agree on what this is.
     fn flow_check_same_line(&mut self) -> R<()> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let is_on_new_line = self.lexer.tok_nl != 0;
-        self.restore();
+        self.restore(saved);
         if is_on_new_line {
             return Err(self.text_refuse());
         }
@@ -2694,10 +2694,10 @@ impl Quick {
     }
 
     pub(crate) fn peek_is_word(&mut self, w: i32) -> R<bool> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = self.word() == w;
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -2705,7 +2705,7 @@ impl Quick {
     /// `export type {` or `export type *`.
     pub(crate) fn flow_parse_export_declaration(&mut self) -> R<i32> {
         if self.word() == w::Type {
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.lexer.tok == tk::BraceL || self.lexer.tok == tk::Mul {
                 return Ok(-1);
@@ -2714,7 +2714,7 @@ impl Quick {
             if self.is_kw(kw::As) {
                 return Err(self.text_refuse());
             }
-            self.restore();
+            self.restore(saved);
         }
         if self.word() == w::Declare || self.word() == w::Match {
             return Ok(0);
@@ -2732,7 +2732,7 @@ impl Quick {
         if kind == 0 {
             return Ok(0);
         }
-        self.save();
+        let saved = self.save();
         self.next()?;
         // `import type from "x"`, `import type, {a} from "x"`
         let mut is_kind = self.lexer.tok == tk::BraceL
@@ -2751,7 +2751,7 @@ impl Quick {
             }
             return Ok(kind);
         }
-        self.restore();
+        self.restore(saved);
         return Ok(0);
     }
 

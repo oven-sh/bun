@@ -100,8 +100,6 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
     fn parent_of_run(&self) -> Option<Parent<'a>> {
         let mut is_in_svg = false;
         let (element, container) = match self.container() {
-            // The blocks of a Vue file.
-            None if self.is_tag_name_case_sensitive => return None,
             None => (None, self.root),
             Some(id) => {
                 let (node, name) = (&self.tree[id], self.full_name_of(id).name);
@@ -857,6 +855,8 @@ pub(crate) fn parse<'a>(
     let (mut tree_errors, is_nested_too_deeply) = (builder.errors, builder.is_nested_too_deeply);
     // There is more only if the tree is nested too deeply.
     while lexer.step() {}
+    tree.has_typescript_script_in_run |=
+        (lexer.runs.as_ref()).is_some_and(|runs| runs.has_typescript_script);
     let mut errors = lexer.errors;
     errors.append(&mut tree_errors);
     let ended = (lexer.tokens.last()).map_or(text.len() as u32, |eof| eof.span.start);

@@ -3322,6 +3322,10 @@ impl Quick {
             return self.no(refusal::End);
         }
         // No semicolon. The statement ends here if what comes next cannot go on with it.
+        if self.fast.saw_less != 0 && self.fast.ts {
+            // `a < keyof`, and `b > (c)` on the next line: type arguments
+            return self.no(refusal::NoSemicolon);
+        }
         let n = self.next_char_index(s);
         let d = self.t.at(n);
         if (CC.at(d) & ID_START) != 0 {
@@ -4587,18 +4591,33 @@ impl Quick {
     pub(crate) fn modifier_at(&self, p: i32, length: i32) -> i32 {
         let e = p + length;
         match length {
+            2 => {
+                return if self.text_is(p, e, b"in") {
+                    MODIFIER_REFUSED
+                } else {
+                    MODIFIER_NONE
+                };
+            }
             3 => {
                 return if self.text_is(p, e, b"get") || self.text_is(p, e, b"set") {
                     MODIFIER_ACCESSOR
                 } else {
-                    MODIFIER_NONE
+                    if self.text_is(p, e, b"out") {
+                        MODIFIER_REFUSED
+                    } else {
+                        MODIFIER_NONE
+                    }
                 };
             }
             5 => {
                 return if self.text_is(p, e, b"async") {
                     MODIFIER_ASYNC
                 } else {
-                    MODIFIER_NONE
+                    if self.text_is(p, e, b"const") {
+                        MODIFIER_REFUSED
+                    } else {
+                        MODIFIER_NONE
+                    }
                 };
             }
             6 => {
@@ -4783,6 +4802,10 @@ impl Quick {
                 is_accessor = true;
             }
             q = self.spaced(e);
+        }
+        // `new ()` is printed with a blank
+        if e - q == 3 && where_ != MEMBER_OF_CLASS && self.text_is(q, e, b"new") {
+            return Ok(self.no(refusal::Start));
         }
         // A constructor has parameters, and nothing but its accessibility before it.
         if e - q == 11
@@ -6311,7 +6334,7 @@ impl Quick {
         }
         let length = q - p - 1;
         self.fast.ready_name_length = length;
-        // <fbt> has rules of its own; what is in <style jsx> can be CSS
+        // <fbt> has rules of its own; what is in <style jsx> can be CSS; `<const a = ` starts type parameters
         if (length == 3 && self.text_is(p + 1, q, b"fbt"))
             || (length == 5
                 && (self.text_is(p + 1, q, b"style") || self.text_is(p + 1, q, b"const")))

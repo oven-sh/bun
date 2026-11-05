@@ -43,7 +43,9 @@ mod root;
 mod scan;
 mod stands;
 mod text;
-mod width_table;
+#[path = "../ir/width_tables.rs"]
+#[expect(dead_code, reason = "one of the tables is for another flavor")]
+mod width_tables;
 mod words;
 mod print {
     pub(crate) mod array;
@@ -107,8 +109,9 @@ pub(crate) mod why {
 pub(crate) mod rare {
     /// None of the following.
     pub(crate) const OTHER: i32 = 0;
-    /// An object type in the return type decides how the only parameter is laid out.
-    pub(crate) const RETURN_TYPE: i32 = 1;
+    /// What the long way prints in another way if it breaks: an object type in the return type, for which it goes back and lays out the
+    /// parameters as it will the next time; a union as the key of an indexer of Flow, which it does not indent.
+    pub(crate) const BROKEN: i32 = 1;
     /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
     /// U+2028 or U+2029 anywhere, a "\r" without a "\n", bytes that are not UTF-8.
     pub(crate) const ODD_BYTES: i32 = 2;
@@ -116,6 +119,22 @@ pub(crate) mod rare {
     pub(crate) const SEMICOLON: i32 = 3;
     /// A `,` that starts a line: an empty line behind it is looked for behind the item by one way and behind the comma by the other.
     pub(crate) const COMMA: i32 = 4;
+    /// A cell of the table of `test.each` that takes several lines: the long way prints such a cell on one line where it can.
+    pub(crate) const EACH_TABLE: i32 = 5;
+    /// An empty line between two elements of a tuple type: the long way keeps it, and the type broken.
+    pub(crate) const TUPLE: i32 = 6;
+    /// A statement that starts with the name `let`: it gets parentheses, and a `;` in front of them where there are no semicolons.
+    pub(crate) const LET: i32 = 7;
+    /// A decorator and `export` on one line.
+    pub(crate) const DECORATOR: i32 = 8;
+    /// TypeScript: `a < b > c`. The long way ends no line with what looks like type arguments.
+    pub(crate) const LESS_GREATER: i32 = 9;
+    /// A chain of calls in the default value of a parameter of a function that is hugged: it is indented otherwise.
+    pub(crate) const HUGGED_CHAIN: i32 = 10;
+    /// `<T>` before something that breaks whatever its width.
+    pub(crate) const ASSERTION: i32 = 11;
+    /// A comment in a place where the long way is not known to print it alike: see is_comment_taken().
+    pub(crate) const COMMENT: i32 = 12;
 }
 
 thread_local! {

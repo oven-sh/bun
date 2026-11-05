@@ -1,6 +1,6 @@
 //! Member expressions (member.js).
 
-use crate::ast::{F_COMPUTED, F_OPTIONAL, k};
+use crate::ast::{F_CHAIN, F_COMPUTED, F_OPTIONAL, F_PAREN, k};
 use crate::doc::LABEL_MEMBER_CHAIN;
 use crate::print::statics::{DOT, LBRACKET, QUESTION_DOT, RBRACKET};
 use crate::{Quick, R, Words};
@@ -11,6 +11,7 @@ pub(crate) struct PrintMember {
     pub(crate) known: i32,
     known_first_non_member: i32,
     known_is_callee_of_new: bool,
+    known_is_in_chain_expression: bool,
 }
 impl PrintMember {
     pub(crate) fn new() -> Self {
@@ -18,6 +19,7 @@ impl PrintMember {
             known: 0,
             known_first_non_member: 0,
             known_is_callee_of_new: false,
+            known_is_in_chain_expression: false,
         }
     }
 }
@@ -78,28 +80,63 @@ impl Quick {
         }
     }
 
+    /// Does the optional chain that `child` is part of end with it? `parent` is the node around it. A `!` is part of the chain.
+    #[cold]
+    fn ends_chain(&self, child: i32, parent: i32) -> bool {
+        (self.n.at(child) & F_PAREN) != 0
+            || self.n.at(parent + 4) != child
+            || !matches!(
+                self.n.at(parent) & 0xff,
+                k::MemberExpression | k::CallExpression | k::NonNullExpression
+            )
+    }
+
     pub(crate) fn print_member_expression(&mut self, n: i32) -> R<()> {
         let object = self.n.at(n + 4);
         let mut parent = self.n.at(n + 3);
         let mut first_non_member = parent;
-        while (self.n.at(first_non_member) & 0xff) == k::MemberExpression
-            || (self.n.at(first_non_member) & 0xff) == k::NonNullExpression
-        {
-            if first_non_member == self.print_member.known {
-                first_non_member = self.print_member.known_first_non_member;
+        // In the trees of TypeScript's and of Flow's parser a ChainExpression is around an optional chain, and that is the first node
+        // around the members of the chain that is no member. Babel's tree has none.
+        let mut is_in_chain_expression = false;
+        let mut child = n;
+        let mut is_chain = false;
+        loop {
+            // (a `!` is what is in front of it)
+            if (self.n.at(child) & 0xff) == k::MemberExpression {
+                is_chain = (self.n.at(child) & F_CHAIN) != 0;
+            }
+            if is_chain
+                && (self.mode.is_type_script || (self.mode.is_flow && !self.mode.is_babel_flow))
+                && self.ends_chain(child, first_non_member)
+            {
+                is_in_chain_expression = true;
+                is_chain = false;
+            }
+            if (self.n.at(first_non_member) & 0xff) != k::MemberExpression
+                && (self.n.at(first_non_member) & 0xff) != k::NonNullExpression
+            {
                 break;
             }
+            if first_non_member == self.print_member.known {
+                first_non_member = self.print_member.known_first_non_member;
+                is_in_chain_expression |= self.print_member.known_is_in_chain_expression;
+                break;
+            }
+            child = first_non_member;
             first_non_member = self.n.at(first_non_member + 3);
         }
-        let is_callee_of_new = self.should_inline_new_expression_callee(n);
+        let is_callee_of_new =
+            !is_in_chain_expression && self.should_inline_new_expression_callee(n);
         self.print_member.known = n;
         self.print_member.known_first_non_member = first_non_member;
         self.print_member.known_is_callee_of_new = is_callee_of_new;
+        self.print_member.known_is_in_chain_expression = is_in_chain_expression;
         self.print(object)?;
         // (for what is in the brackets)
         self.print_member.known = n;
         self.print_member.known_first_non_member = first_non_member;
         self.print_member.known_is_callee_of_new = is_callee_of_new;
+        self.print_member.known_is_in_chain_expression = is_in_chain_expression;
         let object_label = self.doc.label;
         let fk = self.n.at(first_non_member) & 0xff;
         while (self.n.at(parent) & 0xff) == k::NonNullExpression {
@@ -111,6 +148,7 @@ impl Quick {
             stripped_object = self.n.at(stripped_object + 4);
         }
         let should_inline = (fk == k::AssignmentExpression
+            && !is_in_chain_expression
             && (self.n.at(self.n.at(first_non_member + 4)) & 0xff) != k::Identifier)
             || (self.n.at(n) & F_COMPUTED) != 0
             || ((self.n.at(object) & 0xff) == k::Identifier

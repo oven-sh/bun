@@ -256,7 +256,7 @@ pub(crate) struct Tokenizer<'a, 'f> {
     /// The `Eof` token has been made.
     is_done: bool,
     /// `None` if everything goes the long way.
-    runs: Option<Runs>,
+    pub(crate) runs: Option<Runs>,
     /// The cursor is at the first thing on a line, or at the start of the text, and a child starts there.
     is_at_start_of_line: bool,
     get_tag_content_type: GetTagContentType<'f>,

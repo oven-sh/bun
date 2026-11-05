@@ -344,7 +344,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
       `${openTTY}
         input.once("data", () => setTimeout(() => {
           input.setRawMode(false);
-          input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd, keys, bytesRead: input.bytesRead })));
+          input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd, keys })));
           input.destroy();
         }, 30));
         console.log("ready");
@@ -356,7 +356,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         }
       },
     );
-    expect(lines).toEqual(["ready", 'key "a"', 'closed {"fd":null,"keys":["a"],"bytesRead":1}']);
+    expect(lines).toEqual(["ready", 'key "a"', 'closed {"fd":null,"keys":["a"]}']);
     expect(exitCode).toBe(0);
   });
 
@@ -369,8 +369,13 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
           input.pause();
           console.log("paused");
           // The next key is typed once "paused" is seen. Wait for it to be buffered, not for time.
+          const deadline = Date.now() + 5000;
           const poll = setInterval(() => {
-            if (input.readableLength === 0) return;
+            if (input.readableLength === 0) {
+              if (Date.now() < deadline) return;
+              console.log("not buffered");
+              process.exit(1);
+            }
             clearInterval(poll);
             console.log("buffered " + input.readableLength);
             input.once("data", () => {

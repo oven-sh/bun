@@ -63,15 +63,18 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   }
   // Only set isTTY to true if the fd is actually a TTY
   const isTTY = isatty(fd);
-  if (isTTY && typeof fd === "number" && process.platform !== "win32") {
+  const FsReadStream = require("internal/fs/streams").ReadStream;
+  // A subclass with its own _read keeps it.
+  if (isTTY && typeof fd === "number" && process.platform !== "win32" && this._read === FsReadStream.prototype._read) {
     // A polled read that destroy() retracts, as Node's TTY handle. A thread pool read(2) cannot be retracted.
     const native = Bun.file(fd).stream();
     // The fd is open: born constructed, as Node's tty.ReadStream.
-    this._construct = undefined;
-    require("internal/fs/streams").ReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
-    require("internal/streams/native-readable").attachNativeSource(this, native, 64 * 1024);
+    if (this._construct === FsReadStream.prototype._construct) this._construct = undefined;
+    FsReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
+    // bytesRead stays 0 on this path, as on process.stdin: the native source does not count.
+    require("internal/streams/native-readable").attachNativeSource(this as any, native, 64 * 1024);
   } else {
-    require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
+    FsReadStream.$apply(this, ["", { fd }]);
   }
   this.isRaw = false;
   this.isTTY = isTTY;
@@ -160,7 +163,7 @@ const prototypeOfReadStream = {
     Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
       if (this.$bunNativePtr !== undefined) {
         // Closes the reopened terminal and releases the event loop. The caller's fd is closed below.
-        require("internal/streams/native-readable").cancelNativeSource.$call(this, err, null);
+        require("internal/streams/native-readable").cancelNativeSource.$call(this as any, err, null);
       }
       if (isStdio(this.fd)) return cb(err);
       require("internal/fs/streams").ReadStream.prototype._destroy.$call(this, err, cb);

@@ -29,8 +29,6 @@ let dynamicallyAdjustChunkSize = (_?) => (
 
 interface NativeReadable extends $Node.Readable {
   $bunNativePtr: NativePtr | undefined;
-  /** As `socket.bytesRead` and `fs.ReadStream.bytesRead`. */
-  bytesRead: number;
   $start?: typeof ensureConstructed;
   ref: typeof ref;
   unref: typeof unref;
@@ -59,7 +57,6 @@ let debugId = 0;
 
 function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
   const stream = new Readable(options) as NativeReadable;
-  stream.bytesRead = 0;
   attachNativeSource(stream, readableStream, options.highWaterMark);
   stream._destroy = destroy;
   stream.ref = ref;
@@ -73,9 +70,8 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
 }
 
 /** Installs `_read` over the native source behind `readableStream`. The caller's `_destroy` calls `cancelNativeSource`. */
-function attachNativeSource(readable: $Node.Readable, readableStream: ReadableStream, highWaterMark?: number | null) {
+function attachNativeSource(stream: NativeReadable, readableStream: ReadableStream, highWaterMark?: number | null) {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
-  const stream = readable as NativeReadable;
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
   $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
@@ -218,7 +214,6 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  stream.bytesRead += chunk.byteLength;
   if (!stream.push(chunk)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
@@ -263,13 +258,12 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: $Node.Readable, error: any, cb: ((error?: any) => void) | null) {
-  const stream = this as NativeReadable;
-  const ptr = stream.$bunNativePtr;
+function destroy(this: NativeReadable, error: any, cb: ((error?: any) => void) | null) {
+  const ptr = this.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
   }
-  dropReadAhead(stream);
+  dropReadAhead(this);
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);

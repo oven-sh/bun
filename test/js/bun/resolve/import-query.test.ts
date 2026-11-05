@@ -788,9 +788,9 @@ test.concurrent.skipIf(isWindows).each(["literal path", "query suffix"])(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
   },
 );

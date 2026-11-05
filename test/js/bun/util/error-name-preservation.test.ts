@@ -77,6 +77,14 @@ describe("own properties of a native error are configurable", () => {
   const notDeleted = (object: object, keys: string[]) =>
     keys.filter(key => !Reflect.deleteProperty(object, key) || Object.hasOwn(object, key));
 
+  // An origin that refuses connections: the port of a listener that has just stopped.
+  async function refusedOrigin() {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const origin = `http://127.0.0.1:${server.port}`;
+    await server.stop(true);
+    return origin;
+  }
+
   // [label, the keys this case is here to cover besides code and errno, how to get the error]
   const cases: [string, string[], (missing: string) => unknown][] = [
     // Node has no `fd` on this error.
@@ -91,7 +99,7 @@ describe("own properties of a native error are configurable", () => {
     ],
     ["Bun.write", ["path"], missing => Bun.write(join(missing, "a", "b"), "x", { createPath: false }).catch(e => e)],
     ["Bun.spawn", [], missing => thrownBy(() => Bun.spawn([missing]))],
-    ["fetch", [], () => fetch("http://127.0.0.1:1/").catch(e => e)],
+    ["fetch", [], async () => fetch(await refusedOrigin()).catch(e => e)],
   ];
 
   test.each(cases)("%s", async (_label, covers, produce) => {
@@ -124,8 +132,8 @@ describe("own properties of a native error are configurable", () => {
   });
 
   test("S3Error code and path can be deleted", async () => {
-    const options = { accessKeyId: "test", secretAccessKey: "test", endpoint: "http://127.0.0.1:1" };
-    // The source has no bucket. With one from the environment, nothing listens on port 1.
+    const options = { accessKeyId: "test", secretAccessKey: "test", endpoint: await refusedOrigin() };
+    // The source has no bucket. With one from the environment, the endpoint refuses the connection.
     const err: any = await Bun.write(
       Bun.s3.file("to.txt", { ...options, bucket: "bucket" }),
       Bun.s3.file("from.txt", options),

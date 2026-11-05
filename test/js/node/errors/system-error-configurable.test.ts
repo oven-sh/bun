@@ -9,12 +9,13 @@
  * https://github.com/nodejs/node/blob/v26.3.0/src/api/exceptions.cc#L141-L149 (UVException: fs)
  * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L743-L745 (ErrnoException: child_process)
  * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L833-L838 (DNSException)
- * ERR_SYSTEM_ERROR defines info (not writable) and errno and syscall (accessors
- * onto info) with `configurable: true`, and fills info with plain assignments:
- * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L295-L346
+ * ERR_SYSTEM_ERROR assigns code, defines info (not writable) and errno and
+ * syscall (accessors onto info) with `configurable: true`, and fills info with
+ * plain assignments:
+ * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L293-L346
  * https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1644-L1684
- * Bun still has info writable and errno and syscall as data properties, so the
- * ERR_SYSTEM_ERROR tests here check `configurable` and `delete` only.
+ * Bun still has info writable and errno and syscall as data properties, so for
+ * those three the ERR_SYSTEM_ERROR tests check `configurable` and `delete` only.
  *
  * This file uses node:test/node:assert so the identical file also runs under
  * `node --test`, which is where the expected values come from. It cannot import
@@ -113,9 +114,14 @@ describe("own properties of a system error are configurable", () => {
   ];
 
   for (const [label, fn] of systemErrors) {
-    test(`${label} ERR_SYSTEM_ERROR: the properties of the error and of info are configurable`, () => {
+    test(`${label} ERR_SYSTEM_ERROR: code is a plain property, the others are configurable`, () => {
       const err = thrownBy(fn);
-      assert.strictEqual(err.code, "ERR_SYSTEM_ERROR");
+      assert.deepStrictEqual(Object.getOwnPropertyDescriptor(err, "code"), {
+        value: "ERR_SYSTEM_ERROR",
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
 
       const notConfigurable = (object: object, keys: string[]) =>
         keys.filter(key => Object.getOwnPropertyDescriptor(object, key)?.configurable !== true);

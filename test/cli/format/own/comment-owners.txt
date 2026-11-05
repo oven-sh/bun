@@ -78,6 +78,10 @@ casts/block-comment-in-the-parentheses-of-a-cast-that-is-assigned.js
 432 446 L Identifier 449 452 -
 467 489 L ParenthesizedExpression 490 510 -
 491 505 L Identifier 506 509 -
+casts/chain-that-starts-with-a-short-name-in-a-cast.js
+0 16 L ExpressionStatement 17 125 -
+252 268 L ExpressionStatement 269 384 -
+386 402 L ExpressionStatement 403 511 -
 casts/comment-before-the-parameters-of-an-arrow-function-in-parentheses.js
 2 18 L ArrowFunctionExpression 19 27 -
 38 45 L ArrowFunctionExpression 63 71 -

@@ -12,7 +12,7 @@ use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{is_call_expression, is_member_expression};
 use super::is_long_curried_call;
-use super::typecast::is_cast_target;
+use super::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::prelude::*;
 use crate::{best_fitting, write};
@@ -150,6 +150,8 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                         // A name that's shorter than the indentation: the `.` wouldn't even be to the right of it.
                         || (length_of_name(name, f) <= f.options().indent_width.value() as usize
                             && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
+                            // `/** @type {A} */ (a.b().c());`: the parent is the `ParenthesizedExpression`.
+                            && !is_cast_target_that_hides_its_kind(self.root, f)
                             && !is_whole_expression_in_html(f))
                 }
                 ExprTag::This => true,

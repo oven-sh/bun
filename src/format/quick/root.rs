@@ -282,6 +282,7 @@ impl Quick {
     fn format_buffer(&mut self, text: &[u8], dialect: Dialect, options: &Options) -> R<()> {
         let mut length = text.len() as i32;
         self.why.set(why::NONE);
+        crate::forget_losses();
         self.stack_check = bun_core::StackCheck::init();
         if let Some(first) = strings::first_non_ascii(text)
             && is_odd_beyond_ascii(text.get(first as usize..).unwrap_or(&[]))
@@ -358,8 +359,19 @@ impl Quick {
         self.begin_root(language);
         self.format_js()?;
         let stub = self.end_doc();
+        self.nothing_lost()?;
+        if self.doc.overflowed {
+            return Err(self.stop(why::BUG));
+        }
         self.stage(2);
         self.print_doc(DOC_START, stub)?;
+        self.nothing_lost()?;
+        if self.text.overflowed
+            || self.text.gen_pos > self.text.t_cap
+            || self.printer.out_length > self.printer.out.len() as i32
+        {
+            return Err(self.stop(why::BUG));
+        }
         Ok(())
     }
 

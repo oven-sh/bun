@@ -2850,6 +2850,35 @@ describe("templates in another language", () => {
     // An escape that has no value.
     '@Component({\n  selector: "a",\n  template: `<p>\\u{</p>`,\n})\nclass A {}\n',
     '@Component({\n  selector: "a",\n  template: `<p>${a}</p>${b}`,\n})\nclass A {}\n',
+    // Markup with all that a template of Angular has.
+    "@Component({\n  selector: \"a\",\n  template: `\n    <div   class=\"a  b\"  [title]=\"title | async\"   (click)=\"onClick($event); other()\">\n      <span *ngIf=\"items.length > 0; else empty\">{{ items.length | number: '1.0-0' }} items</span>\n      <li *ngFor=\"let item of items; trackBy: trackById; let i = index\" [class.active]=\"item.id === selected?.id && !disabled\">{{item.name}}</li>\n      <ng-template #empty><p>nothing here, and this is a rather long text that has to be wrapped somewhere</p></ng-template>\n      <button type=\"button\" (click)=\"save({ id: item.id, name: item.name, description: item.description, more: true })\">Save</button>\n      @if (a > b) {\n        {{a}} is greater than {{b}}\n      } @else {\n        <b i18n=\"x|y@@z\">c</b>\n      }\n      @for (item of items; track item.id; let idx = $index) { <li>{{item}}</li> } @empty { none }\n      @let name = user.name + \"x\";\n    </div>\n  `,\n  styles: [`\n    :host { display:block; color : red }\n    .a, .b > .c { margin: 0 auto; background: url(foo.png) no-repeat }\n  `],\n})\nexport class A {}\n",
+    "@Component({ template: `<a>{{x}}</a>`, styles: `a{b:c}` })\nclass B {}\n@Component({ template: `<a>${x}</a><b></b>` })\nclass C {}\n@Component({ template: ` <a>${x}</a><b></b>` })\nclass D {}\n@Component({ template: `<a>${x}</a><b></b> ` })\nclass E {}\n@Component({ template: ` <a>${x}</a> ` })\nclass F {}\n",
+    "@Component({ template: `<p title=\"a &quot;b&quot; 'c'\" [a]=\"'x' + &quot;y&quot;\" (b)=\"c = 'd'\">\\${{ price }} \\`x\\` \\\\ \\u00e9</p>` })\nclass A {}\n",
+    "@Component({ template: `<div style=\"color:red;background:blue\" onclick=\"a(1);b()\" class=\"  b   a \"><style>a{b:c}</style><script>let  a = `x${1}`</script><pre>\n  x\n</pre><textarea> a </textarea></div>` })\nclass A {}\n",
+    "@Component({ template: `<a [b]=\"c // d\"></a><a (b)=\"c; // d\"></a>{{ a // b\n}}<i>{{}}</i><i a=\"{{ }}\"></i>` })\nclass A {}\n",
+    // Substitutions in every place of markup.
+    "const h = html`<div class=\"${cls}\" @click=${handler} ${attr} a${b}c=\"d${e}f\">${content}  <p>text ${a + b} more</p><${tag}>x</${tag}></div>`;\nconst i = /* HTML */ `\n  <ul>${items.map(i => html`<li>${i}</li>`)}</ul>\n`;\nfoo(html`<a>${veryLongFunctionName(withSomeArguments, andSomeMoreArguments, andEvenMoreArgumentsThanThat)}</a>`);\nconst f = () => html`<b>${x}</b>`;\n",
+    "o(html`\n<${b}>`);\na.c(/* HTML */ ` <${b}><script></script>\n`).d();\n",
+    "a = html`<script>html\\`<a>\\${b}</a>\\`</script>${c}`;\n",
+    // A text of nothing but white space, as it is written or by its escapes.
+    "a = graphql`\u00a0`;\nb = css`\ufeff`;\nc = html`\u2028`;\nd = markdown`\u3000`;\n@Component({ template: `\u00a0`, styles: `\u2028` })\nclass A {}\n",
+    "@Component({ template: `\\ ` })\nclass A {}\n@Component({ template: `\\t` })\nclass B {}\na = graphql`\\\n`;\nb = html`\u00a0<a></a>\u00a0`;\n",
+    // Style sheets.
+    "const s = styled.div`\n  color: ${props => props.color};\n  ${mixin};\n  margin: ${a}px ${b}px;\n  ${Button}:hover & { a: b }\n  /* c\n     d */\n  // e\n`;\nconst t = styled(Foo).attrs({ a: 1 })`a{b:c}`;\nfoo(css`a{b:c}`);\nconst f = () => css.global`a{b:c}`;\n",
+    "x = css`2:a //\n${(a,b)}`;\ny = css`v{grid-template:''\n${tionName(MoreArguments,andEvenMoreArgumentsThanThat)}'main sidebar'}`;\n",
+    "a = css`& [=\"\n\"]{}`;\nb = css`a [b=\"\n\"], c{}`;\nc = css`a{b: \"x\\\n y\" c}`;\n",
+    "a = css`---\ne:\n-\n---s{}`;\n",
+    "function f(){return css.resolve`@use\"\"(n:(,,))''`}\n",
+    "o={a:css.global`@import(//\n}${a})`}\n",
+    "a = css`a{b:@prettier-placeholder-7-id}`;\nb = css`a{b:${c} @prettier-placeholder-7-id}`;\nc = css`a{${b}`;\n",
+    // Queries.
+    "const q = gql`\n  query Foo($a: Int) { a(b: $a) { c d } }\n\n  ${fragment}\n\n  # comment\n  ${other}\n`;\nconst r = graphql(schema, `{ a }`);\nconst s = /* GraphQL */ `{ a }`;\nconst t = graphql.experimental`{a}`;\n",
+    "s={a:/* GraphQL */`#\\ud800`}\nt = gql`{ a(b: \"\\\\\") }`;\nu = gql`# a ${b}`;\nv = gql`\n# a\n\n# b\n`;\nw = gql`{a}\u00a0`;\n",
+    // Markdown.
+    "const m = markdown`\n  # Title\n  * a\n  * b\n\n  some   text\n`;\nconst n = md`\n# Title\n\n\\`\\`\\`js\nlet  a\n\\`\\`\\`\n`;\n",
+    "someFunction(markdown`>c\n`);\na.c(md`>c\n`).d();\nmd`a|||\n-|-|-`;\na=markdown` \\`\n\\``;\nconst b=await foo(async()=>md` this is a long long long long long long long long paragraph.`);\n",
+    // A text without width.
+    "/* HTML */` he fix happened. \u000b\n`;\n",
   ];
   expectSame("a.ts", texts, [
     [],
@@ -2860,7 +2889,53 @@ describe("templates in another language", () => {
     ["--tab-width=0"],
     ["--end-of-line=crlf"],
     ["--html-whitespace-sensitivity=ignore"],
+    ["--html-whitespace-sensitivity=strict", "--print-width=40"],
+    ["--prose-wrap=never"],
+    ["--prose-wrap=always", "--print-width=30"],
+    ["--print-width=9"],
+    ["--single-quote", "--bracket-same-line", "--single-attribute-per-line"],
+    ["--use-tabs", "--tab-width=8", "--print-width=60"],
   ]);
+});
+
+describe("JavaScript that is deep, long or full of comments", () => {
+  // What is written behind a deep nest or a long chain has to find room in the buffers: nothing of the output may be missing.
+  const nest = (open: string, middle: string, close: string, depth: number) =>
+    `x = ${open.repeat(depth)}${middle}${close.repeat(depth)};\n`;
+  describe("nests and chains", () =>
+    expectSame(
+      "a.jsx",
+      [
+        nest("", "a", "()", 7000),
+        nest("", "a", "(b)", 5000),
+        nest("", "a", ".b()", 5000),
+        nest("", "a", "[0]", 7000),
+        nest("{a:", "1", "}", 2700),
+        nest("[", "", "]", 2700),
+        nest("<a>", "", "</a>", 2700),
+        nest("f(", "", ")", 2700),
+        nest("a ? b : ", "c", "", 5000),
+        nest("", "a", ".b", 20000),
+      ],
+      [["--use-tabs"]],
+    ));
+
+  // Where a comment belongs is asked of what stands next to it, comments aside, whatever separates them.
+  const ascii = [" ", "\t", "\n", "\r\n", "\r", "\x0b", "\x0c", "", ",", ";", " , "];
+  const beyondAscii = ["\u00a0", "\u2028", "\u2029", "\ufeff", "\u3000"];
+  const rows = (separators: string[], count: number) =>
+    separators.flatMap(separator => [
+      `a(${`/* c */${separator}`.repeat(count)}b);\n`,
+      `a;\n${`/* c */${separator}`.repeat(count)}\n`,
+      `function f() ${`/* c */${separator}`.repeat(count)}{}\n`,
+      `x = [${`/* c */${separator}`.repeat(count)}];\n`,
+    ]);
+  describe("rows of comments", () =>
+    expectSame(
+      "a.js",
+      [3, 511, 513, 3000].flatMap(count => rows(ascii, count)).concat([513, 3000].flatMap(count => rows(beyondAscii, count))),
+      [[]],
+    ));
 });
 
 describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them, or that are odd", () => {

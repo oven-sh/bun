@@ -5,6 +5,7 @@
 //!
 //! Here is what it is not asked about at all: the options and the kinds of text that it does not know.
 
+use super::quick_guests::QuickGuests;
 use crate::options::*;
 use crate::text::ends_with_ignore_ascii_case;
 use bun_core::strings;
@@ -128,7 +129,7 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
         experimental_operator_position,
         experimental_ternaries,
         embedded_language_formatting,
-        // For what is in a template in another language, which is refused.
+        // For what is in a template in another language: `QuickGuests`.
         prose_wrap: _,
         html_whitespace_sensitivity,
         vue_indent_script_and_style: _,
@@ -285,7 +286,17 @@ pub fn format(
     if strings::contains(code.text, b"prettier-ignore") {
         return Err(scratch.refuse(Reason::IgnoreComment, code.text));
     }
-    let quick = scratch.quick.get_or_insert_default();
+    let quick = scratch.quick.get_or_insert_with(|| {
+        let mut quick = Box::<quick::Quick>::default();
+        quick.lend_guests(Some(Box::<QuickGuests>::default()));
+        quick
+    });
+    if quick_options.embedded_language_formatting_auto
+        && let Some(guests) = quick.guests_mut()
+        && let Some(guests) = (guests as &mut dyn std::any::Any).downcast_mut::<QuickGuests>()
+    {
+        guests.start_file(options, code.path);
+    }
     let dialect = quick::Dialect::of_name(language, code.path);
     if quick::format(code.text, dialect, &quick_options, quick, out).is_err() {
         let reason = match quick.why() {
@@ -301,6 +312,11 @@ pub fn format(
     if crate::is_too_long(out.len()) {
         out.clear();
         return Err(scratch.refuse(Reason::TooLong, code.text));
+    }
+    // Every text but the empty one ends with the end of a line. One that doesn't has been cut short.
+    if !matches!(out[..], [] | [0xEF, 0xBB, 0xBF] | [.., b'\n' | b'\r']) {
+        out.clear();
+        return Err(scratch.refuse(Reason::Other, code.text));
     }
     if let Some(counts) = &mut scratch.counts {
         counts.printed.add(code.text);

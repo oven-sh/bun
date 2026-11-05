@@ -1045,7 +1045,7 @@ impl Quick {
                                 }
                                 if next == FLAT
                                     && (flags & G_PURE) != 0
-                                    && remeasure == 0
+                                    && (remeasure == 0 || (flags & G_FORCE_FLAT) != 0)
                                     && waiting == 0
                                     && o + self.d.at(pc + 2) < cap
                                     && ((flags & G_HAS_FILL) == 0
@@ -1221,6 +1221,10 @@ impl Quick {
                                     }
                                     pos = pos + (o - from) - extra;
                                     continue 'l1;
+                                }
+                                if remeasure != 0 && (flags & G_FORCE_FLAT) != 0 {
+                                    // Nothing in this group is to be measured, and the next group behind it is.
+                                    return Err(self.stop(why::RARE));
                                 }
                                 self.printer.st.put(sp, mode);
                                 sp += 1;

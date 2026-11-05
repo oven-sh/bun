@@ -110,9 +110,12 @@ for (const [what, text] of Object.entries({
     return (stdout + stderr).split("\n");
   };
   const lines = () => (told ??= explain());
-  test.concurrent(`${what}, with a function under a new symbol on the target: the compiler sees every API`, async () => {
-    expect(await lines()).toContain("aot: trim: the compiler can see every API this program uses");
-  });
+  test.concurrent(
+    `${what}, with a function under a new symbol on the target: the compiler sees every API`,
+    async () => {
+      expect(await lines()).toContain("aot: trim: the compiler can see every API this program uses");
+    },
+  );
   // A goal that is not met yet. Once it is met this case fails: change `test.concurrent.failing` to `test.concurrent`.
   test.concurrent.failing(
     `${what}, with a function under a new symbol on the target, gives no trap away (about 3,700 built-ins escape today, the bound is 20)`,

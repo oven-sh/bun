@@ -57,7 +57,10 @@ const few = 2;
 // Not met yet: what the compiler says of these today. Such a case runs every time and turns red the day it is met: then it goes out of this list.
 const notMetYet: Record<string, string> = isWindows
   ? Object.fromEntries(
-      Object.keys({ ...closed, ...handsOutWhatEveryObjectHas }).map(what => [what, "on Windows about 3,650 names escape"]),
+      Object.keys({ ...closed, ...handsOutWhatEveryObjectHas }).map(what => [
+        what,
+        "on Windows about 3,650 names escape",
+      ]),
     )
   : {
       "the descriptor of process": "the compiler does not see every API that the program uses",

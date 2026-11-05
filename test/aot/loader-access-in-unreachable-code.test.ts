@@ -49,7 +49,11 @@ async function expectNoGrowth(forms: Record<string, string>) {
   }
 }
 
-test("a door in a function that nothing reaches brings no built-in module along", () => expectNoGrowth(notReached), 240_000);
+test(
+  "a door in a function that nothing reaches brings no built-in module along",
+  () => expectNoGrowth(notReached),
+  240_000,
+);
 
 // A goal that is not met yet: beside a load by a name that nobody reads, reached or not, the tables of the executable list every public module of Bun's own that the standard streams load.
 // Once it is met this test fails: put the form back into the list above.

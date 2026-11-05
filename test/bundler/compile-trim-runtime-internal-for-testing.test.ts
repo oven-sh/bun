@@ -135,7 +135,17 @@ const notAllowed = { ...allowed, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefine
           using dir = tempDir("compile-trim-runtime-internal-for-testing", programs);
           const folder = String(dir);
           const built = await run(
-            [bunExe(), "build", "--compile", ...flags, "--trim", ...withoutDebugInformation, "asks.js", "--outfile", "refused"],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...flags,
+              "--trim",
+              ...withoutDebugInformation,
+              "asks.js",
+              "--outfile",
+              "refused",
+            ],
             folder,
             notAllowed,
           );

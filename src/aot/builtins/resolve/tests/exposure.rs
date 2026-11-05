@@ -367,10 +367,7 @@ fn left_of_instanceof_is_handed_to_the_method_of_the_right() {
             assert!(case.exposes(BuiltinId::Process), "{source}")
         });
     }
-    for source in [
-        "process instanceof Map;",
-        "process instanceof Object;",
-    ] {
+    for source in ["process instanceof Map;", "process instanceof Object;"] {
         with_case(PROGRAM, source, |case| {
             assert!(!case.exposes(BuiltinId::Process), "{source}")
         });

@@ -470,7 +470,9 @@ for (const [what, text] of Object.entries({
   "a method that the proxy inherits": `console.log(proxy.hasOwnProperty("A"));`,
   "JSON.stringify": `console.log(JSON.stringify(proxy));`,
 })) {
-  const lines = explainTrim(`const proxy = new Proxy({ A: "a", toJSON: () => ({}) }, ${answersInUpperCase});\n${text}\n`);
+  const lines = explainTrim(
+    `const proxy = new Proxy({ A: "a", toJSON: () => ({}) }, ${answersInUpperCase});\n${text}\n`,
+  );
   test.concurrent(`${what}, found by a get that answers in upper case: the compiler sees every API`, async () => {
     expect(await lines()).toContain("aot: trim: the compiler can see every API this program uses");
   });
@@ -495,7 +497,9 @@ for (const [what, text] of Object.entries(closed)) {
     `${what} uses no built-in that the program does not name (3,698 escape today, the bound is none)`,
     async () => {
       expect(
-        (await lines()).flatMap(line => /trim: uses (.*) \(escapes, so any member may be used\)$/.exec(line)?.[1] ?? []),
+        (await lines()).flatMap(
+          line => /trim: uses (.*) \(escapes, so any member may be used\)$/.exec(line)?.[1] ?? [],
+        ),
       ).toEqual([]);
     },
   );

@@ -43,18 +43,21 @@ async function build(folder: string, entry: string) {
 
 describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim: require() of a computed name and bun:test", () => {
   // A computed name brings the loader's own functions, and with them whatever they can load.
-  test.concurrent.failing("the computed name keeps nothing of the test runner, and bun:test is not found: 3 features are kept, the goal is 0", async () => {
-    using dir = tempDir("compile-trim-computed-require", programs);
-    const folder = String(dir);
-    const { executable, removed } = await build(folder, "computed.cjs");
-    expect(removed).toEqual(expect.arrayContaining(behindTheTestRunner));
-    expect(await run([executable, "bun:test"], folder)).toEqual({
-      stdout:
-        "MODULE_NOT_FOUND: Cannot load 'bun:test': it isn't in this executable. Import it by name somewhere in your program to keep it.\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  test.concurrent.failing(
+    "the computed name keeps nothing of the test runner, and bun:test is not found: 3 features are kept, the goal is 0",
+    async () => {
+      using dir = tempDir("compile-trim-computed-require", programs);
+      const folder = String(dir);
+      const { executable, removed } = await build(folder, "computed.cjs");
+      expect(removed).toEqual(expect.arrayContaining(behindTheTestRunner));
+      expect(await run([executable, "bun:test"], folder)).toEqual({
+        stdout:
+          "MODULE_NOT_FOUND: Cannot load 'bun:test': it isn't in this executable. Import it by name somewhere in your program to keep it.\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test.concurrent("a program that names bun:test keeps it, for a computed name too", async () => {
     using dir = tempDir("compile-trim-named-require", programs);

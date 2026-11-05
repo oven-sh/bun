@@ -238,10 +238,14 @@ if (!canTrim)
         exitCode: 0,
       });
     }, 600_000);
-    test.failing("and it holds no source of the modules of the runtime: the source of all 210 modules for 0", async () => {
-      using main = await buildRows();
-      expect(main.modulesWithSource).toBe(0);
-    }, 600_000);
+    test.failing(
+      "and it holds no source of the modules of the runtime: the source of all 210 modules for 0",
+      async () => {
+        using main = await buildRows();
+        expect(main.modulesWithSource).toBe(0);
+      },
+      600_000,
+    );
 
     // Whether the source is held shows in the file. A build that compiles none of the modules of the runtime takes a tenth of the time, but it finds no node:worker_threads.
     test.each(unseen)(

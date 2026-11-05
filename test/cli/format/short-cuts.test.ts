@@ -2862,3 +2862,33 @@ describe("templates in another language", () => {
     ["--html-whitespace-sensitivity=ignore"],
   ]);
 });
+
+describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them, or that are odd", () => {
+  // One row for each class of input: the name of the file, the flags, the text.
+  const rows: [name: string, flags: string, text: string][] = [
+    // The only parameter before a return type in which an object type doesn't fit (prettier#19968).
+    [
+      "a.ts",
+      "",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\nclass A {\n  method(this: A): Promise<[C, { aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number }]> {}\n  abstract m({ a, b }: A): a is B & { aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccccc: number };\n}\ninterface I {\n  m(a: string): B<{ [K in keyof Taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]: Tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb[K] }>;\n  new (a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number, d: 1 }>;\n}\ntype F = (a: string) => B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number, d: 1 }>;\nfunction g(a = { b: 1 }): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\nfunction h(a: string): B<{ a: (b: string) => C<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccc: 1 }> }> {}\n",
+    ],
+    [
+      "a.ts",
+      "--object-wrap=collapse",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\n",
+    ],
+    [
+      "a.js.flow",
+      "",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\ndeclare function f(a: string): B<{| aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number |}>;\n",
+    ],
+  ];
+  const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
+  test.concurrent.each([...groups])("%s", async (_, group) => {
+    const [[name, flags]] = group;
+    const texts = group.map(row => row[2]);
+    const { different, said, expected } = await differences(name, texts, flags.split(" ").filter(Boolean));
+    expect(different).toEqual([]);
+    expect(said).toEqual(expected);
+  });
+});

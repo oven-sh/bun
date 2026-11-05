@@ -3,6 +3,8 @@
 
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
+use crate::lang::lang;
+use crate::parse::core::TYPED_TS;
 use crate::{Bytes, Quick, R, Words, zeros};
 
 pub(crate) struct Lexer {
@@ -300,7 +302,7 @@ impl Quick {
         // #! line
         if self.t.at(self.lexer.pos) == 35 && self.t.at(self.lexer.pos + 1) == 33 {
             let mut p = self.lexer.pos;
-            while p < self.text.src_end && self.t.at(p) != 10 {
+            while p < self.text.src_end && self.t.at(p) != 10 && !self.is_line_separator(p) {
                 p += 1;
             }
             self.push_comment(self.lexer.pos, p, CF_HASHBANG);
@@ -350,6 +352,7 @@ impl Quick {
         self.lexer.marks.put(m + 7, self.lexer.prev_end);
         self.lexer.marks.put(m + 8, self.lexer.c_count);
         self.lexer.marks_top = m + 9;
+        self.keep_place(m / 9);
         return m;
     }
 
@@ -365,6 +368,7 @@ impl Quick {
         self.lexer.prev_end = self.lexer.marks.at(m + 7);
         self.lexer.c_count = self.lexer.marks.at(m + 8);
         self.lexer.marks_top = m;
+        self.go_back_to_place(m / 9);
     }
 
     /// Forgets the mark and all later ones.
@@ -415,6 +419,44 @@ impl Quick {
             i += 1;
         }
         return shift + 12;
+    }
+
+    /// How many bytes the character has that starts with the byte at p, which is not ASCII; 0 if this is not UTF-8.
+    #[cold]
+    pub(crate) fn character_length(&self, p: i32) -> i32 {
+        let a = self.t.at(p);
+        let b = self.t.at(p + 1);
+        let goes_on = |q: i32| (self.t.at(q) & 0xc0) == 0x80;
+        if a < 0xc2 || !goes_on(p + 1) {
+            return 0;
+        }
+        if a < 0xe0 {
+            return 2;
+        }
+        if !goes_on(p + 2) {
+            return 0;
+        }
+        if a < 0xf0 {
+            return if (a == 0xe0 && b < 0xa0) || (a == 0xed && b >= 0xa0) {
+                0
+            } else {
+                3
+            };
+        }
+        return if !goes_on(p + 3) || a > 0xf4 || (a == 0xf0 && b < 0x90) || (a == 0xf4 && b >= 0x90)
+        {
+            0
+        } else {
+            4
+        };
+    }
+
+    /// Does U+2028 or U+2029 stand at p?
+    #[cold]
+    pub(crate) fn is_line_separator(&self, p: i32) -> bool {
+        self.t.at(p) == 0xe2
+            && self.t.at(p + 1) == 0x80
+            && (self.t.at(p + 2) == 0xa8 || self.t.at(p + 2) == 0xa9)
     }
 
     pub(crate) fn unicode_space(&self, p: i32) -> i32 {
@@ -563,6 +605,8 @@ impl Quick {
                                 nl = 1;
                             } else if e == 0 && p >= self.text.src_end {
                                 return Err(self.fail(start));
+                            } else if e == 0xe2 && self.is_line_separator(p) {
+                                return Err(self.text_refuse());
                             }
                             flags &= !CF_PLAIN;
                         }
@@ -584,9 +628,10 @@ impl Quick {
                     break;
                 }
                 if w > 16 {
-                    nl = 1;
+                    // the end of a line for some, and for some purposes
+                    return Err(self.text_refuse());
                 }
-                p += w & 15;
+                p += w;
             } else {
                 break;
             }
@@ -714,6 +759,10 @@ impl Quick {
         return info >> 8;
     }
 }
+/// A bit for each letter, from `a` on: d g i m s u v y
+const REGEX_FLAGS: i32 = 0x01341148;
+const REGEX_U_AND_V: i32 = 0x00300000;
+
 pub(crate) fn is_in_ranges(ranges: &[i32], code: i32) -> bool {
     let mut low: i32 = 0;
     let mut high = ((ranges.len() as i32) >> 1) - 1;
@@ -736,44 +785,29 @@ impl Quick {
         loop {
             let c = self.t.at(p);
             if c == 92 {
-                // \uXXXX or \u{X}
-                self.lexer.tok_flags |= F_ESCAPE;
-                if self.t.at(p + 1) != 117 {
-                    return Err(self.fail(p));
-                }
-                if self.t.at(p + 2) == 123 {
-                    p += 3;
-                    while self.t.at(p) != 125 {
-                        if (CT.at(self.t.at(p)) & C_HEX) == 0 {
-                            return Err(self.fail(p));
-                        }
-                        p += 1;
-                    }
-                    p += 1;
-                } else {
-                    p += 6;
-                }
+                // \uXXXX or \u{X}: which characters it may stand for, and which words it may spell, depends on the place
+                return Err(self.text_refuse());
             } else if c >= 128 {
                 if self.unicode_space(p) != 0 {
                     return Ok(p);
                 }
                 // one character of two to four bytes
                 let code: i32;
-                let length: i32;
+                let length = self.character_length(p);
+                if length == 0 {
+                    return Err(self.fail(p));
+                }
                 if c < 0xe0 {
                     code = ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f);
-                    length = 2;
                 } else if c < 0xf0 {
                     code = ((c & 0x0f) << 12)
                         | ((self.t.at(p + 1) & 0x3f) << 6)
                         | (self.t.at(p + 2) & 0x3f);
-                    length = 3;
                 } else {
                     code = ((c & 0x07) << 18)
                         | ((self.t.at(p + 1) & 0x3f) << 12)
                         | ((self.t.at(p + 2) & 0x3f) << 6)
                         | (self.t.at(p + 3) & 0x3f);
-                    length = 4;
                 }
                 if !is_in_ranges(
                     if p == self.lexer.pos {
@@ -821,11 +855,69 @@ impl Quick {
         Ok(())
     }
 
+    /// Is T[s, e), which read_number() has taken for a number, one? It has a separator, a prefix or a zero in front of its digits.
+    #[cold]
+    fn is_valid_odd_number(&self, s: i32, mut e: i32) -> bool {
+        let d = self.t.at(s + 1) | 32;
+        if self.t.at(e - 1) == 110 {
+            e -= 1;
+        }
+        let mut from = s;
+        let mut highest = 57;
+        let mut letters = false;
+        if self.t.at(s) == 48 && (d == 120 || d == 111 || d == 98) {
+            from = s + 2;
+            highest = if d == 98 {
+                49
+            } else if d == 111 {
+                55
+            } else {
+                57
+            };
+            letters = d == 120;
+            if from == e {
+                return false;
+            }
+        } else if self.t.at(s) == 48 && s + 1 < e && d != (46 | 32) && d != 101 {
+            // `010`, `08`: numbers of old in JavaScript, if there are digits and nothing else
+            if self.parse.typed == TYPED_TS || self.t.at(e) == 110 {
+                return false;
+            }
+            let mut p = s;
+            while p < e {
+                if (CT.at(self.t.at(p)) & C_DIGIT) == 0 {
+                    return false;
+                }
+                p += 1;
+            }
+            return true;
+        }
+        // a separator stands between two digits
+        let is_digit =
+            |c: i32| (c >= 48 && c <= highest) || (letters && (CT.at(c) & C_HEX) != 0 && c > 57);
+        let mut p = from;
+        while p < e {
+            let c = self.t.at(p);
+            if c == 95 {
+                if p == from || !is_digit(self.t.at(p - 1)) || !is_digit(self.t.at(p + 1)) {
+                    return false;
+                }
+            } else if from != s && !is_digit(c) {
+                return false;
+            }
+            p += 1;
+        }
+        true
+    }
+
     pub(crate) fn read_number(&mut self) -> R<()> {
-        let mut p = self.lexer.pos;
+        let start = self.lexer.pos;
+        let mut p = start;
         let mut type_ = tk::Num;
         let c = self.t.at(p);
         let d = self.t.at(p + 1) | 32;
+        // a zero with something else than `.` behind it, or a separator
+        let mut is_odd = c == 48 && (CT.at(d) & C_ID_PART) != 0;
         if c == 48 && (d == 120 || d == 111 || d == 98) {
             p += 2;
             while (CT.at(self.t.at(p)) & C_HEX) != 0 || self.t.at(p) == 95 {
@@ -836,8 +928,14 @@ impl Quick {
                 p += 1;
             }
         } else {
-            while (CT.at(self.t.at(p)) & C_DIGIT) != 0 || self.t.at(p) == 95 {
+            while (CT.at(self.t.at(p)) & C_DIGIT) != 0 {
                 p += 1;
+            }
+            if self.t.at(p) == 95 {
+                is_odd = true;
+                while (CT.at(self.t.at(p)) & C_DIGIT) != 0 || self.t.at(p) == 95 {
+                    p += 1;
+                }
             }
             if self.t.at(p) == 110 {
                 type_ = tk::BigInt;
@@ -846,6 +944,7 @@ impl Quick {
                 if self.t.at(p) == 46 {
                     p += 1;
                     while (CT.at(self.t.at(p)) & C_DIGIT) != 0 || self.t.at(p) == 95 {
+                        is_odd |= self.t.at(p) == 95;
                         p += 1;
                     }
                 }
@@ -859,6 +958,7 @@ impl Quick {
                     if (CT.at(self.t.at(q)) & C_DIGIT) != 0 {
                         p = q;
                         while (CT.at(self.t.at(p)) & C_DIGIT) != 0 || self.t.at(p) == 95 {
+                            is_odd |= self.t.at(p) == 95;
                             p += 1;
                         }
                     }
@@ -867,6 +967,9 @@ impl Quick {
         }
         if (CT.at(self.t.at(p)) & C_ID_START) != 0 && self.t.at(p) < 128 {
             return Err(self.fail(p));
+        }
+        if is_odd && !self.is_valid_odd_number(start, p) {
+            return Err(self.fail(start));
         }
         self.lexer_finish(type_, p);
         Ok(())
@@ -884,6 +987,34 @@ pub(crate) static STRING_SPECIAL: [u8; 256] = [
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 ];
 impl Quick {
+    /// Is the escape at p, a backslash before `x`, `u` or a digit, one that every parser takes? `legacy`: `\1` and the like are.
+    #[cold]
+    pub(crate) fn is_valid_escape(&self, p: i32, legacy: bool) -> bool {
+        let is_hex = |q: i32| (CT.at(self.t.at(q)) & C_HEX) != 0;
+        match self.t.at(p + 1) {
+            120 => is_hex(p + 2) && is_hex(p + 3),
+            117 => {
+                if self.t.at(p + 2) != 123 {
+                    return is_hex(p + 2) && is_hex(p + 3) && is_hex(p + 4) && is_hex(p + 5);
+                }
+                let mut q = p + 3;
+                let mut value: i32 = 0;
+                while is_hex(q) {
+                    let c = self.t.at(q);
+                    value = (value << 4) | (if c <= 57 { c - 48 } else { (c | 32) - 87 });
+                    if value > 0x10ffff {
+                        return false;
+                    }
+                    q += 1;
+                }
+                q != p + 3 && self.t.at(q) == 125
+            }
+            48 => legacy || (CT.at(self.t.at(p + 2)) & C_DIGIT) == 0,
+            _ => legacy,
+        }
+    }
+
+    #[inline(never)]
     pub(crate) fn read_string(&mut self, quote: i32) -> R<()> {
         let end = self.text.src_end;
         let start = self.lexer.pos;
@@ -899,6 +1030,12 @@ impl Quick {
             }
             if c == 92 {
                 flags |= F_ESCAPE;
+                let e = self.t.at(p + 1);
+                if (e == 117 || e == 120 || (CT.at(e) & C_DIGIT) != 0)
+                    && !self.is_valid_escape(p, self.parse.typed != TYPED_TS)
+                {
+                    return Err(self.fail(p));
+                }
                 p += 2;
                 continue;
             }
@@ -909,6 +1046,14 @@ impl Quick {
                     return Err(self.fail(start));
                 }
                 flags |= F_SLOW_TEXT;
+                if c >= 128 {
+                    let length = self.character_length(p);
+                    if length == 0 {
+                        return Err(self.text_refuse());
+                    }
+                    p += length;
+                    continue;
+                }
             }
             p += 1;
         }
@@ -949,26 +1094,8 @@ impl Quick {
         self.lexer.tok_start = p;
         self.lexer.tok_flags = 0;
         if (CT.at(c) & C_ASCII_START) != 0 {
-            // A name: nearly every second token. Four bytes at a time: a byte of `ok` has its top bit set if that byte of v is a letter, a
-            // digit or "_". (x + (0x80 - low)) & ~(x + (0x7f - high)) has it set for low <= x <= high, for x below 0x80, without carries.
-            let mut q = p + 1;
-            loop {
-                let v = self.t.i32_at(q);
-                let x = v & 0x7f7f7f7f;
-                let l = x | 0x20202020;
-                let ok = ((l.wrapping_add(0x1f1f1f1f) & !l.wrapping_add(0x05050505))
-                    | (x.wrapping_add(0x50505050) & !x.wrapping_add(0x46464646))
-                    | !(x ^ 0x5f5f5f5f).wrapping_add(0x7f7f7f7f))
-                    & !v
-                    & HIGH_BITS;
-                if ok == HIGH_BITS {
-                    q += 4;
-                    continue;
-                }
-                let bad = ok ^ HIGH_BITS;
-                q += (31 - (bad.isolate_lowest_one()).leading_zeros() as i32) >> 3;
-                break;
-            }
+            // A name: nearly every second token.
+            let mut q = self.name_end(p + 1);
             let mut e = self.t.at(q);
             // "$", which the words do not know
             while (CT.at(e) & C_ASCII_PART) != 0 {
@@ -1110,6 +1237,10 @@ impl Quick {
             }
             45 => {
                 if self.t.at(p + 1) == 45 {
+                    // and so does `-->` at the start of a line
+                    if self.t.at(p + 2) == 62 {
+                        return Err(self.text_refuse());
+                    }
                     self.lexer_finish(tk::Dec, p + 2);
                 } else if self.t.at(p + 1) == 61 {
                     self.lexer_finish(tk::SubEq, p + 2);
@@ -1160,6 +1291,18 @@ impl Quick {
                 } else if self.t.at(p + 1) == 61 {
                     self.lexer_finish(tk::LtEq, p + 2);
                 } else {
+                    // `<!--` starts a comment in a script
+                    if self.t.at(p + 1) == 33 && self.t.at(p + 2) == 45 && self.t.at(p + 3) == 45 {
+                        return Err(self.text_refuse());
+                    }
+                    if self.t.at(p + 1) == 47
+                        && self.t.at(p + 2) != 42
+                        && self.parse.jsx_enabled
+                        && self.parse.typed == TYPED_TS
+                    {
+                        // `<// comment`: one token, `</`, for TypeScript in a file with JSX
+                        return Err(self.text_refuse());
+                    }
                     self.lexer_finish(tk::Lt, p + 1);
                 }
                 return Ok(());
@@ -1276,6 +1419,9 @@ impl Quick {
                 return Err(self.fail(start));
             }
             if c == 92 {
+                if self.t.at(p + 1) == 10 || self.is_line_separator(p + 1) {
+                    return Err(self.fail(start));
+                }
                 p += 2;
                 continue;
             }
@@ -1286,13 +1432,34 @@ impl Quick {
             } else if c == 47 && !in_class {
                 break;
             } else if c < 32 || c >= 127 {
+                if c == 0xe2 && self.is_line_separator(p) {
+                    return Err(self.fail(start));
+                }
                 flags |= F_SLOW_TEXT;
+                if c >= 128 {
+                    let length = self.character_length(p);
+                    if length == 0 {
+                        return Err(self.text_refuse());
+                    }
+                    p += length;
+                    continue;
+                }
             }
             p += 1;
         }
         p += 1;
+        // d g i m s u v y, each once, and not both u and v. TypeScript's parser leaves that to others.
+        let mut seen: i32 = 0;
         while (CT.at(self.t.at(p)) & C_ID_PART) != 0 && self.t.at(p) < 128 {
+            let bit = 1_i32.wrapping_shl((self.t.at(p) - 97) as u32);
+            if self.t.at(p) < 97 || (bit & REGEX_FLAGS) == 0 || (seen & bit) != 0 {
+                seen = -1;
+            }
+            seen |= bit;
             p += 1;
+        }
+        if self.parse.typed != TYPED_TS && (seen == -1 || (seen & REGEX_U_AND_V) == REGEX_U_AND_V) {
+            return Err(self.fail(start));
         }
         self.lexer.tok_flags = flags;
         self.lexer_finish(tk::Regex, p);
@@ -1315,6 +1482,15 @@ impl Quick {
             }
             if c == 92 {
                 flags |= F_ESCAPE;
+                // (with a tag in front of the template it would not mind)
+                if self.lang.lang == lang::Flow {
+                    let e = self.t.at(p + 1);
+                    if (e == 117 || e == 120 || (CT.at(e) & C_DIGIT) != 0)
+                        && !self.is_valid_escape(p, false)
+                    {
+                        return Err(self.text_refuse());
+                    }
+                }
                 p += 2;
                 continue;
             }
@@ -1323,6 +1499,14 @@ impl Quick {
                     return Err(self.fail(from));
                 }
                 flags |= F_SLOW_TEXT;
+                if c >= 128 {
+                    let length = self.character_length(p);
+                    if length == 0 {
+                        return Err(self.text_refuse());
+                    }
+                    p += length;
+                    continue;
+                }
             }
             p += 1;
         }
@@ -1352,6 +1536,12 @@ impl Quick {
                             break;
                         }
                         self.lexer.tok_flags |= F_SLOW_TEXT;
+                        let length = self.character_length(q);
+                        if length == 0 {
+                            return Err(self.text_refuse());
+                        }
+                        q += length;
+                        continue;
                     }
                     q += 1;
                 } else {
@@ -1378,6 +1568,14 @@ impl Quick {
                                 return Err(self.fail(p));
                             }
                             flags |= F_SLOW_TEXT;
+                            if d >= 128 {
+                                let length = self.character_length(q);
+                                if length == 0 {
+                                    return Err(self.text_refuse());
+                                }
+                                q += length;
+                                continue;
+                            }
                         } else if d == 38 {
                             // an entity
                             flags |= F_ESCAPE;
@@ -1473,10 +1671,21 @@ impl Quick {
                 break;
             }
             if d < 32 || d >= 127 {
-                if d == 0 && q >= self.text.src_end {
+                if d == 0 {
                     return Err(self.fail(p));
                 }
+                if d == 0xe2 && self.is_line_separator(q) {
+                    return Err(self.text_refuse());
+                }
                 flags |= F_SLOW_TEXT;
+                if d >= 128 {
+                    let length = self.character_length(q);
+                    if length == 0 {
+                        return Err(self.text_refuse());
+                    }
+                    q += length;
+                    continue;
+                }
             } else if (d == 62 || d == 125) && !self.lexer.lenient_jsx_text {
                 return Err(self.fail(q));
             }

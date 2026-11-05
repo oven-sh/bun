@@ -36,6 +36,8 @@ pub enum Reason {
     InHtml,
     /// A comment may say that something stays as it is written.
     IgnoreComment,
+    /// The text isn't UTF-8.
+    NotUtf8,
     SyntaxError,
     /// Something rare that is left to the long way.
     Rare,
@@ -43,20 +45,24 @@ pub enum Reason {
     Guest,
     Stack,
     TooLong,
+    /// Something was written or read beyond a buffer: a mistake in the quick way that it has noticed.
+    Lost,
     Other,
 }
 
 impl Reason {
-    pub const ALL: [Reason; 10] = [
+    pub const ALL: [Reason; 12] = [
         Reason::Options,
         Reason::Language,
         Reason::InHtml,
         Reason::IgnoreComment,
+        Reason::NotUtf8,
         Reason::SyntaxError,
         Reason::Rare,
         Reason::Guest,
         Reason::Stack,
         Reason::TooLong,
+        Reason::Lost,
         Reason::Other,
     ];
 }
@@ -298,7 +304,11 @@ pub fn format(
         quick_options.is_in_markdown = may_be_jsx(&code);
         quick_options.marks_line_breaks_in_texts = !options.is_at_margin;
     }
-    let dialect = quick::Dialect::of_name(language, code.path);
+    let mut dialect = quick::Dialect::of_name(language, code.path);
+    // In a declaration file, too, `await` is a name outside of async functions.
+    dialect.common_js |= [&b".d.ts"[..], b".d.mts"]
+        .iter()
+        .any(|end| ends_with_ignore_ascii_case(code.path, end));
     let file = Some((options, code.path));
     format_as(code.text, dialect, &quick_options, file, scratch, out)
 }
@@ -352,6 +362,8 @@ pub(crate) fn format_script(
         // The name of the host doesn't say whether TypeScript has JSX.
         jsx: (!script.is_typescript).then_some(true),
         common_js: script.is_no_module,
+        module_only: false,
+        declaration_file: false,
         name_ends_in_ts: name.ends_with(b".ts"),
         name_ends_in_js_flow: false,
     };
@@ -417,6 +429,10 @@ fn format_as(
     if strings::contains(code.text, b"prettier-ignore") {
         return Err(scratch.refuse(Reason::IgnoreComment, code.text));
     }
+    // How wide half a character is, and whether it can be in a name, is for the long way to say.
+    if !strings::is_valid_utf8(code.text) {
+        return Err(scratch.refuse(Reason::NotUtf8, code.text));
+    }
     let quick = scratch.quick.get_or_insert_default();
     match file {
         Some((options, path)) => {
@@ -441,6 +457,7 @@ fn format_as(
             6 => Reason::Stack,
             7 => Reason::Rare,
             8 => Reason::Guest,
+            9 => Reason::Lost,
             _ => Reason::Other,
         };
         return Err(scratch.refuse(reason, code.text));

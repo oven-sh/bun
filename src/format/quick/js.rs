@@ -123,7 +123,7 @@ impl Quick {
         self.set_is_common_js(self.dialect.common_js);
         self.set_flow_comments(self.mode.js_mode_language == lang::BabelFlow);
         self.set_type_script_spaces(self.lang.lang == lang::TypeScript);
-        self.set_lenient_jsx_text(self.lang.lang == lang::Flow);
+        self.set_lenient_jsx_text(false);
         if self.mode.js_mode_language == lang::BabelFlow || self.lang.lang == lang::Flow {
             self.set_parser_mode(TYPED_FLOW, true);
             return self.parse_program();

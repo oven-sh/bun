@@ -23,7 +23,7 @@ const proxy = http.createServer((req, res) => {
   res.end();
 });
 proxy.on("connect", (req, clientSocket, head) => {
-  const serverSocket = net.createConnection({ host: "127.0.0.1", port: wss.port }, () => {
+  const serverSocket = net.createConnection({ host: "127.0.0.1", port: wss.port! }, () => {
     clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     if (head.length) serverSocket.write(head);
     clientSocket.pipe(serverSocket);

@@ -16,11 +16,14 @@ class FrontendRouter;
 class BackendDispatcher;
 class BunFrontendDevServerFrontendDispatcher;
 
-class InspectorBunFrontendDevServerAgent final : public InspectorAgentBase, public Inspector::BunFrontendDevServerBackendDispatcherHandler {
+class InspectorBunFrontendDevServerAgent final : public InspectorAgentBase, public Inspector::BunFrontendDevServerBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorBunFrontendDevServerAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorBunFrontendDevServerAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorBunFrontendDevServerAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorBunFrontendDevServerAgent);
 
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject&);
     virtual ~InspectorBunFrontendDevServerAgent() final;
 

@@ -280,7 +280,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       }
 
       // Simulate multiple requests
-      const results = [];
+      const results: boolean[] = [];
       for (let i = 0; i < 7; i++) {
         results.push(await isRateLimited());
       }

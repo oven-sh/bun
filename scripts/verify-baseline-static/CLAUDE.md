@@ -52,7 +52,7 @@ false positive.
 
 ## Which builds run this
 
-See `needsBaselineVerification()` in `.buildkite/ci.mjs`:
+See `needsBaselineVerification()` in `.buildkite/ci.ts`:
 
 | Target                                                         | Allowlist file              |
 | -------------------------------------------------------------- | --------------------------- |

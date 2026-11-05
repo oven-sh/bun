@@ -1,0 +1,95 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = (
+  // c
+  B | C
+)[];
+type D = (
+  /* a */ // b
+  B | C
+)[];
+type E = (
+  // a
+  // b
+  B | C
+)["d"];
+type F = keyof (
+  // c
+  B | C
+);
+type G = (
+  | B
+  | C /* a */ // b
+)[];
+type H =
+  // prettier-ignore
+  // c
+  I | J;
+type K =
+  // a
+  // b
+  L | M;
+type N = (/* 1 */ /* 2 */ B | C)[];
+type O = (
+  // 1
+  /* 2 */ B | C
+)[];
+type P = (/* 1 */ /* 2 */ B | C)[];
+type Q = (
+  /* 1 */
+  /* 2 */ /* 3 */ B | C
+)[];
+type R = (
+  /* 1 */ // 2
+  B | C
+)[];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = (
+  // c
+  B | C
+)[];
+type D = (
+  /* a */ // b
+  B | C
+)[];
+type E = (
+  // a
+  // b
+  B | C
+)["d"];
+type F = keyof (
+  // c
+  B | C
+);
+type G = (
+  | B
+  | C /* a */ // b
+)[];
+type H =
+  // prettier-ignore
+  // c
+  I | J;
+type K =
+  // a
+  // b
+  L | M;
+type N = (/* 1 */ /* 2 */ B | C)[];
+type O = (
+  // 1
+  /* 2 */ B | C
+)[];
+type P = (/* 1 */ /* 2 */ B | C)[];
+type Q = (
+  /* 1 */
+  /* 2 */ /* 3 */ B | C
+)[];
+type R = (
+  /* 1 */ // 2
+  B | C
+)[];
+
+===================== End =====================

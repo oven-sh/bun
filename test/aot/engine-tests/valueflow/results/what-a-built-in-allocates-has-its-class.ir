@@ -1,0 +1,74 @@
+# map = new Map();  filled = new Map(); filled.set("a", 1); read = filled.get("a");  bytes = new Uint8Array(1);  mapOrSet = new (flag ? Map : Set)();  forOtherTarget = Reflect.construct(Map, [], Other)
+# keys = Object.keys({ x: 1 });  handedOver = new Map(); keep(handedOver)
+# The universe is made before anybody knows the callee of a call, so it has one object without a class for what the built-ins among the callees allocate. Once the callees are known, the table says what that object is:
+# an instance of the class that every overload they may select answers with. It is followed like a literal: what it holds and that it keeps the behavior it is made with are proven.
+# What a read takes out of it is what was put in, and `undefined`: native code makes nothing of its own for a result that stands for what an operand holds.
+# Beside these: callees that answer with different classes leave an object; a construction for another new.target makes an instance of the class with a prototype that nobody has looked at;
+# and of an instance that code which nobody compiles has got hold of only the class is left
+# RUN: valueflow-apply
+# CHECK: variable g0 name="map" {{*}}declared={type=Map<never, never, proven, pristine[Storage, Names]>}
+# CHECK: variable g1 name="filled" {{*}}declared={type=Map<"a", 1, proven, pristine[Storage, Names]>}
+# CHECK: variable g2 name="bytes" {{*}}declared={type=Uint8Array
+# CHECK: variable g3 name="mapOrSet" {{*}}declared={type=object}
+# CHECK: variable g4 name="forOtherTarget" {{*}}declared={type=Map}
+# CHECK: variable g5 name="keys" {{*}}declared={type=Array<"x", proven, pristine[Storage, Names, Dense]>}
+# CHECK: variable g6 name="handedOver" {{*}}declared={type=Map}
+# CHECK: variable g7 name="read" {{*}}declared={type=undefined|1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="map" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="filled" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="bytes" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="mapOrSet" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="forOtherTarget" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="keys" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="handedOver" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="read" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Builtin builtin=Set
+    v2 = Construct v0
+    PutModuleVariable v2 variable=g0
+    v4 = Construct v0
+    PutModuleVariable v4 variable=g1
+    v6 = String string="a"
+    v7 = Integer integer=1
+    v8 = PropGet v4 key="set"
+    v9 = Call v8, v4, v6, v7 calleeKey="set"
+    v10 = PropGet v4 key="get"
+    v11 = Call v10, v4, v6 calleeKey="get"
+    PutModuleVariable v11 variable=g7
+    v13 = Builtin builtin=Uint8Array
+    v14 = Construct v13, -, v7
+    PutModuleVariable v14 variable=g2
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="flag" [isFreeName]
+    v18 = ToBoolean v17
+    Branch v18 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v19):
+    v20 = Construct v19
+    PutModuleVariable v20 variable=g3
+    v22 = NewClosure function=f1
+    v23 = Construct v0, v22
+    PutModuleVariable v23 variable=g4
+    v25 = NewObject -, v7 layout=L0 fields=[0]
+    v26 = Builtin builtin=ObjectKeys
+    v27 = Call v26, -, v25
+    PutModuleVariable v27 variable=g5
+    v29 = Construct v0
+    PutModuleVariable v29 variable=g6
+    v31 = PropGet v16 key="keep" [isFreeName]
+    v32 = Call v31, -, v29
+    Return
+}
+function f1 name="Other" results=[{type=anything}] {
+  b0():
+    Return
+}

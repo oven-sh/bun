@@ -1,7 +1,93 @@
+const path = require("node:path");
+
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
   return {
     ...nativeModule,
+
+    test_v8_function_script_origin() {
+      function namedFunction(a, b) {
+        return a + b;
+      }
+      const arrowFunction = (a, b) => a + b;
+      class DefaultConstructor {
+        method() {}
+      }
+      class ExplicitConstructor {
+        constructor() {}
+      }
+      class Derived extends DefaultConstructor {}
+      const AnonymousClass = class {};
+      const cases = [
+        ["named function", namedFunction],
+        ["arrow function", arrowFunction],
+        ["class with default constructor", DefaultConstructor],
+        ["class with explicit constructor", ExplicitConstructor],
+        ["derived class with default constructor", Derived],
+        ["anonymous class expression", AnonymousClass],
+        ["class method", DefaultConstructor.prototype.method],
+        ["builtin function", Array.prototype.map],
+        ["bound function", namedFunction.bind(null)],
+        ["native addon function", nativeModule.get_function_script_origin],
+      ];
+      for (const [description, fn] of cases) {
+        console.log(`====== ${description}`);
+        const { file, line, column } = nativeModule.get_function_script_origin(fn);
+        console.log("file:", typeof file === "string" ? path.basename(file) : file);
+        console.log("file is absolute:", typeof file === "string" && path.isAbsolute(file));
+        console.log("line:", line, "column:", column);
+      }
+    },
+
+    test_v8_value_to_int32() {
+      const cases = [
+        ["int", 42],
+        ["negative int", -7],
+        ["fraction", 3.99],
+        ["negative fraction", -3.99],
+        ["INT32_MAX + 1", 2 ** 31],
+        ["UINT32_MAX + 6", 2 ** 32 + 5],
+        ["INT32_MIN - 1", -(2 ** 31) - 1],
+        ["NaN", NaN],
+        ["Infinity", Infinity],
+        ["numeric string", "123"],
+        ["hex string", "0x10"],
+        ["true", true],
+        ["null", null],
+        ["undefined", undefined],
+        ["object with valueOf", { valueOf: () => 77.5 }],
+        [
+          "object with throwing valueOf",
+          {
+            valueOf() {
+              throw new Error("valueOf threw");
+            },
+          },
+        ],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        try {
+          console.log("result:", nativeModule.perform_to_int32(value));
+        } catch (e) {
+          console.log("threw:", e.message);
+        }
+      }
+    },
+
+    // Bun only: 48k collected instances with 128 internal fields each. Their
+    // field storage is about 2 KB per instance, 100 MiB if none of it is freed.
+    test_v8_internal_field_object_leak() {
+      nativeModule.create_objects_with_internal_fields(256, 128);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 24; i++) {
+        nativeModule.create_objects_with_internal_fields(2000, 128);
+        Bun.gc(true);
+      }
+      const after = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    },
 
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
@@ -36,7 +122,17 @@ module.exports = debugMode => {
       const obj = nativeModule.test_v8_define_own_property();
       for (const key of ["writable", "readonly", "hidden"]) {
         const d = Object.getOwnPropertyDescriptor(obj, key);
-        console.log(key, "=", d.value, "writable =", d.writable, "enumerable =", d.enumerable, "configurable =", d.configurable);
+        console.log(
+          key,
+          "=",
+          d.value,
+          "writable =",
+          d.writable,
+          "enumerable =",
+          d.enumerable,
+          "configurable =",
+          d.configurable,
+        );
       }
       console.log("enumerable keys =", JSON.stringify(Object.keys(obj).sort()));
     },
@@ -96,6 +192,31 @@ module.exports = debugMode => {
         console.log("did not throw");
       } catch (e) {
         console.log("caught", e.constructor.name, e.message);
+      }
+    },
+
+    test_v8_exception_empty_message() {
+      for (const e of nativeModule.test_v8_exception_empty_message()) {
+        console.log(e.constructor.name, "message =", JSON.stringify(e.message), "own =", Object.hasOwn(e, "message"));
+      }
+    },
+
+    test_v8_throw_error_empty_message() {
+      try {
+        nativeModule.test_v8_throw_error_empty_message();
+        console.log("did not throw");
+      } catch (e) {
+        const own = Object.hasOwn(e, "message");
+        console.log("caught", e.constructor.name, "message =", JSON.stringify(e.message), "own =", own);
+      }
+    },
+
+    test_v8_new_values_with_pending_exception() {
+      try {
+        nativeModule.test_v8_new_values_with_pending_exception();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
       }
     },
 
@@ -171,6 +292,11 @@ module.exports = debugMode => {
       console.log("setter.call(5):", describe(holderSeenBySetter(5)));
       console.log("setter.call(obj):", describe(holderSeenBySetter(obj)));
       keep();
+    },
+
+    test_uv_queue_work_on_current_event_loop() {
+      const rc = nativeModule.queue_work_and_call((...args) => console.log("after_work_cb", ...args));
+      console.log("uv_queue_work", rc);
     },
 
     test_v8_object_get_set_exceptions() {

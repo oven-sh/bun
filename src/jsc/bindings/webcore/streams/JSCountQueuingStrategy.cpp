@@ -156,12 +156,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCountQueuingStrategyPrototype_inspectCustom, (JSGloba
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSCountQueuingStrategy>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(thisObject->m_highWaterMark), 0);
+    Bun::putDirectNamed(vm, data, "highWaterMark"_s, jsNumber(thisObject->m_highWaterMark));
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CountQueuingStrategy"_s, data));
 }
 

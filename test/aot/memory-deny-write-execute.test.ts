@@ -110,13 +110,23 @@ test.skipIf(!isLinux || isHardened)(
     using dir = tempDir("aot-mdwe-allowed", {
       "program.ts": program,
       "twice.c": "int twice(int x) { return 2 * x; }\n",
+      "build.ts": `const result = await Bun.build({
+  entrypoints: ["./program.ts"],
+  compile: { aot: true, allowExecutableMemory: true, outfile: "./by-api" },
+});
+console.log(result.success);
+`,
     });
-    const executable = await build(String(dir), "program", "--aot-allow-executable-memory");
-    const { stdout, stderr, exitCode } = await run([executable, join(String(dir), "twice.c")]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const state = JSON.parse(stdout);
-    expect([0, -1]).toContain(state.bits);
-    expect(state).toMatchObject({ isGranted: true, compiler: 42 });
+    const byFlag = await build(String(dir), "program", "--aot-allow-executable-memory");
+    const api = await runCommand([bunExe(), "build.ts"], String(dir));
+    expect({ stdout: api.stdout, exitCode: api.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+    for (const executable of [byFlag, join(String(dir), "by-api")]) {
+      const { stdout, stderr, exitCode } = await run([executable, join(String(dir), "twice.c")]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const state = JSON.parse(stdout);
+      expect([0, -1]).toContain(state.bits);
+      expect(state).toMatchObject({ isGranted: true, compiler: 42 });
+    }
   },
   120_000,
 );
@@ -144,6 +154,13 @@ test.skipIf(isHardened)("--aot-allow-executable-memory requires --aot", async ()
     stderr: "error: --aot-allow-executable-memory requires --aot\n",
     exitCode: 1,
   });
+  // `bun --aot` runs the program with a JIT, so there is no request to leave out.
+  const checks = await runCommand([bunExe(), "--aot", "--aot-allow-executable-memory", "program.ts"], String(dir));
+  expect({ stderr: checks.stderr, exitCode: checks.exitCode }).toEqual({
+    stderr:
+      "error: --aot-allow-executable-memory is only valid where the program is compiled: bun test --aot, bun --aot-log-type-mismatches, bun build --compile --aot and bun compile\n",
+    exitCode: 1,
+  });
   const key = await runCommand([bunExe(), "build.ts"], String(dir), { ...bunEnv, NO_COLOR: "1" });
   expect({ stdout: key.stdout, exitCode: key.exitCode }).toEqual({
     stdout: "compile.allowExecutableMemory requires compile.aot: true\n",
@@ -151,6 +168,8 @@ test.skipIf(isHardened)("--aot-allow-executable-memory requires --aot", async ()
   });
 });
 
+// Under AddressSanitizer its handler answers the fault, not Bun's, so no report is printed.
+// Where the kernel has no PR_SET_MDWE (before 6.7) the executable isn't denied, and the case pins that the code runs.
 test.skipIf(!isLinux || isHardened || isASAN)(
   "a crash in code that the denial kept from becoming executable says so",
   async () => {

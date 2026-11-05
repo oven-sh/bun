@@ -959,8 +959,13 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             use_image_on_this_thread(program, program.first_image());
         }
         Bun__AOT__takePagesForTablesOfFirstThread();
+        // A test run builds its programs above a library that a build without the flag holds.
         #[cfg(not(bun_hardened))]
-        if !program.allows_executable_memory && write_execute::deny() {
+        let allows_executable_memory = core::iter::once(&program)
+            .chain(above.into_iter().flatten())
+            .any(|program| program.allows_executable_memory);
+        #[cfg(not(bun_hardened))]
+        if !allows_executable_memory && write_execute::deny() {
             bun_crash_handler::note_write_execute_memory_denied();
         }
         #[cfg(bun_hardened)]

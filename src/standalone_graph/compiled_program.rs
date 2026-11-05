@@ -1357,6 +1357,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn executable_memory_round_trips() {
+        let entry_points = [entry_point(10, b"/a/b.ts")];
+        let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 3).unwrap();
+        let (program, _) = read_back(bytes, record_at).unwrap();
+        assert!(!program.allows_executable_memory);
+        input.allows_executable_memory = true;
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 3).unwrap();
+        let (program, _) = read_back(bytes, record_at).unwrap();
+        assert!(program.allows_executable_memory);
+        assert!(!program.allows_code_from_disk);
+    }
+
+    #[test]
     fn package_names_round_trip() {
         let entry_points = [
             entry_point(10, b"/$bunfs/root/main.js"),

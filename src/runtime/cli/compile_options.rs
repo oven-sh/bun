@@ -1030,6 +1030,12 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
             RequestOrigin::BuildFlag,
         );
     }
+    // `bun --aot` runs the program from its source, with a JIT, so it never denies itself executable memory.
+    if allows_executable_memory && !compiles {
+        exit_with_message(
+            b"--aot-allow-executable-memory is only valid where the program is compiled: bun test --aot, bun --aot-log-type-mismatches, bun build --compile --aot and bun compile",
+        );
+    }
     check_runtime_conflicts(&ctx, compiles);
     let test_words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS
         .get_not_empty()

@@ -1646,6 +1646,13 @@ declare module "bun" {
        */
       tagFilter?: boolean;
       /**
+       * Skip a front matter block at the very start of the input: the lines
+       * between two `---` lines (YAML) or two `+++` lines (TOML). The block
+       * is not parsed. Use {@link frontmatter} to read it. Set to `false` to
+       * render the block as CommonMark does. Default: `true`.
+       */
+      frontmatter?: boolean;
+      /**
        * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
        * or an object to enable individually.
        *
@@ -1940,6 +1947,12 @@ declare module "bun" {
        * @default false
        */
       kittyGraphics?: boolean;
+      /**
+       * Skip a front matter block (`---` for YAML, `+++` for TOML) at the
+       * very start of the input.
+       * @default true
+       */
+      frontmatter?: boolean;
     }
 
     /**
@@ -2071,6 +2084,50 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /** The result of {@link frontmatter}. */
+    interface FrontmatterResult {
+      /**
+       * The parsed metadata. `{}` for a block with nothing in it, and `null`
+       * when the input does not start with a front matter block.
+       */
+      data: Record<string, unknown> | null;
+      /** The input without the front matter block. */
+      content: string;
+    }
+
+    /**
+     * Parse the front matter block at the very start of a document.
+     *
+     * The block is the lines between two `---` lines (parsed as YAML, so a
+     * JSON object works too) or two `+++` lines (parsed as TOML). The opening
+     * line must be the first line of the input, and the line after it must
+     * not be blank. An input without such a block gives `data: null` and the
+     * input as `content`.
+     *
+     * Throws a `SyntaxError` when the metadata does not parse, or when it is
+     * not a mapping: `---\ntitle Hello\n---` (a missing colon) is a YAML
+     * scalar.
+     *
+     * The renderers skip the same block. Pass `{ frontmatter: false }` when
+     * you render `content`, so that a document body that starts with `---`
+     * is not skipped a second time.
+     *
+     * @param input The document, as a string or a buffer of UTF-8
+     * @returns The parsed metadata and the rest of the document
+     *
+     * @example
+     * ```ts
+     * const { data, content } = Bun.markdown.frontmatter("---\ntitle: Hello\n---\n# Heading\n");
+     * data; // { title: "Hello" }
+     * content; // "# Heading\n"
+     *
+     * const html = Bun.markdown.html(content, { frontmatter: false });
+     * ```
+     */
+    export function frontmatter(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+    ): FrontmatterResult;
   }
 
   /**

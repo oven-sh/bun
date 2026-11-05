@@ -347,6 +347,43 @@ describe("bun <file.md>", () => {
     expect(openers).toBeGreaterThanOrEqual(2);
   });
 
+  test("skips front matter", async () => {
+    const body = ["# Heading", "", "body", ""].join("\n");
+    const rendered = await runMd(body);
+    expect(await runMd("---\ntitle: Hello\n---\n" + body)).toBe(rendered);
+    expect(await runMd("+++\ntitle = 'Hello'\n+++\n" + body)).toBe(rendered);
+    expect(await runMd("\uFEFF---\r\ntitle: Hello\r\n---\r\n" + body)).toBe(rendered);
+    // A blank line behind the first `---` makes it a thematic break.
+    expect(await runMd("---\n\ntitle: Hello\n---\n" + body)).not.toBe(rendered);
+  });
+
+  test.skipIf(!isPosix)("does not fetch an image that the front matter names", async () => {
+    const requested: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requested.push(new URL(request.url).pathname);
+        return new Response(Buffer.alloc(16, "z"), { headers: { "content-type": "image/png" } });
+      },
+    });
+    const image = (name: string) => `![${name}](http://127.0.0.1:${server.port}/${name}.png)`;
+    using dir = tempDir("md-front-matter-img-", {
+      "doc.md": `---\ncover: ${image("cover")}\n---\n${image("body")}\n`,
+      "tmp/keep": "",
+    });
+    const tmp = join(String(dir), "tmp");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env: { ...bunEnv, FORCE_COLOR: "1", TERM: "xterm-kitty", KITTY_WINDOW_ID: "1", BUN_TMPDIR: tmp, TMPDIR: tmp },
+      cwd: String(dir),
+      terminal: { cols: 80, rows: 24, data() {} },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    expect(requested).toEqual(["/body.png"]);
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(!isPosix || !(isDebug || isASAN))(
     "prefetched remote images are staged into fresh temp files and never written through a pre-existing entry at the staged path",
     async () => {

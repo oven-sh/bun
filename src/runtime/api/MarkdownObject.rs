@@ -257,7 +257,7 @@ pub(crate) fn frontmatter<'a>(
         let mut pending = Vec::new();
         let mut copy = Vec::new();
         let mut data = JsLocal::NULL;
-        let content = match &input {
+        let content = match input {
             // `content` shares the characters of the string, which is not converted.
             StringOrJsBytes::String(text) => {
                 let (bom, block) = match text.is_8bit() {
@@ -274,7 +274,7 @@ pub(crate) fn frontmatter<'a>(
                     data = parse_metadata(heap, block.marker, &metadata, roots, &mut pending)?;
                 }
                 let body = block.map_or(0, |block| bom + block.end);
-                heap.create_substring(text, body, text.length())
+                heap.create_substring(&text, body, text.length())
             }
             StringOrJsBytes::Bytes(bytes) => {
                 let text = bytes.get_or_copy_if_shared(heap, &mut copy)?;

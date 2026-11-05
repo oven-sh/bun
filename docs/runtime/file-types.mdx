@@ -359,6 +359,8 @@ import notes from "./notes.txt" with { type: "md" };
 
 During bundling, Bun inlines the rendered HTML into the bundle as a string.
 
+Bun skips [front matter](/runtime/markdown#front-matter) at the start of the file. The loader has no option to render it, and the module does not export the metadata. To read the metadata, pass the text of the file to `Bun.markdown.frontmatter()`.
+
 ### `napi`
 
 **Native addon loader**. Default for `.node`.

@@ -19,25 +19,24 @@ pub(crate) fn parse_text<Caller: super::TextFormatCaller>(
     // returns without reading `input` again.
     let global = unsafe { heap.global() };
     super::with_text_format_source(global, input, b"input.toml", |arena, log, source| {
-        let root =
-            match TOML::parse(source, log, arena, false) {
-                Ok(v) => v,
-                Err(bun_parsers::Error::StackOverflow) => {
-                    return Err(global.throw_stack_overflow());
-                }
-                Err(bun_parsers::Error::Alloc(_)) => {
-                    return Err(JsError::OutOfMemory);
-                }
-                Err(_) => {
-                    return Err(super::throw_parse_error(
-                        global,
-                        log,
-                        "TOML",
-                        "Unable to parse TOML",
-                        Caller::LINES_BEFORE,
-                    ));
-                }
-            };
+        let root = match TOML::parse(source, log, arena, false) {
+            Ok(v) => v,
+            Err(bun_parsers::Error::StackOverflow) => {
+                return Err(global.throw_stack_overflow());
+            }
+            Err(bun_parsers::Error::Alloc(_)) => {
+                return Err(JsError::OutOfMemory);
+            }
+            Err(_) => {
+                return Err(super::throw_parse_error(
+                    global,
+                    log,
+                    "TOML",
+                    "Unable to parse TOML",
+                    Caller::LINES_BEFORE,
+                ));
+            }
+        };
         Caller::check_root(global, &root)?;
 
         super::expr_to_js(root, global)

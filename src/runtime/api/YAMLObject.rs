@@ -1112,21 +1112,20 @@ pub(crate) fn parse_to_values<Caller: super::TextFormatCaller>(
     super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
         // once by pointer identity, so a cyclic graph is fine here.
-        let root =
-            match YAML::parse(source, log, arena, CyclicAliases::Allow) {
-                Ok(root) => root,
-                Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
-                Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
-                Err(YamlParseError::SyntaxError) => {
-                    return Err(super::throw_parse_error(
-                        global,
-                        log,
-                        "YAML",
-                        "Unable to parse YAML string",
-                        Caller::LINES_BEFORE,
-                    ));
-                }
-            };
+        let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+            Ok(root) => root,
+            Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+            Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+            Err(YamlParseError::SyntaxError) => {
+                return Err(super::throw_parse_error(
+                    global,
+                    log,
+                    "YAML",
+                    "Unable to parse YAML string",
+                    Caller::LINES_BEFORE,
+                ));
+            }
+        };
         Caller::check_root(global, &root)?;
 
         let mut ctx = ParserCtx {

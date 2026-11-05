@@ -21,6 +21,7 @@ pub(crate) struct Options {
     pub(crate) html_whitespace_sensitivity: i32,
     pub(crate) embedded_language_formatting_auto: bool,
     pub(crate) is_in_markdown: bool,
+    pub(crate) is_mdx_es_syntax: bool,
     /// See `Options::marks_line_breaks_in_texts` of root.rs.
     pub(crate) marks_line_breaks_in_texts: bool,
     /// See `Options::indentation` of root.rs.
@@ -69,6 +70,7 @@ impl Options {
             html_whitespace_sensitivity: 0,
             embedded_language_formatting_auto: true,
             is_in_markdown: false,
+            is_mdx_es_syntax: false,
             marks_line_breaks_in_texts: false,
             indentation: 0,
             name_ends_in_ts: false,

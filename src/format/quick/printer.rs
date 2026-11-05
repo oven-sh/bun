@@ -10,7 +10,7 @@
 
 use crate::doc::{
     ALIGN_BIAS, ALIGN_MARK_ROOT, ALIGN_TO_ROOT, G_BREAK, G_END_PENDING, G_FORCE_FLAT, G_HAS_FILL,
-    G_PURE, G_STAYS_EXPANDED, LINE_HARD, LINE_LITERAL, LINE_NORMAL, STANDING_BELOW, op,
+    G_PURE, G_STAYS_EXPANDED, LINE_HARD, LINE_LITERAL, LINE_NORMAL, LINE_SOFT, STANDING_BELOW, op,
 };
 use crate::options::{EOL_CR, EOL_CRLF, EOL_LF};
 use crate::text::much_larger;
@@ -2001,6 +2001,20 @@ impl Quick {
                     let has_suffix = (waiting & WAIT_SUFFIX) != 0;
                     let content_start = pc + 1;
                     let sep = content_start + ((w as u32) >> 5) as i32;
+                    // Nothing between two soft lines (JSX: an element, a line break, text), and the first of them is a line break. Where the text does not fit either,
+                    // Prettier breaks the second too, which leaves a line with nothing on it. The long way writes one line break for the two.
+                    if w == op::FillItem
+                        && self.printer.st.at(sp - 1) == BREAK
+                        && self.d.at(pc - 2) == (op::FillSep | (1 << 5))
+                        && self.d.at(pc - 1) == (op::Line | (LINE_SOFT << 5))
+                        && self.d.at(sep) == (op::FillSep | (1 << 5))
+                        && self.d.at(sep + 1) == (op::Line | (LINE_SOFT << 5))
+                    {
+                        self.printer.st.put(sp - 1, FLAT);
+                        mode = FLAT;
+                        pc = content_start;
+                        break 's0;
+                    }
                     // prose: a word, a line, a word. The two calls of fits() come to two sums.
                     if w == (op::FillItem | (2 << 5))
                         && rem >= 0

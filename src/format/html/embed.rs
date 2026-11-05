@@ -360,6 +360,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         let script = crate::js::quick::Script {
             text: code,
+            name: (self.options.format.filepath.as_deref()).unwrap_or_default(),
             is_typescript,
             is_no_module: source_type == SourceType::Script,
             indentation,
@@ -373,6 +374,98 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let is_written = is_formatted && !lines.is_empty();
         if is_written {
             self.out.lines(lines);
+        }
+        self.scripts.formatted = formatted;
+        is_written
+    }
+
+    /// Writes an attribute of Vue whose value is an expression as the quick way for JavaScript formats it. The start tag
+    /// is either on one line, with all that is in it, or the attribute is on a line of its own at the current
+    /// indentation: so what fits there on one line is printed like that, and what doesn't is printed as it is there.
+    /// Returns false, with nothing written, if it has to go the long way.
+    pub(crate) fn write_attribute_quickly(
+        &mut self,
+        element: Id,
+        attr: &Attribute<'_>,
+        value: &[u8],
+        is_typescript: bool,
+        has_filters: bool,
+    ) -> bool {
+        let Some(indentation) = self.out.indent_level() else {
+            return false;
+        };
+        if self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+            || self.options.has_parent_parser
+            || self.options.script_flavor.is_oxfmt()
+            || self.tree.is_vue_sfc_block(element, self.options)
+            || !self.has_room_on_line_of_its_own(element, 0)
+        {
+            return false;
+        }
+        let mut formatted = std::mem::take(&mut self.scripts.formatted);
+        let mut name = std::mem::take(&mut self.scripts.name);
+        name.clear();
+        let (namespace, local) = attr.raw_name();
+        if !namespace.is_empty() {
+            name.extend_from_slice(namespace);
+            name.push(b':');
+        }
+        name.extend_from_slice(local);
+        name.extend_from_slice(b"=\"");
+        let expression = crate::js::quick::Expression {
+            text: value,
+            is_typescript,
+            has_filters,
+            attribute: Some(&name),
+            indentation,
+        };
+        let quick = &mut self.scripts.quick;
+        let format = self.options.format;
+        let mut is_written =
+            crate::js::quick::format_expression(expression, format, quick, &mut formatted).is_ok();
+        if is_written && strings::contains_char(&formatted, b'\n') {
+            // What has no room on a line of its own has none behind `<`, the name of the element and a blank either, if
+            // that is at least as wide as a level of indentation. So the start tag is broken.
+            is_written = format.indent_width.value() as usize <= self.tree[element].name.len() + 2;
+            if is_written {
+                self.out.break_parent();
+                self.out.lines(&formatted);
+            }
+        } else if is_written {
+            self.out.text(&formatted);
+        }
+        (self.scripts.formatted, self.scripts.name) = (formatted, name);
+        is_written
+    }
+
+    /// The same for an expression between `{{` and `}}`, which is written only if it is on one line: it is either on one
+    /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
+    fn write_interpolation_quickly(&mut self, code: &[u8], is_typescript: bool) -> bool {
+        let Some(indentation) = self.out.indent_level() else {
+            return false;
+        };
+        if self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+            || self.options.has_parent_parser
+            || self.options.script_flavor.is_oxfmt()
+        {
+            return false;
+        }
+        let mut formatted = std::mem::take(&mut self.scripts.formatted);
+        let expression = crate::js::quick::Expression {
+            text: code,
+            is_typescript,
+            has_filters: true,
+            attribute: None,
+            indentation,
+        };
+        let quick = &mut self.scripts.quick;
+        let format = self.options.format;
+        let is_written =
+            crate::js::quick::format_expression(expression, format, quick, &mut formatted).is_ok()
+                && !formatted.is_empty()
+                && !strings::contains_char(&formatted, b'\n');
+        if is_written {
+            self.out.text(&formatted);
         }
         self.scripts.formatted = formatted;
         is_written
@@ -597,11 +690,27 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 self.out.text(value.trim_ascii());
                 true
             }
+            Parser::Vue
+                if !lends_closing_braces
+                    && let Some(quote) = self.quote_printed_between_braces(value) =>
+            {
+                self.out.built_text(|out| {
+                    out.extend(value.trim_ascii().iter().map(|&byte| match byte {
+                        b'"' | b'\'' => quote,
+                        _ => byte,
+                    }));
+                });
+                true
+            }
             _ => {
                 let is_typescript =
                     self.options.parser == Parser::Vue && self.is_vue_sfc_with_typescript_script();
-                self.out
-                    .foreign(|f| js::write_expression(f, value, is_typescript, in_html, Hug::Bare))
+                (self.options.parser == Parser::Vue
+                    && !lends_closing_braces
+                    && self.write_interpolation_quickly(value, is_typescript))
+                    || self.out.foreign(|f| {
+                        js::write_expression(f, value, is_typescript, in_html, Hug::Bare)
+                    })
             }
         };
         self.out.end_indent();
@@ -636,11 +745,24 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
     fn is_printed_as_written_between_braces(&self, code: &[u8]) -> bool {
         let (format, code) = (self.options.format, code.trim_ascii());
+        self.has_room_between_braces(code)
+            && canonical::expression_end(code, 0, Spelling::new(format)) == Some(code.len())
+    }
+
+    fn has_room_between_braces(&self, code: &[u8]) -> bool {
+        let format = self.options.format;
         !format.no_short_cuts
             && self.out.indentation_width().is_some_and(|indentation| {
                 indentation + code.len() <= format.line_width.value() as usize
             })
-            && canonical::expression_end(code, 0, Spelling::new(format)) == Some(code.len())
+    }
+
+    /// The same for an expression that is printed as it is written but for its quotes: returns the quote that is printed.
+    fn quote_printed_between_braces(&self, code: &[u8]) -> Option<u8> {
+        let code = code.trim_ascii();
+        let spelling = Spelling::new(self.options.format);
+        let (end, quote) = canonical::expression_end_in_other_quotes(code, 0, spelling)?;
+        (end == code.len() && self.has_room_between_braces(code)).then_some(quote)
     }
 
     // ───────────────────────────── `embed/attribute.js` ─────────────────────────────

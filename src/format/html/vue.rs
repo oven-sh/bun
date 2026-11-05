@@ -212,6 +212,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         if name.starts_with(b"@") || name.starts_with(b"v-on:") {
+            if self.write_attribute_quickly(element, attr, value, is_typescript, false) {
+                return true;
+            }
             // `printVueVOnDirective`
             let syntax = if is_typescript {
                 Syntax::BabelTs
@@ -242,6 +245,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             } else {
                 return false;
             };
+        let has_filters = root == HtmlRoot::VueExpression;
+        if self.write_attribute_quickly(element, attr, value, is_typescript, has_filters) {
+            return true;
+        }
         self.print_attribute_with(attr, |printer| {
             printer.out.foreign(|f| {
                 js::write_expression(f, value, is_typescript, in_html(root), Hug::Expression)

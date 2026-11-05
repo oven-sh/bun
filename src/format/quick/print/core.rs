@@ -598,6 +598,10 @@ impl Quick {
                 self.print_block(n)?;
                 return Ok(());
             }
+            k::JsExpressionRoot => {
+                self.print(self.n.at(n + 4))?;
+                return Ok(());
+            }
             k::ClassBody | k::InterfaceBody | k::TypeLiteral | k::RecordDeclarationBody => {
                 self.print_class_body(n)?;
                 return Ok(());

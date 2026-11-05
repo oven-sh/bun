@@ -79,7 +79,8 @@ mod parse {
 
 pub use guest::{Answer, Detached, GroupId, Guest, Guests, Open, Sink};
 pub use root::{
-    Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format, stands,
+    Dialect, EndOfLine, Expression, Language, Options, QuoteProps, Refused, TrailingComma, Wrap,
+    format, format_expression, stands,
 };
 use std::cell::Cell;
 
@@ -519,6 +520,7 @@ pub struct Quick {
     pub(crate) print_jsx: print::jsx::PrintJsx,
     pub(crate) print: print::core::Print,
     pub(crate) stands: stands::Stands,
+    pub(crate) host: js::Host,
 }
 
 impl Default for Quick {
@@ -576,6 +578,7 @@ impl Quick {
             print_jsx: print::jsx::PrintJsx::new(),
             print: print::core::Print::new(),
             stands: stands::Stands::new(),
+            host: js::Host::new(),
         }
     }
 

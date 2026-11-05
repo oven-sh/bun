@@ -1143,6 +1143,12 @@ function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> |
 //------------------------------------------------------------------------------
 // Section 3. ChildProcess class
 //------------------------------------------------------------------------------
+function defineOwn(target, key: string, value) {
+  // A data property in place of the accessor would end the lazy creation for every instance.
+  if (target === ChildProcess.prototype) throw new TypeError(`Attempted to assign to readonly property ${key}.`);
+  Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true });
+}
+
 type StdioStream = $Node.Readable | $Node.Writable | $Node.Socket;
 
 class ChildProcess extends EventEmitter {
@@ -1381,68 +1387,65 @@ class ChildProcess extends EventEmitter {
   }
 
   // Own data properties as in node. The private slots hold only what spawn() created.
-  #defineOwn(key: string, value) {
-    Object.defineProperty(this, key, { value, enumerable: true, configurable: true, writable: true });
-  }
-
   get stdin() {
-    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    if (!$isObject(this) || !(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
     const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
-    this.#defineOwn("stdin", value);
+    defineOwn(this, "stdin", value);
     return value;
   }
 
   set stdin(value) {
-    this.#defineOwn("stdin", value);
+    defineOwn(this, "stdin", value);
   }
 
   get stdout() {
-    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    if (!$isObject(this) || !(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
     const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
-    this.#defineOwn("stdout", value);
+    defineOwn(this, "stdout", value);
     return value;
   }
 
   set stdout(value) {
-    this.#defineOwn("stdout", value);
+    defineOwn(this, "stdout", value);
   }
 
   get stderr() {
-    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    if (!$isObject(this) || !(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
     const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
-    this.#defineOwn("stderr", value);
+    defineOwn(this, "stderr", value);
     return value;
   }
 
   set stderr(value) {
-    this.#defineOwn("stderr", value);
+    defineOwn(this, "stderr", value);
   }
 
   get stdio() {
-    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    if (!$isObject(this) || !(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
     const value = (this.#stdioObject ??= this.#createStdioObject());
-    this.#defineOwn("stdio", value);
+    defineOwn(this, "stdio", value);
     return value;
   }
 
   set stdio(value) {
-    this.#defineOwn("stdio", value);
+    defineOwn(this, "stdio", value);
   }
 
   // An assigned `connected`, until spawn() or a disconnect overwrites it.
   #connected;
 
   get connected() {
-    if (!(#handle in this)) return undefined;
+    if (!$isObject(this) || !(#handle in this)) return undefined;
     return this.#connected ?? this.#handle?.connected ?? false;
   }
 
   set connected(value) {
-    this.#connected = value;
+    if ($isObject(this) && #handle in this) this.#connected = value;
+    else defineOwn(this, "connected", value);
   }
 
   get [kHandle]() {
-    if (!(#handle in this)) return undefined;
+    if (!$isObject(this) || !(#handle in this)) return undefined;
     return this.#handle;
   }
 

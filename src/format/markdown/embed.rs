@@ -37,7 +37,7 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// A part of a document, in print order.
-enum Op<'d> {
+pub(crate) enum Op<'d> {
     Text(&'d [u8]),
     Line(Line),
     Element(FormatElement),
@@ -129,6 +129,31 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::S
         | Doc::LineSuffixBoundary
         | Doc::KeepTrailingWhitespace => false,
     }
+}
+
+/// Allocations for a text, reused for the next one.
+#[derive(Default)]
+pub(crate) struct Scratch(super::ast::Tree);
+
+/// Calls `then` with the document of `text`, which is what a template has between its backticks without its escapes and
+/// its indentation, and with the document's parts. Returns `None` if the template stays as it is.
+pub(crate) fn with_document_of_template<R>(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    then: impl FnOnce(&Doc<'_>, &[Op<'_>]) -> R,
+) -> Option<R> {
+    let mode = super::Mode {
+        is_in_template: true,
+        is_mdx: false,
+    };
+    super::with_document(text, options, &mut scratch.0, mode, None, |document| {
+        let document = doc::text_to_doc(document).ok()?;
+        let mut ops = Vec::new();
+        flatten(&document, &mut ops, bun_core::StackCheck::init()).then(|| then(&document, &ops))
+    })
+    .ok()
+    .flatten()
 }
 
 /// Line breaks that are written as is, with nothing trimmed before them and nothing added after them.
@@ -257,35 +282,23 @@ pub(crate) fn write_template<'a>(
     }
 
     let options = f.options().clone();
-    let mut tree = super::ast::Tree::default();
-    let mode = super::Mode {
-        is_in_template: true,
-        is_mdx: false,
-    };
-    let is_written = super::with_document(&text, &options, &mut tree, mode, None, |document| {
-        let Ok(document) = doc::text_to_doc(document) else {
-            return false;
-        };
-        let mut ops = Vec::new();
-        if !flatten(&document, &mut ops, bun_core::StackCheck::init()) {
-            return false;
-        }
+    let scratch = &mut Scratch::default();
+    let is_written = with_document_of_template(&text, &options, scratch, |_, ops| {
         f.write_token("`");
         if indentation.is_empty() {
             write_line_breaks(1, f);
             f.write_element(FormatElement::ExpandParent);
             f.write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
-            write_ops(&ops, f);
+            write_ops(ops, f);
             f.write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
         } else {
             f.write_element(FormatElement::Tag(Tag::StartIndent));
             f.write_element(FormatElement::Line(LineMode::Soft));
-            write_ops(&ops, f);
+            write_ops(ops, f);
             f.write_element(FormatElement::Tag(Tag::EndIndent));
         }
         f.write_element(FormatElement::Line(LineMode::Soft));
         f.write_token("`");
-        true
     });
-    is_written == Ok(true)
+    is_written.is_some()
 }

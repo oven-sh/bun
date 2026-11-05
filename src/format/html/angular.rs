@@ -12,7 +12,6 @@ use super::ast::{Attribute, Flags, Id};
 use super::js::{self, AngularExpression, Hug};
 use super::printer::Printer;
 use super::utilities::{html_split, html_trim_preserve_indentation, min_indentation};
-use crate::ir::element::TextWidth;
 use crate::options::{HtmlRoot, InHtml};
 use crate::prelude::*;
 use crate::write;
@@ -448,17 +447,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 self.out.text(part);
                 continue;
             }
-            // Two `line`s with an `NGEmptyExpression`, which prints nothing, between them. When Prettier measures
-            // whether something fits, they count as a single space.
+            // Two `line`s with an `NGEmptyExpression`, which prints nothing, between them.
             if is_blank(part) {
                 self.out.start_group();
                 self.out.token("{{");
-                self.out.start_if(false, None);
-                self.out
-                    .foreign(|f| f.write_text(b"  ", Some(TextWidth::single(1))));
-                self.out.end_if();
-                self.out.softline();
-                self.out.softline();
+                self.out.two_lines();
                 self.out.token("}}");
                 self.out.end_group();
                 continue;

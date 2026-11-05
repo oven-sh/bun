@@ -29,6 +29,7 @@ mod comments;
 mod doc;
 mod es5_id_table;
 mod fast;
+mod guest;
 mod holes;
 mod id_table;
 mod js;
@@ -76,6 +77,7 @@ mod parse {
     pub(crate) mod typescript;
 }
 
+pub use guest::{Answer, Detached, GroupId, Guest, Guests, Open, Sink};
 pub use root::{Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format};
 use std::cell::Cell;
 
@@ -379,6 +381,7 @@ pub struct Quick {
     pub(crate) holes: holes::Holes,
     pub(crate) doc: doc::Doc,
     pub(crate) lang: lang::Lang,
+    pub(crate) guest: guest::State,
     pub(crate) options: options::Options,
     pub(crate) printer: printer::Printer,
     pub(crate) mode: mode::Mode,
@@ -434,6 +437,7 @@ impl Quick {
             holes: holes::Holes::new(),
             doc: doc::Doc::new(),
             lang: lang::Lang::new(),
+            guest: guest::State::new(),
             options: options::Options::new(),
             printer: printer::Printer::new(),
             mode: mode::Mode::new(),

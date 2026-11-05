@@ -119,8 +119,25 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
     }
 }
 
+/// Returns the options for the text of a template in the file `path`, which is formatted with `options`.
+pub(crate) fn options_in_template(
+    options: &FormatOptions,
+    path: &[u8],
+    parser: Parser,
+) -> FormatOptions {
+    FormatOptions {
+        html_template_depth: options.html_template_depth.saturating_add(1),
+        parser: None,
+        filepath: Some(path.into()),
+        range_start: None,
+        range_end: None,
+        cursor_offset: None,
+        ..super::options_of_host(options, parser)
+    }
+}
+
 /// Returns the line break between the backticks and the text, or `None` if there's none.
-fn surrounding_line(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
+pub(crate) fn surrounding_line(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     if options.html_whitespace_sensitivity == HtmlWhitespaceSensitivity::Ignore {
         return Some(LineMode::Hard);
     }
@@ -353,15 +370,7 @@ pub(crate) fn write_template<'a>(
         }
         None => text,
     };
-    let options = FormatOptions {
-        html_template_depth: counter.saturating_add(1),
-        parser: None,
-        filepath: Some(f.filepath().into()),
-        range_start: None,
-        range_end: None,
-        cursor_offset: None,
-        ..super::options_of_host(f.options(), parser)
-    };
+    let options = options_in_template(f.options(), f.filepath(), parser);
     let line = surrounding_line(&text, &options);
     // The printer decides where the lines start. But languages that are printed separately (JSON, YAML, ..) need to
     // know the available width up front, so assume the indentation the file would have if it had been formatted before.

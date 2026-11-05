@@ -1911,10 +1911,11 @@ async function expectClientBundleToParseAsModule(dev: Dev) {
   await using check = Bun.spawn({
     cmd: [process.env.BUN_DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node")!, "--check", "--input-type=module"],
     stdin: new Blob([await clientBundle(dev)]),
+    stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([check.stderr.text(), check.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const [stdout, stderr, exitCode] = await Promise.all([check.stdout.text(), check.stderr.text(), check.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 }
 devTest("module with restricted-identifier basename (#34357)", {
   // https://github.com/oven-sh/bun/issues/34357

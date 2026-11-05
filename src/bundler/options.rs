@@ -597,12 +597,11 @@ pub fn get_loader_and_virtual_source<'a>(
         Fs::Path::init(normalized_file_path_from_specifier)
     };
 
-    let mut loader: Option<Loader> = if is_data_url {
-        Some(data_url_loader(path.text))
-    } else {
-        // SAFETY: loaders() returns a borrow tied to jsc_vm.owner.
-        path.loader(unsafe { &*jsc_vm.loaders() })
-    };
+    // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
+    let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
+    if is_data_url {
+        loader = Some(data_url_loader(path.text));
+    }
     let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
     let attribute_loader = type_attribute_str.and_then(Loader::from_string);
     let suffix = match attribute_loader {

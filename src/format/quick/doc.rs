@@ -1,4 +1,4 @@
-//! The document: what Prettier builds as a tree of objects is here a linear stream of commands in one Int32Array, written
+//! The document: what Prettier builds as a tree of objects is here a linear stream of commands in one array of numbers, written
 //! in print order. Printing a node appends to the stream; nothing is allocated and nothing is returned.
 //!
 //!   group(...)            GroupOpen .. GroupClose, with the length in the header so that a reader can skip it
@@ -15,7 +15,7 @@
 
 use crate::text::much_larger;
 use crate::width_table::{WIDE, WIDE_WITH_VS16, ZERO};
-use crate::{Quick, R, Words, zeros};
+use crate::{Quick, Words, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -312,7 +312,7 @@ impl Quick {
         return p < end;
     }
 
-    pub(crate) fn text(&mut self, command: i32) -> R<()> {
+    pub(crate) fn text(&mut self, command: i32) {
         if self.doc.narrow_filter != 0
             && (if (command & 31) == op::Short {
                 self.doc.pass_mask < 0
@@ -340,31 +340,30 @@ impl Quick {
                 if ((command >> 5) & 255) == 2 {
                     self.gen_byte(((command as u32) >> 21) as i32);
                 }
-                self.filter(at, self.text.gen_pos)?;
+                self.filter(at, self.text.gen_pos);
             } else {
                 self.filter(
                     ((command as u32) >> 13) as i32,
                     ((command as u32) >> 13) as i32 + ((command >> 5) & 255),
-                )?;
+                );
             }
-            return Ok(());
+            return;
         }
         self.d.put(self.doc.d_pos, command);
         self.doc.d_pos += 1;
         self.doc.acc_w = self.doc.acc_w + ((command >> 5) & 255) + self.doc.pending;
         self.doc.pending = 0;
-        Ok(())
     }
 
     /// T[start, end): printable ASCII only.
-    pub(crate) fn slice(&mut self, start: i32, end: i32) -> R<()> {
+    pub(crate) fn slice(&mut self, start: i32, end: i32) {
         let len = end - start;
         if len <= 0 {
-            return Ok(());
+            return;
         }
         if self.doc.narrow_filter != 0 && !self.passes(start, end) {
-            self.filter(start, end)?;
-            return Ok(());
+            self.filter(start, end);
+            return;
         }
         let p = self.doc.d_pos;
         self.d.put(p, op::Text | (len << 5));
@@ -372,7 +371,6 @@ impl Quick {
         self.doc.d_pos = p + 2;
         self.doc.acc_w = self.doc.acc_w + len + self.doc.pending;
         self.doc.pending = 0;
-        Ok(())
     }
 
     /// T[start, start + length), printable ASCII, in the place of a doc that would be printed like that if it fits on the line, together
@@ -387,8 +385,7 @@ impl Quick {
         self.doc.pending = 0;
     }
 
-    /// fitted() for callers that are not hot. (With three more calls of fitted() in the program the compiler stopped putting it into the printer of JavaScript: 19 M
-    /// instructions more for the TypeScript files, which run none of the three.)
+    /// fitted() for callers that are not hot.
     #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn fitted_text(&mut self, start: i32, length: i32, behind: i32) {
         let p = self.doc.d_pos;
@@ -399,10 +396,10 @@ impl Quick {
         self.doc.pending = 0;
     }
 
-    pub(crate) fn slice_w(&mut self, start: i32, end: i32, width: i32) -> R<()> {
+    pub(crate) fn slice_w(&mut self, start: i32, end: i32, width: i32) {
         let len = end - start;
         if len <= 0 {
-            return Ok(());
+            return;
         }
         if self.doc.text_filter != 0
             && (if self.doc.narrow_filter != 0 {
@@ -411,8 +408,8 @@ impl Quick {
                 self.has_line_ending(start, end)
             })
         {
-            self.filter(start, end)?;
-            return Ok(());
+            self.filter(start, end);
+            return;
         }
         let p = self.doc.d_pos;
         self.d.put(p, op::TextW | (len << 5));
@@ -421,19 +418,18 @@ impl Quick {
         self.doc.d_pos = p + 3;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
-        Ok(())
     }
 
     /// slice_w() for lines that a short cut has put together, at the left margin (guest_column of lang.rs is 0); `width` is that of the last line. A filter that
     /// makes literal lines of the line breaks, and nothing else, would give the same output in more commands, so the text passes it by.
-    pub(crate) fn slice_lines_at_margin(&mut self, start: i32, end: i32, width: i32) -> R<()> {
+    pub(crate) fn slice_lines_at_margin(&mut self, start: i32, end: i32, width: i32) {
         if self.doc.narrow_filter != 0 {
-            self.slice_w(start, end, width)?;
-            return Ok(());
+            self.slice_w(start, end, width);
+            return;
         }
         let len = end - start;
         if len <= 0 {
-            return Ok(());
+            return;
         }
         let p = self.doc.d_pos;
         self.d.put(p, op::TextW | (len << 5));
@@ -442,7 +438,6 @@ impl Quick {
         self.doc.d_pos = p + 3;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
-        Ok(())
     }
 }
 pub(crate) const STANDING: i32 = -1 << 30;
@@ -481,9 +476,8 @@ impl Quick {
     }
 
     /// T[start, end), whatever it holds.
-    pub(crate) fn slice_any(&mut self, start: i32, end: i32) -> R<()> {
-        self.slice_w(start, end, self.text_width(start, end))?;
-        Ok(())
+    pub(crate) fn slice_any(&mut self, start: i32, end: i32) {
+        self.slice_w(start, end, self.text_width(start, end));
     }
 }
 pub(crate) fn doc_in_ranges(table: &[i32], cp: i32) -> bool {
@@ -611,16 +605,15 @@ impl Quick {
         self.doc.line_count += 1;
     }
 
-    pub(crate) fn line(&mut self) -> R<()> {
+    pub(crate) fn line(&mut self) {
         if self.doc.remove_lines_depth != 0 {
-            self.text(S_SPACE)?;
-            return Ok(());
+            self.text(S_SPACE);
+            return;
         }
         self.d.put(self.doc.d_pos, op::Line | (LINE_NORMAL << 5));
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.doc.pending = 1;
-        Ok(())
     }
 
     /// indent_open(), softline()
@@ -636,18 +629,17 @@ impl Quick {
     }
 
     /// indent_open(), line()
-    pub(crate) fn indent_line(&mut self) -> R<()> {
+    pub(crate) fn indent_line(&mut self) {
         if self.doc.remove_lines_depth != 0 {
             self.indent_open();
-            self.text(S_SPACE)?;
-            return Ok(());
+            self.text(S_SPACE);
+            return;
         }
         self.d
             .put(self.doc.d_pos, op::IndentLine | (LINE_NORMAL << 5));
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.doc.pending = 1;
-        Ok(())
     }
 
     /// indent_open(), hardline()
@@ -672,18 +664,17 @@ impl Quick {
     }
 
     /// indent_close(), line()
-    pub(crate) fn dedent_line(&mut self) -> R<()> {
+    pub(crate) fn dedent_line(&mut self) {
         if self.doc.remove_lines_depth != 0 {
             self.indent_close();
-            self.text(S_SPACE)?;
-            return Ok(());
+            self.text(S_SPACE);
+            return;
         }
         self.d
             .put(self.doc.d_pos, op::DedentLine | (LINE_NORMAL << 5));
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.doc.pending = 1;
-        Ok(())
     }
 
     /// indent_close(), hardline()
@@ -738,13 +729,13 @@ impl Quick {
 
     /// replaceEndOfLine(text, literalline or hardline): T[start, end) with a line command for every "\n" in it.
     #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn slice_lines(&mut self, start: i32, end: i32, hard: bool) -> R<()> {
+    pub(crate) fn slice_lines(&mut self, start: i32, end: i32, hard: bool) {
         let mut from = start;
         let mut p = start;
         while p < end {
             if self.t.at(p) == 10 {
                 self.reserve();
-                self.slice_any(from, p)?;
+                self.slice_any(from, p);
                 if hard {
                     self.hardline();
                 } else {
@@ -754,8 +745,7 @@ impl Quick {
             }
             p += 1;
         }
-        self.slice_any(from, end)?;
-        Ok(())
+        self.slice_any(from, end);
     }
 
     /// `cursor`: at most two in a doc.
@@ -972,7 +962,7 @@ impl Quick {
     }
 
     /// ifBreak(a, b) of two fixed texts; 0 stands for "".
-    pub(crate) fn if_break_text(&mut self, break_text: i32, flat_text: i32, id: i32) -> R<()> {
+    pub(crate) fn if_break_text(&mut self, break_text: i32, flat_text: i32, id: i32) {
         if flat_text == 0
             && id == 0
             && self.doc.narrow_filter == 0
@@ -984,18 +974,17 @@ impl Quick {
                     .put(self.doc.d_pos, (break_text & !31) | op::BreakText);
                 self.doc.d_pos += 1;
             }
-            return Ok(());
+            return;
         }
         let h = self.if_break_open(id);
         if break_text != 0 {
-            self.text(break_text)?;
+            self.text(break_text);
         }
         self.if_break_else(h);
         if flat_text != 0 {
-            self.text(flat_text)?;
+            self.text(flat_text);
         }
         self.if_break_close(h);
-        Ok(())
     }
 
     // ---------------------------------------------------------------------------------------------------- line suffix

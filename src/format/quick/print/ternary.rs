@@ -74,11 +74,11 @@ impl Quick {
     }
 
     pub(crate) fn print_wrapped(&mut self, n: i32) -> R<()> {
-        self.if_break_text(LPAREN, 0, 0)?;
+        self.if_break_text(LPAREN, 0, 0);
         self.indent_softline();
         self.print(n)?;
         self.dedent_softline();
-        self.if_break_text(RPAREN, 0, 0)?;
+        self.if_break_text(RPAREN, 0, 0);
         Ok(())
     }
 
@@ -148,7 +148,7 @@ impl Quick {
         }
         self.print(test)?;
         if !is_expression {
-            self.text(_EXTENDS_)?;
+            self.text(_EXTENDS_);
             self.print(self.n.at(n + 5))?;
         }
         if is_alternate {
@@ -158,15 +158,15 @@ impl Quick {
             self.indent_open();
         }
         if jsx_mode {
-            self.text(SPACE)?;
-            self.text(QUESTION_SPACE)?;
+            self.text(SPACE);
+            self.text(QUESTION_SPACE);
             if self.is_nil(consequent) {
                 self.print(consequent)?;
             } else {
                 self.print_wrapped(consequent)?;
             }
-            self.text(SPACE)?;
-            self.text(COLON_SPACE)?;
+            self.text(SPACE);
+            self.text(COLON_SPACE);
             if (self.n.at(alternate) & 0xff) == k::ConditionalExpression || self.is_nil(alternate) {
                 self.print(alternate)?;
             } else {
@@ -183,17 +183,17 @@ impl Quick {
                 }
             }
             let consequent_is_conditional = (self.n.at(consequent) & 0xff) == kind;
-            self.line()?;
-            self.text(QUESTION_SPACE)?;
+            self.line();
+            self.text(QUESTION_SPACE);
             if consequent_is_conditional {
-                self.if_break_text(0, LPAREN, 0)?;
+                self.if_break_text(0, LPAREN, 0);
             }
             self.print_branch(consequent)?;
             if consequent_is_conditional {
-                self.if_break_text(0, RPAREN, 0)?;
+                self.if_break_text(0, RPAREN, 0);
             }
-            self.line()?;
-            self.text(COLON_SPACE)?;
+            self.line();
+            self.text(COLON_SPACE);
             self.print_branch(alternate)?;
             if !plain {
                 self.indent_close();

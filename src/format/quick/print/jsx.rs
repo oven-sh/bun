@@ -136,11 +136,11 @@ impl Quick {
     pub(crate) fn emit_entry(&mut self, at: i32) -> R<()> {
         match self.print_jsx.jx.at(at) {
             TEXT => {
-                self.slice(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2))?;
+                self.slice(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2));
                 return Ok(());
             }
             TEXT_SLOW => {
-                self.slice_any(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2))?;
+                self.slice_any(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2));
                 return Ok(());
             }
             DOC => {
@@ -160,12 +160,12 @@ impl Quick {
                 return Ok(());
             }
             LINE => {
-                self.line()?;
+                self.line();
                 return Ok(());
             }
             WHITESPACE => {
                 if self.print_jsx.whitespace_is_line {
-                    self.line()?;
+                    self.line();
                     return Ok(());
                 }
                 let h = self.if_break_open(0);
@@ -173,10 +173,10 @@ impl Quick {
                     RAW_WHITESPACE_SINGLE
                 } else {
                     RAW_WHITESPACE_DOUBLE
-                })?;
+                });
                 self.softline();
                 self.if_break_else(h);
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.if_break_close(h);
                 return Ok(());
             }
@@ -514,13 +514,13 @@ impl Quick {
                 if type_ == WHITESPACE {
                     if i == 1 && self.print_jsx.jx.at(base) == EMPTY {
                         if length == 2 {
-                            self.text(raw)?;
+                            self.text(raw);
                             break 'c1;
                         }
                         if use_fill {
                             self.fill_sep();
                         }
-                        self.text(raw)?;
+                        self.text(raw);
                         self.hardline();
                         if use_fill {
                             self.fill_item();
@@ -528,14 +528,14 @@ impl Quick {
                         break 'c1;
                     }
                     if i == length - 1 {
-                        self.text(raw)?;
+                        self.text(raw);
                         break 'c1;
                     }
                     if self.print_jsx.jx.at(at - 3) == EMPTY
                         && i >= 2
                         && self.print_jsx.jx.at(at - 6) == HARD
                     {
-                        self.text(raw)?;
+                        self.text(raw);
                         break 'c1;
                     }
                 }
@@ -662,7 +662,7 @@ impl Quick {
 
     pub(crate) fn print_closing(&mut self, n: i32) -> R<()> {
         if (self.n.at(n) & 0xff) == k::Ready {
-            self.slice(self.n.at(n + 1), self.n.at(n + 2))?;
+            self.slice(self.n.at(n + 1), self.n.at(n + 2));
         } else {
             self.print(n)?;
         }
@@ -812,7 +812,7 @@ impl Quick {
                 st = self.state_open();
                 let g = self.group_open();
                 self.call(opening_doc);
-                self.slice(from, to)?;
+                self.slice(from, to);
                 self.print_closing(closing)?;
                 self.group_close(g);
                 self.state_close(st);
@@ -931,23 +931,23 @@ impl Quick {
             _ => {}
         }
         if !wrap {
-            self.print_leading_comments(n)?;
+            self.print_leading_comments(n);
             self.print_jsx_element_internal(n)?;
-            self.print_trailing_comments(n)?;
+            self.print_trailing_comments(n);
             return Ok(());
         }
         let parens = self.needs_parens(n)?;
         let g = self.group_open();
         if !parens {
-            self.if_break_text(LPAREN, 0, 0)?;
+            self.if_break_text(LPAREN, 0, 0);
         }
         self.indent_softline();
-        self.print_leading_comments(n)?;
+        self.print_leading_comments(n);
         self.print_jsx_element_internal(n)?;
-        self.print_trailing_comments(n)?;
+        self.print_trailing_comments(n);
         self.dedent_softline();
         if !parens {
-            self.if_break_text(RPAREN, 0, 0)?;
+            self.if_break_text(RPAREN, 0, 0);
         }
         self.group_close_with(g, self.should_break_jsx_element(n), 0);
         Ok(())
@@ -964,11 +964,11 @@ impl Quick {
         return true;
     }
 
-    pub(crate) fn print_jsx_attribute_string(&mut self, value: i32) -> R<()> {
+    pub(crate) fn print_jsx_attribute_string(&mut self, value: i32) {
         let head = self.n.at(value);
         let start = self.n.at(value + 1);
         let end = self.n.at(value + 2);
-        self.print_leading_comments(value)?;
+        self.print_leading_comments(value);
         if (head & (F_QUOTE | F_ESCAPE)) == 0 {
             let quote = if self.options.jsx_single_quote {
                 39
@@ -977,29 +977,29 @@ impl Quick {
             };
             if self.t.at(start) == quote {
                 if (head & F_SLOW_TEXT) != 0 {
-                    self.slice_with_newlines(start, end)?;
+                    self.slice_with_newlines(start, end);
                 } else {
-                    self.slice(start, end)?;
+                    self.slice(start, end);
                 }
             } else {
                 self.text(if self.options.jsx_single_quote {
                     SQUOTE
                 } else {
                     DQUOTE
-                })?;
+                });
                 if (head & F_SLOW_TEXT) != 0 {
-                    self.slice_with_newlines(start + 1, end - 1)?;
+                    self.slice_with_newlines(start + 1, end - 1);
                 } else {
-                    self.slice(start + 1, end - 1)?;
+                    self.slice(start + 1, end - 1);
                 }
                 self.text(if self.options.jsx_single_quote {
                     SQUOTE
                 } else {
                     DQUOTE
-                })?;
+                });
             }
-            self.print_trailing_comments(value)?;
-            return Ok(());
+            self.print_trailing_comments(value);
+            return;
         }
         // unescape the two entities, choose the quote, escape again
         self.reserve_gen((end - start) * 6 + 8);
@@ -1037,9 +1037,8 @@ impl Quick {
             p += 1;
         }
         self.gen_byte(quote);
-        self.slice_with_newlines(from, self.text.gen_pos)?;
-        self.print_trailing_comments(value)?;
-        Ok(())
+        self.slice_with_newlines(from, self.text.gen_pos);
+        self.print_trailing_comments(value);
     }
 
     pub(crate) fn string_has_newline(&self, n: i32) -> bool {
@@ -1101,7 +1100,7 @@ impl Quick {
             self.fitted(self.n.at(n + 4), self.n.at(n + 5), 0);
         } else {
             // there is no other way to print it
-            self.slice(self.n.at(n + 4), self.n.at(n + 4) + self.n.at(n + 5))?;
+            self.slice(self.n.at(n + 4), self.n.at(n + 4) + self.n.at(n + 5));
         }
         Ok(())
     }
@@ -1115,10 +1114,10 @@ impl Quick {
         let name_has_comments =
             self.has_comment(name) || (type_arguments != 0 && self.has_comment(type_arguments));
         if self_closing && count == 0 && !name_has_comments {
-            self.text(LT)?;
+            self.text(LT);
             self.print(name)?;
             self.print(type_arguments)?;
-            self.text(SELF_CLOSE)?;
+            self.text(SELF_CLOSE);
             return Ok(());
         }
         if count == 1 {
@@ -1136,12 +1135,12 @@ impl Quick {
                 && !self.has_comment(attribute)
             {
                 let g = self.group_open();
-                self.text(LT)?;
+                self.text(LT);
                 self.print(name)?;
                 self.print(type_arguments)?;
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.print_attribute(attribute)?;
-                self.text(if self_closing { SELF_CLOSE } else { GT })?;
+                self.text(if self_closing { SELF_CLOSE } else { GT });
                 self.group_close(g);
                 return Ok(());
             }
@@ -1166,7 +1165,7 @@ impl Quick {
         }
         let hard_attribute_line = self.options.single_attribute_per_line && count > 1;
         let g = self.group_open();
-        self.text(LT)?;
+        self.text(LT);
         self.print(name)?;
         self.print(type_arguments)?;
         self.indent_open();
@@ -1179,15 +1178,15 @@ impl Quick {
             } else if hard_attribute_line {
                 self.hardline();
             } else {
-                self.line()?;
+                self.line();
             }
             self.print_attribute(self.n.at(attributes + i))?;
             i += 1;
         }
         self.indent_close();
         if self_closing {
-            self.line()?;
-            self.text(SLASH_GT)?;
+            self.line();
+            self.text(SLASH_GT);
         } else {
             let last_has_trailing_comments =
                 count > 0 && self.has_trailing_comment(self.n.at(attributes + count));
@@ -1198,7 +1197,7 @@ impl Quick {
             if !same_line {
                 self.softline();
             }
-            self.text(GT)?;
+            self.text(GT);
         }
         self.group_close_with(g, should_break, 0);
         Ok(())
@@ -1210,9 +1209,9 @@ impl Quick {
                 self.print(self.n.at(n + 4))?;
                 let value = self.n.at(n + 5);
                 if value != 0 {
-                    self.text(EQUALS)?;
+                    self.text(EQUALS);
                     if (self.n.at(value) & 0xff) == k::StringLiteral {
-                        self.print_jsx_attribute_string(value)?;
+                        self.print_jsx_attribute_string(value);
                     } else {
                         self.print(value)?;
                     }
@@ -1221,37 +1220,37 @@ impl Quick {
             }
             k::JSXNamespacedName => {
                 self.print(self.n.at(n + 4))?;
-                self.text(COLON)?;
+                self.text(COLON);
                 self.print(self.n.at(n + 5))?;
                 return Ok(());
             }
             k::JSXMemberExpression => {
                 self.print(self.n.at(n + 4))?;
-                self.text(DOT)?;
+                self.text(DOT);
                 self.print(self.n.at(n + 5))?;
                 return Ok(());
             }
             k::JSXSpreadAttribute | k::JSXSpreadChild => {
                 let argument = self.n.at(n + 4);
-                self.text(LBRACE)?;
+                self.text(LBRACE);
                 if !self.has_comment(argument) {
-                    self.text(ELLIPSIS)?;
+                    self.text(ELLIPSIS);
                     self.print(argument)?;
                 } else {
                     self.indent_softline();
-                    self.print_leading_comments(argument)?;
-                    self.text(ELLIPSIS)?;
+                    self.print_leading_comments(argument);
+                    self.text(ELLIPSIS);
                     self.print(argument)?;
-                    self.print_trailing_comments(argument)?;
+                    self.print_trailing_comments(argument);
                     self.dedent_softline();
                 }
-                self.text(RBRACE)?;
+                self.text(RBRACE);
                 return Ok(());
             }
             k::JSXExpressionContainer => {
                 let expression = self.n.at(n + 4);
                 let g = self.group_open();
-                self.text(LBRACE)?;
+                self.text(LBRACE);
                 if self.should_inline_container(expression, self.n.at(n + 3))? {
                     self.print(expression)?;
                     self.line_suffix_boundary();
@@ -1261,7 +1260,7 @@ impl Quick {
                     self.dedent_softline();
                     self.line_suffix_boundary();
                 }
-                self.text(RBRACE)?;
+                self.text(RBRACE);
                 self.group_close(g);
                 return Ok(());
             }
@@ -1275,42 +1274,42 @@ impl Quick {
             }
             k::JSXClosingElement => {
                 let name = self.n.at(n + 4);
-                self.text(LT_SLASH)?;
+                self.text(LT_SLASH);
                 if self.has_leading_line_comment(name) {
                     self.indent_hardline();
                     self.print(name)?;
                     self.dedent_hardline();
                 } else {
                     if self.has_leading_block_comment(name) {
-                        self.text(SPACE)?;
+                        self.text(SPACE);
                     }
                     self.print(name)?;
                 }
-                self.text(GT)?;
+                self.text(GT);
                 return Ok(());
             }
             k::JSXOpeningFragment | k::JSXClosingFragment => {
                 let node_has_comment = self.has_comment(n);
                 let has_own_line_comment = node_has_comment && self.has_line_comment(n);
                 let is_opening = k == k::JSXOpeningFragment;
-                self.text(if is_opening { LT } else { LT_SLASH })?;
+                self.text(if is_opening { LT } else { LT_SLASH });
                 self.indent_open();
                 if has_own_line_comment {
                     self.hardline();
                 } else if node_has_comment && !is_opening {
-                    self.text(SPACE)?;
+                    self.text(SPACE);
                 }
-                self.print_dangling_comments(n)?;
+                self.print_dangling_comments(n);
                 self.indent_close();
                 if has_own_line_comment {
                     self.hardline();
                 }
-                self.text(GT)?;
+                self.text(GT);
                 return Ok(());
             }
             k::JSXEmptyExpression => {
                 let requires_hardline = self.has_comment(n) && self.has_line_comment(n);
-                self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, requires_hardline)?;
+                self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, requires_hardline);
                 if requires_hardline {
                     self.hardline();
                 }

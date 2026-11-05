@@ -122,7 +122,7 @@ impl Quick {
             == k::Identifier
         {
             // four nodes in ten
-            self.slice(self.n.at(n + 1), self.n.at(n + 2))?;
+            self.slice(self.n.at(n + 1), self.n.at(n + 2));
             self.set_label(0);
             return Ok(());
         }
@@ -153,10 +153,10 @@ impl Quick {
         if n == self.print_binaryish.skip_leading_comments_of {
             self.clear_skip_leading_comments();
         } else {
-            self.print_leading_comments(n)?;
+            self.print_leading_comments(n);
         }
         self.print_with_parens(n, k, args, ignored)?;
-        self.print_trailing_comments(n)?;
+        self.print_trailing_comments(n);
         Ok(())
     }
 
@@ -192,7 +192,7 @@ impl Quick {
                 );
             }
         } else if (head & (0xff | F_COMMENTS)) == k::ReadyComment {
-            self.print_comment_at(self.n.at(n + 1), self.n.at(n + 2), self.n.at(n + 4))?;
+            self.print_comment_at(self.n.at(n + 1), self.n.at(n + 2), self.n.at(n + 4));
         } else {
             self.print_node(n, 0)?;
         }
@@ -203,10 +203,10 @@ impl Quick {
     pub(crate) fn print_binding_suffix(&mut self, n: i32, k: i32) -> R<()> {
         let head = self.n.at(n);
         if (head & F_OPTIONAL) != 0 && !(k == k::Identifier && self.is_key_of_parent(n)) {
-            self.text(QUESTION)?;
+            self.text(QUESTION);
         }
         if k == k::Identifier && (head & F_DEFINITE) != 0 {
-            self.text(BANG)?;
+            self.text(BANG);
         }
         if (head & F_EXT) != 0 {
             self.print_type_annotation_property(self.n.at(n + EXT_AT.at(k)))?;
@@ -253,11 +253,11 @@ impl Quick {
             && k == k::ExpressionStatement
             && self.expression_statement_needs_leading_semicolon(n)?;
         if leading_semicolon {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
-        self.slice_any(self.n.at(n + 1), self.n.at(n + 2))?;
+        self.slice_any(self.n.at(n + 1), self.n.at(n + 2));
         if self.options.semi && self.should_ignored_node_print_semicolon(n) {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         if is_decorated_class_expression {
             self.dedent_softline();
@@ -277,7 +277,7 @@ impl Quick {
         }
         let parens = self.needs_parens(n)?;
         if parens {
-            self.text(LPAREN)?;
+            self.text(LPAREN);
         }
         let mut decorators: i32 = 0;
         if k == k::ClassDeclaration {
@@ -303,7 +303,7 @@ impl Quick {
             (self.n.at(n) & (F_LEADING | F_TRAILING)) != 0 && self.is_iife_callee_or_tag(n);
         if own_comments {
             self.indent_softline();
-            self.print_leading_comments(n)?;
+            self.print_leading_comments(n);
         }
         if ignored {
             self.print_ignored(n, k)?;
@@ -318,20 +318,20 @@ impl Quick {
             self.set_label(0);
         }
         if own_comments {
-            self.print_trailing_comments(n)?;
+            self.print_trailing_comments(n);
             self.dedent_softline();
         }
         if decorated {
             self.group_close(g);
         }
         if parens {
-            self.text(RPAREN)?;
+            self.text(RPAREN);
         }
         Ok(())
     }
 
     /// An identifier with `\u` escapes is printed decoded, like Babel's `name`.
-    pub(crate) fn print_escaped_name(&mut self, start: i32, end: i32) -> R<()> {
+    pub(crate) fn print_escaped_name(&mut self, start: i32, end: i32) {
         self.reserve_gen(end - start);
         let from = self.text.gen_pos;
         let mut p = start;
@@ -374,8 +374,7 @@ impl Quick {
                 self.gen_byte(0x80 | (cp & 63));
             }
         }
-        self.slice_any(from, self.text.gen_pos)?;
-        Ok(())
+        self.slice_any(from, self.text.gen_pos);
     }
 }
 pub(crate) fn print_hex_value(c: i32) -> i32 {
@@ -386,16 +385,15 @@ pub(crate) fn print_hex_value(c: i32) -> i32 {
 }
 
 impl Quick {
-    pub(crate) fn print_name(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_name(&mut self, n: i32) {
         let head = self.n.at(n);
         if (head & (F_SLOW_TEXT | F_ESCAPE)) == 0 {
-            self.slice(self.n.at(n + 1), self.n.at(n + 2))?;
+            self.slice(self.n.at(n + 1), self.n.at(n + 2));
         } else if (head & F_ESCAPE) != 0 {
-            self.print_escaped_name(self.n.at(n + 1), self.n.at(n + 2))?;
+            self.print_escaped_name(self.n.at(n + 1), self.n.at(n + 2));
         } else {
-            self.slice_any(self.n.at(n + 1), self.n.at(n + 2))?;
+            self.slice_any(self.n.at(n + 1), self.n.at(n + 2));
         }
-        Ok(())
     }
 
     pub(crate) fn print_await_expression(&mut self, n: i32) -> R<()> {
@@ -424,8 +422,8 @@ impl Quick {
             }
             let g = if should_group { self.group_open() } else { 0 };
             self.indent_softline();
-            self.text(AWAIT)?;
-            self.text(SPACE)?;
+            self.text(AWAIT);
+            self.text(SPACE);
             self.print(argument)?;
             self.dedent_softline();
             if should_group {
@@ -433,9 +431,9 @@ impl Quick {
             }
             return Ok(());
         }
-        self.text(AWAIT)?;
+        self.text(AWAIT);
         if argument != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(argument)?;
         }
         Ok(())
@@ -448,43 +446,43 @@ impl Quick {
                     self.print_typed_name(n)?;
                     return Ok(());
                 }
-                self.print_name(n)?;
+                self.print_name(n);
                 return Ok(());
             }
             k::JSXIdentifier => {
-                self.print_name(n)?;
+                self.print_name(n);
                 return Ok(());
             }
             k::PrivateName => {
-                self.print_name(n)?;
+                self.print_name(n);
                 return Ok(());
             }
             k::StringLiteral => {
-                self.print_string_literal(n)?;
+                self.print_string_literal(n);
                 return Ok(());
             }
             k::NumericLiteral => {
-                self.print_numeric_literal(n)?;
+                self.print_numeric_literal(n);
                 return Ok(());
             }
             k::BigIntLiteral => {
-                self.print_big_int_literal(n)?;
+                self.print_big_int_literal(n);
                 return Ok(());
             }
             k::BooleanLiteral | k::NullLiteral | k::ThisExpression | k::Super => {
-                self.slice(self.n.at(n + 1), self.n.at(n + 2))?;
+                self.slice(self.n.at(n + 1), self.n.at(n + 2));
                 return Ok(());
             }
             k::RegExpLiteral => {
-                self.print_reg_exp_literal(n)?;
+                self.print_reg_exp_literal(n);
                 return Ok(());
             }
             k::DirectiveLiteral => {
-                self.print_directive_literal(n)?;
+                self.print_directive_literal(n);
                 return Ok(());
             }
             k::TemplateElement => {
-                self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2))?;
+                self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2));
                 return Ok(());
             }
             k::ExpressionStatement => {
@@ -494,17 +492,17 @@ impl Quick {
             k::ParenthesizedExpression => {
                 let expression = self.n.at(n + 4);
                 if !self.has_comment(expression) && self.is_object_or_array_expression(expression) {
-                    self.text(LPAREN)?;
+                    self.text(LPAREN);
                     self.print(expression)?;
-                    self.text(RPAREN)?;
+                    self.text(RPAREN);
                     return Ok(());
                 }
                 let g = self.group_open();
-                self.text(LPAREN)?;
+                self.text(LPAREN);
                 self.indent_softline();
                 self.print(expression)?;
                 self.dedent_softline();
-                self.text(RPAREN)?;
+                self.text(RPAREN);
                 self.group_close(g);
                 return Ok(());
             }
@@ -522,7 +520,7 @@ impl Quick {
             }
             k::AssignmentPattern => {
                 self.print(self.n.at(n + 4))?;
-                self.text(EQ_SPACES)?;
+                self.text(EQ_SPACES);
                 self.print(self.n.at(n + 5))?;
                 return Ok(());
             }
@@ -532,12 +530,12 @@ impl Quick {
             }
             k::MetaProperty => {
                 self.print(self.n.at(n + 4))?;
-                self.text(DOT)?;
+                self.text(DOT);
                 self.print(self.n.at(n + 5))?;
                 return Ok(());
             }
             k::SpreadElement | k::RestElement => {
-                self.text(ELLIPSIS)?;
+                self.text(ELLIPSIS);
                 self.print(self.n.at(n + 4))?;
                 if (self.n.at(n) & F_EXT) != 0 {
                     self.print_binding_suffix(n, k)?;
@@ -560,9 +558,9 @@ impl Quick {
                     YIELD_STAR
                 } else {
                     YIELD
-                })?;
+                });
                 if self.n.at(n + 4) != 0 {
-                    self.text(SPACE)?;
+                    self.text(SPACE);
                     self.print(self.n.at(n + 4))?;
                 }
                 return Ok(());
@@ -616,7 +614,7 @@ impl Quick {
                 return Ok(());
             }
             k::Decorator => {
-                self.text(AT)?;
+                self.text(AT);
                 self.print(self.n.at(n + 4))?;
                 return Ok(());
             }
@@ -631,24 +629,24 @@ impl Quick {
             k::Directive => {
                 self.print(self.n.at(n + 4))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(());
             }
             k::UnaryExpression => {
                 let o = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
-                self.text(OPERATOR.at(o))?;
+                self.text(OPERATOR.at(o));
                 if o >= tk::In {
-                    self.text(SPACE)?;
+                    self.text(SPACE);
                 }
                 let argument = self.n.at(n + 4);
                 if self.has_comment(argument) {
                     let g = self.group_open();
-                    self.text(LPAREN)?;
+                    self.text(LPAREN);
                     self.indent_softline();
                     self.print(argument)?;
                     self.dedent_softline();
-                    self.text(RPAREN)?;
+                    self.text(RPAREN);
                     self.group_close(g);
                 } else {
                     self.print(argument)?;
@@ -658,11 +656,11 @@ impl Quick {
             k::UpdateExpression => {
                 let o = OPERATOR.at(((self.n.at(n) as u32) >> SUB_SHIFT) as i32);
                 if (self.n.at(n) & F_PREFIX) != 0 {
-                    self.text(o)?;
+                    self.text(o);
                 }
                 self.print(self.n.at(n + 4))?;
                 if (self.n.at(n) & F_PREFIX) == 0 {
-                    self.text(o)?;
+                    self.text(o);
                 }
                 return Ok(());
             }
@@ -719,9 +717,9 @@ impl Quick {
                 return Ok(());
             }
             k::DebuggerStatement => {
-                self.text(DEBUGGER)?;
+                self.text(DEBUGGER);
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(());
             }
@@ -752,7 +750,7 @@ impl Quick {
             }
             k::EmptyStatement => {
                 if self.is_meaningful_empty_statement(n) {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(());
             }
@@ -782,14 +780,14 @@ impl Quick {
                 return Ok(());
             }
             k::ReadyComment => {
-                self.print_comment_at(self.n.at(n + 1), self.n.at(n + 2), self.n.at(n + 4))?;
+                self.print_comment_at(self.n.at(n + 1), self.n.at(n + 2), self.n.at(n + 4));
                 return Ok(());
             }
             k::ReadyLines => {
                 if self.options.end_of_line == EOL_LF {
-                    self.slice_lines_at_margin(self.n.at(n + 1), self.n.at(n + 2), 0)?;
+                    self.slice_lines_at_margin(self.n.at(n + 1), self.n.at(n + 2), 0);
                 } else {
-                    self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2))?;
+                    self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2));
                 }
                 return Ok(());
             }
@@ -807,7 +805,7 @@ impl Quick {
                             true,
                         );
                     } else if i == 0 && (self.n.at(n) & F_ANY_WIDTH) != 0 {
-                        self.slice(self.n.at(n + 5), self.n.at(n + 5) + self.n.at(n + 6))?;
+                        self.slice(self.n.at(n + 5), self.n.at(n + 5) + self.n.at(n + 6));
                     } else {
                         self.fitted(self.n.at(n + 5 + i * 2), self.n.at(n + 6 + i * 2), 1);
                     }
@@ -815,7 +813,7 @@ impl Quick {
                     i += 1;
                 }
                 let start = self.n.at(n + 5 + count * 2);
-                self.slice(start, start + self.n.at(n + 6 + count * 2))?;
+                self.slice(start, start + self.n.at(n + 6 + count * 2));
                 return Ok(());
             }
             _ => {
@@ -833,7 +831,7 @@ impl Quick {
         let end = self.n.at(n + 2);
         self.n.put(n + 1, self.name_start(n));
         self.n.put(n + 2, self.print_name_end(n));
-        self.print_name(n)?;
+        self.print_name(n);
         self.n.put(n + 1, start);
         self.n.put(n + 2, end);
         self.print_binding_suffix(n, k::Identifier)?;

@@ -666,11 +666,7 @@ impl Quick {
     ///
     /// This function handles the commands that need no call: texts, lines, closings, groups whose fate is clear. Whatever
     /// needs more (measuring with fits(), growing a buffer, comments at the end of a line, fill) goes to slow_step(), through
-    /// the variables above. That call is the only one in here, which is the point: with the thirty-odd calls of slow_step() in
-    /// the same function, the compiler kept every variable of the loop on the stack.
-    ///
-    /// Every number that comes out of an array is sealed with `| 0`: the function is too large for the compiler to keep a
-    /// second, generic copy of it, so without the seal "the index may be out of bounds" turns the variable into a double.
+    /// the variables above. That call is the only one in here, so that the variables of the loop can stay in registers.
     pub(crate) fn print_doc(&mut self, start: i32, stub: i32) -> R<()> {
         let width = self.options.print_width;
         let eol = self.options.end_of_line;
@@ -740,8 +736,7 @@ impl Quick {
                                     break 's2;
                                 }
                                 let s = ((w as u32) >> 13) as i32;
-                                // Eight bytes at a time, and up to seven too many: what follows overwrites them. As a float64, because that is
-                                // the widest move there is. No run of valid UTF-8 is a NaN (that takes 0xf0..0xff before 0x7f or 0xff).
+                                // Eight bytes at a time, and up to seven too many: what follows overwrites them.
                                 self.printer.out.put_u64(o, self.t.u64_at(s));
                                 let mut k: i32 = 8;
                                 while k < len {

@@ -121,10 +121,6 @@ impl Quick {
         return true;
     }
 
-    pub(crate) fn round_trips_as_number(&self, _start: i32, _end: i32) -> R<bool> {
-        Err(self.stop(why::RARE))
-    }
-
     pub(crate) fn is_key_safe_to_unquote(&self, member: i32) -> R<bool> {
         let key = self.n.at(member + 4);
         if (self.n.at(key) & 0xff) != k::StringLiteral || (self.n.at(key) & F_ESCAPE) != 0 {
@@ -164,10 +160,6 @@ impl Quick {
         }
         // String(value) === printNumber(raw), and that is a simple number. A rare question, so strings will do.
         return self.number_is_printed_as_its_value(self.n.at(key + 1), self.n.at(key + 2));
-    }
-
-    pub(crate) fn number_is_printed_as_its_value(&self, _start: i32, _end: i32) -> R<bool> {
-        Err(self.stop(why::RARE))
     }
 
     pub(crate) fn members_of(&self, parent: i32) -> i32 {
@@ -226,9 +218,9 @@ impl Quick {
     pub(crate) fn print_key(&mut self, member: i32) -> R<()> {
         let key = self.n.at(member + 4);
         if (self.n.at(member) & F_COMPUTED) != 0 {
-            self.text(LBRACKET)?;
+            self.text(LBRACKET);
             self.print(key)?;
-            self.text(RBRACKET)?;
+            self.text(RBRACKET);
             return Ok(());
         }
         let k = self.n.at(key) & 0xff;
@@ -238,17 +230,17 @@ impl Quick {
                     && !self.has_siblings_require_quoted(member)?))
                 && self.is_key_safe_to_unquote(member)?
             {
-                self.print_leading_comments(key)?;
+                self.print_leading_comments(key);
                 let start = self.n.at(key + 1) + 1;
                 let end = self.n.at(key + 2) - 1;
                 if print_object_is_digit(self.t.at(start)) {
-                    self.print_number_range(start, end)?;
+                    self.print_number_range(start, end);
                 } else if (self.n.at(key) & F_SLOW_TEXT) != 0 {
-                    self.slice_any(start, end)?;
+                    self.slice_any(start, end);
                 } else {
-                    self.slice(start, end)?;
+                    self.slice(start, end);
                 }
-                self.print_trailing_comments(key)?;
+                self.print_trailing_comments(key);
                 return Ok(());
             }
         } else if (k == k::Identifier || k == k::NumericLiteral)
@@ -256,20 +248,20 @@ impl Quick {
                 && self.has_siblings_require_quoted(member)?)
             && self.is_key_safe_to_quote(member)?
         {
-            self.print_leading_comments(key)?;
+            self.print_leading_comments(key);
             let quote = if self.options.single_quote {
                 SQUOTE
             } else {
                 DQUOTE
             };
-            self.text(quote)?;
+            self.text(quote);
             if k == k::NumericLiteral {
-                self.print_number_range(self.n.at(key + 1), self.n.at(key + 2))?;
+                self.print_number_range(self.n.at(key + 1), self.n.at(key + 2));
             } else {
-                self.print_name(key)?;
+                self.print_name(key);
             }
-            self.text(quote)?;
-            self.print_trailing_comments(key)?;
+            self.text(quote);
+            self.print_trailing_comments(key);
             return Ok(());
         }
         self.print(key)?;
@@ -295,10 +287,10 @@ impl Quick {
     ) -> R<()> {
         let count = self.n.at(list);
         let g = if with_group { self.group_open() } else { 0 };
-        self.text(LBRACE)?;
+        self.text(LBRACE);
         self.indent_open();
         if self.options.bracket_spacing {
-            self.line()?;
+            self.line();
         } else {
             self.softline();
         }
@@ -310,8 +302,8 @@ impl Quick {
             if i == count {
                 break;
             }
-            self.text(COMMA)?;
-            self.line()?;
+            self.text(COMMA);
+            self.line();
             if self.is_next_line_empty(member) {
                 self.hardline();
             }
@@ -320,14 +312,14 @@ impl Quick {
         if self.options.trailing_comma != TRAILING_COMMA_NONE
             && (self.n.at(self.n.at(list + count)) & 0xff) != k::RestElement
         {
-            self.if_break_text(COMMA, 0, 0)?;
+            self.if_break_text(COMMA, 0, 0);
         }
         if self.options.bracket_spacing {
-            self.dedent_line()?;
+            self.dedent_line();
         } else {
             self.dedent_softline();
         }
-        self.text(RBRACE)?;
+        self.text(RBRACE);
         if with_group {
             self.group_close_with(g, should_break, 0);
         }
@@ -339,10 +331,10 @@ impl Quick {
         let list = self.n.at(n + 4);
         let count = self.n.at(list);
         let g = self.group_open();
-        self.text(LBRACE)?;
+        self.text(LBRACE);
         self.indent_open();
         if self.options.bracket_spacing {
-            self.line()?;
+            self.line();
         } else {
             self.softline();
         }
@@ -350,31 +342,31 @@ impl Quick {
         while i <= count {
             let member = self.n.at(list + i);
             self.print(member)?;
-            self.text(COMMA)?;
-            self.line()?;
+            self.text(COMMA);
+            self.line();
             if self.is_next_line_empty(member) {
                 self.hardline();
             }
             i += 1;
         }
         if self.has_dangling_comment(n) {
-            self.print_dangling_comments(n)?;
+            self.print_dangling_comments(n);
             if self.has_line_comment(n)
                 || self.has_newline(self.comment_end(self.last_dangling_comment(n)))
             {
                 self.hardline();
             } else {
-                self.line()?;
+                self.line();
             }
         }
-        self.text(ELLIPSIS)?;
+        self.text(ELLIPSIS);
         self.indent_close();
         if self.options.bracket_spacing {
-            self.line()?;
+            self.line();
         } else {
             self.softline();
         }
-        self.text(RBRACE)?;
+        self.text(RBRACE);
         self.group_close_with(g, true, 0);
         Ok(())
     }
@@ -385,7 +377,7 @@ impl Quick {
         if (self.n.at(n) & 0xff) == k::EnumBody {
             let explicit_type = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
             if explicit_type != EB_NONE {
-                self.text(OF_)?;
+                self.text(OF_);
                 self.text(if explicit_type == EB_BOOLEAN {
                     BOOLEAN
                 } else {
@@ -402,8 +394,8 @@ impl Quick {
                             }
                         }
                     }
-                })?;
-                self.text(SPACE)?;
+                });
+                self.text(SPACE);
             }
             if (self.n.at(n) & F_INEXACT) != 0 {
                 self.print_flow_enum_body(n)?;
@@ -412,9 +404,9 @@ impl Quick {
         }
         if count == 0 {
             let g = self.group_open();
-            self.text(LBRACE)?;
-            self.print_dangling_comments_in_list(n)?;
-            self.text(RBRACE)?;
+            self.text(LBRACE);
+            self.print_dangling_comments_in_list(n);
+            self.text(RBRACE);
             if (self.n.at(n) & (F_EXT | F_OPTIONAL)) != 0 {
                 self.print_binding_suffix(n, self.n.at(n) & 0xff)?;
             }
@@ -489,5 +481,76 @@ impl Quick {
             self.group_close_with(g, should_break, 0);
         }
         Ok(())
+    }
+}
+
+/// `String(Number(text)) === text` for digits with or without a fraction. `None`: that takes more than counting digits.
+fn simple_number_round_trips(text: &[u8]) -> Option<bool> {
+    let (whole, fraction) = match bun_core::strings::index_of_char_usize(text, b'.') {
+        Some(dot) => (text.get(..dot).unwrap_or(&[]), text.get(dot + 1..)),
+        None => (text, None),
+    };
+    if whole.is_empty() || (whole.len() > 1 && whole.first() == Some(&b'0')) {
+        return Some(false);
+    }
+    // from 1e21 on, and below 1e-6, the value is written with an exponent
+    if whole.len() > 21 {
+        return Some(false);
+    }
+    let zeros_at_start = |digits: &[u8]| digits.iter().take_while(|&&c| c == b'0').count();
+    let zeros_at_end = |digits: &[u8]| digits.iter().rev().take_while(|&&c| c == b'0').count();
+    let significant = match fraction {
+        None => whole.len() - zeros_at_end(whole).min(whole.len() - 1),
+        Some(fraction) => {
+            if fraction.is_empty() || fraction.last() == Some(&b'0') {
+                return Some(false);
+            }
+            if whole == b"0" {
+                if zeros_at_start(fraction) >= 6 {
+                    return Some(false);
+                }
+                fraction.len() - zeros_at_start(fraction)
+            } else {
+                whole.len() + fraction.len()
+            }
+        }
+    };
+    // Fifteen digits survive the way to a double and back, more than seventeen never do.
+    match significant {
+        0..=15 => Some(true),
+        16 | 17 => None,
+        _ => Some(false),
+    }
+}
+
+impl Quick {
+    fn round_trips_as_number(&self, start: i32, end: i32) -> R<bool> {
+        simple_number_round_trips(self.t.sub(start, end)).ok_or_else(|| self.stop(why::RARE))
+    }
+
+    /// `String(value) === printNumber(raw)`, and that is a simple number.
+    fn number_is_printed_as_its_value(&self, start: i32, end: i32) -> R<bool> {
+        let raw = self.t.sub(start, end);
+        if !raw.iter().all(|&c| c.is_ascii_digit() || c == b'.')
+            || bun_core::strings::count_char(raw, b'.') > 1
+        {
+            // an exponent, another base, separators
+            return Err(self.stop(why::RARE));
+        }
+        // printNumber(): a digit in front of the dot, no zeros at the end of the fraction but for the first digit, no dot at the end
+        let mut printed = Vec::with_capacity(raw.len() + 1);
+        if raw.first() == Some(&b'.') {
+            printed.push(b'0');
+        }
+        printed.extend_from_slice(raw);
+        if let Some(dot) = bun_core::strings::index_of_char_usize(&printed, b'.') {
+            while printed.len() > dot + 2 && printed.last() == Some(&b'0') {
+                printed.pop();
+            }
+            if printed.len() == dot + 1 {
+                printed.pop();
+            }
+        }
+        simple_number_round_trips(&printed).ok_or_else(|| self.stop(why::RARE))
     }
 }

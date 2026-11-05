@@ -7,7 +7,7 @@ use crate::comments::{
 use crate::doc::ALIGN_MARK_ROOT;
 use crate::lexer::{C_FLAGS, C_STRIDE, CF_BLOCK, CF_INDENTABLE, CF_PLAIN};
 use crate::print::statics::{SPACE, TWO_SPACES};
-use crate::{Quick, R, Words};
+use crate::{Quick, Words};
 
 pub(crate) fn print_comments_is_blank(c: i32) -> bool {
     return c == 32 || c == 9 || c == 13 || c == 10 || c == 11 || c == 12;
@@ -45,31 +45,29 @@ impl Quick {
     }
 
     /// A piece of a comment. Of a plain one the width is known.
-    pub(crate) fn piece(&mut self, from: i32, to: i32, plain: bool) -> R<()> {
+    pub(crate) fn piece(&mut self, from: i32, to: i32, plain: bool) {
         if plain {
-            self.slice(from, to)?;
+            self.slice(from, to);
         } else {
-            self.slice_any(from, to)?;
+            self.slice_any(from, to);
         }
-        Ok(())
     }
 
-    pub(crate) fn print_comment(&mut self, c: i32) -> R<()> {
+    pub(crate) fn print_comment(&mut self, c: i32) {
         self.print_comment_at(
             self.comment_start(c),
             self.comment_end(c),
             self.comment_flags(c),
-        )?;
-        Ok(())
+        );
     }
 
     /// The comment T[s, e), with the flags that the lexer gave it.
-    pub(crate) fn print_comment_at(&mut self, s: i32, e: i32, flags: i32) -> R<()> {
+    pub(crate) fn print_comment_at(&mut self, s: i32, e: i32, flags: i32) {
         self.reserve();
         let plain = (flags & CF_PLAIN) != 0;
         if (flags & CF_BLOCK) == 0 {
-            self.piece(s, self.trim_end(s, e), plain)?;
-            return Ok(());
+            self.piece(s, self.trim_end(s, e), plain);
+            return;
         }
         if plain && (flags & CF_INDENTABLE) == 0 && e - s < 80 {
             // most often: one short line
@@ -82,8 +80,8 @@ impl Quick {
                 p += 1;
             }
             if one_line {
-                self.slice(s, e)?;
-                return Ok(());
+                self.slice(s, e);
+                return;
             }
         }
         if if plain {
@@ -109,28 +107,28 @@ impl Quick {
                 if p >= e {
                     // the last line, with the closing delimiter
                     if from == line_start {
-                        self.text(SPACE)?;
+                        self.text(SPACE);
                     }
-                    self.piece(from, e, plain)?;
-                    return Ok(());
+                    self.piece(from, e, plain);
+                    return;
                 }
                 let end = self.trim_end(line_start, p);
                 if first {
-                    self.piece(line_start, end, plain)?;
+                    self.piece(line_start, end, plain);
                     self.hardline();
                     first = false;
                 } else {
                     if from == line_start {
-                        self.text(SPACE)?;
+                        self.text(SPACE);
                     }
-                    self.piece(from, end, plain)?;
+                    self.piece(from, end, plain);
                     if is_jsdoc
                         && end - line_start != 1
                         && p - line_start >= 2
                         && self.t.at(p - 1) == 32
                         && self.t.at(p - 2) == 32
                     {
-                        self.text(TWO_SPACES)?;
+                        self.text(TWO_SPACES);
                         self.align_open(ALIGN_MARK_ROOT);
                         self.literalline();
                         self.indent_close();
@@ -153,28 +151,27 @@ impl Quick {
         while p < e {
             if self.t.at(p) == 10 {
                 self.reserve();
-                self.piece(from, p, plain)?;
+                self.piece(from, p, plain);
                 self.literalline();
                 from = p + 1;
             }
             p += 1;
         }
-        self.piece(from, e, plain)?;
-        Ok(())
+        self.piece(from, e, plain);
     }
 
-    pub(crate) fn print_leading_comment(&mut self, c: i32) -> R<()> {
-        self.print_comment(c)?;
+    pub(crate) fn print_leading_comment(&mut self, c: i32) {
+        self.print_comment(c);
         let end = self.comment_end(c);
         if self.is_block_comment(c) {
             if self.has_newline(end) {
                 if self.has_newline_before(self.comment_start(c)) {
                     self.hardline();
                 } else {
-                    self.line()?;
+                    self.line();
                 }
             } else {
-                self.text(SPACE)?;
+                self.text(SPACE);
             }
         } else {
             self.hardline();
@@ -182,18 +179,12 @@ impl Quick {
         if self.has_newline(self.skip_newline(self.skip_spaces(end))) {
             self.hardline();
         }
-        Ok(())
     }
 
     /// `except`: a comment to leave out, or -1. `only`: the one comment to print, or -1.
-    pub(crate) fn print_leading_comments_filtered(
-        &mut self,
-        n: i32,
-        except: i32,
-        only: i32,
-    ) -> R<()> {
+    pub(crate) fn print_leading_comments_filtered(&mut self, n: i32, except: i32, only: i32) {
         if (self.n.at(n) & F_LEADING) == 0 {
-            return Ok(());
+            return;
         }
         let mut c = self.first_comment(n);
         while c >= 0 {
@@ -205,21 +196,19 @@ impl Quick {
                 {
                     break 'c1;
                 }
-                self.print_leading_comment(c)?;
+                self.print_leading_comment(c);
             }
             c = self.next_comment(c);
         }
-        Ok(())
     }
 
-    pub(crate) fn print_leading_comments(&mut self, n: i32) -> R<()> {
-        self.print_leading_comments_filtered(n, -1, -1)?;
-        Ok(())
+    pub(crate) fn print_leading_comments(&mut self, n: i32) {
+        self.print_leading_comments_filtered(n, -1, -1);
     }
 
-    pub(crate) fn print_trailing_comments(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_trailing_comments(&mut self, n: i32) {
         if (self.n.at(n) & F_TRAILING) == 0 {
-            return Ok(());
+            return;
         }
         let mut previous_has_line_suffix = false;
         let mut previous_is_block = false;
@@ -241,23 +230,23 @@ impl Quick {
                         if self.is_previous_line_empty_before(start) {
                             self.hardline();
                         }
-                        self.print_comment(c)?;
+                        self.print_comment(c);
                         self.line_suffix_close(h);
                     }
                     previous_has_line_suffix = true;
                 } else if !is_block || previous_has_line_suffix {
                     if should_print {
                         let h = self.line_suffix_open();
-                        self.text(SPACE)?;
-                        self.print_comment(c)?;
+                        self.text(SPACE);
+                        self.print_comment(c);
                         self.line_suffix_close(h);
                         self.break_parent();
                     }
                     previous_has_line_suffix = true;
                 } else {
                     if should_print {
-                        self.text(SPACE)?;
-                        self.print_comment(c)?;
+                        self.text(SPACE);
+                        self.print_comment(c);
                     }
                     previous_has_line_suffix = false;
                 }
@@ -265,7 +254,6 @@ impl Quick {
             }
             c = self.next_comment(c);
         }
-        Ok(())
     }
 }
 pub(crate) const DANGLING_NO_MARKER: i32 = 1;
@@ -325,9 +313,9 @@ impl Quick {
         n: i32,
         filter: i32,
         should_indent: bool,
-    ) -> R<bool> {
+    ) -> bool {
         if !self.has_dangling_matching(n, filter) {
-            return Ok(false);
+            return false;
         }
         if should_indent {
             self.indent_hardline();
@@ -343,34 +331,33 @@ impl Quick {
                     self.hardline();
                 }
                 first = false;
-                self.print_comment(c)?;
+                self.print_comment(c);
             }
             c = self.next_comment(c);
         }
         if should_indent {
             self.indent_close();
         }
-        return Ok(true);
+        return true;
     }
 
-    pub(crate) fn print_dangling_comments(&mut self, n: i32) -> R<bool> {
+    pub(crate) fn print_dangling_comments(&mut self, n: i32) -> bool {
         return self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, false);
     }
 
     /// print_dangling_comments_in_list
-    pub(crate) fn print_dangling_comments_in_list(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_dangling_comments_in_list(&mut self, n: i32) {
         if !self.has_dangling_matching(n, DANGLING_NO_MARKER) {
-            return Ok(());
+            return;
         }
         self.indent_softline();
-        self.print_dangling_comments(n)?;
+        self.print_dangling_comments(n);
         self.indent_close();
         if self.has_dangling_matching(n, DANGLING_LINE) {
             self.hardline();
         } else {
             self.softline();
         }
-        Ok(())
     }
 
     /// The comments inside a node that is printed as it stands in the source are not printed on their own.

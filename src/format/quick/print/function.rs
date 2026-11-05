@@ -162,20 +162,20 @@ impl Quick {
         while i <= count {
             let parameter = self.n.at(params + i);
             if i == count && self.is_flow_rest_parameter(parameter) {
-                self.text(ELLIPSIS)?;
+                self.text(ELLIPSIS);
             }
             self.print(parameter)?;
             if i == count {
                 break;
             }
-            self.text(COMMA)?;
+            self.text(COMMA);
             if separator_is_space {
-                self.text(SPACE)?;
+                self.text(SPACE);
             } else if self.is_next_line_empty(parameter) {
                 self.hardline();
                 self.hardline();
             } else {
-                self.line()?;
+                self.line();
             }
             i += 1;
         }
@@ -217,9 +217,9 @@ impl Quick {
         };
         if count == 0 {
             self.print(type_parameters)?;
-            self.text(LPAREN)?;
-            self.print_dangling_comments_in_list(fn_)?;
-            self.text(RPAREN)?;
+            self.text(LPAREN);
+            self.print_dangling_comments_in_list(fn_);
+            self.text(RPAREN);
             return Ok(());
         }
         let is_parameters_in_test_call = self.is_test_call(self.n.at(fn_ + 3), 0)?;
@@ -232,47 +232,47 @@ impl Quick {
                 self.print(type_parameters)?;
                 self.remove_lines_close();
             }
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             self.remove_lines_open();
             self.print_parameter_list(params, is_parameters_in_test_call || should_hug)?;
             self.remove_lines_close();
             if self.doc.wb_count != breaks {
                 self.set_bailout(true);
             }
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             self.group_close(g);
             return Ok(());
         }
         self.print(type_parameters)?;
         if (should_hug && !self.has_parameter_decorator(params)) || is_parameters_in_test_call {
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             self.print_parameter_list(params, true)?;
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             return Ok(());
         }
         if self.mode.is_flow && self.is_flow_shorthand_with_one_arg(fn_, params) {
             let parens = self.options.arrow_parens_always
                 || (self.n.at(fn_) & 0xff) == k::HookTypeAnnotation;
             if parens {
-                self.text(LPAREN)?;
+                self.text(LPAREN);
             }
             self.print_parameter_list(params, false)?;
             if parens {
-                self.text(RPAREN)?;
+                self.text(RPAREN);
             }
             return Ok(());
         }
-        self.text(LPAREN)?;
+        self.text(LPAREN);
         self.indent_softline();
         self.print_parameter_list(params, should_hug)?;
         if self.options.trailing_comma == TRAILING_COMMA_ALL
             && (self.n.at(self.n.at(params + count)) & 0xff) != k::RestElement
             && !self.is_flow_rest_parameter(self.n.at(params + count))
         {
-            self.if_break_text(COMMA, 0, 0)?;
+            self.if_break_text(COMMA, 0, 0);
         }
         self.dedent_softline();
-        self.text(RPAREN)?;
+        self.text(RPAREN);
         Ok(())
     }
 
@@ -311,20 +311,20 @@ impl Quick {
         }
         let is_declared = (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) != 0;
         if is_declared {
-            self.text(DECLARE_)?;
+            self.text(DECLARE_);
         }
         if (self.n.at(n) & F_ASYNC) != 0 {
-            self.text(ASYNC_)?;
+            self.text(ASYNC_);
         }
         self.text(if (self.n.at(n) & 0xff) == k::HookDeclaration {
             HOOK
         } else {
             FUNCTION
-        })?;
+        });
         if (self.n.at(n) & F_GENERATOR) != 0 {
-            self.text(STAR)?;
+            self.text(STAR);
         }
-        self.text(SPACE)?;
+        self.text(SPACE);
         self.print(self.n.at(n + 4))?;
         self.print(self.n.at(n + FN_TYPE_PARAMETERS))?;
         let g = self.group_open();
@@ -334,11 +334,11 @@ impl Quick {
         }
         self.group_close(g);
         if self.n.at(n + 5) != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print_body(self.n.at(n + 5), args)?;
         }
         if self.options.semi && (is_declared || self.n.at(n + 5) == 0) {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         Ok(())
     }
@@ -379,7 +379,7 @@ impl Quick {
                     _ARROW_
                 } else {
                     COLON_SPACE
-                })?;
+                });
                 self.print(self.n.at(fn_ + FN_RETURN_TYPE))?;
                 return Ok(());
             }
@@ -510,10 +510,10 @@ impl Quick {
         )?;
         self.group_close(g);
         if self.n.at(n + 5) != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(self.n.at(n + 5))?;
         } else if self.options.semi {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         Ok(())
     }
@@ -523,18 +523,18 @@ impl Quick {
         let head = self.n.at(n);
         let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
         if method == M_GET {
-            self.text(GET_)?;
+            self.text(GET_);
         } else if method == M_SET {
-            self.text(SET_)?;
+            self.text(SET_);
         } else if (head & F_ASYNC) != 0 {
-            self.text(ASYNC_)?;
+            self.text(ASYNC_);
         }
         if (head & F_GENERATOR) != 0 {
-            self.text(STAR)?;
+            self.text(STAR);
         }
         self.print_key(n)?;
         if (head & F_OPTIONAL) != 0 {
-            self.text(QUESTION)?;
+            self.text(QUESTION);
         }
         self.print_method_value(n)?;
         Ok(())

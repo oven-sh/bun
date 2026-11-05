@@ -1,4 +1,19 @@
-//! The quick way for JavaScript and TypeScript.
+//! The quick way for JavaScript and TypeScript: a lexer, a parser, comment attachment, printers and a layout that share one
+//! context and allocate nothing per token, node or command.
+//!
+//! [`format`] either prints the file or answers [`Refused`], which is always a valid answer: whoever calls it then takes the long
+//! way, which prints the file or says what is wrong with it. So nothing in here reports an error, and whatever is not certain (a
+//! syntax error, syntax that is not known here, a stack that is full) is refused. What is printed is, byte for byte, what the long way prints.
+//!
+//! How the code is written:
+//!
+//! - All state is in [`Quick`], which lives from file to file: one part per module (`self.lexer.tok`), and three large buffers, the
+//!   texts `self.t` (text.rs), the tree `self.n` (arena.rs) and the document `self.d` (doc.rs).
+//! - A position, a node, a list, a text and a command are numbers (`i32`): offsets into these buffers. 0 and -1 stand for "none".
+//! - Arrays are read with `at()` and written with `put()` ([`Words`]), which have an answer for every index. Nothing can panic.
+//! - A function that can stop the work returns [`R`]; why it stopped is `Quick::why`. `REDO` means: a short cut was taken on a wrong
+//!   guess, and the file is formatted again without short cuts.
+//! - Whoever calls itself, directly or not, asks `self.stack()?` first.
 
 #![allow(
     clippy::needless_late_init,

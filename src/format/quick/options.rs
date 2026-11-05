@@ -1,5 +1,4 @@
-//! Prettier's options, as module-level variables. A host that runs a guest with other options sets them before embed()
-//! and puts them back after it, with the setters at the end of this file.
+//! Prettier's options. A host that runs a guest with other options sets them before embed() and puts them back after it.
 
 use crate::Quick;
 

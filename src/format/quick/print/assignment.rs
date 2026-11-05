@@ -513,27 +513,27 @@ impl Quick {
         if !has_outer {
             self.group_cancel(outer);
         }
-        self.text(operator_a)?;
+        self.text(operator_a);
         if operator_b != 0 {
-            self.text(operator_b)?;
+            self.text(operator_b);
         }
         let args = layout << ARG_LAYOUT_SHIFT;
         match layout {
             LAYOUT_BREAK_AFTER_OPERATOR => {
                 let g = self.group_open();
-                self.indent_line()?;
+                self.indent_line();
                 self.print_node(right, args)?;
                 self.indent_close();
                 self.group_close(g);
             }
             LAYOUT_NEVER_BREAK_AFTER_OPERATOR => {
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.print_node(right, args)?;
             }
             LAYOUT_FLUID => {
                 let id = self.new_group_id();
                 let g = self.group_open();
-                self.indent_line()?;
+                self.indent_line();
                 self.indent_close();
                 self.group_close_with(g, false, id);
                 self.line_suffix_boundary();
@@ -542,17 +542,17 @@ impl Quick {
                 self.indent_close();
             }
             LAYOUT_BREAK_LHS => {
-                self.text(SPACE)?;
+                self.text(SPACE);
                 let g = self.group_open();
                 self.print_node(right, args)?;
                 self.group_close(g);
             }
             LAYOUT_CHAIN => {
-                self.line()?;
+                self.line();
                 self.print_node(right, args)?;
             }
             LAYOUT_CHAIN_TAIL => {
-                self.indent_line()?;
+                self.indent_line();
                 self.print_node(right, args)?;
                 self.indent_close();
             }

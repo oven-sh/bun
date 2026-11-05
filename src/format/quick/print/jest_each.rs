@@ -254,7 +254,7 @@ impl Quick {
             r += 3;
         }
         self.line_suffix_boundary();
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.indent_hardline();
         let mut is_first_row = true;
         let mut r = row_base;
@@ -275,13 +275,13 @@ impl Quick {
                     'c14: {
                         self.reserve();
                         if c > 0 {
-                            self.text(_BAR_)?;
+                            self.text(_BAR_);
                         }
                         let at = first_cell + c * 3;
                         self.slice_any(
                             self.print_jest_each.cells.at(at),
                             self.print_jest_each.cells.at(at + 1),
-                        )?;
+                        );
                         if self.print_jest_each.rows.at(r + 2) != 0 {
                             break 'c14;
                         }
@@ -289,7 +289,7 @@ impl Quick {
                             - self.print_jest_each.cells.at(at + 2);
                         while padding > 0 {
                             let chunk = if padding > 128 { 128 } else { padding };
-                            self.slice_w(PADDING, PADDING + chunk, chunk)?;
+                            self.slice_w(PADDING, PADDING + chunk, chunk);
                             padding -= 128;
                         }
                     }
@@ -299,7 +299,7 @@ impl Quick {
             r += 3;
         }
         self.dedent_hardline();
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.print_jest_each.cell_top = cell_base;
         self.print_jest_each.row_top = row_base;
         return Ok(true);

@@ -1,4 +1,4 @@
-//! The syntax trees of all languages live in one Int32Array arena. A node is an offset into it.
+//! The syntax tree lives in one arena of numbers. A node is an offset into it.
 //!
 //!   N[n + 0]  kind (8 bits) | flags (16 bits) | operator or sub-kind (8 bits)
 //!   N[n + 1]  start   offset into the text buffer

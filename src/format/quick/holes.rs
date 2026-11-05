@@ -15,7 +15,7 @@
 //! Filters nest (a template literal in a <script> in a template literal): what the inner filter writes goes through the
 //! outer one, as it does when Prettier maps the outer doc.
 
-use crate::{Quick, R, Words, zeros};
+use crate::{Quick, Words, zeros};
 
 pub(crate) struct Holes {
     /// How many holes the source of the running guest has. 0: it has none, or it is not in a template literal.
@@ -252,9 +252,8 @@ impl Quick {
 
     /// Not needed any more: every text goes through the filter. Kept for callers that say what they mean.
     #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn slice_with_holes(&mut self, start: i32, end: i32) -> R<()> {
-        self.slice_any(start, end)?;
-        Ok(())
+    pub(crate) fn slice_with_holes(&mut self, start: i32, end: i32) {
+        self.slice_any(start, end);
     }
 
     // ---- the filter itself. It runs with the level below as the current one, so that what it writes goes through the outer filter.
@@ -276,9 +275,9 @@ impl Quick {
     }
 
     /// Writes T[start, end), which holds no placeholder, changed as `flags` say.
-    pub(crate) fn write_piece(&mut self, start: i32, end: i32, flags: i32) -> R<()> {
+    pub(crate) fn write_piece(&mut self, start: i32, end: i32, flags: i32) {
         if start >= end {
-            return Ok(());
+            return;
         }
         let mut needs = false;
         let mut p = start;
@@ -290,8 +289,8 @@ impl Quick {
             p += 1;
         }
         if !needs {
-            self.slice_any(start, end)?;
-            return Ok(());
+            self.slice_any(start, end);
+            return;
         }
         self.reserve_gen((end - start) * 6 + 8);
         let mut from = self.text.gen_pos;
@@ -301,7 +300,7 @@ impl Quick {
                 let c = self.t.at(p);
                 if c == 10 && (flags & FILTER_END_OF_LINE) != 0 {
                     self.reserve();
-                    self.slice_any(from, self.text.gen_pos)?;
+                    self.slice_any(from, self.text.gen_pos);
                     self.literalline();
                     self.reserve_gen((end - p) * 6 + 8);
                     from = self.text.gen_pos;
@@ -345,12 +344,10 @@ impl Quick {
             }
             p += 1;
         }
-        self.slice_any(from, self.text.gen_pos)?;
-        Ok(())
+        self.slice_any(from, self.text.gen_pos);
     }
 
-    pub(crate) fn filter(&mut self, start: i32, end: i32) -> R<()> {
-        self.stack()?;
+    pub(crate) fn filter(&mut self, start: i32, end: i32) {
         let flags = self.holes.lv.at(self.holes.level * STRIDE);
         let count = self.holes.hole_count;
         let base = self.holes.hole_base;
@@ -367,7 +364,7 @@ impl Quick {
                         let doc = self.holes.holes.at(base + self.holes.hole_index);
                         self.holes.level -= 1;
                         self.load();
-                        self.write_piece(from, p, flags)?;
+                        self.write_piece(from, p, flags);
                         self.call(doc);
                         self.holes.level += 1;
                         self.load();
@@ -392,10 +389,9 @@ impl Quick {
             } else {
                 flags & !FILTER_END_OF_LINE
             },
-        )?;
+        );
         self.holes.level += 1;
         self.holes.lv.put(self.holes.level * STRIDE + 3, used);
         self.load();
-        Ok(())
     }
 }

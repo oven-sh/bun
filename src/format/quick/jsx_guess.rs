@@ -1,6 +1,5 @@
 //! Prettier's is_probably_jsx(), /^[^"'`]*<\/|^[^/]{2}.*\/>/m, on the bytes of the source.
-//! The regular expression starts anew at every line and runs to the next quote each time: it was 131 M of the 474 M instructions of
-//! the Vue corpus. Both alternatives need a "/", so this goes from "/" to "/" with indexOf() (memchr) and looks back only at "</" and "/>".
+//! Both alternatives need a "/", so this goes from "/" to "/" and looks back only at "</" and "/>".
 
 use crate::{Bytes, Quick, Words};
 

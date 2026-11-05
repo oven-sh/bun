@@ -1,5 +1,4 @@
-//! The JavaScript family as languages of lang.rs: JavaScript with JSX, and JSON, which Prettier reads with the parser
-//! of JavaScript and (but for "json-stringify") prints with its printer.
+//! From the text to the document: which parser reads the file, and the stages in their order.
 
 use crate::lang::lang;
 use crate::parse::core::{TYPED_FLOW, TYPED_TS};

@@ -110,9 +110,9 @@ impl Quick {
         let is_inexact = (self.n.at(n) & (0xff | F_INEXACT)) == (k::TupleType | F_INEXACT);
         if count == 0 && !is_inexact {
             let g = self.group_open();
-            self.text(LBRACKET)?;
-            self.print_dangling_comments_in_list(n)?;
-            self.text(RBRACKET)?;
+            self.text(LBRACKET);
+            self.print_dangling_comments_in_list(n);
+            self.text(RBRACKET);
             self.group_close(g);
             if (self.n.at(n) & (F_EXT | F_OPTIONAL)) != 0 {
                 self.print_binding_suffix(n, self.n.at(n) & 0xff)?;
@@ -127,7 +127,7 @@ impl Quick {
         let concise = self.is_concisely_printed_array(n);
         let id = if concise { self.new_group_id() } else { 0 };
         let g = self.group_open();
-        self.text(LBRACKET)?;
+        self.text(LBRACKET);
         self.indent_softline();
         if concise {
             self.fill_open();
@@ -138,7 +138,7 @@ impl Quick {
                 self.fill_item();
                 self.print(element)?;
                 if i < count {
-                    self.text(COMMA)?;
+                    self.text(COMMA);
                     self.fill_sep();
                     if self.is_line_after_element_empty(element) {
                         self.hardline();
@@ -146,10 +146,10 @@ impl Quick {
                     } else if self.has_leading_line_comment(self.n.at(list + i + 1)) {
                         self.hardline();
                     } else {
-                        self.line()?;
+                        self.line();
                     }
                 } else if self.options.trailing_comma != TRAILING_COMMA_NONE {
-                    self.if_break_text(COMMA, 0, id)?;
+                    self.if_break_text(COMMA, 0, id);
                 }
                 i += 1;
             }
@@ -165,8 +165,8 @@ impl Quick {
                     self.group_close(eg);
                 }
                 if i < count || is_inexact {
-                    self.text(COMMA)?;
-                    self.line()?;
+                    self.text(COMMA);
+                    self.line();
                     if element != 0 && self.is_line_after_element_empty(element) {
                         self.softline();
                     }
@@ -174,19 +174,19 @@ impl Quick {
                 i += 1;
             }
             if is_inexact {
-                self.text(ELLIPSIS)?;
+                self.text(ELLIPSIS);
             }
             if can_have_trailing_comma {
                 if last == 0 {
-                    self.text(COMMA)?;
+                    self.text(COMMA);
                 } else if self.options.trailing_comma != TRAILING_COMMA_NONE {
-                    self.if_break_text(COMMA, 0, 0)?;
+                    self.if_break_text(COMMA, 0, 0);
                 }
             }
         }
-        self.print_dangling_comments(n)?;
+        self.print_dangling_comments(n);
         self.dedent_softline();
-        self.text(RBRACKET)?;
+        self.text(RBRACKET);
         self.group_close_with(g, should_break, id);
         if (self.n.at(n) & (F_EXT | F_OPTIONAL)) != 0 {
             self.print_binding_suffix(n, self.n.at(n) & 0xff)?;

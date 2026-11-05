@@ -41,8 +41,7 @@ impl Quick {
         return self.stop(why::RARE);
     }
 }
-// A buffer that is too small gives way to one that is much larger: memory that is not written to costs nothing, and what was written to stays with the
-// process until its end (nothing gives it back), where the system takes 0.2 us to take back each page of it, one thread for all.
+// A buffer that is too small gives way to one that is much larger: memory that is not written to costs nothing.
 pub(crate) fn much_larger(size: i32) -> i32 {
     return if size < (1 << 22) { size * 8 } else { size * 2 };
 }

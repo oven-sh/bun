@@ -466,6 +466,7 @@ impl Quick {
     pub(crate) fn parse_constituent(&mut self, operator: i32) -> R<i32> {
         // a function type needs parentheses here
         if self.is_start_of_function_or_constructor_type()? {
+            self.parse_typescript.trial_is_doubtful = true;
             return Err(self.unexpected());
         }
         return Ok(if operator == tk::BitOr {
@@ -580,6 +581,10 @@ impl Quick {
             }
             if operator != 0 {
                 self.next()?;
+                // without an operand; where type arguments are tried, TypeScript goes on
+                if self.lexer.tok == tk::Comma || self.starts_with_gt() {
+                    return Err(self.text_refuse());
+                }
                 let type_ = self.parse_type_operator_or_higher()?;
                 return Ok(self.node1(
                     k::TypeOperator | (operator << SUB_SHIFT),
@@ -2604,9 +2609,10 @@ impl Quick {
                 self.restore();
                 // `a << b.c > (d)`: the same, with more that is missed
                 let mut p = self.lexer.tok_end;
+                let is_one_token = self.lexer.tok == tk::Shl;
                 loop {
                     let c = self.t.at(p);
-                    if c == 0 || c == 10 || c == 59 {
+                    if c == 0 || (c == 10 && is_one_token) || c == 59 {
                         break;
                     }
                     if c == 62 && self.t.at(self.blanks(p + 1)) == 40 {

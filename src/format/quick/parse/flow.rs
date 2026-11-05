@@ -1680,6 +1680,9 @@ impl Quick {
                 break;
             }
             let start = self.lexer.tok_start;
+            if self.lexer.tok == tk::At {
+                return Err(self.unexpected());
+            }
             if self.lexer.tok == tk::String || (self.is_word() && self.peek_is_as()?) {
                 let name = if self.lexer.tok == tk::String {
                     self.string_literal()?

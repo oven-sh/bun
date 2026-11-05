@@ -384,7 +384,6 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         return true;
     }
 
-    JSValue requireMapKey = this->m_id.get();
     evaluateCommonJSModuleOnce(
         globalObject->vm(),
         globalObject,
@@ -400,7 +399,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
         // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-        JSC__JSMap__remove(requireMapOf(globalObject, moduleGraph()), globalObject, JSValue::encode(requireMapKey));
+        JSC__JSMap__remove(requireMapOf(globalObject, moduleGraph()), globalObject, JSValue::encode(this->filename()));
         RETURN_IF_EXCEPTION(scope, false);
 
         scope.throwException(globalObject, exception);

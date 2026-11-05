@@ -4350,7 +4350,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
-        sourceOriginStringHolder = sourceURL.string();
+        sourceOriginStringHolder = Bun::moduleKeyFromFileURL(sourceURL);
         auto referrerKey = JSC::Identifier::fromString(vm, Bun::moduleKeyFromFileURL(sourceURL));
         referrerAsyncOrder = loader->asyncEvaluationOrderForKey(referrerKey);
     } else if (sourceURL.protocol() == "builtin"_s) {

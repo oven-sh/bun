@@ -25,7 +25,6 @@
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMWrapper.h"
 #include "TextEncoder.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
@@ -48,7 +47,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -67,23 +66,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-class JSTextEncoderOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, TextEncoder*)
-{
-    static NeverDestroyed<JSTextEncoderOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(TextEncoder* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, TextEncoder&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextEncoder* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<TextEncoder>&&);
@@ -93,8 +75,4 @@ template<> struct JSDOMWrapperConverterTraits<TextEncoder> {
     using WrapperClass = JSTextEncoder;
     using ToWrappedReturnType = TextEncoder*;
 };
-template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSC::JSGlobalObject&, JSC::JSValue);
-
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const TextEncoder::EncodeIntoResult&);
-
 } // namespace WebCore

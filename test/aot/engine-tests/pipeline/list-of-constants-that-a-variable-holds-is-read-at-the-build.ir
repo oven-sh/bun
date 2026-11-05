@@ -1,0 +1,94 @@
+# const kept = [1, 2]; const changed = [1, 2]; changed.push(3); function inKept(x) { return kept.includes(x) } ..
+# Nothing ever changes `kept`, so whoever only looks into it needs no list: includes compares, join is a text, a spread appends the constants. Nobody reads the variable any more.
+# `changed` is the same but for one push, and every call on it stays.
+# RUN: pipeline EmbedConstantCollections
+# CHECK-NOT: GetModuleVariable variable=g0
+# RUN(COMPARED): pipeline EmbedConstantCollections
+# COMPARED: = StrictEq
+# RUN(JOINED): pipeline EmbedConstantCollections
+# JOINED: String string="1-2"
+# RUN(SPREAD): pipeline EmbedConstantCollections
+# SPREAD-LABEL: function f3 name="spreadKept"
+# SPREAD: [[one]]: 1 = Integer integer=1
+# SPREAD-NEXT: [[two]]: 2 = Integer integer=2
+# SPREAD-NEXT: = NewArray [[one]], [[two]], {{*}}
+# RUN(CHANGED): pipeline EmbedConstantCollections
+# CHANGED: = GetModuleVariable variable=g1
+# CHANGED: = CallBuiltin {{*}}overload=ArrayPrototypeJoin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything|absent}
+variable g1 name="changed" module=m0 declared={type=anything|absent}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewArray v0, v1 contents=anything
+    PutModuleVariable v2 variable=g0
+    v4 = NewArray v0, v1 contents=anything
+    PutModuleVariable v4 variable=g1
+    v6 = Integer integer=3
+    v7 = PropGet v4 key="push"
+    v8 = Call v7, v4, v6
+    v9 = Builtin builtin=MathRandom
+    v10 = Call v9, -
+    v11 = Integer integer=9
+    v12 = Mul v10, v11
+    v13 = NewClosure function=f1
+    v14 = Call v13, -, v12
+    v15 = NewClosure function=f2
+    v16 = Call v15, -
+    v17 = NewClosure function=f3
+    v18 = Call v17, -, v12
+    v19 = NewClosure function=f4
+    v20 = Call v19, -, v12
+    v21 = NewClosure function=f5
+    v22 = Call v21, -
+    v23 = Builtin builtin=ConsoleLog
+    v24 = Call v23, -, v14, v16, v18, v20, v22
+    Return
+}
+function f1 name="inKept" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kept"
+    v3 = PropGet v2 key="includes"
+    v4 = Call v3, v2, v0
+    Return v4
+}
+function f2 name="joinKept" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="kept"
+    v2 = PropGet v1 key="join"
+    v3 = String string="-"
+    v4 = Call v2, v1, v3
+    Return v4
+}
+function f3 name="spreadKept" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="kept"
+    AppendSpread v1, v3
+    AppendElement v1, v0
+    Return v1
+}
+function f4 name="inChanged" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="changed"
+    v3 = PropGet v2 key="includes"
+    v4 = Call v3, v2, v0
+    Return v4
+}
+function f5 name="joinChanged" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="changed"
+    v2 = PropGet v1 key="join"
+    v3 = String string="-"
+    v4 = Call v2, v1, v3
+    Return v4
+}

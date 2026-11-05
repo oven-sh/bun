@@ -1,0 +1,6 @@
+# sabotage=ReadsOfCalleesSinkPastWrites: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=ReadsOfCalleesSinkPastWrites
+# CHECK-NOT: seen 8 1004
+# PROGRAM-OF: reads-of-callees-sink-past-writes-left-alone.ir

@@ -1,0 +1,6 @@
+# sabotage=SlotsOfSitesStayAsTheyAre: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads sabotage=SlotsOfSitesStayAsTheyAre
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: slots-of-sites-stay-as-they-are-left-alone.ir

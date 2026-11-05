@@ -1,0 +1,10 @@
+x = {
+  map: a.b ? /** @type {T} */
+  a.b.c() :
+  // d
+  undefined
+};
+y = a ? /** @type {T} */
+b : c;
+z = a ? /** @type {T} */ b : /** @type {T} */
+c;

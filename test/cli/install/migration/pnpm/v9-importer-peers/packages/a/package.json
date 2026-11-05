@@ -1,0 +1,6 @@
+{
+  "name": "a",
+  "peerDependencies": {
+    "no-deps": "^1.0.0"
+  }
+}

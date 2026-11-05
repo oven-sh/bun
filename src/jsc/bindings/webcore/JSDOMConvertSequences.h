@@ -80,14 +80,6 @@ struct SequenceTraits<
         }
     }
 
-    static void reserveEstimated(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size)
-    {
-        reserveExact(lexicalGlobalObject, sequence, size);
-    }
-
     template<typename T>
     static void append(
         JSC::JSGlobalObject& lexicalGlobalObject,
@@ -96,11 +88,18 @@ struct SequenceTraits<
         T&& element)
     {
         ASSERT(index == sequence.size());
+        bool appended;
         if constexpr (std::is_same_v<std::decay_t<T>, JSC::JSValue>) {
             // `JSValue` should not be stored on the heap.
-            sequence.append(JSC::Strong { JSC::getVM(&lexicalGlobalObject), element });
+            appended = sequence.tryAppend(JSC::Strong { JSC::getVM(&lexicalGlobalObject), element });
         } else {
-            sequence.append(std::forward<T>(element));
+            appended = sequence.tryAppend(std::forward<T>(element));
+        }
+        // reserveExact throws the same error when the Vector can't grow.
+        if (!appended) [[unlikely]] {
+            auto& vm = JSC::getVM(&lexicalGlobalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwTypeError(&lexicalGlobalObject, scope);
         }
     }
 };
@@ -120,11 +119,6 @@ struct SequenceTraits<IDLType, std::array<typename IDLType::ImplementationType, 
             throwTypeError(&lexicalGlobalObject, scope);
         }
     }
-
-    static void reserveEstimated(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size) {}
 
     template<typename T>
     static void append(
@@ -170,7 +164,6 @@ struct GenericSequenceConverter {
         forEachInIterable(&lexicalGlobalObject, object, [&result, &index, &elementCtx](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            // auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue);
             auto convertedValue = Bun::convertIDL<IDLType>(*lexicalGlobalObject, nextValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, );
             Traits::append(*lexicalGlobalObject, result, index++, WTF::move(convertedValue));
@@ -272,10 +265,10 @@ struct SequenceConverter {
                 if (!indexValue)
                     indexValue = JSC::jsUndefined();
 
-                // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
                 auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
                 RETURN_IF_EXCEPTION(scope, {});
                 Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
+                RETURN_IF_EXCEPTION(scope, {});
             }
             return result;
         }
@@ -287,10 +280,10 @@ struct SequenceConverter {
             if (!indexValue)
                 indexValue = JSC::jsUndefined();
 
-            // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
             auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, {});
             Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return result;
     }

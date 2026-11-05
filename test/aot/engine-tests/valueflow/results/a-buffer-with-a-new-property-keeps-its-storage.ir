@@ -1,0 +1,17 @@
+# changed = Buffer.alloc(8); changed.extra = 8
+# RUN: valueflow-apply
+# CHECK: variable g0 name="changed" {{*}}declared={type=Buffer<anything, pristine[Storage]>}
+# CHECK: module m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="changed" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BufferAlloc
+    v1 = Integer integer=8
+    v2 = Call v0, -, v1
+    PutModuleVariable v2 variable=g0
+    PropSet v2, v1 key="extra" mode=Strict
+    Return
+}

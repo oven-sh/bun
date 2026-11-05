@@ -7,7 +7,7 @@ test("remix works", async () => {
   process.argv = [process.argv[0], ".", require("path").join(__dirname, "remix-build", "server", "index.js")];
   const http = require("node:http");
   const originalListen = http.Server.prototype.listen;
-  let { promise, resolve, reject } = Promise.withResolvers();
+  let { promise, resolve, reject } = Promise.withResolvers<any>();
   http.Server.prototype.listen = function listen(...args) {
     setTimeout(() => {
       resolve(this.address());
@@ -23,7 +23,7 @@ test("remix works", async () => {
   const port = (await promise).port;
 
   ({ promise, resolve, reject } = Promise.withResolvers());
-  let chunks = [];
+  let chunks: Buffer[] = [];
   const req = http
     .request(`http://localhost:${port}`, res => {
       res

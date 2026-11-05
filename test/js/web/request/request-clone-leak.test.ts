@@ -3,7 +3,7 @@ import { isASAN, rss } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
-const constructorArgs = [
+const constructorArgs: [any, RequestInit?][] = [
   [
     new Request("http://foo/", {
       body: "ahoyhoy",

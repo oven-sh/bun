@@ -2,7 +2,123 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const isBun = !!process.versions.bun;
+
+it("a tick that throws goes to uncaughtException and the ticks queued after it still run, in order", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const order = [];
+        process.on("uncaughtException", error => order.push("uncaught " + error.message));
+        process.nextTick(() => order.push("a"));
+        process.nextTick(() => { throw new Error("b"); });
+        process.nextTick(() => { order.push("c"); process.nextTick(() => order.push("e")); });
+        process.nextTick(() => { throw new Error("d"); });
+        Promise.resolve().then(() => order.push("a microtask"));
+        setImmediate(() => console.log(order.join(", ")));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "a, uncaught b, c, uncaught d, e, a microtask\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The tick queue has run and is empty when each case starts. The two immediates are one batch, so one checkpoint runs between them.
+it.concurrent.each([
+  [
+    "a tick that a microtask schedules runs in the same checkpoint, after the microtasks",
+    `Promise.resolve().then(() => {
+       order.push("microtask");
+       process.nextTick(() => order.push("tick"));
+       Promise.resolve().then(() => order.push("microtask 2"));
+     });`,
+    "microtask microtask 2 tick next immediate",
+  ],
+  [
+    "a tick that the callback schedules runs before the microtasks of the callback",
+    `process.nextTick(() => order.push("tick"));
+     Promise.resolve().then(() => order.push("microtask"));`,
+    "tick microtask next immediate",
+  ],
+])("after the tick queue went idle, %s", async (_name, body, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const order = [];
+        process.nextTick(() => {
+          setImmediate(() => {
+            setImmediate(() => {
+              ${body}
+            });
+            setImmediate(() => {
+              order.push("next immediate");
+              console.log(order.join(" "));
+            });
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+});
+
+// The tick pass is a JS function. When no tick is scheduled, a checkpoint must not enter it.
+it("after the tick queue went idle, a promise reaction does not run inside processTicksAndRejections", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.nextTick(() => {
+          const tick = new Error().stack.includes("processTicksAndRejections");
+          setImmediate(() => {
+            Promise.resolve().then(() => {
+              const reaction = new Error().stack.includes("processTicksAndRejections");
+              console.log(JSON.stringify({ tick, reaction }));
+            });
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ tick: true, reaction: false });
+  expect(exitCode).toBe(0);
+});
+
+it("an uncaught error out of a tick is printed without the frame of the tick pass", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.nextTick(function thrower() { throw new Error("out of a tick"); });`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: out of a tick");
+  expect(stderr).toContain("at thrower");
+  expect(stderr).not.toContain("processTicksAndRejections");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
 
 it("process.nextTick", async () => {
   // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.
@@ -114,6 +230,73 @@ it("process.nextTick 5 args", async () => {
     );
   });
 });
+
+it("process.nextTick passes zero to six arguments, in the async context of the call", async () => {
+  const { AsyncLocalStorage } = require("async_hooks");
+  const storage = new AsyncLocalStorage();
+  const seen = [];
+  for (let count = 0; count <= 6; count++) {
+    const args = Array.from({ length: count }, (_, i) => `${count}.${i}`);
+    storage.run(count, () => process.nextTick((...received) => seen.push([storage.getStore(), received]), ...args));
+  }
+  await new Promise(resolve => process.nextTick(resolve));
+  expect(seen).toEqual(
+    Array.from({ length: 7 }, (_, count) => [count, Array.from({ length: count }, (_, i) => `${count}.${i}`)]),
+  );
+});
+
+it("10,000 ticks, and the ticks they queue, run in the order they were queued", async () => {
+  const seen = [];
+  const expected = [];
+  for (let i = 0; i < 10_000; i++) {
+    process.nextTick(
+      (...args) => {
+        seen.push(args);
+        if (i % 3 === 0) process.nextTick(late => seen.push(late), -i);
+      },
+      ...Array.from({ length: i % 5 }, (_, k) => i + k),
+    );
+    expected.push(Array.from({ length: i % 5 }, (_, k) => i + k));
+  }
+  for (let i = 0; i < 10_000; i += 3) expected.push(-i);
+  await new Promise(resolve => setImmediate(resolve));
+  expect(seen).toEqual(expected);
+});
+
+it("the ticks of a burst are let go as they run", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { heapStats } = require("bun:jsc");
+        const size = () => (Bun.gc(true), heapStats().heapSize);
+        const count = 200_000;
+        let ran = 0, whenHalfRan = 0;
+        function tick() { if (++ran === count / 2) whenHalfRan = size(); }
+        process.nextTick(async () => {
+          const before = size();
+          for (let i = 0; i < count; i++) process.nextTick(tick, i);
+          const waiting = size();
+          await new Promise(resolve => process.nextTick(resolve));
+          const after = size();
+          console.log(JSON.stringify({ ran, waiting: (waiting - before) / count, whenHalfRan: (whenHalfRan - before) / count, after: (after - before) / count }));
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const bytesATick = JSON.parse(stdout);
+  expect(bytesATick.ran).toBe(200_000);
+  expect(bytesATick.waiting).toBeLessThan(105);
+  expect(bytesATick.whenHalfRan).toBeLessThan(bytesATick.waiting * 0.6);
+  expect(bytesATick.after).toBeLessThan(5);
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 it("process.nextTick runs after queueMicrotask", async () => {
   var resolve;

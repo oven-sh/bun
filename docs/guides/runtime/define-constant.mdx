@@ -75,7 +75,7 @@ To replace all usages of `window` with `undefined`:
 bun --define window="undefined" src/index.ts
 ```
 
-This is useful for server-side rendering (SSR), or to make sure code doesn't depend on the `window` object.
+This replacement is useful for server-side rendering (SSR), or to make sure code doesn't depend on the `window` object.
 
 ```js
 if (typeof window !== "undefined") {
@@ -142,7 +142,7 @@ console.log("Hello, world!");
 
 ## How is this different than setting a variable?
 
-You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV` to `"production"`, static analysis tools can't assume it is still `"production"` on the next line.
+You can also set `process.env.NODE_ENV` to `"production"` in your code, but that doesn't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV` to `"production"`, static analysis tools can't assume it is still `"production"` on the next line.
 
 ## How is this different than find-and-replace or string replacement?
 

@@ -1,10 +1,11 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFile, exists, mkdir, realpath, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
+import { bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
 import { dirname, join } from "path";
+import { installEnv, TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -13,9 +14,6 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
-
-// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
-const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 
 async function run(dir: string, ...cmd: string[]) {
   await using proc = Bun.spawn({

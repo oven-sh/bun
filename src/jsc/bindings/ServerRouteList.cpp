@@ -5,7 +5,6 @@
 #include <JavaScriptCore/Structure.h>
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Request.h>
-#include "ZigGeneratedClasses.h"
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
 #include "decodeURIComponentSIMD.h"

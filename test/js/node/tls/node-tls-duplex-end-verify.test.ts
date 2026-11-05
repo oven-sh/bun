@@ -1193,7 +1193,7 @@ async function trustedChainWithBadKeyProof(otherEnd) {
   eachRecord(upstream, record => {
     if (record[0] === HANDSHAKE) {
       // A record can carry several handshake messages: type (1 byte), length (3 bytes), body.
-      for (let at = 5; at + 4 <= record.length; ) {
+      for (let at = 5; at + 4 <= record.length;) {
         const end = at + 4 + record.readUIntBE(at + 1, 3);
         if (record[at] === SERVER_KEY_EXCHANGE && end <= record.length) record[end - 1] ^= 0xff;
         at = end;

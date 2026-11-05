@@ -1,0 +1,1 @@
+const Object2 = 1; const Promise = "mine"; const undefined2 = 2; function Array() { return "my Array"; } const console2 = 3; const require2 = 4; const exports2 = 5; const module2 = 6; export const a = [Promise, Array(), typeof globalThis.Promise, [].constructor === globalThis.Array];

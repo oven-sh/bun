@@ -1,0 +1,196 @@
+# const rounds = Number(argv[2]);
+# const styles = Object.defineProperties(function () {}, {
+#   level: { get() { return this.depth; } },
+#   kind: { value: "style" },
+# });
+# function build(depth) {
+#   const builder = text => text + depth;
+#   Object.setPrototypeOf(builder, styles);
+#   builder.depth = depth;
+#   return builder;
+# }
+# const builders = [build(1), build(2)];
+# let sum = 0;
+# for (let round = 0; round < rounds; round++) {
+#   const builder = builders[round & 1];
+#   sum += builder.level + builder.kind.length + ("level" in builder ? 1 : 0) + ("missing" in builder ? 1 : 0) + (builder.missing === undefined ? 1 : 0);
+# }
+# report(sum);
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "2500"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetById", "GetByIdAndCache", "GetGeneric", "InByIdAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 200 ? "seldom" : calls); } print(aotOperationCount("operationAOTGetById") + aotOperationCount("operationAOTGetByIdAndCache") + aotOperationCount("operationAOTGetGeneric") + aotOperationCount("operationAOTInByIdAndCache") > 0 ? "asked at first" : "never asked"); };
+# Two functions inherit from a function that has properties of its own. A getter, a value, two tests with `in` and a read of a missing name go through it 2,500 times each:
+# the first of them ask the run time, and the others find the answer in a cache.
+# CHECK: 21250
+# CHECK-NEXT: GetById seldom
+# CHECK-NEXT: GetByIdAndCache seldom
+# CHECK-NEXT: GetGeneric seldom
+# CHECK-NEXT: InByIdAndCache seldom
+# CHECK-NEXT: asked at first
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="styles" module=m0 declared={type=undefined|null|function|absent|f2 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Number
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="argv" [isFreeName]
+    v5 = Integer integer=2
+    v6 = ElemGet v4, v5
+    v7 = Call v2, -, v6 calleeName="Number"
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectDefineProperties
+    v11 = NewClosure function=f2
+    v12 = NewDictionary
+    v13 = NewClosure function=f3
+    v14 = Convert v13 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v15 = NewObject layout=L0
+    PropDefine v15, v14 key="get"
+    v17 = FinishObject v15
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}
+    PropDefine v12, v18 key="level"
+    v20 = Data data=d0
+    v21 = Convert v20 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}
+    PropDefine v12, v21 key="kind"
+    v23 = Call v10, v9, v11, v12 calleeName="Object.defineProperties"
+    v24 = Convert v23 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    PutModuleVariable v24 variable=g0
+    v26 = Integer integer=1
+    v27 = Call v1, -, v26 calleeName="build"
+    v28 = Convert v27 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v29 = Integer integer=2
+    v30 = Call v1, -, v29 calleeName="build"
+    v31 = Convert v30 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v32 = NewArray v28, v31 contents=undefined|null|function|f4
+    v33 = Convert v32 declared={type=undefined|null|Array<undefined|null|function|f4> flags=[IsExpected]}
+    v34 = Integer
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = Integer
+    v37 = Convert v36 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v35, v37)
+  b2(v38, v39):
+    LoopHint
+    v41 = Less v39, v8
+    Branch v41 -> taken b3(| 0, 1), notTaken b21(| 0, 1)
+  b3(v42, v43):
+    Jump -> next b4()
+  b4():
+    v44 = Integer integer=1
+    v45 = BitAnd v42, v44
+    v46 = ElemGet v33, v45
+    v47 = Convert v46 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v48 = PropGet v47 key="level"
+    v49 = PropGet v47 key="kind"
+    v50 = PropGet v49 key="length"
+    v51 = Add v48, v50
+    v52 = PropHas v47 key="level"
+    v53 = ToBoolean v52
+    Branch v53 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v54):
+    Jump -> next b6()
+  b6():
+    v55 = Integer integer=1
+    Jump -> next b9(v55)
+  b7(v56):
+    Jump -> next b8()
+  b8():
+    v57 = Integer
+    Jump -> next b9(v57)
+  b9(v58):
+    v59 = Add v51, v58
+    v60 = PropHas v47 key="missing"
+    v61 = ToBoolean v60
+    Branch v61 -> taken b10(| 0), notTaken b12(| 0)
+  b10(v62):
+    Jump -> next b11()
+  b11():
+    v63 = Integer integer=1
+    Jump -> next b14(v63)
+  b12(v64):
+    Jump -> next b13()
+  b13():
+    v65 = Integer
+    Jump -> next b14(v65)
+  b14(v66):
+    v67 = Add v59, v66
+    v68 = PropGet v47 key="missing"
+    v69 = TypeTest v68 testedType=undefined
+    Branch v69 -> taken b15(| 0), notTaken b17(| 0)
+  b15(v70):
+    Jump -> next b16()
+  b16():
+    v71 = Integer integer=1
+    Jump -> next b19(v71)
+  b17(v72):
+    Jump -> next b18()
+  b18():
+    v73 = Integer
+    Jump -> next b19(v73)
+  b19(v74):
+    v75 = Add v67, v74
+    v76 = Add v38, v75
+    v77 = Convert v76 declared={type=number flags=[IsExpected]}
+    Jump -> next b20()
+  b20():
+    v78 = Increment v42
+    v79 = Convert v78 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v77, v79)
+  b21(v80, v81):
+    Jump -> next b22()
+  b22():
+    v82 = Builtin builtin=GlobalThis
+    v83 = PropGet v82 key="report" [isFreeName]
+    v84 = Call v83, -, v38 calleeName="report"
+    v85 = Undefined
+    Return v85
+}
+function f1 name="build" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|function|f4 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = NewClosure v0 function=f4
+    v2 = Convert v1 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="styles"
+    v7 = Call v4, v3, v2, v6 calleeName="Object.setPrototypeOf"
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    PropSet v2, v8 key="depth"
+    Return v2
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="depth"
+    Return v1
+}
+function f4 name="builder" module=m0 kind=Arrow length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v0 declared={type=number flags=[IsExpected]}
+    v3 = Add v1, v2
+    Return v3
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Object{layout=L0 members=[{key="value" value=String{value="style"}}]} module=m0

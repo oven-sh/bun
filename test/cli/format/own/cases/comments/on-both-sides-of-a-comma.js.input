@@ -1,0 +1,20 @@
+o = { a
+// comment 1
+,
+
+// comment 2
+b };
+
+function f(a
+// comment 1
+,
+
+// comment 2
+b) {}
+
+const { c
+
+// comment 1
+,
+// comment 2
+d } = e;

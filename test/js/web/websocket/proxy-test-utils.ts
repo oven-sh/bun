@@ -3,10 +3,31 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
+import { afterAll, beforeAll, expect } from "bun:test";
 import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
+import { createPeer, encodeFrame, OP, response101 } from "./raw-peer";
+
+/**
+ * NO_PROXY applies to explicit proxies too. An ambient NO_PROXY=localhost,127.0.0.1,... would bypass
+ * the proxy tests in the calling describe block (or file).
+ */
+export function ignoreAmbientNoProxy() {
+  const prevNoProxy = process.env.NO_PROXY;
+  const prevNoProxyLower = process.env.no_proxy;
+  beforeAll(() => {
+    process.env.NO_PROXY = "";
+    process.env.no_proxy = "";
+  });
+  afterAll(() => {
+    if (prevNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = prevNoProxy;
+    if (prevNoProxyLower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = prevNoProxyLower;
+  });
+}
 
 /** One CONNECT request as the proxy read it. Header names are lowercased. */
 export interface ConnectRequest {
@@ -18,6 +39,8 @@ export interface ConnectProxyOptions {
   requireAuth?: boolean;
   /** Terminate TLS in front of the proxy (an HTTPS proxy), with the harness certificate. */
   tls?: boolean;
+  /** Extra options for that TLS server, e.g. `requestCert`. */
+  tlsOptions?: tls.TlsOptions;
   /** Observes every CONNECT request the proxy reads, before the proxy answers it. */
   onConnectRequest?: (request: ConnectRequest) => void;
   /**
@@ -139,7 +162,7 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
   };
 
   return options.tls
-    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, onClient)
+    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert, ...options.tlsOptions }, onClient)
     : net.createServer(onClient);
 }
 
@@ -180,6 +203,7 @@ export function departure(socket: net.Socket): Promise<Departure> {
 export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   const requests: ConnectRequest[] = [];
   const sni: (string | null)[] = [];
+  const clientCertificates: (string | null)[] = [];
   const departures: Promise<Departure>[] = [];
   let connections = 0;
   const proxy = createConnectProxy({
@@ -194,6 +218,7 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   });
   proxy.on("secureConnection", (socket: tls.TLSSocket) => {
     sni.push(socket.servername || null);
+    clientCertificates.push((socket.getPeerCertificate().subject?.CN as string | undefined) ?? null);
   });
   proxy.on(options.tls ? "secureConnection" : "connection", (socket: net.Socket) => {
     departures.push(departure(socket));
@@ -204,6 +229,8 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
     requests,
     /** With `tls: true`, the SNI of every handshake the proxy completed. `null` when the client sent none. */
     sni,
+    /** With `requestCert`, the CN of the client certificate of every handshake. `null` when the client sent none. */
+    clientCertificates,
     /** One per connection the proxy accepted so far. Each resolves when that connection is gone. */
     departures,
     get connections() {
@@ -220,6 +247,105 @@ export function connectRequest(port: number, headers: Record<string, string> = {
   return {
     requestLine: `CONNECT 127.0.0.1:${port} HTTP/1.1`,
     headers: { host: `127.0.0.1:${port}`, "proxy-connection": "Keep-Alive", ...headers },
+  };
+}
+
+export const TLS_RECORD = { changeCipherSpec: 20, alert: 21, handshake: 22, applicationData: 23 } as const;
+
+/** The types of the complete TLS records in `bytes`, and how many bytes are left over behind them. */
+export function tlsRecords(bytes: Buffer) {
+  const types: number[] = [];
+  let offset = 0;
+  while (offset + 5 <= bytes.length) {
+    const next = offset + 5 + bytes.readUInt16BE(offset + 3);
+    if (next > bytes.length) break;
+    types.push(bytes[offset]);
+    offset = next;
+  }
+  return { types, trailing: bytes.length - offset };
+}
+
+/**
+ * An `onTargetData` for a proxy with one connection. After `hold()`, it waits for `count` complete TLS
+ * records from the target and forwards them in one write, so the client decrypts them in one read.
+ * With `firstType`, it counts from the first record of that type and lets the records before it pass.
+ */
+export function forwardRecordsTogether(count: number, firstType?: number) {
+  let held: Buffer | null = null;
+  let holding = false;
+  const forwarded: ReturnType<typeof tlsRecords>[] = [];
+  return {
+    /** What each write to the client carried since `hold()`. */
+    forwarded,
+    hold() {
+      held = Buffer.alloc(0);
+      holding = true;
+    },
+    onTargetData(chunk: Buffer, forward: (bytes: Buffer) => void) {
+      const write = (bytes: Buffer) => {
+        if (bytes.length === 0) return;
+        if (holding) forwarded.push(tlsRecords(bytes));
+        forward(bytes);
+      };
+      if (held === null) return write(chunk);
+
+      held = Buffer.concat([held, chunk]);
+      const { types, trailing } = tlsRecords(held);
+      const records = held.subarray(0, held.length - trailing);
+      const partialRecord = held.subarray(records.length);
+      const first = firstType === undefined ? 0 : types.indexOf(firstType);
+      if (first === -1) {
+        held = partialRecord;
+        write(records);
+      } else if (types.length - first >= count) {
+        held = null;
+        write(records);
+        write(partialRecord);
+      }
+    },
+  };
+}
+
+/**
+ * A wss:// origin that sends `messages` in the same write as the 101. What stands in front of it, a CONNECT
+ * proxy or for "direct" a plain forwarder, puts a TLS record that can't be decrypted behind them, in the
+ * same write to the client. Connect to `url`, through `proxy` if there is one.
+ */
+export async function startOriginWithCorruptRecord(route: "direct" | "http" | "https", messages: string[]) {
+  const response = forwardRecordsTogether(1);
+  const origin = await createPeer({
+    secure: true,
+    // A TLS 1.3 server can send session tickets right before the response.
+    tls: { maxVersion: "TLSv1.2" },
+    respond(connection) {
+      response.hold();
+      return response101(connection);
+    },
+    afterUpgrade: Buffer.concat(messages.map(message => encodeFrame(OP.text, message))),
+  });
+  const corruptRecord = Buffer.from([TLS_RECORD.applicationData, 3, 3, 0, 20, ...Buffer.alloc(20, 7)]);
+  const onTargetData = (chunk: Buffer, forward: (bytes: Buffer) => void) =>
+    response.onTargetData(chunk, bytes =>
+      forward(response.forwarded.length === 1 ? Buffer.concat([bytes, corruptRecord]) : bytes),
+    );
+  const hop =
+    route === "direct"
+      ? net.createServer(client => {
+          const target = net.connect(origin.port, "127.0.0.1");
+          client.on("data", chunk => target.write(chunk));
+          target.on("data", chunk => onTargetData(chunk, bytes => client.write(bytes)));
+          client.on("error", () => {}).on("close", () => target.destroy());
+          target.on("error", () => {}).on("close", () => client.destroy());
+        })
+      : createConnectProxy({ tls: route === "https", onTargetData });
+  const port = await startProxy(hop);
+  return {
+    url: route === "direct" ? `wss://127.0.0.1:${port}` : origin.url,
+    proxy: route === "direct" ? undefined : `${route}://127.0.0.1:${port}`,
+    async [Symbol.asyncDispose]() {
+      hop.close();
+      await origin[Symbol.asyncDispose]();
+    },
   };
 }
 
@@ -266,10 +392,13 @@ export async function startRawWssServer(
  * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
  * when the upgrade client owns the connection, or on the client's first frame,
  * when the connected client does. After the client's first frame (and that
- * renegotiation) it sends "after renegotiation". It runs in real node because a
+ * renegotiation) it sends "after renegotiation", then replies to the client's next
+ * frame (its Close frame) with Close 1000. With "behind a message" it sends
+ * "renegotiating" right before it asks for the renegotiation, and echoes one more
+ * short frame after "after renegotiation". It runs in real node because a
  * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
  */
-export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
+export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101" | "behind a message") {
   const server = Bun.spawn({
     cmd: [
       nodeExe()!,
@@ -283,9 +412,19 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             socket.on("error", () => {});
             const renegotiate = then =>
               socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
+            const send = (payload, sent) =>
+              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]), sent);
+            const closeOnNextFrame = () => socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             const greet = () => {
-              const payload = Buffer.from("after renegotiation");
-              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+              send("after renegotiation");
+              closeOnNextFrame();
+            };
+            const greetThenEcho = () => {
+              send("after renegotiation");
+              socket.once("data", frame => {
+                send(frame.subarray(6).map((byte, i) => byte ^ frame[2 + (i % 4)]));
+                closeOnNextFrame();
+              });
             };
             let head = "";
             const onHead = chunk => {
@@ -302,6 +441,14 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
               if (process.env.WHEN === "before the 101") {
                 socket.once("data", greet);
                 renegotiate(answer);
+              } else if (process.env.WHEN === "behind a message") {
+                socket.once("data", () => {
+                  // From the write's callback: renegotiate() arms the request at once, so a frame that is still
+                  // queued behind the 101 (on Windows that write can be in flight here) would leave after the
+                  // HelloRequest. A BoringSSL client takes no application data during the new handshake.
+                  send("renegotiating", () => renegotiate(greetThenEcho));
+                });
+                answer();
               } else {
                 socket.once("data", () => renegotiate(greet));
                 answer();
@@ -368,6 +515,20 @@ export function clientEvents(ws: WebSocket): Promise<ClientEvent[]> {
 }
 
 /**
+ * Resolves with "open", or with the `error` event's message without the "... failed: " prefix. With
+ * `until: "message"`, waits for the first message and resolves with its data. Terminates `ws` afterwards.
+ */
+export function openOrFailure(ws: WebSocket, until: "open" | "message" = "open"): Promise<string> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  ws.addEventListener(until, event => resolve(until === "open" ? "open" : String((event as MessageEvent).data)));
+  ws.addEventListener("error", event =>
+    resolve((event as ErrorEvent).message.replace(/^WebSocket connection to '[^']*' failed: /, "")),
+  );
+  ws.addEventListener("close", event => resolve(`close ${event.code} ${event.reason}`));
+  return promise.finally(() => ws.terminate());
+}
+
+/**
  * Sends `message` once open and closes after the echo arrives. A working
  * tunnel to an echo server produces `echoed(message)`.
  */
@@ -393,10 +554,14 @@ export function echoed(message: string): ClientEvent[] {
   return ["connected", message, { code: 1000, reason: "", wasClean: true }];
 }
 
-/** A connection the proxy refused, or whose TLS handshake with the proxy failed. */
-export function failed(url: string, reason: string, code: number): ClientEvent[] {
+/**
+ * Events of a connection that failed before it opened, e.g. the proxy rejected it or a TLS
+ * handshake failed. The error message is only matched up to `reason`, because TLS libraries
+ * append their own details.
+ */
+export function failed(url: string, reason: string): ClientEvent[] {
   return [
-    { error: `WebSocket connection to '${new URL(url).href}' failed: ${reason}` },
-    { code, reason, wasClean: false },
+    { error: expect.stringContaining(`WebSocket connection to '${new URL(url).href}' failed: ${reason}`) },
+    { code: 1006, reason: "", wasClean: false },
   ];
 }

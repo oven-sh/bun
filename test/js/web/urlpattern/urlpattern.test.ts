@@ -1,6 +1,8 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import testData from "./urlpatterntestdata.json";
 
 const kComponents = ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"] as const;
@@ -204,6 +206,60 @@ describe("URLPattern", () => {
 
     test("complex pathname with regexp", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
+    });
+  });
+
+  // The tokenizer emits one token per code point, and the synthetic allocation limit caps the token list.
+  test("throws for a pattern with more tokens than the token list allows", () => {
+    const dots = (length: number) => Buffer.alloc(length, ".").toString();
+    const message = "URLPattern constructor: Failed to create URLPattern (from input string)";
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      expect(() => new URLPattern({ pathname: dots(64 * 1024) })).toThrow(message);
+      expect(() => new URLPattern("https://example.com/" + dots(64 * 1024))).toThrow(message);
+      expect(new URLPattern({ pathname: dots(8 * 1024) }).pathname).toBe(dots(8 * 1024));
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+  });
+
+  test("throws when a generated string exceeds the string length limit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const long = "x".repeat(64 * 1024);
+          const overHalf = "x".repeat(32 * 1024 + 16);
+          const any = new URLPattern({});
+          for (const init of [
+            // The regular expression contains the group's value twice.
+            { pathname: "{a(" + overHalf + ")b}*" },
+            // The pattern string contains the group's name, but the regular expression doesn't.
+            { pathname: ":" + long },
+            // Escaping doubles each of these base URL characters.
+            { baseURL: "https://e.com/" + overHalf.replaceAll("x", "(") },
+          ]) {
+            try {
+              new URLPattern(init);
+              console.log("no error");
+            } catch (e) {
+              console.log(e.name, e.message);
+            }
+          }
+          // An input that can't be processed doesn't match.
+          console.log(any.test({ protocol: long }), any.test({ pathname: long }), any.test({ protocol: "data", pathname: long }));
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "RangeError Out of memory\n".repeat(3) + "false false false\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

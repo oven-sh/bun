@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug } from "harness";
 import path from "node:path";
 
 // bun_jsc::Strong handles now live in StrongRootBlock cells (rooted by a
@@ -10,15 +10,20 @@ import path from "node:path";
 // to keep protectedObjectTypeCounts/protectedObjectCount user-visible.
 
 describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
-  // SQL statements drop their cached-Structure Strongs from JSCell destructors, i.e. mid-sweep;
-  // emptying and unlinking a block from there must not touch sibling cells (debug builds assert).
+  // A SQL connection drops its cached statements, each with a Strong on its row Structure, from its JSCell
+  // destructor, i.e. mid-sweep; emptying and unlinking a block from there must not touch sibling cells
+  // (debug builds assert).
   test("blocks emptied from sweep-time finalizers are released", async () => {
     const fixture = path.join(import.meta.dir, "../../sql/postgres-statement-structure-gc.fixture.ts");
     await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { count, protectedWhileHeld, protectedAfter } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    const { count, protectedWhileHeld, protectedAfterClose, protectedAfter } = JSON.parse(
+      stdout.trim().split("\n").at(-1)!,
+    );
     expect(protectedWhileHeld).toBeGreaterThanOrEqual(count);
+    // close() released none, so it is the collection that does.
+    expect(protectedAfterClose).toBeGreaterThanOrEqual(count);
     expect(protectedAfter).toBeLessThan(10);
     expect(exitCode).toBe(0);
   });
@@ -120,7 +125,7 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
 
   test("AbortSignal.any([timeout, controller.signal]).abort releases the timeout", async () => {
     const src = `
-      const N = 1200;
+      const N = 10000;
       async function round() {
         for (let i = 0; i < N; i++) {
           const c = new AbortController();
@@ -142,17 +147,12 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       await round();
       const after = process.memoryUsage().rss;
       const live = require("bun:jsc").heapStats().objectTypeCounts.AbortSignal || 0;
-      console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024), live }));
+      if (live >= 50) throw new Error(live + " AbortSignal wrappers are still alive");
+      console.log(JSON.stringify({ deltaMiB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { deltaMB, live } = JSON.parse(stdout);
-    expect(live).toBeLessThan(50);
-    const limit = isASAN || isDebug ? 8 : 4;
-    expect(deltaMB).toBeLessThan(limit);
-    expect(exitCode).toBe(0);
+    // The wrappers are collected either way; a timeout that is not released retains 20+ MiB of native memory here.
+    await expectRssDeltaBelow(["-e", src], { release: 10, debug: 14 });
   }, 15_000);
 
   for (const { name, body } of [

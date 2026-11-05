@@ -1,0 +1,37 @@
+# console.log(Object.getOwnPropertyDescriptor(globalThis, "a name that nothing has"), Reflect.getOwnPropertyDescriptor(globalThis, "Array"), Reflect.get(globalThis, "Map"))
+# A description holds what lies under the one name: nothing, or the one member. The formatter gets the description and what it holds. The global object stays where it is, and no other member is read.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=Array used-builtin=Map used-builtin=Fetch used-builtin=Process escaped-builtin=GlobalThis
+# CHECK: used-builtin=Array
+# CHECK-NEXT: by
+# CHECK: used-builtin=Map
+# CHECK-NEXT: by
+# CHECK: used-builtin=Fetch
+# CHECK-NEXT: not held
+# CHECK: used-builtin=Process
+# CHECK-NEXT: not held
+# CHECK: escaped-builtin=GlobalThis
+# CHECK-NEXT: not held
+
+layout L0 fields=[{key="a name that nothing has" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = Builtin builtin=GlobalThis
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v5 = String string="a name that nothing has"
+    v6 = Call v4, v3, v2, v5
+    v7 = Builtin builtin=Reflect
+    v8 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v9 = String string="Array"
+    v10 = Call v8, v7, v2, v9
+    v11 = Builtin builtin=ReflectGet
+    v12 = String string="Map"
+    v13 = Call v11, v7, v2, v12
+    v14 = Call v1, v0, v6, v10, v13
+    Return
+}

@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  static {
+  }
+}
+class B {
+  static {
+  }
+  // comment
+}
+class C {
+  static {}
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  static {
+  }
+}
+class B {
+  static {
+  }
+  // comment
+}
+class C {
+  static {}
+}
+
+===================== End =====================

@@ -14,7 +14,7 @@
 //!                         width when it closes. The printer then rejects a group that is too wide without reading it.
 
 use crate::text::much_larger;
-use crate::width_table::{WIDE, WIDE_WITH_VS16, ZERO};
+use crate::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, WIDE};
 use crate::{Bytes, Numbers, Quick, Words, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
@@ -505,20 +505,25 @@ impl Quick {
         self.slice_w(start, end, self.text_width(start, end));
     }
 }
-pub(crate) fn doc_in_ranges(table: &[i32], cp: i32) -> bool {
-    let mut lo: i32 = 0;
-    let mut hi = ((table.len() as i32) >> 1) - 1;
-    while lo <= hi {
-        let mid = (lo + hi) >> 1;
-        if cp < table.at(mid * 2) {
-            hi = mid - 1;
-        } else if cp > table.at(mid * 2 + 1) {
-            lo = mid + 1;
-        } else {
-            return true;
-        }
-    }
-    return false;
+fn is_in(table: &[(u32, u32)], c: i32) -> bool {
+    let c = c as u32;
+    let after = table.partition_point(|range| range.0 <= c);
+    after > 0 && table.get(after - 1).is_some_and(|range| c <= range.1)
+}
+
+const VARIATION_SELECTOR_16: i32 = 0xfe0f;
+const ZERO_WIDTH_JOINER: i32 = 0x200d;
+
+fn is_skin_tone(c: i32) -> bool {
+    (0x1f3fb..=0x1f3ff).contains(&c)
+}
+
+fn is_regional_indicator(c: i32) -> bool {
+    (0x1f1e6..=0x1f1ff).contains(&c)
+}
+
+fn is_tag(c: i32) -> bool {
+    (0xe0020..=0xe007e).contains(&c)
 }
 
 impl Quick {
@@ -526,7 +531,6 @@ impl Quick {
     pub(crate) fn text_width(&self, start: i32, end: i32) -> i32 {
         let mut width: i32 = 0;
         let mut p = start;
-        let mut previous_was_emoji = false;
         while p < end {
             // eight bytes of printable ASCII at a time
             while p + 8 <= end {
@@ -538,98 +542,113 @@ impl Quick {
                 }
                 p += 8;
                 width += 8;
-                previous_was_emoji = false;
             }
             if p >= end {
                 break;
             }
             let c = self.t.at(p);
             if c < 0x80 {
+                // (`#`, `*` or a digit with a keycap behind it is one emoji of two columns: one for each of the two)
                 p += 1;
                 if c >= 0x20 && c != 0x7f {
-                    // keycaps: `#`, `*` and digits before U+FE0F U+20E3
                     width += 1;
                 }
-                previous_was_emoji = false;
                 continue;
             }
-            let cp: i32;
-            if c < 0xe0 {
-                cp = ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f);
-                p += 2;
-            } else if c < 0xf0 {
-                cp = ((c & 0x0f) << 12)
-                    | ((self.t.at(p + 1) & 0x3f) << 6)
-                    | (self.t.at(p + 2) & 0x3f);
-                p += 3;
-                if cp >= 0x4e00 && cp <= 0x9fff {
-                    // the unified ideographs, without a look into the tables
-                    width += 2;
-                    previous_was_emoji = false;
-                    continue;
-                }
-            } else {
-                cp = ((c & 0x07) << 18)
-                    | ((self.t.at(p + 1) & 0x3f) << 12)
-                    | ((self.t.at(p + 2) & 0x3f) << 6)
-                    | (self.t.at(p + 3) & 0x3f);
-                p += 4;
-            }
-            if cp == 0x200d && previous_was_emoji {
-                // a joiner glues the next emoji to this one
-                let n = self.t.at(p);
-                if n >= 0xe2 {
-                    p += if n >= 0xf0 { 4 } else { 3 };
-                    if self.t.at(p) == 0xef && self.t.at(p + 1) == 0xb8 && self.t.at(p + 2) == 0x8f
-                    {
-                        p += 3;
-                    }
-                    continue;
-                }
-            }
-            if cp >= 0x1f3fb && cp <= 0x1f3ff && previous_was_emoji {
-                // skin tone
+            let (c, next) = self.character_at(p, end);
+            if c >= 0x4e00 && c <= 0x9fff {
+                // the unified ideographs, without a look into the tables
+                width += 2;
+                p = next;
                 continue;
             }
-            if cp >= 0x1f1e6 && cp <= 0x1f1ff {
-                // two regional indicators make one flag; one alone is a narrow character
-                if p + 4 <= end
-                    && self.t.at(p) == 0xf0
-                    && self.t.at(p + 1) == 0x9f
-                    && self.t.at(p + 2) == 0x87
-                    && self.t.at(p + 3) >= 0xa6
-                {
-                    p += 4;
-                    width += 2;
-                    previous_was_emoji = true;
+            let emoji_end = self.emoji_end(c, next, end);
+            if emoji_end != 0 {
+                width += if emoji_end == next && is_in(NARROW_EMOJI, c) {
+                    1
                 } else {
-                    width += 1;
-                    previous_was_emoji = false;
-                }
+                    2
+                };
+                p = emoji_end;
                 continue;
             }
-            if self.t.at(p) == 0xef
-                && self.t.at(p + 1) == 0xb8
-                && self.t.at(p + 2) == 0x8f
-                && doc_in_ranges(&WIDE_WITH_VS16, cp)
-            {
-                p += 3;
-                width += 2;
-                previous_was_emoji = true;
-                continue;
-            }
-            if doc_in_ranges(&ZERO, cp) {
-                continue;
-            }
-            if doc_in_ranges(&WIDE, cp) {
-                width += 2;
-                previous_was_emoji = cp >= 0x2300 && (cp < 0x2e80 || cp >= 0x1f000);
-            } else {
-                width += 1;
-                previous_was_emoji = false;
-            }
+            p = next;
+            width += match c {
+                0x80..=0x9f | 0x300..=0x36f | 0xfe00..=0xfe0f => 0,
+                _ if is_in(WIDE, c) => 2,
+                _ => 1,
+            };
         }
         return width;
+    }
+
+    /// The character at `p`, and where the next one starts; 0 at the end.
+    fn character_at(&self, p: i32, end: i32) -> (i32, i32) {
+        if p >= end {
+            return (0, p);
+        }
+        let c = self.t.at(p);
+        let more = |q: i32| self.t.at(q) & 0x3f;
+        if c < 0x80 {
+            (c, p + 1)
+        } else if c < 0xe0 {
+            (((c & 0x1f) << 6) | more(p + 1), p + 2)
+        } else if c < 0xf0 {
+            (((c & 0x0f) << 12) | (more(p + 1) << 6) | more(p + 2), p + 3)
+        } else {
+            (
+                ((c & 0x07) << 18) | (more(p + 1) << 12) | (more(p + 2) << 6) | more(p + 3),
+                p + 4,
+            )
+        }
+    }
+
+    /// Where the emoji ends that starts with `first`, which is not ASCII and ends at `q`, as the package `emoji-regex` defines one; 0 if
+    /// none does. Any sequence that is joined like an emoji counts, while the package only takes those recommended for interchange.
+    fn emoji_end(&self, first: i32, mut q: i32, end: i32) -> i32 {
+        if is_regional_indicator(first) {
+            let (next, behind) = self.character_at(q, end);
+            return if is_regional_indicator(next) {
+                behind
+            } else {
+                0
+            };
+        }
+        if !is_in(EMOJI, first) {
+            return 0;
+        }
+        let alone = q;
+        let mut base = first;
+        loop {
+            let (mut next, mut behind) = self.character_at(q, end);
+            if next == VARIATION_SELECTOR_16
+                || (is_skin_tone(next) && is_in(EMOJI_MODIFIER_BASE, base))
+            {
+                q = behind;
+                (next, behind) = self.character_at(q, end);
+            }
+            // the flags of England, Scotland and Wales
+            if base == 0x1f3f4 && is_tag(next) {
+                while is_tag(next) {
+                    q = behind;
+                    (next, behind) = self.character_at(q, end);
+                }
+                if next == 0xe007f {
+                    q = behind;
+                    (next, behind) = self.character_at(q, end);
+                }
+            }
+            if next == ZERO_WIDTH_JOINER {
+                let (joined, behind_joined) = self.character_at(behind, end);
+                if is_in(EMOJI, joined) {
+                    base = joined;
+                    q = behind_joined;
+                    continue;
+                }
+            }
+            // no emoji that the package knows starts with a skin tone, so the joiner behind it counts as a column
+            return if is_skin_tone(first) { alone } else { q };
+        }
     }
 }
 // ---------------------------------------------------------------------------------------------------------- lines

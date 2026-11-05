@@ -3535,6 +3535,12 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.tsx", "--print-width=8", "aaaa!?.cccc! = vvvv;\n"],
     ["a.js.flow", "--print-width=8", "aaaa?.cccc[0] = vvvv;\n"],
     ["a.ts", "--print-width=8", "aaaa()?.cccc! = vvvv;\n"],
+    // The width of sequences: a modifier behind what is no base for it, flags, keycaps, tags, joiners, the replacement character.
+    [
+      "a.js",
+      "--print-width=11",
+      'f("\u234d\ud83c\udfff", b);\nf("\ud83d\udc4d\ud83c\udfff", b);\nf("\ud83c\uddef\ud83c\uddf5", b);\nf("\ud83c\uddefa", b);\nf("1\ufe0f\u20e3", b);\nf("\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f", b);\nf("\ud83d\udc69\u200d\ud83d\udc67", b);\nf("\ufffda", b);\nf("\u00a9\ufe0f", b);\nf("\u263a", b);\nf("\u263a\ufe0f", b);\n',
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

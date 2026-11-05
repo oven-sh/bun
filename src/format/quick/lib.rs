@@ -43,7 +43,9 @@ mod root;
 mod scan;
 mod stands;
 mod text;
-mod width_table;
+#[path = "../ir/width_tables.rs"]
+#[expect(dead_code, reason = "one of the tables is for another flavor")]
+mod width_tables;
 mod words;
 mod print {
     pub(crate) mod array;

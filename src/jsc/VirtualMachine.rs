@@ -182,8 +182,7 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: Option<bun_ptr::RawSlice<u8>>,
-    /// `process.argv[1]` when it is not `main`: the entry path as written
-    /// (absolute, not realpath'd). Same BACKREF invariant as `main`.
+    /// `process.argv[1]` when it is not `main`. Same BACKREF invariant as `main`.
     main_for_argv: Option<bun_ptr::RawSlice<u8>>,
     pub main_entry_point: MainEntryPoint,
     pub did_look_for_server: bool,

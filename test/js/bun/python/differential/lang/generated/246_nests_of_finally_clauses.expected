@@ -1,0 +1,844 @@
+status: 0
+script: f5ba2d33e66a5896
+source: 997c557438ec0bc6
+---
+how [how='break', inner=list, ways='one way', final=list, values=(0, 1)] => break
+| ways [how='break', inner=list, ways='one way', final=list, values=(0, 1)] => one way
+| values [how='break', inner=list, ways='one way', final=list, values=(0, 1)] => (0, 1)
+| result [how='break', inner=list, ways='one way', final=list, values=(0, 1)] => end
+out [how='break', inner=list, ways='one way', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='break', inner=list, ways='one way', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='one way', final=list, values=(0, 2, 1)] => break
+| ways [how='break', inner=list, ways='one way', final=list, values=(0, 2, 1)] => one way
+| values [how='break', inner=list, ways='one way', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='break', inner=list, ways='one way', final=list, values=(0, 2, 1)] => end
+out [how='break', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='break', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='one way', final=list, values=(3,)] => break
+| ways [how='break', inner=list, ways='one way', final=list, values=(3,)] => one way
+| values [how='break', inner=list, ways='one way', final=list, values=(3,)] => (3,)
+| result [how='break', inner=list, ways='one way', final=list, values=(3,)] => end
+out [how='break', inner=list, ways='one way', final=list, values=(3,)] => [0, 1, 2]
+events [how='break', inner=list, ways='one way', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='one way', final=list, values=(0, 0)] => break
+| ways [how='break', inner=list, ways='one way', final=list, values=(0, 0)] => one way
+| values [how='break', inner=list, ways='one way', final=list, values=(0, 0)] => (0, 0)
+| result [how='break', inner=list, ways='one way', final=list, values=(0, 0)] => end
+out [how='break', inner=list, ways='one way', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='break', inner=list, ways='one way', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='one way', final=list] => break
+| ways [how='break', inner=list, ways='one way', final=list] => one way
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='break', inner=list, ways='one way', final=list] => True
+sizes[2] < 6 * sizes[0] [how='break', inner=list, ways='one way', final=list] => True
+how [how='break', inner=list, ways='two ways', final=list, values=(0, 1)] => break
+| ways [how='break', inner=list, ways='two ways', final=list, values=(0, 1)] => two ways
+| values [how='break', inner=list, ways='two ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='break', inner=list, ways='two ways', final=list, values=(0, 1)] => end
+out [how='break', inner=list, ways='two ways', final=list, values=(0, 1)] => [0, -1, -2, 0, 1, 2]
+events [how='break', inner=list, ways='two ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => break
+| ways [how='break', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => two ways
+| values [how='break', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='break', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => end
+out [how='break', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [0, -1, -2, 0, -1, -2]
+events [how='break', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='two ways', final=list, values=(3,)] => break
+| ways [how='break', inner=list, ways='two ways', final=list, values=(3,)] => two ways
+| values [how='break', inner=list, ways='two ways', final=list, values=(3,)] => (3,)
+| result [how='break', inner=list, ways='two ways', final=list, values=(3,)] => end
+out [how='break', inner=list, ways='two ways', final=list, values=(3,)] => [0, 1, 2]
+events [how='break', inner=list, ways='two ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='two ways', final=list, values=(0, 0)] => break
+| ways [how='break', inner=list, ways='two ways', final=list, values=(0, 0)] => two ways
+| values [how='break', inner=list, ways='two ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='break', inner=list, ways='two ways', final=list, values=(0, 0)] => end
+out [how='break', inner=list, ways='two ways', final=list, values=(0, 0)] => [0, -1, -2, 0, -1, -2]
+events [how='break', inner=list, ways='two ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='two ways', final=list] => break
+| ways [how='break', inner=list, ways='two ways', final=list] => two ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='break', inner=list, ways='two ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='break', inner=list, ways='two ways', final=list] => True
+how [how='break', inner=list, ways='three ways', final=list, values=(0, 1)] => break
+| ways [how='break', inner=list, ways='three ways', final=list, values=(0, 1)] => three ways
+| values [how='break', inner=list, ways='three ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='break', inner=list, ways='three ways', final=list, values=(0, 1)] => end
+out [how='break', inner=list, ways='three ways', final=list, values=(0, 1)] => ['0', '1', '2', 0, 1, 2]
+events [how='break', inner=list, ways='three ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 12), ('l', 16), ('l', 19), ('r', 19)]
+how [how='break', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => break
+| ways [how='break', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => three ways
+| values [how='break', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='break', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => end
+out [how='break', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => ['0', '1', '2', 0, -1, -2]
+events [how='break', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 12), ('l', 13), ('l', 16), ('l', 17), ('l', 19), ('r', 19)]
+how [how='break', inner=list, ways='three ways', final=list, values=(3,)] => break
+| ways [how='break', inner=list, ways='three ways', final=list, values=(3,)] => three ways
+| values [how='break', inner=list, ways='three ways', final=list, values=(3,)] => (3,)
+| result [how='break', inner=list, ways='three ways', final=list, values=(3,)] => end
+out [how='break', inner=list, ways='three ways', final=list, values=(3,)] => ['0', '1', '2']
+events [how='break', inner=list, ways='three ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 19), ('r', 19)]
+how [how='break', inner=list, ways='three ways', final=list, values=(0, 0)] => break
+| ways [how='break', inner=list, ways='three ways', final=list, values=(0, 0)] => three ways
+| values [how='break', inner=list, ways='three ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='break', inner=list, ways='three ways', final=list, values=(0, 0)] => end
+out [how='break', inner=list, ways='three ways', final=list, values=(0, 0)] => ['0', '1', '2', '0', '1', '2']
+events [how='break', inner=list, ways='three ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 19), ('r', 19)]
+how [how='break', inner=list, ways='three ways', final=list] => break
+| ways [how='break', inner=list, ways='three ways', final=list] => three ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='break', inner=list, ways='three ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='break', inner=list, ways='three ways', final=list] => True
+how [how='break', inner=list, ways='a loop', final=list, values=(0, 1)] => break
+| ways [how='break', inner=list, ways='a loop', final=list, values=(0, 1)] => a loop
+| values [how='break', inner=list, ways='a loop', final=list, values=(0, 1)] => (0, 1)
+| result [how='break', inner=list, ways='a loop', final=list, values=(0, 1)] => end
+out [how='break', inner=list, ways='a loop', final=list, values=(0, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='break', inner=list, ways='a loop', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => break
+| ways [how='break', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => a loop
+| values [how='break', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='break', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => end
+out [how='break', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='break', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a loop', final=list, values=(3,)] => break
+| ways [how='break', inner=list, ways='a loop', final=list, values=(3,)] => a loop
+| values [how='break', inner=list, ways='a loop', final=list, values=(3,)] => (3,)
+| result [how='break', inner=list, ways='a loop', final=list, values=(3,)] => end
+out [how='break', inner=list, ways='a loop', final=list, values=(3,)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='break', inner=list, ways='a loop', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a loop', final=list, values=(0, 0)] => break
+| ways [how='break', inner=list, ways='a loop', final=list, values=(0, 0)] => a loop
+| values [how='break', inner=list, ways='a loop', final=list, values=(0, 0)] => (0, 0)
+| result [how='break', inner=list, ways='a loop', final=list, values=(0, 0)] => end
+out [how='break', inner=list, ways='a loop', final=list, values=(0, 0)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='break', inner=list, ways='a loop', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a loop', final=list] => break
+| ways [how='break', inner=list, ways='a loop', final=list] => a loop
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='break', inner=list, ways='a loop', final=list] => True
+sizes[2] < 6 * sizes[0] [how='break', inner=list, ways='a loop', final=list] => True
+how [how='break', inner=list, ways='a with', final=list, values=(0, 1)] => break
+| ways [how='break', inner=list, ways='a with', final=list, values=(0, 1)] => a with
+| values [how='break', inner=list, ways='a with', final=list, values=(0, 1)] => (0, 1)
+| result [how='break', inner=list, ways='a with', final=list, values=(0, 1)] => end
+out [how='break', inner=list, ways='a with', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='break', inner=list, ways='a with', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a with', final=list, values=(0, 2, 1)] => break
+| ways [how='break', inner=list, ways='a with', final=list, values=(0, 2, 1)] => a with
+| values [how='break', inner=list, ways='a with', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='break', inner=list, ways='a with', final=list, values=(0, 2, 1)] => end
+out [how='break', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='break', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a with', final=list, values=(3,)] => break
+| ways [how='break', inner=list, ways='a with', final=list, values=(3,)] => a with
+| values [how='break', inner=list, ways='a with', final=list, values=(3,)] => (3,)
+| result [how='break', inner=list, ways='a with', final=list, values=(3,)] => end
+out [how='break', inner=list, ways='a with', final=list, values=(3,)] => [0, 1, 2]
+events [how='break', inner=list, ways='a with', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a with', final=list, values=(0, 0)] => break
+| ways [how='break', inner=list, ways='a with', final=list, values=(0, 0)] => a with
+| values [how='break', inner=list, ways='a with', final=list, values=(0, 0)] => (0, 0)
+| result [how='break', inner=list, ways='a with', final=list, values=(0, 0)] => end
+out [how='break', inner=list, ways='a with', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='break', inner=list, ways='a with', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='break', inner=list, ways='a with', final=list] => break
+| ways [how='break', inner=list, ways='a with', final=list] => a with
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='break', inner=list, ways='a with', final=list] => True
+sizes[2] < 6 * sizes[0] [how='break', inner=list, ways='a with', final=list] => True
+how [how='break', inner=list, ways='a handler', final=list, values=(0, 1)] => break
+| ways [how='break', inner=list, ways='a handler', final=list, values=(0, 1)] => a handler
+| values [how='break', inner=list, ways='a handler', final=list, values=(0, 1)] => (0, 1)
+| result [how='break', inner=list, ways='a handler', final=list, values=(0, 1)] => end
+out [how='break', inner=list, ways='a handler', final=list, values=(0, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='break', inner=list, ways='a handler', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => break
+| ways [how='break', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => a handler
+| values [how='break', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='break', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => end
+out [how='break', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='break', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='a handler', final=list, values=(3,)] => break
+| ways [how='break', inner=list, ways='a handler', final=list, values=(3,)] => a handler
+| values [how='break', inner=list, ways='a handler', final=list, values=(3,)] => (3,)
+| result [how='break', inner=list, ways='a handler', final=list, values=(3,)] => end
+out [how='break', inner=list, ways='a handler', final=list, values=(3,)] => [0, 0, 1, -1, 2, -2]
+events [how='break', inner=list, ways='a handler', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='a handler', final=list, values=(0, 0)] => break
+| ways [how='break', inner=list, ways='a handler', final=list, values=(0, 0)] => a handler
+| values [how='break', inner=list, ways='a handler', final=list, values=(0, 0)] => (0, 0)
+| result [how='break', inner=list, ways='a handler', final=list, values=(0, 0)] => end
+out [how='break', inner=list, ways='a handler', final=list, values=(0, 0)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='break', inner=list, ways='a handler', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='break', inner=list, ways='a handler', final=list] => break
+| ways [how='break', inner=list, ways='a handler', final=list] => a handler
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='break', inner=list, ways='a handler', final=list] => True
+sizes[2] < 6 * sizes[0] [how='break', inner=list, ways='a handler', final=list] => True
+how [how='continue', inner=list, ways='one way', final=list, values=(0, 1)] => continue
+| ways [how='continue', inner=list, ways='one way', final=list, values=(0, 1)] => one way
+| values [how='continue', inner=list, ways='one way', final=list, values=(0, 1)] => (0, 1)
+| result [how='continue', inner=list, ways='one way', final=list, values=(0, 1)] => end
+out [how='continue', inner=list, ways='one way', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='continue', inner=list, ways='one way', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='one way', final=list, values=(0, 2, 1)] => continue
+| ways [how='continue', inner=list, ways='one way', final=list, values=(0, 2, 1)] => one way
+| values [how='continue', inner=list, ways='one way', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='continue', inner=list, ways='one way', final=list, values=(0, 2, 1)] => end
+out [how='continue', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2, 0, 1, 2]
+events [how='continue', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='one way', final=list, values=(3,)] => continue
+| ways [how='continue', inner=list, ways='one way', final=list, values=(3,)] => one way
+| values [how='continue', inner=list, ways='one way', final=list, values=(3,)] => (3,)
+| result [how='continue', inner=list, ways='one way', final=list, values=(3,)] => end
+out [how='continue', inner=list, ways='one way', final=list, values=(3,)] => [0, 1, 2]
+events [how='continue', inner=list, ways='one way', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='one way', final=list, values=(0, 0)] => continue
+| ways [how='continue', inner=list, ways='one way', final=list, values=(0, 0)] => one way
+| values [how='continue', inner=list, ways='one way', final=list, values=(0, 0)] => (0, 0)
+| result [how='continue', inner=list, ways='one way', final=list, values=(0, 0)] => end
+out [how='continue', inner=list, ways='one way', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='continue', inner=list, ways='one way', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='one way', final=list] => continue
+| ways [how='continue', inner=list, ways='one way', final=list] => one way
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='continue', inner=list, ways='one way', final=list] => True
+sizes[2] < 6 * sizes[0] [how='continue', inner=list, ways='one way', final=list] => True
+how [how='continue', inner=list, ways='two ways', final=list, values=(0, 1)] => continue
+| ways [how='continue', inner=list, ways='two ways', final=list, values=(0, 1)] => two ways
+| values [how='continue', inner=list, ways='two ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='continue', inner=list, ways='two ways', final=list, values=(0, 1)] => end
+out [how='continue', inner=list, ways='two ways', final=list, values=(0, 1)] => [0, -1, -2, 0, 1, 2]
+events [how='continue', inner=list, ways='two ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => continue
+| ways [how='continue', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => two ways
+| values [how='continue', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='continue', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => end
+out [how='continue', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [0, -1, -2, 0, -1, -2, 0, 1, 2]
+events [how='continue', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='two ways', final=list, values=(3,)] => continue
+| ways [how='continue', inner=list, ways='two ways', final=list, values=(3,)] => two ways
+| values [how='continue', inner=list, ways='two ways', final=list, values=(3,)] => (3,)
+| result [how='continue', inner=list, ways='two ways', final=list, values=(3,)] => end
+out [how='continue', inner=list, ways='two ways', final=list, values=(3,)] => [0, 1, 2]
+events [how='continue', inner=list, ways='two ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='two ways', final=list, values=(0, 0)] => continue
+| ways [how='continue', inner=list, ways='two ways', final=list, values=(0, 0)] => two ways
+| values [how='continue', inner=list, ways='two ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='continue', inner=list, ways='two ways', final=list, values=(0, 0)] => end
+out [how='continue', inner=list, ways='two ways', final=list, values=(0, 0)] => [0, -1, -2, 0, -1, -2]
+events [how='continue', inner=list, ways='two ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='two ways', final=list] => continue
+| ways [how='continue', inner=list, ways='two ways', final=list] => two ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='continue', inner=list, ways='two ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='continue', inner=list, ways='two ways', final=list] => True
+how [how='continue', inner=list, ways='three ways', final=list, values=(0, 1)] => continue
+| ways [how='continue', inner=list, ways='three ways', final=list, values=(0, 1)] => three ways
+| values [how='continue', inner=list, ways='three ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='continue', inner=list, ways='three ways', final=list, values=(0, 1)] => end
+out [how='continue', inner=list, ways='three ways', final=list, values=(0, 1)] => ['0', '1', '2', 0, 1, 2]
+events [how='continue', inner=list, ways='three ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 12), ('l', 16), ('l', 2), ('l', 19), ('r', 19)]
+how [how='continue', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => continue
+| ways [how='continue', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => three ways
+| values [how='continue', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='continue', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => end
+out [how='continue', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => ['0', '1', '2', 0, -1, -2, 0, 1, 2]
+events [how='continue', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 12), ('l', 13), ('l', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 12), ('l', 16), ('l', 2), ('l', 19), ('r', 19)]
+how [how='continue', inner=list, ways='three ways', final=list, values=(3,)] => continue
+| ways [how='continue', inner=list, ways='three ways', final=list, values=(3,)] => three ways
+| values [how='continue', inner=list, ways='three ways', final=list, values=(3,)] => (3,)
+| result [how='continue', inner=list, ways='three ways', final=list, values=(3,)] => end
+out [how='continue', inner=list, ways='three ways', final=list, values=(3,)] => ['0', '1', '2']
+events [how='continue', inner=list, ways='three ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 19), ('r', 19)]
+how [how='continue', inner=list, ways='three ways', final=list, values=(0, 0)] => continue
+| ways [how='continue', inner=list, ways='three ways', final=list, values=(0, 0)] => three ways
+| values [how='continue', inner=list, ways='three ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='continue', inner=list, ways='three ways', final=list, values=(0, 0)] => end
+out [how='continue', inner=list, ways='three ways', final=list, values=(0, 0)] => ['0', '1', '2', '0', '1', '2']
+events [how='continue', inner=list, ways='three ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 19), ('r', 19)]
+how [how='continue', inner=list, ways='three ways', final=list] => continue
+| ways [how='continue', inner=list, ways='three ways', final=list] => three ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='continue', inner=list, ways='three ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='continue', inner=list, ways='three ways', final=list] => True
+how [how='continue', inner=list, ways='a loop', final=list, values=(0, 1)] => continue
+| ways [how='continue', inner=list, ways='a loop', final=list, values=(0, 1)] => a loop
+| values [how='continue', inner=list, ways='a loop', final=list, values=(0, 1)] => (0, 1)
+| result [how='continue', inner=list, ways='a loop', final=list, values=(0, 1)] => end
+out [how='continue', inner=list, ways='a loop', final=list, values=(0, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='continue', inner=list, ways='a loop', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => continue
+| ways [how='continue', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => a loop
+| values [how='continue', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='continue', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => end
+out [how='continue', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='continue', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a loop', final=list, values=(3,)] => continue
+| ways [how='continue', inner=list, ways='a loop', final=list, values=(3,)] => a loop
+| values [how='continue', inner=list, ways='a loop', final=list, values=(3,)] => (3,)
+| result [how='continue', inner=list, ways='a loop', final=list, values=(3,)] => end
+out [how='continue', inner=list, ways='a loop', final=list, values=(3,)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='continue', inner=list, ways='a loop', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a loop', final=list, values=(0, 0)] => continue
+| ways [how='continue', inner=list, ways='a loop', final=list, values=(0, 0)] => a loop
+| values [how='continue', inner=list, ways='a loop', final=list, values=(0, 0)] => (0, 0)
+| result [how='continue', inner=list, ways='a loop', final=list, values=(0, 0)] => end
+out [how='continue', inner=list, ways='a loop', final=list, values=(0, 0)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='continue', inner=list, ways='a loop', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a loop', final=list] => continue
+| ways [how='continue', inner=list, ways='a loop', final=list] => a loop
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='continue', inner=list, ways='a loop', final=list] => True
+sizes[2] < 6 * sizes[0] [how='continue', inner=list, ways='a loop', final=list] => True
+how [how='continue', inner=list, ways='a with', final=list, values=(0, 1)] => continue
+| ways [how='continue', inner=list, ways='a with', final=list, values=(0, 1)] => a with
+| values [how='continue', inner=list, ways='a with', final=list, values=(0, 1)] => (0, 1)
+| result [how='continue', inner=list, ways='a with', final=list, values=(0, 1)] => end
+out [how='continue', inner=list, ways='a with', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='continue', inner=list, ways='a with', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a with', final=list, values=(0, 2, 1)] => continue
+| ways [how='continue', inner=list, ways='a with', final=list, values=(0, 2, 1)] => a with
+| values [how='continue', inner=list, ways='a with', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='continue', inner=list, ways='a with', final=list, values=(0, 2, 1)] => end
+out [how='continue', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2, 0, 1, 2]
+events [how='continue', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a with', final=list, values=(3,)] => continue
+| ways [how='continue', inner=list, ways='a with', final=list, values=(3,)] => a with
+| values [how='continue', inner=list, ways='a with', final=list, values=(3,)] => (3,)
+| result [how='continue', inner=list, ways='a with', final=list, values=(3,)] => end
+out [how='continue', inner=list, ways='a with', final=list, values=(3,)] => [0, 1, 2]
+events [how='continue', inner=list, ways='a with', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a with', final=list, values=(0, 0)] => continue
+| ways [how='continue', inner=list, ways='a with', final=list, values=(0, 0)] => a with
+| values [how='continue', inner=list, ways='a with', final=list, values=(0, 0)] => (0, 0)
+| result [how='continue', inner=list, ways='a with', final=list, values=(0, 0)] => end
+out [how='continue', inner=list, ways='a with', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='continue', inner=list, ways='a with', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='continue', inner=list, ways='a with', final=list] => continue
+| ways [how='continue', inner=list, ways='a with', final=list] => a with
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='continue', inner=list, ways='a with', final=list] => True
+sizes[2] < 6 * sizes[0] [how='continue', inner=list, ways='a with', final=list] => True
+how [how='continue', inner=list, ways='a handler', final=list, values=(0, 1)] => continue
+| ways [how='continue', inner=list, ways='a handler', final=list, values=(0, 1)] => a handler
+| values [how='continue', inner=list, ways='a handler', final=list, values=(0, 1)] => (0, 1)
+| result [how='continue', inner=list, ways='a handler', final=list, values=(0, 1)] => end
+out [how='continue', inner=list, ways='a handler', final=list, values=(0, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='continue', inner=list, ways='a handler', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => continue
+| ways [how='continue', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => a handler
+| values [how='continue', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='continue', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => end
+out [how='continue', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='continue', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='a handler', final=list, values=(3,)] => continue
+| ways [how='continue', inner=list, ways='a handler', final=list, values=(3,)] => a handler
+| values [how='continue', inner=list, ways='a handler', final=list, values=(3,)] => (3,)
+| result [how='continue', inner=list, ways='a handler', final=list, values=(3,)] => end
+out [how='continue', inner=list, ways='a handler', final=list, values=(3,)] => [0, 0, 1, -1, 2, -2]
+events [how='continue', inner=list, ways='a handler', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='a handler', final=list, values=(0, 0)] => continue
+| ways [how='continue', inner=list, ways='a handler', final=list, values=(0, 0)] => a handler
+| values [how='continue', inner=list, ways='a handler', final=list, values=(0, 0)] => (0, 0)
+| result [how='continue', inner=list, ways='a handler', final=list, values=(0, 0)] => end
+out [how='continue', inner=list, ways='a handler', final=list, values=(0, 0)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='continue', inner=list, ways='a handler', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='continue', inner=list, ways='a handler', final=list] => continue
+| ways [how='continue', inner=list, ways='a handler', final=list] => a handler
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='continue', inner=list, ways='a handler', final=list] => True
+sizes[2] < 6 * sizes[0] [how='continue', inner=list, ways='a handler', final=list] => True
+how [how='return', inner=list, ways='one way', final=list, values=(0, 1)] => return
+| ways [how='return', inner=list, ways='one way', final=list, values=(0, 1)] => one way
+| values [how='return', inner=list, ways='one way', final=list, values=(0, 1)] => (0, 1)
+| result [how='return', inner=list, ways='one way', final=list, values=(0, 1)] => 1
+out [how='return', inner=list, ways='one way', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='return', inner=list, ways='one way', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='one way', final=list, values=(0, 2, 1)] => return
+| ways [how='return', inner=list, ways='one way', final=list, values=(0, 2, 1)] => one way
+| values [how='return', inner=list, ways='one way', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='return', inner=list, ways='one way', final=list, values=(0, 2, 1)] => 2
+out [how='return', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='return', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='one way', final=list, values=(3,)] => return
+| ways [how='return', inner=list, ways='one way', final=list, values=(3,)] => one way
+| values [how='return', inner=list, ways='one way', final=list, values=(3,)] => (3,)
+| result [how='return', inner=list, ways='one way', final=list, values=(3,)] => 3
+out [how='return', inner=list, ways='one way', final=list, values=(3,)] => [0, 1, 2]
+events [how='return', inner=list, ways='one way', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='one way', final=list, values=(0, 0)] => return
+| ways [how='return', inner=list, ways='one way', final=list, values=(0, 0)] => one way
+| values [how='return', inner=list, ways='one way', final=list, values=(0, 0)] => (0, 0)
+| result [how='return', inner=list, ways='one way', final=list, values=(0, 0)] => end
+out [how='return', inner=list, ways='one way', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='return', inner=list, ways='one way', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='return', inner=list, ways='one way', final=list] => return
+| ways [how='return', inner=list, ways='one way', final=list] => one way
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='return', inner=list, ways='one way', final=list] => True
+sizes[2] < 6 * sizes[0] [how='return', inner=list, ways='one way', final=list] => True
+how [how='return', inner=list, ways='two ways', final=list, values=(0, 1)] => return
+| ways [how='return', inner=list, ways='two ways', final=list, values=(0, 1)] => two ways
+| values [how='return', inner=list, ways='two ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='return', inner=list, ways='two ways', final=list, values=(0, 1)] => 1
+out [how='return', inner=list, ways='two ways', final=list, values=(0, 1)] => [0, -1, -2, 0, 1, 2]
+events [how='return', inner=list, ways='two ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('r', 14)]
+how [how='return', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => return
+| ways [how='return', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => two ways
+| values [how='return', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='return', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => 2
+out [how='return', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [0, -1, -2, 0, -1, -2]
+events [how='return', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('r', 15)]
+how [how='return', inner=list, ways='two ways', final=list, values=(3,)] => return
+| ways [how='return', inner=list, ways='two ways', final=list, values=(3,)] => two ways
+| values [how='return', inner=list, ways='two ways', final=list, values=(3,)] => (3,)
+| result [how='return', inner=list, ways='two ways', final=list, values=(3,)] => 3
+out [how='return', inner=list, ways='two ways', final=list, values=(3,)] => [0, 1, 2]
+events [how='return', inner=list, ways='two ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('r', 14)]
+how [how='return', inner=list, ways='two ways', final=list, values=(0, 0)] => return
+| ways [how='return', inner=list, ways='two ways', final=list, values=(0, 0)] => two ways
+| values [how='return', inner=list, ways='two ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='return', inner=list, ways='two ways', final=list, values=(0, 0)] => end
+out [how='return', inner=list, ways='two ways', final=list, values=(0, 0)] => [0, -1, -2, 0, -1, -2]
+events [how='return', inner=list, ways='two ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='return', inner=list, ways='two ways', final=list] => return
+| ways [how='return', inner=list, ways='two ways', final=list] => two ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='return', inner=list, ways='two ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='return', inner=list, ways='two ways', final=list] => True
+how [how='return', inner=list, ways='three ways', final=list, values=(0, 1)] => return
+| ways [how='return', inner=list, ways='three ways', final=list, values=(0, 1)] => three ways
+| values [how='return', inner=list, ways='three ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='return', inner=list, ways='three ways', final=list, values=(0, 1)] => 1
+out [how='return', inner=list, ways='three ways', final=list, values=(0, 1)] => ['0', '1', '2', 0, 1, 2]
+events [how='return', inner=list, ways='three ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 12), ('l', 16), ('r', 16)]
+how [how='return', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => return
+| ways [how='return', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => three ways
+| values [how='return', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='return', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => 2
+out [how='return', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => ['0', '1', '2', 0, -1, -2]
+events [how='return', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 12), ('l', 13), ('l', 16), ('l', 17), ('r', 17)]
+how [how='return', inner=list, ways='three ways', final=list, values=(3,)] => return
+| ways [how='return', inner=list, ways='three ways', final=list, values=(3,)] => three ways
+| values [how='return', inner=list, ways='three ways', final=list, values=(3,)] => (3,)
+| result [how='return', inner=list, ways='three ways', final=list, values=(3,)] => 3
+out [how='return', inner=list, ways='three ways', final=list, values=(3,)] => ['0', '1', '2']
+events [how='return', inner=list, ways='three ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('r', 18)]
+how [how='return', inner=list, ways='three ways', final=list, values=(0, 0)] => return
+| ways [how='return', inner=list, ways='three ways', final=list, values=(0, 0)] => three ways
+| values [how='return', inner=list, ways='three ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='return', inner=list, ways='three ways', final=list, values=(0, 0)] => end
+out [how='return', inner=list, ways='three ways', final=list, values=(0, 0)] => ['0', '1', '2', '0', '1', '2']
+events [how='return', inner=list, ways='three ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 19), ('r', 19)]
+how [how='return', inner=list, ways='three ways', final=list] => return
+| ways [how='return', inner=list, ways='three ways', final=list] => three ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='return', inner=list, ways='three ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='return', inner=list, ways='three ways', final=list] => True
+how [how='return', inner=list, ways='a loop', final=list, values=(0, 1)] => return
+| ways [how='return', inner=list, ways='a loop', final=list, values=(0, 1)] => a loop
+| values [how='return', inner=list, ways='a loop', final=list, values=(0, 1)] => (0, 1)
+| result [how='return', inner=list, ways='a loop', final=list, values=(0, 1)] => 1
+out [how='return', inner=list, ways='a loop', final=list, values=(0, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='return', inner=list, ways='a loop', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => return
+| ways [how='return', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => a loop
+| values [how='return', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='return', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => 2
+out [how='return', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='return', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='a loop', final=list, values=(3,)] => return
+| ways [how='return', inner=list, ways='a loop', final=list, values=(3,)] => a loop
+| values [how='return', inner=list, ways='a loop', final=list, values=(3,)] => (3,)
+| result [how='return', inner=list, ways='a loop', final=list, values=(3,)] => 3
+out [how='return', inner=list, ways='a loop', final=list, values=(3,)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='return', inner=list, ways='a loop', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='a loop', final=list, values=(0, 0)] => return
+| ways [how='return', inner=list, ways='a loop', final=list, values=(0, 0)] => a loop
+| values [how='return', inner=list, ways='a loop', final=list, values=(0, 0)] => (0, 0)
+| result [how='return', inner=list, ways='a loop', final=list, values=(0, 0)] => end
+out [how='return', inner=list, ways='a loop', final=list, values=(0, 0)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='return', inner=list, ways='a loop', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='return', inner=list, ways='a loop', final=list] => return
+| ways [how='return', inner=list, ways='a loop', final=list] => a loop
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='return', inner=list, ways='a loop', final=list] => True
+sizes[2] < 6 * sizes[0] [how='return', inner=list, ways='a loop', final=list] => True
+how [how='return', inner=list, ways='a with', final=list, values=(0, 1)] => return
+| ways [how='return', inner=list, ways='a with', final=list, values=(0, 1)] => a with
+| values [how='return', inner=list, ways='a with', final=list, values=(0, 1)] => (0, 1)
+| result [how='return', inner=list, ways='a with', final=list, values=(0, 1)] => 1
+out [how='return', inner=list, ways='a with', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='return', inner=list, ways='a with', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='a with', final=list, values=(0, 2, 1)] => return
+| ways [how='return', inner=list, ways='a with', final=list, values=(0, 2, 1)] => a with
+| values [how='return', inner=list, ways='a with', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='return', inner=list, ways='a with', final=list, values=(0, 2, 1)] => 2
+out [how='return', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='return', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='a with', final=list, values=(3,)] => return
+| ways [how='return', inner=list, ways='a with', final=list, values=(3,)] => a with
+| values [how='return', inner=list, ways='a with', final=list, values=(3,)] => (3,)
+| result [how='return', inner=list, ways='a with', final=list, values=(3,)] => 3
+out [how='return', inner=list, ways='a with', final=list, values=(3,)] => [0, 1, 2]
+events [how='return', inner=list, ways='a with', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('r', 12)]
+how [how='return', inner=list, ways='a with', final=list, values=(0, 0)] => return
+| ways [how='return', inner=list, ways='a with', final=list, values=(0, 0)] => a with
+| values [how='return', inner=list, ways='a with', final=list, values=(0, 0)] => (0, 0)
+| result [how='return', inner=list, ways='a with', final=list, values=(0, 0)] => end
+out [how='return', inner=list, ways='a with', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='return', inner=list, ways='a with', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='return', inner=list, ways='a with', final=list] => return
+| ways [how='return', inner=list, ways='a with', final=list] => a with
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='return', inner=list, ways='a with', final=list] => True
+sizes[2] < 6 * sizes[0] [how='return', inner=list, ways='a with', final=list] => True
+how [how='return', inner=list, ways='a handler', final=list, values=(0, 1)] => return
+| ways [how='return', inner=list, ways='a handler', final=list, values=(0, 1)] => a handler
+| values [how='return', inner=list, ways='a handler', final=list, values=(0, 1)] => (0, 1)
+| result [how='return', inner=list, ways='a handler', final=list, values=(0, 1)] => 1
+out [how='return', inner=list, ways='a handler', final=list, values=(0, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='return', inner=list, ways='a handler', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('r', 15)]
+how [how='return', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => return
+| ways [how='return', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => a handler
+| values [how='return', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='return', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => 2
+out [how='return', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='return', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('r', 15)]
+how [how='return', inner=list, ways='a handler', final=list, values=(3,)] => return
+| ways [how='return', inner=list, ways='a handler', final=list, values=(3,)] => a handler
+| values [how='return', inner=list, ways='a handler', final=list, values=(3,)] => (3,)
+| result [how='return', inner=list, ways='a handler', final=list, values=(3,)] => 3
+out [how='return', inner=list, ways='a handler', final=list, values=(3,)] => [0, 0, 1, -1, 2, -2]
+events [how='return', inner=list, ways='a handler', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('r', 15)]
+how [how='return', inner=list, ways='a handler', final=list, values=(0, 0)] => return
+| ways [how='return', inner=list, ways='a handler', final=list, values=(0, 0)] => a handler
+| values [how='return', inner=list, ways='a handler', final=list, values=(0, 0)] => (0, 0)
+| result [how='return', inner=list, ways='a handler', final=list, values=(0, 0)] => end
+out [how='return', inner=list, ways='a handler', final=list, values=(0, 0)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='return', inner=list, ways='a handler', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='return', inner=list, ways='a handler', final=list] => return
+| ways [how='return', inner=list, ways='a handler', final=list] => a handler
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='return', inner=list, ways='a handler', final=list] => True
+sizes[2] < 6 * sizes[0] [how='return', inner=list, ways='a handler', final=list] => True
+how [how='all three', inner=list, ways='one way', final=list, values=(0, 1)] => all three
+| ways [how='all three', inner=list, ways='one way', final=list, values=(0, 1)] => one way
+| values [how='all three', inner=list, ways='one way', final=list, values=(0, 1)] => (0, 1)
+| result [how='all three', inner=list, ways='one way', final=list, values=(0, 1)] => end
+out [how='all three', inner=list, ways='one way', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='all three', inner=list, ways='one way', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='one way', final=list, values=(0, 2, 1)] => all three
+| ways [how='all three', inner=list, ways='one way', final=list, values=(0, 2, 1)] => one way
+| values [how='all three', inner=list, ways='one way', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='all three', inner=list, ways='one way', final=list, values=(0, 2, 1)] => end
+out [how='all three', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='all three', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 10), ('l', 12), ('l', 14), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='one way', final=list, values=(3,)] => all three
+| ways [how='all three', inner=list, ways='one way', final=list, values=(3,)] => one way
+| values [how='all three', inner=list, ways='one way', final=list, values=(3,)] => (3,)
+| result [how='all three', inner=list, ways='one way', final=list, values=(3,)] => 3
+out [how='all three', inner=list, ways='one way', final=list, values=(3,)] => [0, 1, 2]
+events [how='all three', inner=list, ways='one way', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('r', 14)]
+how [how='all three', inner=list, ways='one way', final=list, values=(0, 0)] => all three
+| ways [how='all three', inner=list, ways='one way', final=list, values=(0, 0)] => one way
+| values [how='all three', inner=list, ways='one way', final=list, values=(0, 0)] => (0, 0)
+| result [how='all three', inner=list, ways='one way', final=list, values=(0, 0)] => end
+out [how='all three', inner=list, ways='one way', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='all three', inner=list, ways='one way', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='one way', final=list] => all three
+| ways [how='all three', inner=list, ways='one way', final=list] => one way
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='all three', inner=list, ways='one way', final=list] => True
+sizes[2] < 6 * sizes[0] [how='all three', inner=list, ways='one way', final=list] => True
+how [how='all three', inner=list, ways='two ways', final=list, values=(0, 1)] => all three
+| ways [how='all three', inner=list, ways='two ways', final=list, values=(0, 1)] => two ways
+| values [how='all three', inner=list, ways='two ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='all three', inner=list, ways='two ways', final=list, values=(0, 1)] => end
+out [how='all three', inner=list, ways='two ways', final=list, values=(0, 1)] => [0, -1, -2, 0, 1, 2]
+events [how='all three', inner=list, ways='two ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 10), ('l', 13), ('l', 16), ('l', 2), ('l', 18), ('r', 18)]
+how [how='all three', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => all three
+| ways [how='all three', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => two ways
+| values [how='all three', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='all three', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => end
+out [how='all three', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [0, -1, -2, 0, -1, -2]
+events [how='all three', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 10), ('l', 11), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('r', 18)]
+how [how='all three', inner=list, ways='two ways', final=list, values=(3,)] => all three
+| ways [how='all three', inner=list, ways='two ways', final=list, values=(3,)] => two ways
+| values [how='all three', inner=list, ways='two ways', final=list, values=(3,)] => (3,)
+| result [how='all three', inner=list, ways='two ways', final=list, values=(3,)] => 3
+out [how='all three', inner=list, ways='two ways', final=list, values=(3,)] => [0, 1, 2]
+events [how='all three', inner=list, ways='two ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 13), ('l', 16), ('r', 16)]
+how [how='all three', inner=list, ways='two ways', final=list, values=(0, 0)] => all three
+| ways [how='all three', inner=list, ways='two ways', final=list, values=(0, 0)] => two ways
+| values [how='all three', inner=list, ways='two ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='all three', inner=list, ways='two ways', final=list, values=(0, 0)] => end
+out [how='all three', inner=list, ways='two ways', final=list, values=(0, 0)] => [0, -1, -2, 0, -1, -2]
+events [how='all three', inner=list, ways='two ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 2), ('l', 18), ('r', 18)]
+how [how='all three', inner=list, ways='two ways', final=list] => all three
+| ways [how='all three', inner=list, ways='two ways', final=list] => two ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='all three', inner=list, ways='two ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='all three', inner=list, ways='two ways', final=list] => True
+how [how='all three', inner=list, ways='three ways', final=list, values=(0, 1)] => all three
+| ways [how='all three', inner=list, ways='three ways', final=list, values=(0, 1)] => three ways
+| values [how='all three', inner=list, ways='three ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='all three', inner=list, ways='three ways', final=list, values=(0, 1)] => end
+out [how='all three', inner=list, ways='three ways', final=list, values=(0, 1)] => ['0', '1', '2', 0, 1, 2]
+events [how='all three', inner=list, ways='three ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 16), ('l', 18), ('l', 19), ('l', 20), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 10), ('l', 14), ('l', 18), ('l', 2), ('l', 21), ('r', 21)]
+how [how='all three', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => all three
+| ways [how='all three', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => three ways
+| values [how='all three', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='all three', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => end
+out [how='all three', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => ['0', '1', '2', 0, -1, -2]
+events [how='all three', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 16), ('l', 18), ('l', 19), ('l', 20), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 10), ('l', 11), ('l', 14), ('l', 15), ('l', 18), ('l', 19), ('l', 21), ('r', 21)]
+how [how='all three', inner=list, ways='three ways', final=list, values=(3,)] => all three
+| ways [how='all three', inner=list, ways='three ways', final=list, values=(3,)] => three ways
+| values [how='all three', inner=list, ways='three ways', final=list, values=(3,)] => (3,)
+| result [how='all three', inner=list, ways='three ways', final=list, values=(3,)] => 3
+out [how='all three', inner=list, ways='three ways', final=list, values=(3,)] => ['0', '1', '2']
+events [how='all three', inner=list, ways='three ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 16), ('l', 18), ('l', 19), ('l', 20), ('r', 20)]
+how [how='all three', inner=list, ways='three ways', final=list, values=(0, 0)] => all three
+| ways [how='all three', inner=list, ways='three ways', final=list, values=(0, 0)] => three ways
+| values [how='all three', inner=list, ways='three ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='all three', inner=list, ways='three ways', final=list, values=(0, 0)] => end
+out [how='all three', inner=list, ways='three ways', final=list, values=(0, 0)] => ['0', '1', '2', '0', '1', '2']
+events [how='all three', inner=list, ways='three ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 16), ('l', 18), ('l', 19), ('l', 20), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 16), ('l', 18), ('l', 19), ('l', 20), ('l', 2), ('l', 21), ('r', 21)]
+how [how='all three', inner=list, ways='three ways', final=list] => all three
+| ways [how='all three', inner=list, ways='three ways', final=list] => three ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='all three', inner=list, ways='three ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='all three', inner=list, ways='three ways', final=list] => True
+how [how='all three', inner=list, ways='a loop', final=list, values=(0, 1)] => all three
+| ways [how='all three', inner=list, ways='a loop', final=list, values=(0, 1)] => a loop
+| values [how='all three', inner=list, ways='a loop', final=list, values=(0, 1)] => (0, 1)
+| result [how='all three', inner=list, ways='a loop', final=list, values=(0, 1)] => end
+out [how='all three', inner=list, ways='a loop', final=list, values=(0, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='all three', inner=list, ways='a loop', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('l', 2), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => all three
+| ways [how='all three', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => a loop
+| values [how='all three', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='all three', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => end
+out [how='all three', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='all three', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='a loop', final=list, values=(3,)] => all three
+| ways [how='all three', inner=list, ways='a loop', final=list, values=(3,)] => a loop
+| values [how='all three', inner=list, ways='a loop', final=list, values=(3,)] => (3,)
+| result [how='all three', inner=list, ways='a loop', final=list, values=(3,)] => 3
+out [how='all three', inner=list, ways='a loop', final=list, values=(3,)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='all three', inner=list, ways='a loop', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('r', 14)]
+how [how='all three', inner=list, ways='a loop', final=list, values=(0, 0)] => all three
+| ways [how='all three', inner=list, ways='a loop', final=list, values=(0, 0)] => a loop
+| values [how='all three', inner=list, ways='a loop', final=list, values=(0, 0)] => (0, 0)
+| result [how='all three', inner=list, ways='a loop', final=list, values=(0, 0)] => end
+out [how='all three', inner=list, ways='a loop', final=list, values=(0, 0)] => [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='all three', inner=list, ways='a loop', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 14), ('l', 14), ('l', 14), ('l', 2), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='a loop', final=list] => all three
+| ways [how='all three', inner=list, ways='a loop', final=list] => a loop
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='all three', inner=list, ways='a loop', final=list] => True
+sizes[2] < 6 * sizes[0] [how='all three', inner=list, ways='a loop', final=list] => True
+how [how='all three', inner=list, ways='a with', final=list, values=(0, 1)] => all three
+| ways [how='all three', inner=list, ways='a with', final=list, values=(0, 1)] => a with
+| values [how='all three', inner=list, ways='a with', final=list, values=(0, 1)] => (0, 1)
+| result [how='all three', inner=list, ways='a with', final=list, values=(0, 1)] => end
+out [how='all three', inner=list, ways='a with', final=list, values=(0, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='all three', inner=list, ways='a with', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='a with', final=list, values=(0, 2, 1)] => all three
+| ways [how='all three', inner=list, ways='a with', final=list, values=(0, 2, 1)] => a with
+| values [how='all three', inner=list, ways='a with', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='all three', inner=list, ways='a with', final=list, values=(0, 2, 1)] => end
+out [how='all three', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [0, 1, 2, 0, 1, 2]
+events [how='all three', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 10), ('l', 12), ('l', 14), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='a with', final=list, values=(3,)] => all three
+| ways [how='all three', inner=list, ways='a with', final=list, values=(3,)] => a with
+| values [how='all three', inner=list, ways='a with', final=list, values=(3,)] => (3,)
+| result [how='all three', inner=list, ways='a with', final=list, values=(3,)] => 3
+out [how='all three', inner=list, ways='a with', final=list, values=(3,)] => [0, 1, 2]
+events [how='all three', inner=list, ways='a with', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('r', 14)]
+how [how='all three', inner=list, ways='a with', final=list, values=(0, 0)] => all three
+| ways [how='all three', inner=list, ways='a with', final=list, values=(0, 0)] => a with
+| values [how='all three', inner=list, ways='a with', final=list, values=(0, 0)] => (0, 0)
+| result [how='all three', inner=list, ways='a with', final=list, values=(0, 0)] => end
+out [how='all three', inner=list, ways='a with', final=list, values=(0, 0)] => [0, 1, 2, 0, 1, 2]
+events [how='all three', inner=list, ways='a with', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('l', 12), ('l', 14), ('l', 2), ('l', 15), ('r', 15)]
+how [how='all three', inner=list, ways='a with', final=list] => all three
+| ways [how='all three', inner=list, ways='a with', final=list] => a with
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='all three', inner=list, ways='a with', final=list] => True
+sizes[2] < 6 * sizes[0] [how='all three', inner=list, ways='a with', final=list] => True
+how [how='all three', inner=list, ways='a handler', final=list, values=(0, 1)] => all three
+| ways [how='all three', inner=list, ways='a handler', final=list, values=(0, 1)] => a handler
+| values [how='all three', inner=list, ways='a handler', final=list, values=(0, 1)] => (0, 1)
+| result [how='all three', inner=list, ways='a handler', final=list, values=(0, 1)] => end
+out [how='all three', inner=list, ways='a handler', final=list, values=(0, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='all three', inner=list, ways='a handler', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('l', 2), ('l', 18), ('r', 18)]
+how [how='all three', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => all three
+| ways [how='all three', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => a handler
+| values [how='all three', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='all three', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => end
+out [how='all three', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='all three', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('l', 18), ('r', 18)]
+how [how='all three', inner=list, ways='a handler', final=list, values=(3,)] => all three
+| ways [how='all three', inner=list, ways='a handler', final=list, values=(3,)] => a handler
+| values [how='all three', inner=list, ways='a handler', final=list, values=(3,)] => (3,)
+| result [how='all three', inner=list, ways='a handler', final=list, values=(3,)] => 3
+out [how='all three', inner=list, ways='a handler', final=list, values=(3,)] => [0, 0, 1, -1, 2, -2]
+events [how='all three', inner=list, ways='a handler', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('r', 17)]
+how [how='all three', inner=list, ways='a handler', final=list, values=(0, 0)] => all three
+| ways [how='all three', inner=list, ways='a handler', final=list, values=(0, 0)] => a handler
+| values [how='all three', inner=list, ways='a handler', final=list, values=(0, 0)] => (0, 0)
+| result [how='all three', inner=list, ways='a handler', final=list, values=(0, 0)] => end
+out [how='all three', inner=list, ways='a handler', final=list, values=(0, 0)] => [0, 0, 1, -1, 2, -2, 0, 0, 1, -1, 2, -2]
+events [how='all three', inner=list, ways='a handler', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 7), ('l', 8), ('l', 10), ('e', 10), ('l', 11), ('l', 13), ('e', 13), ('l', 14), ('l', 16), ('e', 16), ('l', 17), ('l', 2), ('l', 18), ('r', 18)]
+how [how='all three', inner=list, ways='a handler', final=list] => all three
+| ways [how='all three', inner=list, ways='a handler', final=list] => a handler
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='all three', inner=list, ways='a handler', final=list] => True
+sizes[2] < 6 * sizes[0] [how='all three', inner=list, ways='a handler', final=list] => True
+how [how='nothing', inner=list, ways='one way', final=list, values=(0, 1)] => nothing
+| ways [how='nothing', inner=list, ways='one way', final=list, values=(0, 1)] => one way
+| values [how='nothing', inner=list, ways='one way', final=list, values=(0, 1)] => (0, 1)
+| result [how='nothing', inner=list, ways='one way', final=list, values=(0, 1)] => end
+out [how='nothing', inner=list, ways='one way', final=list, values=(0, 1)] => [0, 0, 1, 2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='one way', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='one way', final=list, values=(0, 2, 1)] => nothing
+| ways [how='nothing', inner=list, ways='one way', final=list, values=(0, 2, 1)] => one way
+| values [how='nothing', inner=list, ways='one way', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='nothing', inner=list, ways='one way', final=list, values=(0, 2, 1)] => end
+out [how='nothing', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [0, 0, 1, 2, 2, 0, 1, 2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='one way', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='one way', final=list, values=(3,)] => nothing
+| ways [how='nothing', inner=list, ways='one way', final=list, values=(3,)] => one way
+| values [how='nothing', inner=list, ways='one way', final=list, values=(3,)] => (3,)
+| result [how='nothing', inner=list, ways='one way', final=list, values=(3,)] => end
+out [how='nothing', inner=list, ways='one way', final=list, values=(3,)] => [3, 0, 1, 2]
+events [how='nothing', inner=list, ways='one way', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='one way', final=list, values=(0, 0)] => nothing
+| ways [how='nothing', inner=list, ways='one way', final=list, values=(0, 0)] => one way
+| values [how='nothing', inner=list, ways='one way', final=list, values=(0, 0)] => (0, 0)
+| result [how='nothing', inner=list, ways='one way', final=list, values=(0, 0)] => end
+out [how='nothing', inner=list, ways='one way', final=list, values=(0, 0)] => [0, 0, 1, 2, 0, 0, 1, 2]
+events [how='nothing', inner=list, ways='one way', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='one way', final=list] => nothing
+| ways [how='nothing', inner=list, ways='one way', final=list] => one way
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='nothing', inner=list, ways='one way', final=list] => True
+sizes[2] < 6 * sizes[0] [how='nothing', inner=list, ways='one way', final=list] => True
+how [how='nothing', inner=list, ways='two ways', final=list, values=(0, 1)] => nothing
+| ways [how='nothing', inner=list, ways='two ways', final=list, values=(0, 1)] => two ways
+| values [how='nothing', inner=list, ways='two ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='nothing', inner=list, ways='two ways', final=list, values=(0, 1)] => end
+out [how='nothing', inner=list, ways='two ways', final=list, values=(0, 1)] => [0, 0, -1, -2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='two ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => nothing
+| ways [how='nothing', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => two ways
+| values [how='nothing', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='nothing', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => end
+out [how='nothing', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [0, 0, -1, -2, 2, 0, -1, -2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='two ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='two ways', final=list, values=(3,)] => nothing
+| ways [how='nothing', inner=list, ways='two ways', final=list, values=(3,)] => two ways
+| values [how='nothing', inner=list, ways='two ways', final=list, values=(3,)] => (3,)
+| result [how='nothing', inner=list, ways='two ways', final=list, values=(3,)] => end
+out [how='nothing', inner=list, ways='two ways', final=list, values=(3,)] => [3, 0, 1, 2]
+events [how='nothing', inner=list, ways='two ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 11), ('l', 14), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='two ways', final=list, values=(0, 0)] => nothing
+| ways [how='nothing', inner=list, ways='two ways', final=list, values=(0, 0)] => two ways
+| values [how='nothing', inner=list, ways='two ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='nothing', inner=list, ways='two ways', final=list, values=(0, 0)] => end
+out [how='nothing', inner=list, ways='two ways', final=list, values=(0, 0)] => [0, 0, -1, -2, 0, 0, -1, -2]
+events [how='nothing', inner=list, ways='two ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 11), ('l', 12), ('l', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='two ways', final=list] => nothing
+| ways [how='nothing', inner=list, ways='two ways', final=list] => two ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='nothing', inner=list, ways='two ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='nothing', inner=list, ways='two ways', final=list] => True
+how [how='nothing', inner=list, ways='three ways', final=list, values=(0, 1)] => nothing
+| ways [how='nothing', inner=list, ways='three ways', final=list, values=(0, 1)] => three ways
+| values [how='nothing', inner=list, ways='three ways', final=list, values=(0, 1)] => (0, 1)
+| result [how='nothing', inner=list, ways='three ways', final=list, values=(0, 1)] => end
+out [how='nothing', inner=list, ways='three ways', final=list, values=(0, 1)] => [0, '0', '1', '2', 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='three ways', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 12), ('l', 16), ('l', 2), ('l', 19), ('r', 19)]
+how [how='nothing', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => nothing
+| ways [how='nothing', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => three ways
+| values [how='nothing', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='nothing', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => end
+out [how='nothing', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => [0, '0', '1', '2', 2, 0, -1, -2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='three ways', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 12), ('l', 13), ('l', 16), ('l', 17), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 12), ('l', 16), ('l', 2), ('l', 19), ('r', 19)]
+how [how='nothing', inner=list, ways='three ways', final=list, values=(3,)] => nothing
+| ways [how='nothing', inner=list, ways='three ways', final=list, values=(3,)] => three ways
+| values [how='nothing', inner=list, ways='three ways', final=list, values=(3,)] => (3,)
+| result [how='nothing', inner=list, ways='three ways', final=list, values=(3,)] => end
+out [how='nothing', inner=list, ways='three ways', final=list, values=(3,)] => [3, '0', '1', '2']
+events [how='nothing', inner=list, ways='three ways', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 19), ('r', 19)]
+how [how='nothing', inner=list, ways='three ways', final=list, values=(0, 0)] => nothing
+| ways [how='nothing', inner=list, ways='three ways', final=list, values=(0, 0)] => three ways
+| values [how='nothing', inner=list, ways='three ways', final=list, values=(0, 0)] => (0, 0)
+| result [how='nothing', inner=list, ways='three ways', final=list, values=(0, 0)] => end
+out [how='nothing', inner=list, ways='three ways', final=list, values=(0, 0)] => [0, '0', '1', '2', 0, '0', '1', '2']
+events [how='nothing', inner=list, ways='three ways', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 9), ('l', 10), ('l', 12), ('l', 13), ('l', 14), ('l', 16), ('l', 17), ('l', 18), ('l', 2), ('l', 19), ('r', 19)]
+how [how='nothing', inner=list, ways='three ways', final=list] => nothing
+| ways [how='nothing', inner=list, ways='three ways', final=list] => three ways
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='nothing', inner=list, ways='three ways', final=list] => True
+sizes[2] < 6 * sizes[0] [how='nothing', inner=list, ways='three ways', final=list] => True
+how [how='nothing', inner=list, ways='a loop', final=list, values=(0, 1)] => nothing
+| ways [how='nothing', inner=list, ways='a loop', final=list, values=(0, 1)] => a loop
+| values [how='nothing', inner=list, ways='a loop', final=list, values=(0, 1)] => (0, 1)
+| result [how='nothing', inner=list, ways='a loop', final=list, values=(0, 1)] => end
+out [how='nothing', inner=list, ways='a loop', final=list, values=(0, 1)] => [0, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), 1, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='nothing', inner=list, ways='a loop', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => nothing
+| ways [how='nothing', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => a loop
+| values [how='nothing', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='nothing', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => end
+out [how='nothing', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [0, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), 2, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), 1, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='nothing', inner=list, ways='a loop', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a loop', final=list, values=(3,)] => nothing
+| ways [how='nothing', inner=list, ways='a loop', final=list, values=(3,)] => a loop
+| values [how='nothing', inner=list, ways='a loop', final=list, values=(3,)] => (3,)
+| result [how='nothing', inner=list, ways='a loop', final=list, values=(3,)] => end
+out [how='nothing', inner=list, ways='a loop', final=list, values=(3,)] => [3, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='nothing', inner=list, ways='a loop', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a loop', final=list, values=(0, 0)] => nothing
+| ways [how='nothing', inner=list, ways='a loop', final=list, values=(0, 0)] => a loop
+| values [how='nothing', inner=list, ways='a loop', final=list, values=(0, 0)] => (0, 0)
+| result [how='nothing', inner=list, ways='a loop', final=list, values=(0, 0)] => end
+out [how='nothing', inner=list, ways='a loop', final=list, values=(0, 0)] => [0, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2), 0, (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)]
+events [how='nothing', inner=list, ways='a loop', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 8), ('l', 8), ('l', 10), ('l', 10), ('l', 10), ('l', 12), ('l', 12), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a loop', final=list] => nothing
+| ways [how='nothing', inner=list, ways='a loop', final=list] => a loop
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='nothing', inner=list, ways='a loop', final=list] => True
+sizes[2] < 6 * sizes[0] [how='nothing', inner=list, ways='a loop', final=list] => True
+how [how='nothing', inner=list, ways='a with', final=list, values=(0, 1)] => nothing
+| ways [how='nothing', inner=list, ways='a with', final=list, values=(0, 1)] => a with
+| values [how='nothing', inner=list, ways='a with', final=list, values=(0, 1)] => (0, 1)
+| result [how='nothing', inner=list, ways='a with', final=list, values=(0, 1)] => end
+out [how='nothing', inner=list, ways='a with', final=list, values=(0, 1)] => [0, 0, 1, 2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='a with', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a with', final=list, values=(0, 2, 1)] => nothing
+| ways [how='nothing', inner=list, ways='a with', final=list, values=(0, 2, 1)] => a with
+| values [how='nothing', inner=list, ways='a with', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='nothing', inner=list, ways='a with', final=list, values=(0, 2, 1)] => end
+out [how='nothing', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [0, 0, 1, 2, 2, 0, 1, 2, 1, 0, 1, 2]
+events [how='nothing', inner=list, ways='a with', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a with', final=list, values=(3,)] => nothing
+| ways [how='nothing', inner=list, ways='a with', final=list, values=(3,)] => a with
+| values [how='nothing', inner=list, ways='a with', final=list, values=(3,)] => (3,)
+| result [how='nothing', inner=list, ways='a with', final=list, values=(3,)] => end
+out [how='nothing', inner=list, ways='a with', final=list, values=(3,)] => [3, 0, 1, 2]
+events [how='nothing', inner=list, ways='a with', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a with', final=list, values=(0, 0)] => nothing
+| ways [how='nothing', inner=list, ways='a with', final=list, values=(0, 0)] => a with
+| values [how='nothing', inner=list, ways='a with', final=list, values=(0, 0)] => (0, 0)
+| result [how='nothing', inner=list, ways='a with', final=list, values=(0, 0)] => end
+out [how='nothing', inner=list, ways='a with', final=list, values=(0, 0)] => [0, 0, 1, 2, 0, 0, 1, 2]
+events [how='nothing', inner=list, ways='a with', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('l', 10), ('l', 12), ('l', 2), ('l', 13), ('r', 13)]
+how [how='nothing', inner=list, ways='a with', final=list] => nothing
+| ways [how='nothing', inner=list, ways='a with', final=list] => a with
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='nothing', inner=list, ways='a with', final=list] => True
+sizes[2] < 6 * sizes[0] [how='nothing', inner=list, ways='a with', final=list] => True
+how [how='nothing', inner=list, ways='a handler', final=list, values=(0, 1)] => nothing
+| ways [how='nothing', inner=list, ways='a handler', final=list, values=(0, 1)] => a handler
+| values [how='nothing', inner=list, ways='a handler', final=list, values=(0, 1)] => (0, 1)
+| result [how='nothing', inner=list, ways='a handler', final=list, values=(0, 1)] => end
+out [how='nothing', inner=list, ways='a handler', final=list, values=(0, 1)] => [0, 0, 0, 1, -1, 2, -2, 1, 0, 0, 1, -1, 2, -2]
+events [how='nothing', inner=list, ways='a handler', final=list, values=(0, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => nothing
+| ways [how='nothing', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => a handler
+| values [how='nothing', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => (0, 2, 1)
+| result [how='nothing', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => end
+out [how='nothing', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [0, 0, 0, 1, -1, 2, -2, 2, 0, 0, 1, -1, 2, -2, 1, 0, 0, 1, -1, 2, -2]
+events [how='nothing', inner=list, ways='a handler', final=list, values=(0, 2, 1)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='a handler', final=list, values=(3,)] => nothing
+| ways [how='nothing', inner=list, ways='a handler', final=list, values=(3,)] => a handler
+| values [how='nothing', inner=list, ways='a handler', final=list, values=(3,)] => (3,)
+| result [how='nothing', inner=list, ways='a handler', final=list, values=(3,)] => end
+out [how='nothing', inner=list, ways='a handler', final=list, values=(3,)] => [3, 0, 0, 1, -1, 2, -2]
+events [how='nothing', inner=list, ways='a handler', final=list, values=(3,)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='a handler', final=list, values=(0, 0)] => nothing
+| ways [how='nothing', inner=list, ways='a handler', final=list, values=(0, 0)] => a handler
+| values [how='nothing', inner=list, ways='a handler', final=list, values=(0, 0)] => (0, 0)
+| result [how='nothing', inner=list, ways='a handler', final=list, values=(0, 0)] => end
+out [how='nothing', inner=list, ways='a handler', final=list, values=(0, 0)] => [0, 0, 0, 1, -1, 2, -2, 0, 0, 0, 1, -1, 2, -2]
+events [how='nothing', inner=list, ways='a handler', final=list, values=(0, 0)] => [('c', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 6), ('l', 8), ('e', 8), ('l', 9), ('l', 11), ('e', 11), ('l', 12), ('l', 14), ('e', 14), ('l', 15), ('l', 2), ('l', 16), ('r', 16)]
+how [how='nothing', inner=list, ways='a handler', final=list] => nothing
+| ways [how='nothing', inner=list, ways='a handler', final=list] => a handler
+| grows with the depth: sizes[3] < 6 * sizes[1] [how='nothing', inner=list, ways='a handler', final=list] => True
+sizes[2] < 6 * sizes[0] [how='nothing', inner=list, ways='a handler', final=list] => True

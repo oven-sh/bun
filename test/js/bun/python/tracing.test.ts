@@ -373,6 +373,52 @@ for (const worker of workers) worker.terminate();
     expect(exitCode).toBe(0);
   });
 
+  test("code that ran under a tool goes when it is dropped, in the same collection as any other", async () => {
+    const tools = `
+import sys
+
+def trace(frame, event, argument):
+    return trace
+
+def start(code, offset):
+    pass
+
+def run(tool, count):
+    body = "def f():" + "".join(chr(10) + "    x = %d" % i for i in range(50)) + chr(10)
+    for n in range(count):
+        namespace = {}
+        exec(compile(body, "f%d" % n, "exec"), namespace)
+        if tool == "settrace":
+            sys.settrace(trace)
+        elif tool == "monitoring":
+            sys.monitoring.use_tool_id(2, "test")
+            sys.monitoring.register_callback(2, sys.monitoring.events.PY_START, start)
+            sys.monitoring.set_events(2, sys.monitoring.events.PY_START)
+        namespace["f"]()
+        sys.settrace(None)
+        if tool == "monitoring":
+            sys.monitoring.set_events(2, 0)
+            sys.monitoring.free_tool_id(2)
+`;
+    const main = `
+import { heapStats } from "bun:jsc";
+import { run } from "./tools.py";
+const count = () => {
+  Bun.gc(true);
+  return heapStats().objectTypeCounts.UnlinkedFunctionCodeBlock ?? 0;
+};
+const left = [];
+for (const tool of ["none", "settrace", "monitoring"]) {
+  run(tool, 3);
+  const before = count();
+  run(tool, 200);
+  left.push(count() - before < 100);
+}
+console.log(JSON.stringify(left));
+`;
+    expect(await run({ "main.ts": main, "tools.py": tools }, ["main.ts"])).toEqual(printed("[true,true,true]\n"));
+  });
+
   test("cProfile counts calls", async () => {
     const main = `
 import cProfile

@@ -1,0 +1,140 @@
+status: 0
+script: 7068095832ab6597
+source: 33169a1a2809989d
+---
+statement [statement='break', dead='return\n{s}'] => break
+repr(dead) [statement='break', dead='return\n{s}'] => 'return\n{s}'
+e.msg [statement='break', dead='return\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='return\n{s}'] => 6
+e.offset [statement='break', dead='return\n{s}'] => 13
+statement [statement='break', dead='raise E\n{s}'] => break
+repr(dead) [statement='break', dead='raise E\n{s}'] => 'raise E\n{s}'
+e.msg [statement='break', dead='raise E\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='raise E\n{s}'] => 7
+e.offset [statement='break', dead='raise E\n{s}'] => 13
+statement [statement='break', dead='if 0:\n    {s}'] => break
+repr(dead) [statement='break', dead='if 0:\n    {s}'] => 'if 0:\n    {s}'
+e.msg [statement='break', dead='if 0:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='if 0:\n    {s}'] => 7
+e.offset [statement='break', dead='if 0:\n    {s}'] => 17
+statement [statement='break', dead='if not 1:\n    {s}'] => break
+repr(dead) [statement='break', dead='if not 1:\n    {s}'] => 'if not 1:\n    {s}'
+e.msg [statement='break', dead='if not 1:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='if not 1:\n    {s}'] => 7
+e.offset [statement='break', dead='if not 1:\n    {s}'] => 17
+statement [statement='break', dead='while 1:\n    pass\nelse:\n    {s}'] => break
+repr(dead) [statement='break', dead='while 1:\n    pass\nelse:\n    {s}'] => 'while 1:\n    pass\nelse:\n    {s}'
+e.msg [statement='break', dead='while 1:\n    pass\nelse:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='while 1:\n    pass\nelse:\n    {s}'] => 9
+e.offset [statement='break', dead='while 1:\n    pass\nelse:\n    {s}'] => 17
+statement [statement='break', dead='if 1:\n    pass\nelse:\n    {s}'] => break
+repr(dead) [statement='break', dead='if 1:\n    pass\nelse:\n    {s}'] => 'if 1:\n    pass\nelse:\n    {s}'
+e.msg [statement='break', dead='if 1:\n    pass\nelse:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='if 1:\n    pass\nelse:\n    {s}'] => 9
+e.offset [statement='break', dead='if 1:\n    pass\nelse:\n    {s}'] => 17
+statement [statement='break', dead='{s}'] => break
+repr(dead) [statement='break', dead='{s}'] => '{s}'
+e.msg [statement='break', dead='{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='break', dead='{s}'] => 6
+e.offset [statement='break', dead='{s}'] => 13
+statement [statement='continue', dead='return\n{s}'] => continue
+repr(dead) [statement='continue', dead='return\n{s}'] => 'return\n{s}'
+e.msg [statement='continue', dead='return\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='return\n{s}'] => 6
+e.offset [statement='continue', dead='return\n{s}'] => 13
+statement [statement='continue', dead='raise E\n{s}'] => continue
+repr(dead) [statement='continue', dead='raise E\n{s}'] => 'raise E\n{s}'
+e.msg [statement='continue', dead='raise E\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='raise E\n{s}'] => 7
+e.offset [statement='continue', dead='raise E\n{s}'] => 13
+statement [statement='continue', dead='if 0:\n    {s}'] => continue
+repr(dead) [statement='continue', dead='if 0:\n    {s}'] => 'if 0:\n    {s}'
+e.msg [statement='continue', dead='if 0:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='if 0:\n    {s}'] => 7
+e.offset [statement='continue', dead='if 0:\n    {s}'] => 17
+statement [statement='continue', dead='if not 1:\n    {s}'] => continue
+repr(dead) [statement='continue', dead='if not 1:\n    {s}'] => 'if not 1:\n    {s}'
+e.msg [statement='continue', dead='if not 1:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='if not 1:\n    {s}'] => 7
+e.offset [statement='continue', dead='if not 1:\n    {s}'] => 17
+statement [statement='continue', dead='while 1:\n    pass\nelse:\n    {s}'] => continue
+repr(dead) [statement='continue', dead='while 1:\n    pass\nelse:\n    {s}'] => 'while 1:\n    pass\nelse:\n    {s}'
+e.msg [statement='continue', dead='while 1:\n    pass\nelse:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='while 1:\n    pass\nelse:\n    {s}'] => 9
+e.offset [statement='continue', dead='while 1:\n    pass\nelse:\n    {s}'] => 17
+statement [statement='continue', dead='if 1:\n    pass\nelse:\n    {s}'] => continue
+repr(dead) [statement='continue', dead='if 1:\n    pass\nelse:\n    {s}'] => 'if 1:\n    pass\nelse:\n    {s}'
+e.msg [statement='continue', dead='if 1:\n    pass\nelse:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='if 1:\n    pass\nelse:\n    {s}'] => 9
+e.offset [statement='continue', dead='if 1:\n    pass\nelse:\n    {s}'] => 17
+statement [statement='continue', dead='{s}'] => continue
+repr(dead) [statement='continue', dead='{s}'] => '{s}'
+e.msg [statement='continue', dead='{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='continue', dead='{s}'] => 6
+e.offset [statement='continue', dead='{s}'] => 13
+statement [statement='return', dead='return\n{s}'] => return
+repr(dead) [statement='return', dead='return\n{s}'] => 'return\n{s}'
+e.msg [statement='return', dead='return\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='return\n{s}'] => 6
+e.offset [statement='return', dead='return\n{s}'] => 13
+statement [statement='return', dead='raise E\n{s}'] => return
+repr(dead) [statement='return', dead='raise E\n{s}'] => 'raise E\n{s}'
+e.msg [statement='return', dead='raise E\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='raise E\n{s}'] => 7
+e.offset [statement='return', dead='raise E\n{s}'] => 13
+statement [statement='return', dead='if 0:\n    {s}'] => return
+repr(dead) [statement='return', dead='if 0:\n    {s}'] => 'if 0:\n    {s}'
+e.msg [statement='return', dead='if 0:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='if 0:\n    {s}'] => 7
+e.offset [statement='return', dead='if 0:\n    {s}'] => 17
+statement [statement='return', dead='while False:\n    {s}'] => return
+repr(dead) [statement='return', dead='while False:\n    {s}'] => 'while False:\n    {s}'
+e.msg [statement='return', dead='while False:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='while False:\n    {s}'] => 7
+e.offset [statement='return', dead='while False:\n    {s}'] => 17
+statement [statement='return', dead='if not 1:\n    {s}'] => return
+repr(dead) [statement='return', dead='if not 1:\n    {s}'] => 'if not 1:\n    {s}'
+e.msg [statement='return', dead='if not 1:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='if not 1:\n    {s}'] => 7
+e.offset [statement='return', dead='if not 1:\n    {s}'] => 17
+statement [statement='return', dead='while 1:\n    pass\nelse:\n    {s}'] => return
+repr(dead) [statement='return', dead='while 1:\n    pass\nelse:\n    {s}'] => 'while 1:\n    pass\nelse:\n    {s}'
+e.msg [statement='return', dead='while 1:\n    pass\nelse:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='while 1:\n    pass\nelse:\n    {s}'] => 9
+e.offset [statement='return', dead='while 1:\n    pass\nelse:\n    {s}'] => 17
+statement [statement='return', dead='if 1:\n    pass\nelse:\n    {s}'] => return
+repr(dead) [statement='return', dead='if 1:\n    pass\nelse:\n    {s}'] => 'if 1:\n    pass\nelse:\n    {s}'
+e.msg [statement='return', dead='if 1:\n    pass\nelse:\n    {s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='if 1:\n    pass\nelse:\n    {s}'] => 9
+e.offset [statement='return', dead='if 1:\n    pass\nelse:\n    {s}'] => 17
+statement [statement='return', dead='{s}'] => return
+repr(dead) [statement='return', dead='{s}'] => '{s}'
+e.msg [statement='return', dead='{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='return', dead='{s}'] => 6
+e.offset [statement='return', dead='{s}'] => 13
+statement [statement='pass', dead='return\n{s}'] => pass
+repr(dead) [statement='pass', dead='return\n{s}'] => 'return\n{s}'
+e.msg [statement='pass', dead='return\n{s}'] => 'break', 'continue' and 'return' cannot appear in an except* block
+e.lineno [statement='pass', dead='return\n{s}'] => 6
+e.offset [statement='pass', dead='return\n{s}'] => 13
+statement [statement='pass', dead='raise E\n{s}'] => pass
+repr(dead) [statement='pass', dead='raise E\n{s}'] => 'raise E\n{s}'
+compiles
+statement [statement='pass', dead='if 0:\n    {s}'] => pass
+repr(dead) [statement='pass', dead='if 0:\n    {s}'] => 'if 0:\n    {s}'
+compiles
+statement [statement='pass', dead='while False:\n    {s}'] => pass
+repr(dead) [statement='pass', dead='while False:\n    {s}'] => 'while False:\n    {s}'
+compiles
+statement [statement='pass', dead='if not 1:\n    {s}'] => pass
+repr(dead) [statement='pass', dead='if not 1:\n    {s}'] => 'if not 1:\n    {s}'
+compiles
+statement [statement='pass', dead='while 1:\n    pass\nelse:\n    {s}'] => pass
+repr(dead) [statement='pass', dead='while 1:\n    pass\nelse:\n    {s}'] => 'while 1:\n    pass\nelse:\n    {s}'
+compiles
+statement [statement='pass', dead='if 1:\n    pass\nelse:\n    {s}'] => pass
+repr(dead) [statement='pass', dead='if 1:\n    pass\nelse:\n    {s}'] => 'if 1:\n    pass\nelse:\n    {s}'
+compiles
+statement [statement='pass', dead='{s}'] => pass
+repr(dead) [statement='pass', dead='{s}'] => '{s}'
+compiles

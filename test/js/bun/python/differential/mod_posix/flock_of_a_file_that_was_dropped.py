@@ -143,3 +143,50 @@ fcntl.flock(mine, fcntl.LOCK_EX)
 print("after the child")
 child.stdout.close()
 print(child.wait())
+
+# Without waiting: "is another instance running?"
+mine.close()
+NB = fcntl.LOCK_NB
+for i in range(3):
+    lock(fcntl.LOCK_EX | NB)
+    print("not waiting", i, flush=True)
+lock(fcntl.LOCK_SH | NB)
+lock(fcntl.LOCK_SH | NB)
+lock(fcntl.LOCK_EX | NB)
+lock(fcntl.LOCK_SH | NB)
+print("not waiting: shared, exclusive, shared", flush=True)
+f = open(path, "w")
+fcntl.flock(f.fileno(), fcntl.LOCK_EX | NB)
+del f
+f = open(path, "w")
+fcntl.flock(f.fileno(), fcntl.LOCK_EX | NB)
+del f
+print("not waiting, by number", flush=True)
+thread = threading.Thread(target=lock)
+thread.start()
+thread.join()
+lock(fcntl.LOCK_EX | NB)
+print("not waiting, after a thread that has ended", flush=True)
+go_on.clear()
+has_locked.clear()
+thread = threading.Thread(target=locks_and_waits)
+thread.start()
+has_locked.wait()
+lock(fcntl.LOCK_EX | NB)
+print("not waiting, beside a thread that waits", flush=True)
+go_on.set()
+thread.join()
+
+# A program that polls for a lock that a file of its own holds, which is in use, is refused every time, and does not pay for it.
+held = open(path, "w")
+fcntl.flock(held, fcntl.LOCK_EX)
+before = gc.get_stats()[2]["collections"]
+refused = 0
+with open(path, "w") as mine:
+    for i in range(300):
+        try:
+            fcntl.flock(mine, fcntl.LOCK_EX | NB)
+        except BlockingIOError:
+            refused += 1
+print(refused, gc.get_stats()[2]["collections"] - before < 20)
+held.close()

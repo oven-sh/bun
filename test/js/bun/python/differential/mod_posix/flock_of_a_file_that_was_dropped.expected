@@ -1,5 +1,5 @@
 status: 0
-script: 0e3e8268143b7ecf
+script: 0690242753feccdd
 ---
 locked 0
 locked 1
@@ -24,3 +24,11 @@ BlockingIOError
 the child has it
 after the child
 0
+not waiting 0
+not waiting 1
+not waiting 2
+not waiting: shared, exclusive, shared
+not waiting, by number
+not waiting, after a thread that has ended
+not waiting, beside a thread that waits
+300 True

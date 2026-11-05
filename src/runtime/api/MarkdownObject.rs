@@ -200,7 +200,7 @@ pub(crate) fn html<'a>(
         .map_err(|err| parser_err_to_js(cx.global(), err, input_len))
 }
 
-/// Throws for YAML metadata whose root is a scalar or a sequence. A null root is metadata of comments alone.
+/// Throws for a root that is a scalar or a sequence, which YAML can have. A null root is metadata of comments alone.
 fn must_be_mapping(global: &JSGlobalObject, root: &bun_ast::Expr) -> JsResult<()> {
     use bun_ast::expr::Data;
     match root.data {
@@ -222,14 +222,13 @@ fn parse_metadata<'a>(
 ) -> JsResult<JsLocal<'a>> {
     // SAFETY: as for `Bun.YAML.parse` and `Bun.TOML.parse`, which this is.
     let global = unsafe { heap.global() };
+    let check_root = |root: &bun_ast::Expr| must_be_mapping(global, root);
     let data = match marker {
         b'-' => bun_removable_features::removable_body!(Yaml, Abort, {
-            let check_root = |root: &bun_ast::Expr| must_be_mapping(global, root);
             yaml_object::parse_to_values(global, utf8, roots, pending, check_root)
         })?,
-        // The root of a TOML document is a table.
         _ => bun_removable_features::removable_body!(Toml, Abort, {
-            toml_object::parse(heap, utf8)
+            toml_object::parse_text(heap, utf8, check_root)
         })?,
     };
     Ok(match data.is_null() {

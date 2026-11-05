@@ -150,7 +150,7 @@ fn jsx_import_of(kind: JsxImportKind) -> JsxImport {
 /// `_temp` for `%react:outlined:0:_temp`: what the compiler calls the function that it has outlined. Its `.name` says so, and a message that quotes it.
 pub(crate) fn name_of_outlined_function(name: &[u8]) -> Option<&[u8]> {
     let numbered = name.strip_prefix(NAME_PREFIX)?.strip_prefix(OUTLINED)?;
-    let colon = numbered.iter().position(|&byte| byte == b':')?;
+    let colon = bun_core::strings::index_of_char_usize(numbered, b':')?;
     Some(&numbered[colon + 1..])
 }
 

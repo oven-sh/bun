@@ -98,7 +98,7 @@ fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
         bun_core::fmt::format_json_string_utf8(&text, Default::default()).to_string()
     };
     // A URL reads these otherwise than a path does.
-    let named = match name.iter().any(|&byte| matches!(byte, b'#' | b'%' | b'\\')) {
+    let named = match strings::index_of_any(name, b"#%\\").is_some() {
         true => format!("import.meta.dir + {}", quote([b"/", name].concat())),
         false => format!(
             "new URL({}, import.meta.url)",

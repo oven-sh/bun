@@ -306,7 +306,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 // The path of a module with a query ends where the query begins, and its URL does not.
                 let path = self.find_path_text(self.file, BuiltinId::ImportMetaPath)?;
-                if path.contains(&b'?') {
+                if bun_core::strings::contains_char(&path, b'?') {
                     return None;
                 }
                 match name {

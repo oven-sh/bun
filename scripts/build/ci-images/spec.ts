@@ -1575,19 +1575,13 @@ function sshClient(image: LinuxImage): Tool {
     identity: packageDatabase,
     steps: [
       ...(distro === "alpine"
-        ? [
-            apkAdd(["openssh-client-default"]),
-            service("sshd", "disabled"),
-            apkDel(["openssh", "openssh-server-pam"]),
-            failIfExists("/usr/sbin/sshd.pam", "the SSH server is still installed"),
-          ]
+        ? [apkAdd(["openssh-client-default"]), service("sshd", "disabled"), apkDel(["openssh", "openssh-server-pam"])]
         : [
             ...(distro === "ubuntu"
               ? [comment("Its removal restarts the server, so it goes first."), aptPurge(["ec2-instance-connect"])]
               : []),
             aptPurge(["openssh-server", "openssh-sftp-server"]),
           ]),
-      failIfExists("/usr/sbin/sshd", "the SSH server is still installed"),
       remove(text`/etc/ssh/${glob("ssh_host_*")}`),
       comment("cloud-init would make the server's host keys and write its configuration."),
       directory("/etc/cloud/cloud.cfg.d"),
@@ -1728,6 +1722,16 @@ function cleanup(image: LinuxImage): Tool {
       comment("Tells the disk which blocks are free, so the snapshot does not store them."),
       tolerate(run("fstrim", "--all")),
     ],
+  };
+}
+
+/** Last, so that no tool can bring the server back as a dependency. */
+function noSshServer(image: LinuxImage): Tool {
+  const servers = ["/usr/sbin/sshd", ...(image.distro === "alpine" ? ["/usr/sbin/sshd.pam"] : [])];
+  return {
+    name: "no-ssh-server",
+    identity: configuration,
+    steps: servers.map(server => failIfExists(server, "the SSH server is installed")),
   };
 }
 
@@ -2102,6 +2106,7 @@ export function tools(image: Image): readonly Tool[] {
     agentService(),
     recordImage(image),
     cleanup(image),
+    noSshServer(image),
   ];
 }
 

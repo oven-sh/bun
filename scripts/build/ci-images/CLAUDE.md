@@ -80,7 +80,7 @@ A pin has to name something its publisher keeps: a bake that asks for a version 
 - **The Windows bake step must be a single command.** With several, Buildkite runs them in a shell, and a cancel ends that shell without `ci-image.ts` or Packer seeing the signal, so Packer's VM is never deleted and keeps holding its cores. As one command, Packer hears the cancel and deletes the VM first; the hosted agent ends the job seconds later, so the VM's network and disk can be left behind.
 - **The system's trusted roots are the distro's without `droppedRoots`.** The `ca-certificates` tool deselects them, and the bake fails if one is still trusted afterwards. Bun and Node.js use lists of their own unless told to read the system's, and those move with their pins.
 - **Debian gives a user who is not root no sbin directory on PATH.** The test runner calls `sysctl` as the agent's user; the core-dumps tool puts `/sbin` on the job PATH.
-- **Linux machines have the SSH client and no server.** Every base image comes with the server; the `ssh-client` tool removes it, and the bake fails if it is still there. It runs after the last tool that installs packages.
+- **Linux machines have the SSH client and no server.** Every base image comes with the server; the `ssh-client` tool removes it, and the bake ends by failing if it is there.
 - **Starting a service during a bake can leave machine identity in the image** (sshd writes host keys). Remove it before the image is taken.
 - **A push cancels the branch's running build**, bakes included. A Linux bake takes 5 to 15 minutes and its snapshot another 20 to 35 to become available; a Windows bake takes about an hour.
 

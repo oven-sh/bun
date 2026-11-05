@@ -1,0 +1,7 @@
+function a({}: { bbbbbbbbbbbbbbbbbbbbbbb: string }): Cccccccccccccccccc<Dddddddddddddddddddddddddddddddd, Eeeeeeeeeeeeeeeeeeeeeeeeeeeeee> {}
+const f = ({}: { bbbbbbbbbbbbbbbbbbbbbbb: string }): Cccccccccccccccccc<Dddddddddddddddddddddddddddddddd, Eeeeeeeeeeeeeeeeeeeeeeeeeeee> => {};
+class G {
+  h({}: { bbbbbbbbbbbbbbbbbbbbbbb: string }): Cccccccccccccccccc<Dddddddddddddddddddddddddddddddd, Eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee> {}
+}
+function i({}: { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: string; cccccccccccccccccccccccccccccccccccccccccccccccccc: number }): void {}
+function j({ k }: { bbbbbbbbbbbbbbbbbbbbbbb: string }): Cccccccccccccccccc<Dddddddddddddddddddddddddddddddd, Eeeeeeeeeeeeeeeeeeeeeeeeeeeeee> {}

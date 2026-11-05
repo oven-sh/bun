@@ -309,7 +309,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         should_hug_function_parameters(func, parentheses_not_needed, f)
     });
 
-    if is_hug_parameter && !has_decorators {
+    if is_hug_parameter && !has_decorators && !empty_pattern_is_group(param, f) {
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
@@ -332,6 +332,12 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             ))
         );
     }
+}
+
+/// `function a({}: { b }): C<⏎D,⏎E⏎> {}`: Prettier's `printObject` makes a group of a pattern with nothing in it and its type.
+fn empty_pattern_is_group<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
+    matches!(param.pat().kind(), PatKind::Object(properties) if properties.is_empty())
+        && !f.options().flavor.is_oxfmt()
 }
 
 /// `a(⏎@b⏎c: {⏎d;⏎},⏎) {}`: the object type of an only parameter is no group in Prettier's `printObject`, with

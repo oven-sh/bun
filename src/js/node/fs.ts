@@ -45,6 +45,15 @@ function ensureCallback(callback: ((...args: any[]) => unknown) | undefined) {
   return wrapFsCallback(callback);
 }
 
+// Node checks fd and buffer before the callback: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L600-L634
+function throwInvalidReadCallback(fd: unknown, buffer: unknown, callback: unknown): never {
+  validateInteger(fd, "fd", 0, 2147483647);
+  if (!types.isArrayBufferView(buffer)) {
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], buffer);
+  }
+  throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+}
+
 // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
 function settleCallback<T>(promise: Promise<T>, callback: Callback<[T]>) {
   promise.then(
@@ -164,7 +173,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       options = undefined;
     }
 
-    callback = wrapFsCallback(callback);
+    callback = ensureCallback(callback);
     fs.fstatCb(callback, fd, options);
   },
   fsync = function fsync(fd, callback) {
@@ -287,9 +296,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
-    if (!callback) {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
+    if (!$isCallable(callback)) throwInvalidReadCallback(fd, buffer, callback);
     callback = wrapFsCallback(callback);
     fs.readCb(
       (err, bytesRead) => (err ? callback!(err, 0, buffer) : callback!(null, bytesRead, buffer)),

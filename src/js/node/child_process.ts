@@ -1481,13 +1481,6 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#stdioOptions = bunStdio;
-    this.#connected = undefined;
-    // node's spawn() assigns the streams over any value assigned before it.
-    for (const key of ["stdin", "stdout", "stderr", "stdio"]) {
-      if (ObjectHasOwn(this, key)) delete this[key];
-    }
-    this.#stdin = this.#stdout = this.#stderr = this.#stdioObject = undefined;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
@@ -1503,6 +1496,14 @@ class ChildProcess extends EventEmitter {
       validateArray(options.args, "options.args");
       spawnargs = this.spawnargs = options.args;
     }
+
+    this.#stdioOptions = bunStdio;
+    this.#connected = undefined;
+    // node's spawn() assigns the streams over any value assigned before it.
+    for (const key of ["stdin", "stdout", "stderr", "stdio"]) {
+      if (ObjectHasOwn(this, key)) delete this[key];
+    }
+    this.#stdin = this.#stdout = this.#stderr = this.#stdioObject = undefined;
     // What script of a disposed Bun.ModuleGraph starts does not start, and reports nothing: a
     // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
     if (require("internal/shared").isStoppedModuleGraphRunning()) {

@@ -600,6 +600,9 @@ impl Quick {
 
     pub(crate) fn flow_object_type_semicolon(&mut self) -> R<()> {
         if self.lexer.tok == tk::Semi || self.lexer.tok == tk::Comma {
+            if self.lexer.tok_nl != 0 {
+                return Err(self.rare(rare::SEMICOLON));
+            }
             self.next()?;
         } else if self.lexer.tok != tk::BraceR && !self.is_exact_end() {
             return Err(self.unexpected());

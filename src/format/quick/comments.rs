@@ -359,24 +359,30 @@ impl Quick {
             _ if behind == 58 => false,
             // behind the last item of a pattern that has a type
             k::ObjectPattern | k::ArrayPattern => c.h_following_kind != k::TypeAnnotation,
-            // in braces with nothing else in them, which may be hugged
-            k::TypeLiteral => c.h_preceding != 0 || c.h_following != 0,
+            // in braces with nothing else in them, which may be hugged; on the line of a member that has no separator
+            k::TypeLiteral | k::InterfaceBody => {
+                (inside == k::InterfaceBody || c.h_preceding != 0 || c.h_following != 0)
+                    && !(form == END_BLOCK && is_part_of_word(before))
+            }
             // between the key and the parameters, on the line of their `(`, or all there is between `(` and `)`
             k::ObjectMethod | k::ClassMethod => {
                 !(is_part_of_word(before) && behind != 44 && behind != 41)
                     && !(before == 40 && (c.h_placement == CF_END_OF_LINE || behind == 41))
+                    && !(behind == 123 && form != MID_BLOCK && before != 40 && before != 44)
             }
-            // behind a modifier, the key or the value
-            k::ClassProperty | k::PropertySignature => !is_part_of_word(before),
+            // behind a modifier, the key or the value; behind a word of an import or an export
+            k::ClassProperty
+            | k::PropertySignature
+            | k::ImportDeclaration
+            | k::ExportNamedDeclaration
+            | k::ExportAllDeclaration => !is_part_of_word(before),
+            k::QualifiedName => false,
             // between two words of the head
             k::ClassDeclaration
             | k::ClassExpression
             | k::InterfaceDeclaration
             | k::EnumDeclaration
             | k::ModuleDeclaration
-            | k::ImportDeclaration
-            | k::ExportNamedDeclaration
-            | k::ExportAllDeclaration
             | k::TSDeclareFunction
             | k::MethodSignature
             | k::VariableDeclaration => !(is_part_of_word(before) && is_part_of_word(behind)),
@@ -398,9 +404,17 @@ impl Quick {
             }
             // before the `...` of a rest parameter
             k::FunctionType => behind != 46,
+            // between the name and the type arguments
+            k::TypeReference => behind != 60,
+            // next to the `=`
+            k::JSXAttribute => before != 61 && behind != 61,
+            // between `/` and `>`
+            k::JSXOpeningElement => before != 47,
             // between the name and the parameters
+            // nor, but for a block comment on the line, before a body, which may start with a directive
             k::FunctionDeclaration | k::FunctionExpression => {
                 !(is_part_of_word(before) && (behind == 40 || is_part_of_word(behind)))
+                    && !(behind == 123 && form != MID_BLOCK && before != 40 && before != 44)
             }
             // in the key of an indexer, in an index, in the last type of a tuple
             k::UnionType => {

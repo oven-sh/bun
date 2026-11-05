@@ -4790,6 +4790,27 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.jsx", "", "<fbt><fbt:param>\u00a0\n    </fbt:param><fbt:param></fbt:param></fbt>\n"],
     // A comment before an object that is the right side of a logical expression.
     ["a.js", "--print-width=30", "ErrorLike=SerializedProps&&\n  // short\n  {causeunknown}\n"],
+    // A comment between the name of a type and its type arguments.
+    ["a.js.flow", "", "type A =\n  | CDPRequest<'a'>\n  | CDPRequest\n// c\n<>\n"],
+    // A comment next to the `=` of an attribute, or between `/` and `>`.
+    [
+      "a.jsx",
+      "",
+      "const IndicatorStyle = () => {\n  return (\n    <View>\n      <View>\n        <Button\n          onPress//c\n={() =>\n            indicatorStyle === 'default'\n              ? setIndicatorStyle('white')\n              : setIndicatorStyle('default')\n          }\n          label={'Indicator Style: ' + indicatorStyle}\n        />\n      </View>\n    </View>\n  )\n}\n",
+    ],
+    [
+      "a.js",
+      "",
+      "// @flow\nconst RemoveClippedSubviews = () => {\n  const [removeClippedSubviews, setRemoveClippedSubviews] = useState(false)\n  return (\n    <View>\n      <ScrollView\n        style={[styles.scrollView, {height: 200}]}\n        removeClippedSubviews={removeClippedSubviews}\n        nestedScrollEnabled>\n        {ITEMS.map(createItemRow)}\n      </ScrollView>\n      <Button\n        label={'removeClippedSubviews: ' + removeClippedSubviews.toString()}\n        onPress={() => setRemoveClippedSubviews(!removeClippedSubviews)}\n      / /* cc */ >\n    </View>\n  )\n}\n",
+    ],
+    // Comments behind a word of an export, before the body of a function, behind a member without a separator, in a qualified name.
+    ["a.ts", "", 'export/**/*as a from""\n'],
+    ["a.ts", "", "export//\n\n@x class a{}\n"],
+    ["a.ts", "", 'function a()//\n{""}\n'],
+    ["a.ts", "", "interface a{T/**@type*/\n\nT}\n"],
+    ["a.js.flow", "", "interface a extends b//\n.c<>{y:T}\n"],
+    // Flow: a `;` that starts a line between two members.
+    ["a.js.flow", "", "interface a{x:T\n;\n\ny:T}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

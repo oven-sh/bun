@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -29,12 +30,15 @@ import {
   isIPv4,
   isIPv6,
   Server,
+  setDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamilyAttemptTimeout,
   Socket,
+  SocketAddress,
   // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -124,6 +128,41 @@ describe("net.BlockList subnet rules", () => {
     v6.addSubnet("::", 0, "ipv6");
     expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
     expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
+  });
+});
+
+describe("net.BlockList and an IPv6 zone id", () => {
+  it("check() matches on the address alone", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("fe80::1", "ipv6");
+    blockList.addAddress("1.2.3.4");
+    expect(blockList.check("fe80::1%eth0", "ipv6")).toBe(true);
+    expect(blockList.check("fe80::1%", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.2.3.4%lo", "ipv6")).toBe(true);
+    expect(blockList.check(new SocketAddress({ address: "fe80::1%eth0", family: "ipv6" }))).toBe(true);
+    expect(blockList.check("fe80::2%eth0", "ipv6")).toBe(false);
+    expect(blockList.check("1.2.3.4%lo")).toBe(false);
+  });
+
+  it("a rule drops it", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("fe80::9%eth0", "ipv6");
+    blockList.addRange("fe80::10%eth0", "fe80::20%eth1", "ipv6");
+    blockList.addSubnet("fd00::%eth0", 64, "ipv6");
+    expect(blockList.rules).toEqual([
+      "Subnet: IPv6 fd00::/64",
+      "Range: IPv6 fe80::10-fe80::20",
+      "Address: IPv6 fe80::9",
+    ]);
+    expect(new SocketAddress({ address: "fe80::9%eth0", family: "ipv6" }).address).toBe("fe80::9");
+  });
+
+  it("connect() refuses a blocked address", async () => {
+    const blockList = new BlockList();
+    blockList.addAddress("::1", "ipv6");
+    const socket = connect({ host: "::1%lo", port: 1, blockList });
+    const [error] = await once(socket, "error");
+    expect(error.code).toBe("ERR_IP_BLOCKED");
   });
 });
 
@@ -990,6 +1029,44 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("AbortError");
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
+});
+
+describe.concurrent("'timeout' is emitted with a write that does not move", () => {
+  it("while the socket is connecting", async () => {
+    const neverAnswers = () => {};
+    const socket = connect({ host: "localhost", port: 1, lookup: neverAnswers });
+    try {
+      socket.write("x");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(socket.connecting).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it.each([
+    ["the TLS handshake gets no answer", tlsConnect as typeof connect, (socket: any) => socket.secureConnecting],
+    ["the peer does not read", connect, (socket: Socket) => socket.writableLength > 0],
+  ])("while %s", async (_, dial, isWaiting) => {
+    const accepted: Socket[] = [];
+    const server = createServer(socket => accepted.push(socket)).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = dial({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+    try {
+      await once(socket, "connect");
+      // The kernel takes only so much for a peer that does not read.
+      do socket.write(Buffer.alloc(16 * 1024 * 1024));
+      while (socket.writableLength === 0);
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(isWaiting(socket)).toBe(true);
+    } finally {
+      socket.destroy();
+      for (const socket of accepted) socket.destroy();
+      server.close();
+    }
+  });
 });
 
 // Regression test for #30697: net.connect({ localPort, lookup }) on the
@@ -3547,3 +3624,22 @@ it.skipIf(isWindows || isMusl).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });
+
+it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyAttemptTimeout }))(
+  "net.%s() without an argument throws what it throws for undefined",
+  (_, set) => {
+    const thrownBy = (call: () => void) => {
+      try {
+        call();
+      } catch (error: any) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+    };
+    // @ts-expect-error
+    const thrown = thrownBy(() => set());
+    expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(thrown!.message).toMatch(/^The "value" argument must be of type (boolean|number)\. Received undefined$/);
+    // @ts-expect-error
+    expect(thrown).toEqual(thrownBy(() => set(undefined)));
+  },
+);

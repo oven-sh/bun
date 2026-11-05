@@ -142,6 +142,74 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  // A max-length 16-bit rope throws "Out of memory" the first time it's flattened.
+  // `external: true` skips the JS-side path checks, which would flatten it first.
+  test.concurrent("plugin/fails the build when a returned string can't be flattened", async () => {
+    using dir = tempDir("plugin-string-answer-cannot-flatten", {
+      "entry.ts": `import { foo } from "./foo.magic"; console.log(foo);`,
+      "foo.magic": `hello world`,
+      "build.mjs": `
+        let huge = "\\u0100";
+        for (let i = 0; i < 30; i++) huge = huge + huge + "\\u0100";
+        console.log("length=" + (huge.length === 2 ** 31 - 1));
+
+        async function run(name, answer) {
+          const { success, logs } = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            throw: false,
+            plugins: [{
+              name,
+              setup(build) {
+                build.onResolve({ filter: /foo\\.magic$/ }, args => {
+                  console.log(name + ": resolve returned");
+                  return answer.resolve ? answer.resolve(args.path) : undefined;
+                });
+                build.onLoad({ filter: /\\.magic$/ }, () => {
+                  console.log(name + ": load returned");
+                  return answer.load ? answer.load() : undefined;
+                });
+              },
+            }],
+          });
+          const errors = logs.map(l => l.level + " " + JSON.stringify(l.message) + " " + l.position?.file.split(/[\\\\/]/).pop());
+          console.log(name + ": success=" + success + " " + errors.join(", "));
+        }
+
+        await run("contents", { load: () => ({ contents: huge, loader: "js" }) });
+        await run("path", { resolve: () => ({ path: huge, external: true }) });
+        await run("namespace", { resolve: path => ({ path, namespace: huge, external: true }) });
+        await run("ok", { load: () => ({ contents: "export const foo = 1;", loader: "js" }) });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        "length=true",
+        "contents: resolve returned",
+        "contents: load returned",
+        'contents: success=false error "Out of memory" foo.magic',
+        "path: resolve returned",
+        'path: success=false error "Out of memory" entry.ts',
+        "namespace: resolve returned",
+        'namespace: success=false error "Out of memory" entry.ts',
+        "ok: resolve returned",
+        "ok: load returned",
+        "ok: success=true ",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {
       "index.ts": /* ts */ `
@@ -1040,6 +1108,49 @@ describe("bundler", () => {
     },
   });
 
+  test.concurrent("plugin/onLoad that returns nothing for an asset leaves it to the file loader", async () => {
+    using dir = tempDir("plugin-onload-declines-asset", {
+      "index.ts": `
+        import logo from "./logo.png";
+        console.log(logo);
+      `,
+      "logo.png": "png bytes",
+      "build.mjs": `
+        import { basename } from "node:path";
+        const result = await Bun.build({
+          entrypoints: ["./index.ts"],
+          outdir: "./out",
+          naming: { asset: "[name].[ext]" },
+          plugins: [
+            {
+              name: "yaml-only",
+              setup(build) {
+                build.onLoad({ filter: /.*/ }, args =>
+                  args.path.endsWith(".yaml") ? { contents: "export default 1", loader: "js" } : undefined,
+                );
+              },
+            },
+          ],
+        });
+        console.log(result.outputs.map(output => output.kind + " " + basename(output.path)).sort().join("\\n"));
+        console.log(await Bun.file("./out/logo.png").text());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("asset logo.png\nentry-point index.js\npng bytes\n");
+    expect(exitCode).toBe(0);
+  });
+
   itBundled("plugin/OnEndBasic", ({ root }) => {
     let onEndCalled = false;
 
@@ -1893,4 +2004,92 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  test.concurrent("plugin/internal plugin object checks its receiver and rejects new filters after setup", async () => {
+    using dir = tempDir("plugin-private-object", {
+      "entry.js": `export default 1;`,
+      "fixture.mjs": /* js */ `
+        import { getProtectedObjects } from "bun:jsc";
+        const hasOwn = Object.prototype.hasOwnProperty;
+        // The plugin object is a protected cell. Some other protected cells throw on property lookup.
+        function findPlugin() {
+          for (const object of getProtectedObjects()) {
+            try {
+              if (object && typeof object === "object" && hasOwn.call(object, "addFilter")) return object;
+            } catch {}
+          }
+        }
+        const attempt = call => {
+          try {
+            call();
+            return "accepted";
+          } catch (e) {
+            return e.code ?? e.name;
+          }
+        };
+
+        const leaked = [];
+        for (const name of ["promises", "onEndCallbacks"]) {
+          Object.defineProperty(Object.prototype, name, {
+            configurable: true,
+            get() {
+              if (hasOwn.call(this, "addFilter")) leaked.push(name);
+            },
+            set(value) {
+              Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
+            },
+          });
+        }
+
+        let plugin;
+        const outcomes = {};
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              // A callable Proxy isn't a JSFunction.
+              setup: new Proxy(build => {
+                plugin = findPlugin();
+                outcomes.duringSetup = attempt(() => plugin.addFilter(/never/, "probe", 1));
+                build.onEnd(() => {});
+                build.onLoad({ filter: /entry/ }, () => {
+                  outcomes.duringBuild = attempt(() => plugin.addFilter(/never/, "probe", 1));
+                });
+              }, {}),
+            },
+          ],
+        });
+        const calls = {
+          addFilter: [/x/, "a", 1],
+          addError: [0, new Error("x")],
+          onLoadAsync: [0, null, null],
+          onResolveAsync: [0, null, null, null],
+          onBeforeParse: [/x/, "a", {}, "symbol"],
+          generateDeferPromise: [0],
+        };
+        const receivers = Object.entries(calls).map(([name, args]) => attempt(() => plugin[name].apply(undefined, args)));
+        console.log(JSON.stringify({ success: result.success, leaked, outcomes, receivers }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      success: true,
+      leaked: [],
+      outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
+      receivers: Array(6).fill("ERR_INVALID_THIS"),
+    });
+    expect(exitCode).toBe(0);
+  });
 });

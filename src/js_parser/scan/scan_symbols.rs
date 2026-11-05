@@ -4,9 +4,7 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,
@@ -130,6 +128,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // gpe borrows self.module_scope while self.new_symbol needs &mut self.
             // Drop gpe, allocate, then re-insert.
             let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
+            if self.options.features.inject_jest_globals {
+                self.jest.did_declare_unbound(name, new_ref);
+            }
 
             // SAFETY: as above.
             *unsafe {

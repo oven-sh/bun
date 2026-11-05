@@ -1,6 +1,6 @@
 // A DataRow can be framed correctly and still hold a value this client cannot
-// turn into a JS value: a binary int4[] with two dimensions, a text array with
-// explicit bounds, and so on. That is the failure of the query that asked for
+// turn into a JS value: a bytea in the `escape` output format, a jsonb that is
+// not JSON, and so on. That is the failure of the query that asked for
 // the value. The connection treated it as its own failure: it closed the socket
 // and rejected every other query on it with the first query's error. With
 // pipelining the server had already executed those other queries, so the
@@ -40,71 +40,88 @@ const undecodable = (code: string) => ({
 });
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
-  const connect = () =>
-    new SQL({
+  // An array arrives as text, and the client decodes only the `hex` form of a bytea.
+  // So with this setting a bytea[] decodes when it is empty or holds only NULLs.
+  const connect = async () => {
+    const sql = new SQL({
       url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
       max: 1,
       idleTimeout: 30,
     });
+    await sql`set bytea_output = 'escape'`;
+    return sql;
+  };
+  const bad = '{"a b"}';
+  const rejection = undecodable("ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT");
 
   test("a pipelined query with a row the client cannot decode rejects alone", async () => {
     await container.ready;
-    await using sql = connect();
+    await using sql = await connect();
     // One statement text. After this first run it is prepared, so the four
     // executions below are all written before the first reply arrives.
-    const rows = (list: string) => sql`select x::int4[] as v, 'tail' as t from unnest(string_to_array(${list}, ';')) x`;
-    await rows("{0}");
+    const rows = (list: string) =>
+      sql`select x::bytea[] as v, 'tail' as t from unnest(string_to_array(${list}, ';')) x`;
+    await rows("{}");
     const [{ pid }] = await sql`select pg_backend_pid() as pid`;
 
-    // int4[] arrives in binary, and the binary decoder refuses two dimensions.
     // The bad cell is in the first row and has a cell after it. The row after
     // it belongs to the same query and is dropped with it.
-    expect(await settle([rows("{1}"), rows("{{1,2},{3,4}};{5}"), rows("{6};{7}"), rows("{8}")])).toEqual([
-      [{ v: new Int32Array([1]), t: "tail" }],
-      undecodable("ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"),
+    expect(await settle([rows("{NULL}"), rows(bad + ";{NULL}"), rows("{};{NULL,NULL}"), rows("{}")])).toEqual([
+      [{ v: [null], t: "tail" }],
+      rejection,
       [
-        { v: new Int32Array([6]), t: "tail" },
-        { v: new Int32Array([7]), t: "tail" },
+        { v: [], t: "tail" },
+        { v: [null, null], t: "tail" },
       ],
-      [{ v: new Int32Array([8]), t: "tail" }],
+      [{ v: [], t: "tail" }],
     ]);
     expect([...(await sql`select pg_backend_pid() as pid`)]).toEqual([{ pid }]);
   });
 
   test("a simple query with a row the client cannot decode rejects alone", async () => {
     await container.ready;
-    await using sql = connect();
+    await using sql = await connect();
     const [{ pid }] = await sql`select pg_backend_pid() as pid`;
 
-    // The text array decoder refuses explicit bounds. The failing row is in the
-    // second of three result sets, after a result set that was already delivered.
+    // The failing row is in the second of three result sets, after a result set
+    // that was already delivered.
     expect(
       await settle([
         sql`select 'A' as v`.simple(),
-        sql`select 'B' as v; select v::int4[] as v, 'tail' as t from (values ('{1}'), ('[0:1]={2,3}'), ('{4}')) t(v); select 'C' as v`.simple(),
+        sql`select 'B' as v; select v::bytea[] as v, 'tail' as t from (values ('{NULL}'), ('{"a b"}'), ('{}')) t(v); select 'C' as v`.simple(),
         sql`select 'D' as v`.simple(),
       ]),
-    ).toEqual([[{ v: "A" }], undecodable("ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"), [{ v: "D" }]]);
+    ).toEqual([[{ v: "A" }], rejection, [{ v: "D" }]]);
     expect([...(await sql`select pg_backend_pid() as pid`)]).toEqual([{ pid }]);
   });
 
+  // The server quotes an element only where it has to: these arrive as {abc}, {t} and {123}.
+  test.each(["abc", "t", "123"])(
+    "an element of a bytea[] without quotes is no boolean and no number: %s",
+    async text => {
+      await container.ready;
+      await using sql = await connect();
+      expect(await settle([sql.unsafe(`select array['${text}'::bytea] as v`)])).toEqual([rejection]);
+    },
+  );
+
   test("the rest of a rejected query's rows arrives in later reads", async () => {
     await container.ready;
-    await using sql = connect();
-    // The first row is the parameter. Each further row is about 2 KB in binary.
+    await using sql = await connect();
+    // The first row is the parameter. Each further row is about 2 KB.
     const rows = (first: string, count: number) =>
-      sql`select case when i = 1 then ${first}::int4[] else array_fill(7, array[250]) end as v from generate_series(1, ${count}::int) i`;
-    await rows("{0}", 1);
+      sql`select case when i = 1 then ${first}::bytea[] else array_fill(null::bytea, array[400]) end as v from generate_series(1, ${count}::int) i`;
+    await rows("{}", 1);
     const [{ pid }] = await sql`select pg_backend_pid() as pid`;
 
     // 600 rows are more than one socket read holds, so the rejection is seen
     // while the server still sends the rest: `next` is pending at that point.
     // execute() sends a query at once, so these three are pipelined in this order.
-    const first = rows("{1}", 1).execute();
-    let rejected: PromiseLike<any> | null = rows("{{1,2},{3,4}}", 600).execute();
-    const next = rows("{2}", 2).execute();
+    const first = rows("{NULL}", 1).execute();
+    let rejected: PromiseLike<any> | null = rows(bad, 600).execute();
+    const next = rows("{}", 2).execute();
     let unprepared!: PromiseLike<any>;
-    const rejection = rejected.then(undefined, (err: Error) => {
+    const seen = rejected.then(undefined, (err: Error) => {
       // Nothing refers to the rejected query now, so its wrapper can go while its rows still arrive.
       Bun.gc(true);
       const nextStatus = Bun.peek.status(next as unknown as Promise<unknown>);
@@ -114,15 +131,12 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     });
     rejected = null;
 
-    expect(await rejection).toEqual({
-      ...undecodable("ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"),
-      nextStatus: "pending",
-    });
+    expect(await seen).toEqual({ ...rejection, nextStatus: "pending" });
     await new Promise(resolve => setImmediate(resolve));
     Bun.gc(true);
     expect(await settle([first, next, unprepared])).toEqual([
-      [{ v: new Int32Array([1]) }],
-      [{ v: new Int32Array([2]) }, { v: new Int32Array(250).fill(7) }],
+      [{ v: [null] }],
+      [{ v: [] }, { v: Array(400).fill(null) }],
       [{ v: "late" }],
     ]);
     expect([...(await sql`select pg_backend_pid() as pid`)]).toEqual([{ pid }]);
@@ -130,33 +144,33 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 
   test("a wide row with a cell the client cannot decode rejects alone", async () => {
     await container.ready;
-    await using sql = connect();
-    // 70 columns do not fit the inline cell buffer of the row decoder. The int4[] is in the middle.
+    await using sql = await connect();
+    // 70 columns do not fit the inline cell buffer of the row decoder. The bytea[] is in the middle.
     const names = Array.from({ length: 70 }, (_, i) => "c" + i);
-    const text = "select " + names.map((name, i) => (i === 35 ? "$1::int4[]" : i) + " as " + name).join(", ");
+    const text = "select " + names.map((name, i) => (i === 35 ? "$1::bytea[]" : i) + " as " + name).join(", ");
     const wide = (array: string) => sql.unsafe(text, [array]);
-    const row = (array: Int32Array) => Object.fromEntries(names.map((name, i) => [name, i === 35 ? array : i]));
-    await wide("{0}");
+    const row = (array: null[]) => Object.fromEntries(names.map((name, i) => [name, i === 35 ? array : i]));
+    await wide("{}");
 
-    expect(await settle([wide("{1}"), wide("{{1,2},{3,4}}"), wide("{2}")])).toEqual([
-      [row(new Int32Array([1]))],
-      undecodable("ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"),
-      [row(new Int32Array([2]))],
+    expect(await settle([wide("{NULL}"), wide(bad), wide("{NULL,NULL}")])).toEqual([
+      [row([null])],
+      rejection,
+      [row([null, null])],
     ]);
   });
 
   test("a rejected INSERT ... RETURNING is stored", async () => {
     await container.ready;
-    await using sql = connect();
-    await sql`create temp table row_decode_error (v int4[])`;
+    await using sql = await connect();
+    await sql`create temp table row_decode_error (v bytea[])`;
     const insert = (array: string) =>
-      sql`insert into row_decode_error (v) values (${array}::int4[]) returning v, 'tail' as t`;
-    await insert("{0}");
+      sql`insert into row_decode_error (v) values (${array}::bytea[]) returning v, 'tail' as t`;
+    await insert("{}");
 
-    expect(await settle([insert("{1}"), insert("{{1,2},{3,4}}"), insert("{2}")])).toEqual([
-      [{ v: new Int32Array([1]), t: "tail" }],
-      undecodable("ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"),
-      [{ v: new Int32Array([2]), t: "tail" }],
+    expect(await settle([insert("{NULL}"), insert(bad), insert("{NULL,NULL}")])).toEqual([
+      [{ v: [null], t: "tail" }],
+      rejection,
+      [{ v: [null, null], t: "tail" }],
     ]);
     // The hint is about this: the server stored all four rows.
     expect([...(await sql`select count(*)::int as stored from row_decode_error`)]).toEqual([{ stored: 4 }]);
@@ -178,9 +192,9 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 // The two column kinds fail in the two places a row can fail: a text[] cell is
 // decoded while the DataRow is read, a jsonb cell when the row becomes a JS object.
 const columnKinds = {
-  "text[] with explicit bounds": {
+  "text[] that does not end": {
     typeOid: 1009,
-    cell: (piece: string) => (piece === "bad" ? "[0:1]={a,b}" : `{${piece}}`),
+    cell: (piece: string) => (piece === "bad" ? "{a,b" : `{${piece}}`),
     value: (piece: string): unknown => [piece],
     rejection: undecodable("ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"),
   },

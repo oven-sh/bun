@@ -114,8 +114,8 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 });
 
 // A query that fails is answered with ErrorResponse, then with the
-// ReadyForQuery of its Sync. The two can arrive in two reads, and the rejection
-// runs user code between them. The failed request released its place in the
+// ReadyForQuery of its Sync. The two can arrive in two reads, and user code
+// can run between them. The failed request released its place in the
 // connection at the ErrorResponse, so a statement issued in that gap wrote its
 // Parse at once, and the late ReadyForQuery was taken for the answer to that
 // Parse: advance() then wrote the Bind of the next request first. Replies go to
@@ -123,7 +123,8 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 // one. With equal column types nothing fails to decode and nothing rejects.
 //
 // Now the failed request keeps the head of the queue until its ReadyForQuery,
-// and advance() writes nothing past a request whose statement is being parsed.
+// where it rejects, and advance() writes nothing past a request whose statement
+// is being parsed.
 const alice = { owner: "alice", secret: "alice-secret" };
 const bob = { owner: "bob", secret: "bob-secret" };
 const carol = { owner: "carol", secret: "carol-secret" };
@@ -141,24 +142,28 @@ const freshOfCarol = (q: Handle) => q`select owner, secret from swap_c where id 
 const simpleOfBob = (q: Handle) => q.unsafe(`select owner, secret from swap_b where id = 1`);
 
 type Proxy = Awaited<ReturnType<typeof pgHoldingProxy>>;
-/** Resolves when the query has rejected. The proxy then holds the ReadyForQuery of that query. */
-type Failure = (q: Handle, proxy: Proxy) => PromiseLike<unknown>;
+/** Resolves when the client has read the ErrorResponse. The proxy then holds the ReadyForQuery of that query. */
+type Failure = (q: Handle, proxy: Proxy) => Promise<{ failed: PromiseLike<unknown> }>;
 /** What is issued before the proxy lets that ReadyForQuery through. */
 type Gap = (q: Handle) => PromiseLike<unknown>[];
 
 // The statements of ofBob and divide are prepared, so these are written when
 // they are issued, and the first ReadyForQuery arrives with the second owed.
-const failsBehindAnother: Failure = (q, proxy) => {
+const failsBehindAnother: Failure = async (q, proxy) => {
   proxy.holdAfterError();
-  return Promise.all([ofBob(q), divide(q, 0)]).catch(errno);
+  const failed = Promise.all([ofBob(q), divide(q, 0)]).catch(errno);
+  await proxy.held();
+  return { failed };
 };
 const failsAloneTwice: Failure = async (q, proxy) => {
   proxy.holdAfterError();
-  const first = await divide(q, 0).catch(errno);
+  const first = divide(q, 0).catch(errno);
+  await proxy.held();
   const second = divide(q, 0).catch(errno);
   proxy.holdAfterError();
   proxy.release();
-  return [first, await second];
+  await proxy.held();
+  return { failed: Promise.all([first, second]) };
 };
 
 const gaps: [name: string, issue: Gap, rows: unknown[]][] = [
@@ -210,10 +215,10 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       `);
       const warm: unknown[] = await Promise.all([ofBob(q), divide(q, 1)]);
 
-      const failed = await failure(q, proxy);
+      const { failed } = await failure(q, proxy);
       const reads = Promise.all(gap(q));
       proxy.release();
-      return { warm, failed, reads: await reads, after: await ofBob(q) };
+      return { warm, failed: await failed, reads: await reads, after: await ofBob(q) };
     } finally {
       proxy.server.close();
     }
@@ -251,9 +256,11 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   ] as [string, (q: Handle) => PromiseLike<unknown>, string][])(
     "before the ReadyForQuery of %s, a new statement and a prepared one resolve with their own rows",
     async (_, fails, failed) => {
-      const failure: Failure = (q, proxy) => {
+      const failure: Failure = async (q, proxy) => {
         proxy.holdAfterError();
-        return fails(q).then(undefined, errno);
+        const failed = fails(q).then(undefined, errno);
+        await proxy.held();
+        return { failed };
       };
       expect(await run(failure, gaps[0][1])).toEqual(ran(failed, [[alice], [bob]]));
     },
@@ -317,18 +324,18 @@ describe.concurrent("postgres mock", () => {
       await echo("warm");
 
       // execute() sends a query at once, so these two are written before the first reply.
-      const first = echo("first").execute();
-      const failed = echo("fail").execute();
-      let fresh!: PromiseLike<any>;
-      const rejection = await failed.catch((err: any) => {
-        fresh = sql`select ${"fresh"} as v -- not prepared yet`.execute();
-        mock.release();
-        return err.errno;
-      });
+      const written = settle([echo("first").execute(), echo("fail").execute()]);
+      await mock.held();
+      const issued = settle([sql`select ${"fresh"} as v -- not prepared yet`.execute(), echo("after")]);
+      mock.release();
 
-      expect({ rejection, results: await settle([first, fresh, echo("after")]), binds: mock.binds }).toEqual({
-        rejection: "22012",
-        results: [[{ v: "first" }], [{ v: "fresh" }], [{ v: "after" }]],
+      expect({ results: [...(await written), ...(await issued)], binds: mock.binds }).toEqual({
+        results: [
+          [{ v: "first" }],
+          { code: "ERR_POSTGRES_SERVER_ERROR", errno: "22012" },
+          [{ v: "fresh" }],
+          [{ v: "after" }],
+        ],
         binds: ["warm", "first", "fail", "fresh", "after"],
       });
     } finally {
@@ -336,17 +343,14 @@ describe.concurrent("postgres mock", () => {
     }
   });
 
-  // These are the frames of pgdog 0.1.60 with its query parser on, for a
-  // statement that pgdog rejects itself: ErrorResponse and ReadyForQuery at the
-  // Flush, then one more ReadyForQuery at the Sync. The second one arrives when
-  // the Parse of `fresh` is on the wire. advance() must stop at `fresh`. If it
-  // stepped over it, the Bind of `prepared` would be written first.
+  // A pooler that rejects a statement itself (pgdog 0.1.60 with its query parser on) answers ErrorResponse and
+  // ReadyForQuery before it has read the Sync, then one more ReadyForQuery at the Sync.
   test("a second ReadyForQuery for one Sync lets nothing pass a statement that is being parsed", async () => {
     let rejecting = false;
     const mock = await echoServer((type, body) => {
       if (type === "P" && body.includes("rejected by the pooler")) rejecting = true;
       if (!rejecting) return;
-      if (type === "H") return [pgErrorResponse({ S: "ERROR", C: "42601", M: "syntax error" }), pgReadyForQuery()];
+      if (type === "E") return [pgErrorResponse({ S: "ERROR", C: "42601", M: "syntax error" }), pgReadyForQuery()];
       if (type !== "S") return [];
       rejecting = false;
       return [pgReadyForQuery()];

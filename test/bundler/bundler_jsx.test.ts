@@ -527,6 +527,31 @@ describe("bundler", () => {
     },
   });
 
+  // The automatic runtime passes a lone spread object directly as props.
+  {
+    const config = { a: 1, nested: { list: [2, "three", { four: null }] } };
+    const withChild = { ...config, children: "kid" };
+    itBundled("jsx/SpreadOfObjectDefineKeepsOtherUses", {
+      files: {
+        "/index.jsx": /* jsx */ `
+          import { inOtherFile } from "./other.jsx";
+          const before = CONFIG;
+          const spread = <div {...CONFIG} />;
+          const child = <div {...CONFIG}>kid</div>;
+          console.log(JSON.stringify([before, spread.props, child.props, CONFIG, inOtherFile]));
+        `,
+        "/other.jsx": /* jsx */ `
+          const child = <a {...CONFIG}>kid</a>;
+          export const inOtherFile = [child.props, CONFIG];
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      define: { CONFIG: JSON.stringify(config) },
+      run: { stdout: JSON.stringify([config, config, withChild, config, [withChild, config]]) },
+    });
+  }
+
   // The classic transform reads the first member of the factory and fragment
   // member lists. A factory or fragment option whose text has no identifier
   // in it ("." or "..") must keep the list that was configured before it,

@@ -165,7 +165,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
     m_url = WTF::move(completeURL);
     m_searchParamsDirty = false;
     if (m_searchParams)
-        m_searchParams->updateFromAssociatedURL();
+        return m_searchParams->updateFromAssociatedURL();
     return {};
 }
 
@@ -188,10 +188,14 @@ void DOMURL::flushPendingSearchParamsUpdate() const
         self->m_url.setQuery(WTF::move(serialized));
 }
 
-URLSearchParams& DOMURL::searchParams()
+ExceptionOr<URLSearchParams&> DOMURL::searchParams()
 {
-    if (!m_searchParams)
-        m_searchParams = URLSearchParams::create(search(), this);
+    if (!m_searchParams) {
+        auto searchParams = URLSearchParams::create(search(), this);
+        if (searchParams.hasException())
+            return searchParams.releaseException();
+        m_searchParams = searchParams.releaseReturnValue();
+    }
     return *m_searchParams;
 }
 

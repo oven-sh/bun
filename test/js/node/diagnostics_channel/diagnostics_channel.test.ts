@@ -1,5 +1,6 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
@@ -330,6 +331,104 @@ describe("Channel", () => {
   // keeps per channel also go away in FinalizationRegistry callbacks, after the
   // collection. So check what the node test is after directly: once
   // unsubscribed, nothing holds the channels.
+  test("publish() calls the subscribers there were when it started", () => {
+    const dc = channel("changed-during-publish");
+    const calls: string[] = [];
+    const once = () => {
+      calls.push("once");
+      dc.unsubscribe(once);
+    };
+    const second = () => calls.push("second");
+    const adds = () => {
+      calls.push("adds");
+      dc.subscribe(added);
+    };
+    const added = () => calls.push("added");
+    dc.subscribe(once);
+    dc.subscribe(second);
+    dc.subscribe(adds);
+
+    dc.publish(undefined);
+    expect(calls).toEqual(["once", "second", "adds"]);
+    dc.unsubscribe(adds);
+    calls.length = 0;
+    dc.publish(undefined);
+    expect(calls).toEqual(["second", "added"]);
+  });
+
+  test("unsubscribe() does not modify the array in _subscribers", () => {
+    const dc = channel("frozen-subscribers") as Channel & { _subscribers: Function[] };
+    const first = () => {};
+    const second = () => {};
+    dc.subscribe(first);
+    dc.subscribe(second);
+    const frozen = Object.freeze([first, second]) as Function[];
+    dc._subscribers = frozen;
+    expect(dc.unsubscribe(first)).toBe(true);
+    expect(dc._subscribers).toEqual([second]);
+    expect(frozen).toEqual([first, second]);
+  });
+
+  test("unsubscribe() from a list too long to pass as arguments", () => {
+    const dc = channel("many-subscribers") as Channel & { _subscribers: Function[] };
+    const first = () => {};
+    const other = () => {};
+    dc.subscribe(first);
+    dc._subscribers = [first, ...new Array(1_000_000).fill(other)];
+    expect(dc.unsubscribe(first)).toBe(true);
+    expect(dc._subscribers.length).toBe(1_000_000);
+  });
+
+  test("subscribe() after _subscribers was replaced", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { channel } = require("node:diagnostics_channel");
+          const values = {
+            number: 5, string: "abc", boolean: true, object: {}, null: null, undefined: undefined,
+            symbol: Symbol("s"), bigint: 1n, frozen: Object.freeze([]),
+            speciesObject: Object.assign([() => {}], { constructor: { [Symbol.species]: function () { return {}; } } }),
+          };
+          const outcome = {};
+          for (const [name, value] of Object.entries(values)) {
+            const dc = channel("replaced-" + name);
+            dc.subscribe(() => {});
+            dc._subscribers = value;
+            try {
+              dc.subscribe(() => {});
+              outcome[name] = name === "speciesObject" ? "length " + dc._subscribers.length : "returned";
+            } catch (e) {
+              outcome[name] = e.constructor.name;
+            }
+          }
+          console.log(JSON.stringify(outcome));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ outcome: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      outcome: {
+        number: "returned",
+        string: "returned",
+        boolean: "returned",
+        object: "returned",
+        null: "TypeError",
+        undefined: "TypeError",
+        symbol: "returned",
+        bigint: "returned",
+        frozen: "returned",
+        speciesObject: "length 2",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("references are not leaked", () => {
     function noop() {}
 

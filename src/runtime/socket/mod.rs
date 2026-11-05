@@ -7,7 +7,7 @@
 // ─── submodules ──────────────────────────────────────────────────────────────
 
 #[path = "socket_body.rs"]
-mod socket_body;
+pub(crate) mod socket_body;
 
 #[path = "SocketAddress.rs"]
 pub(crate) mod socket_address;
@@ -57,12 +57,7 @@ pub(crate) mod ssl_wrapper {
     }
 }
 
-// `tls_socket_functions.rs` is `#[path]`-included from `socket_body.rs` (where
-// the functions are actually used); a second top-level include here was only
-// there for type-check parity.
-
-#[path = "udp_socket.rs"]
-pub(crate) mod udp_socket_draft;
+pub(crate) mod udp_socket;
 
 #[path = "uws_dispatch.rs"]
 pub(crate) mod uws_dispatch;
@@ -76,7 +71,8 @@ pub(crate) mod uws_jsc;
 #[path = "SSLConfig.rs"]
 pub(crate) mod ssl_config;
 pub(crate) use ssl_config::{
-    SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults,
+    SSLConfig, SSLConfigFromJs, http_client_defaults, resolve_reject_unauthorized,
+    tls_true_defaults,
 };
 
 // ─── canonical type surface ──────────────────────────────────────────────────
@@ -90,41 +86,13 @@ pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;
 pub(crate) use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
+    server_ctx_rejects_unauthorized, server_ctx_requests_cert,
 };
 
 #[cfg(windows)]
 pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
 
-/// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
-/// `udp_socket_draft` above (legacy name retained for existing callers); the
-/// public `udp_socket` module below is a thin re-export façade so both
-/// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
-/// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
-/// resolve against the real struct, not an opaque placeholder.
-pub(crate) mod udp_socket {
-    /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
-    /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
-    /// `udp_socket` segment is the snake-cased struct name; aliasing the type
-    /// lets the associated-fn path resolve directly.
-    pub(crate) use super::udp_socket_draft::UDPSocket as udp_socket;
-    pub(crate) use super::udp_socket_draft::*;
-}
 pub(crate) use udp_socket::UDPSocket;
-
-/// Codegen path alias.
-///
-/// `generated_js2native.rs` lowers `$rust(socket.rs, fnName)` to
-/// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
-/// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
-/// `mod.rs` as the wiring layer, so re-export the js2native entry points under
-/// the name the generator expects rather than special-casing the generator.
-pub(crate) mod socket {
-    pub(crate) use super::socket_body::{
-        js_create_socket_pair, js_first_flight_before_fin, js_get_buffered_amount,
-        js_is_named_pipe_socket, js_set_socket_options, js_upgrade_duplex_to_tls,
-        js_upgrade_tls_deferred, testing_ap_is,
-    };
-}
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the

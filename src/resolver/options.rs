@@ -71,6 +71,8 @@ pub(crate) enum ExtOrder {
     NodeModulesDefault,
     /// `opts.extension_order.node_modules.esm`
     NodeModulesEsm,
+    /// `opts.extension_order.required_by_package`
+    RequiredByPackage,
     /// `opts.extension_order.css`
     Css,
     /// `opts.main_field_extension_order` — used when resolving the `"main"`
@@ -87,6 +89,8 @@ pub fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
 pub struct ExtensionOrder {
     pub default: ExtensionOrderGroup,
     pub node_modules: ExtensionOrderGroup,
+    /// Replaces `default.default` for a `require()` in a file under `node_modules`, unless it's empty.
+    pub required_by_package: Box<[Box<[u8]>]>,
     /// Not on the bundler-side struct — the spec resolver reads
     /// `Defaults.CssExtensionOrder` directly. Stored here so every
     /// [`ExtOrder`] tag resolves into storage with the same owner/lifetime.
@@ -134,6 +138,7 @@ impl BundleOptions {
             ExtOrder::DefaultEsm => &self.extension_order.default.esm,
             ExtOrder::NodeModulesDefault => &self.extension_order.node_modules.default,
             ExtOrder::NodeModulesEsm => &self.extension_order.node_modules.esm,
+            ExtOrder::RequiredByPackage => &self.extension_order.required_by_package,
             ExtOrder::Css => &self.extension_order.css,
             ExtOrder::MainField => &self.main_field_extension_order,
         }
@@ -211,6 +216,12 @@ pub struct BundleOptions {
 }
 
 impl BundleOptions {
+    /// A package that probes the project with `require.resolve()` finds what it finds in Node.js, which doesn't add
+    /// `.ts`. `extra_cjs_extensions` still count.
+    pub fn packages_require_like_node(&mut self) {
+        self.extension_order.required_by_package = owned_string_list(&[b".js", b".json", b".node"]);
+    }
+
     pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;

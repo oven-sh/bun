@@ -121,7 +121,7 @@ test("unsupported formData 1", async () => {
     res.end();
   }).listen(0);
   await once(server, "listening");
-  expect(
+  await expect(
     fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`).then(res => res.formData()),
   ).rejects.toThrow(TypeError);
 });
@@ -168,7 +168,7 @@ test.todo("multipart formdata base64", async () => {
   await using server = createServer(async (req, res) => {
     res.setHeader("content-type", "multipart/form-data; boundary=----formdata-bun-0.5786922755719377");
 
-    for (let offset = 0; offset < formRaw.length; ) {
+    for (let offset = 0; offset < formRaw.length;) {
       res.write(formRaw.slice(offset, (offset += 2)));
       await new Promise(resolve => setTimeout(resolve));
     }
@@ -516,7 +516,7 @@ test("error on redirect", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  expect(
+  await expect(
     fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
       redirect: "error",
     }),
@@ -564,7 +564,9 @@ test("fetching with Request object - issue #1527", async () => {
       body,
     });
 
-    expect(await fetch(request)).resolves.pass();
+    const res = await fetch(request);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
   } finally {
     server.closeAllConnections();
     server.close();

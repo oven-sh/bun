@@ -5,7 +5,8 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { connect, createServer } from "node:tls";
+import { connect, createServer, TLSSocket } from "node:tls";
+import { decodeErrorAlert, startMalformedServerHelloServer } from "./tls-handshake-alert-utils";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 0);
@@ -56,6 +57,53 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
   // Allow one extra straggler — server.close() resolves before the last
   // accepted socket's finalizer runs on Windows ARM64.
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
+});
+
+it.if(isWindows)("a write larger than 64 KiB round-trips over a TLS named pipe", async () => {
+  // The TLS engine over a pipe hands the pipe all the ciphertext of one write at once.
+  const payload = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  // Resolves with the first `payload.length` bytes `socket` emits.
+  const receive = (socket: ReturnType<typeof connect>) => {
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    const chunks: Buffer[] = [];
+    let received = 0;
+    socket.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received >= payload.length) resolve(Buffer.concat(chunks));
+    });
+    socket.on("error", reject);
+    return promise;
+  };
+
+  const atServer = Promise.withResolvers<Buffer>();
+  let client: ReturnType<typeof connect> | null = null;
+  const server = createServer(tls, socket => {
+    receive(socket).then(all => {
+      socket.write(all);
+      atServer.resolve(all);
+    }, atServer.reject);
+  });
+  server.on("tlsClientError", atServer.reject);
+  try {
+    const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    server.listen(pipeName);
+    await once(server, "listening");
+
+    const socket = connect({ path: pipeName, ca: tls.cert });
+    client = socket;
+    const atClient = receive(socket);
+    socket.on("secureConnect", () => socket.write(payload));
+
+    const [serverGot, clientGot] = await Promise.all([atServer.promise, atClient]);
+    expect({ serverGotPayload: serverGot.equals(payload), clientGotPayload: clientGot.equals(payload) }).toEqual({
+      serverGotPayload: true,
+      clientGotPayload: true,
+    });
+  } finally {
+    client?.destroy();
+    server.close();
+  }
 });
 
 describe.each(["TLSv1.2", "TLSv1.3"] as const)(
@@ -140,6 +188,77 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
   },
 );
 
+describe("a peer that ends the handshake with close_notify over a named pipe", () => {
+  // Same contract as the Duplex transport tests in node-tls-duplex-end-verify.test.ts and node-tls-connect.test.ts.
+  // The peer keeps the pipe open behind the alert, so only the alert says that no session will come.
+  const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+
+  it.if(isWindows)("fails the client's connection with ECONNRESET", async () => {
+    const peer = net.createServer(socket => {
+      socket.on("error", () => {});
+      // The alert is the answer to the ClientHello.
+      socket.once("data", () => socket.write(closeNotify));
+    });
+    let client: ReturnType<typeof connect> | null = null;
+    try {
+      const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+      peer.listen(pipeName);
+      await once(peer, "listening");
+
+      const socket = connect({ path: pipeName, rejectUnauthorized: false });
+      client = socket;
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      socket.on("secureConnect", () => events.push("secureConnect"));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      socket.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        closed.resolve();
+      });
+      await closed.promise;
+      expect(events).toEqual(["end", "error ECONNRESET", "close true"]);
+    } finally {
+      client?.destroy();
+      peer.close();
+    }
+  });
+
+  it.if(isWindows)("is reported by a tls.Server as 'tlsClientError'", async () => {
+    const server = createServer(tls);
+    const reported = once(server, "tlsClientError");
+    let client: ReturnType<typeof net.connect> | null = null;
+    try {
+      const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+      server.listen(pipeName);
+      await once(server, "listening");
+
+      // The alert is the first record. No ClientHello comes.
+      const socket = net.connect(pipeName, () => socket.write(closeNotify));
+      client = socket;
+      socket.on("error", () => {});
+      const [err] = await reported;
+      expect({ code: err.code, message: err.message }).toEqual({ code: "ECONNRESET", message: "socket hang up" });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+it.if(isWindows)("a client over a named pipe sends its fatal alert when the handshake fails", async () => {
+  // Same contract as the Duplex transport test in node-tls-connect.test.ts.
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  using server = await startMalformedServerHelloServer(pipeName);
+  const client = connect({ path: pipeName, rejectUnauthorized: false });
+  client.on("error", () => {});
+  try {
+    expect(await server.afterClientHello).toEqual(decodeErrorAlert);
+  } finally {
+    client.destroy();
+  }
+});
+
 it.if(isWindows)("setSecureContext() rotates the certificate of a server listening on a named pipe", async () => {
   const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
   const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
@@ -205,4 +324,207 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   }
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
+});
+
+// A pipe has no fd for the native upgrade to adopt.
+type ServerWrap = (accepted: net.Socket, echo: (secure: TLSSocket) => void, fail: (err: Error) => void) => void;
+
+async function serverWrapRoundTrip(wrap: ServerWrap) {
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  const echoed = Promise.withResolvers<string>();
+  const server = net.createServer(accepted => {
+    accepted.on("error", echoed.reject);
+    wrap(
+      accepted,
+      secure => {
+        secure.on("error", echoed.reject);
+        secure.on("data", chunk => secure.end(`echo:${chunk}`));
+      },
+      echoed.reject,
+    );
+  });
+  server.on("error", echoed.reject);
+  let client: TLSSocket | undefined;
+  try {
+    server.listen(pipeName);
+    await once(server, "listening");
+    client = connect({ socket: net.connect(pipeName), rejectUnauthorized: false }, () => client!.write("ping"));
+    client.on("error", echoed.reject);
+    // A pipe write completes once the peer has read it: read through to the server's close_notify.
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    client.on("end", () => echoed.resolve(received));
+    expect(await echoed.promise).toBe("echo:ping");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+}
+
+it.if(isWindows)("new TLSSocket(pipeSocket, { isServer: true }) completes a handshake over a named pipe", async () => {
+  await serverWrapRoundTrip((accepted, echo) => echo(new TLSSocket(accepted, { isServer: true, ...tls })));
+});
+
+it.if(isWindows)("tls.Server wraps a named-pipe connection handed in via emit('connection')", async () => {
+  const tlsServer = createServer(tls);
+  try {
+    await serverWrapRoundTrip((accepted, echo, fail) => {
+      tlsServer.once("secureConnection", echo);
+      tlsServer.once("tlsClientError", fail);
+      tlsServer.emit("connection", accepted);
+    });
+  } finally {
+    tlsServer.close();
+  }
+});
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+it.if(isWindows)("a TLSSocket over a named pipe that is still connecting emits 'connect'", async () => {
+  const received = Promise.withResolvers<string>();
+  let client: ReturnType<typeof connect> | null = null;
+  const server = createServer(tls, socket => {
+    let data = "";
+    socket.on("error", received.reject);
+    socket.on("data", chunk => (data += chunk));
+    socket.on("end", () => {
+      received.resolve(data);
+      socket.end();
+    });
+  });
+  try {
+    const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    server.listen(pipeName);
+    await once(server, "listening");
+
+    const socket = connect({ socket: net.connect(pipeName), ca: tls.cert });
+    client = socket;
+    const log = [`wrapped connecting=${socket.connecting}`];
+    socket.write("before connect;");
+    socket.on("connect", () => {
+      log.push(`connect connecting=${socket.connecting} pending=${socket.pending}`);
+      socket.write("from connect;");
+    });
+    socket.on("secureConnect", () => {
+      log.push("secureConnect");
+      socket.end();
+    });
+
+    const [fromClient] = await Promise.all([received.promise, once(socket, "close")]);
+
+    expect({ log, fromClient }).toEqual({
+      log: ["wrapped connecting=true", "connect connecting=false pending=false", "secureConnect"],
+      fromClient: "before connect;from connect;",
+    });
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+describe("tls.connect({ socket }) over a named pipe that is already connected", () => {
+  async function connectedPipe(onConnection: (socket: TLSSocket) => void) {
+    const server = createServer(tls, socket => {
+      socket.on("error", () => {});
+      onConnection(socket);
+    });
+    server.on("tlsClientError", () => {});
+    const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    server.listen(pipeName);
+    await once(server, "listening");
+    const pipe = net.connect(pipeName);
+    await once(pipe, "connect");
+    return { server, pipe };
+  }
+
+  it.if(isWindows)("is not connecting, and end() in the same tick emits 'finish'", async () => {
+    const { server, pipe } = await connectedPipe(socket => socket.resume());
+    let client: TLSSocket | undefined;
+    try {
+      client = connect({ socket: pipe, rejectUnauthorized: false });
+      const state = { connecting: client.connecting, pending: client.pending, readyState: client.readyState };
+      client.end();
+      expect(state).toEqual({ connecting: false, pending: false, readyState: "open" });
+      await once(client, "finish");
+      expect(client.writableFinished).toBe(true);
+    } finally {
+      client?.destroy();
+      pipe.destroy();
+      server.close();
+    }
+  });
+});
+
+// Same contract as "tls.connect over a Duplex reports a fatal post-handshake
+// SSL error" in node-tls-connect.test.ts, with both TLS peers on a named pipe.
+// A plain pipe proxy between them injects a record that cannot authenticate
+// once the handshake has completed on both sides.
+describe("a fatal post-handshake SSL error over a named pipe", () => {
+  const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+  // BoringSSL and OpenSSL 3 name the bad_record_mac alert differently.
+  const ALERT_BAD_RECORD_MAC = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
+    ? "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC"
+    : "ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC";
+
+  type Outcome = { event: string; code?: string; library?: string };
+  // Settles on the 'error' (expected), or on a 'close' with no 'error' before it (the bug).
+  function firstErrorOrClose(socket: net.Socket): Promise<Outcome> {
+    return new Promise(resolve => {
+      socket.once("error", (err: NodeJS.ErrnoException & { library?: string }) =>
+        resolve({ event: "error", code: err.code, library: err.library }),
+      );
+      socket.once("close", () => resolve({ event: "close" }));
+    });
+  }
+
+  async function run(inject: (toClient: net.Socket, toServer: net.Socket) => void) {
+    let toClient: net.Socket | undefined;
+    let toServer: net.Socket | undefined;
+    let client: ReturnType<typeof connect> | undefined;
+    let serverSocket: ReturnType<typeof connect> | undefined;
+    const serverPipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    const proxyPipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    const server = createServer(tls);
+    const serverOutcome = Promise.withResolvers<Outcome>();
+    server.on("secureConnection", s => firstErrorOrClose(s).then(serverOutcome.resolve));
+    const proxy = net.createServer(c => {
+      toClient = c;
+      toServer = net.connect(serverPipe);
+      c.pipe(toServer);
+      toServer.pipe(c);
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+    });
+    try {
+      await once(server.listen(serverPipe), "listening");
+      const serverSecure = once(server, "secureConnection");
+      await once(proxy.listen(proxyPipe), "listening");
+
+      client = connect({ path: proxyPipe, rejectUnauthorized: false });
+      const clientOutcome = firstErrorOrClose(client);
+      await once(client, "secureConnect");
+      [serverSocket] = await serverSecure;
+
+      inject(toClient!, toServer!);
+      return { client: await clientOutcome, server: await serverOutcome.promise };
+    } finally {
+      for (const s of [client, serverSocket, toClient, toServer]) s?.destroy();
+      proxy.close();
+      server.close();
+    }
+  }
+
+  it.if(isWindows)("a record that fails to decrypt on the client", async () => {
+    expect(await run(toClient => void toClient.write(BAD_RECORD))).toEqual({
+      client: { event: "error", code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", library: "SSL routines" },
+      // The client's bad_record_mac alert reaches the server as its own error.
+      server: { event: "error", code: ALERT_BAD_RECORD_MAC, library: "SSL routines" },
+    });
+  });
+
+  it.if(isWindows)("a record that fails to decrypt on the server", async () => {
+    expect(await run((_toClient, toServer) => void toServer.write(BAD_RECORD))).toEqual({
+      client: { event: "error", code: ALERT_BAD_RECORD_MAC, library: "SSL routines" },
+      server: { event: "error", code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", library: "SSL routines" },
+    });
+  });
 });

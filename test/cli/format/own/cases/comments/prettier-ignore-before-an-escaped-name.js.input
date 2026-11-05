@@ -1,0 +1,7 @@
+a. /* prettier-ignore */ \u{62};
+a.\u{62};
+a. /* a */ \u{62};
+a
+// prettier-ignore
+.\u{62};
+a. /* prettier-ignore */ \u{62}().c().d();

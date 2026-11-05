@@ -1,0 +1,35 @@
+# Object.setPrototypeOf({ resolve(x) { return x; } }, import.meta); Object.setPrototypeOf(hide(), hide()); import.meta.resolve("./x.mjs"); return import.meta.url
+# import.meta becomes the prototype of another object, and an object nobody knows is given another prototype. Nobody was handed import.meta, so it is neither:
+# it has what the table lists
+# RUN: valueflow-solve calls primitives
+# CHECK: f0 v14 -> ImportMetaResolve
+# RUN(APPLY): valueflow-apply
+# APPLY: AssumeType v12 provenType=builtin(ImportMetaResolve)
+# APPLY: AssumeType v15 provenType=undefined|string
+
+module m0 path="/app/main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+layout L0 fields=[{key="resolve" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectSetPrototypeOf
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v1, v0, v5, v2
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="hide" [isFreeName]
+    v9 = Call v8, -
+    v10 = Call v8, -
+    v11 = Call v1, v0, v9, v10
+    v12 = PropGet v2 key="resolve"
+    v13 = String string="./x.mjs"
+    v14 = Call v12, v2, v13 calleeKey="resolve"
+    v15 = PropGet v2 key="url"
+    Return v15
+}
+function f1 name="resolve" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+😀_a_ and _b_😀 and 😀*c*😀 and 😀__d__
+
+a tab before two blanks
+is no hard break
+
+[**<x:y>*](u) [_a_](u) [**b**](u)
+
+[a ![b](c "[") d](e) and ![f [g](h](j)
+
+-------------------
+{ printWidth: 100 }
+-------------------
+😀_a_ and _b_😀 and 😀*c*😀 and 😀__d__
+
+a tab before two blanks
+is no hard break
+
+[**<x:y>*](u) [_a_](u) [**b**](u)
+
+[a ![b](c "[") d](e) and ![f [g](h](j)
+
+===================== End =====================

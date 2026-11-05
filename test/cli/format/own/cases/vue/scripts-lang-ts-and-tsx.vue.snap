@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 40 }
+------------------
+<script lang="ts">
+const f = <T,>() => 1;
+</script>
+<script setup lang="tsx">
+const g = <T,>() => 1;
+</script>
+
+------------------
+{ printWidth: 80 }
+------------------
+<script lang="ts">
+const f = <T,>() => 1;
+</script>
+<script setup lang="tsx">
+const g = <T,>() => 1;
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script lang="ts">
+const f = <T,>() => 1;
+</script>
+<script setup lang="tsx">
+const g = <T,>() => 1;
+</script>
+
+===================== End =====================

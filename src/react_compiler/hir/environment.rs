@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerError;
@@ -46,13 +46,19 @@ pub struct Environment {
     next_mutable_range_id_counter: u32,
 
     // Arenas (use direct field access for sliced borrows)
-    pub identifiers: HirVec<Identifier>,
-    pub types: HirVec<Type>,
+    pub identifiers: Vec<Identifier>,
+    pub types: Vec<Type>,
     pub scopes: HirVec<ReactiveScope>,
     pub functions: HirVec<HirFunction>,
 
     // Error accumulation
     pub errors: CompilerError,
+
+    /// For what calls itself along the nesting of the source: [`Environment::has_stack`].
+    /// It keeps to a thread's usual stack: a thread that has more has it for what cannot ask,
+    /// `Drop`, `Clone` and `==` of what was built.
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
 
     // Function type classification (Component, Hook, Other)
     pub fn_type: ReactFunctionType,
@@ -75,6 +81,9 @@ pub struct Environment {
     // Renames: tracks variable renames from lowering (original_name → new_name)
     // keyed by binding declaration position, for applying back to the Babel AST.
     pub renames: HirVec<BindingRename>,
+
+    // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
+    pub(crate) binding_names: HashMap<StoreStr, u32>,
 
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
@@ -164,7 +173,7 @@ impl Environment {
         }
 
         // Register reanimated module type when enabled
-        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::new();
+        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::default();
         if config.enable_custom_type_definition_for_reanimated {
             let reanimated_module_type = globals::get_reanimated_module_type(&mut shapes);
             module_types.insert(
@@ -177,11 +186,14 @@ impl Environment {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: AstAlloc::vec(),
-            types: AstAlloc::vec(),
+            identifiers: Vec::new(),
+            types: Vec::new(),
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),
+            stack: bun_core::StackCheck::init()
+                .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
+            is_out_of_stack: std::cell::Cell::new(false),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
             code: None,
@@ -190,8 +202,9 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
-            reference_node_ids: HashSet::new(),
-            hoisted_identifiers: HashSet::new(),
+            binding_names: HashMap::default(),
+            reference_node_ids: HashSet::default(),
+            hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,
             validate_no_set_state_in_render: config.validate_no_set_state_in_render,
@@ -200,12 +213,39 @@ impl Environment {
             globals: global_registry,
             shapes,
             module_types,
-            module_type_errors: HashMap::new(),
+            module_type_errors: HashMap::default(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
             uid_known_names: None,
             config,
+        }
+    }
+
+    /// Whether the thread has the stack for one more level of the source. Once it had not, the
+    /// answer stays no: something was left out, and `lower` fails.
+    pub(crate) fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
+    }
+
+    /// For a pass that asks the stack by itself.
+    pub(crate) fn stack(&self) -> bun_core::StackCheck {
+        self.stack
+    }
+
+    /// From such a pass.
+    pub(crate) fn ran_out_of_stack(&self) {
+        self.is_out_of_stack.set(true);
+    }
+
+    /// Fails if a pass had not the stack to go on, and left something out.
+    pub(crate) fn stack_held(&self) -> Result<(), CompilerError> {
+        match self.is_out_of_stack.get() {
+            true => Err(crate::lowering::nested_too_deeply().into()),
+            false => Ok(()),
         }
     }
 
@@ -756,7 +796,7 @@ impl Environment {
         // Lazily build the set of known names from existing identifiers.
         // This approximates Babel's hasBinding/hasGlobal/hasReference checks.
         if self.uid_known_names.is_none() {
-            let mut known = HashSet::new();
+            let mut known = HashSet::default();
             for id in &self.identifiers {
                 if let Some(name) = &id.name {
                     known.insert(StoreStr::new(name.value()));

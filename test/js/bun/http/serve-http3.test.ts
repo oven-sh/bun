@@ -1,9 +1,12 @@
 import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { once } from "node:events";
+import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect as connectTLS } from "node:tls";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -514,6 +517,62 @@ describe("Bun.serve HTTP/3", () => {
     expect(stdout).toContain("listening");
     expect(exitCode).toBe(0);
   });
+
+  // A killed process never flushes at exit, so the warning must be on the pipe before SIGKILL.
+  test("validation: the unix socket warning reaches stderr while the server runs", async () => {
+    using dir = tempDir("serve-http3-unix-warn", {});
+    const sock = join(String(dir), "h3.sock");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.serve({ unix: ${JSON.stringify(sock)}, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") }); console.log("listening");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // console.log flushes at once, so "listening" means the warning was already written on the same thread.
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    while (!stdout.includes("listening")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+    expect(stdout).toBe("listening\n");
+
+    proc.kill("SIGKILL");
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("http3: true with a unix socket — HTTP/3 listener skipped");
+  });
+
+  test("validation: the unix socket warning reaches stderr from a Worker", async () => {
+    using dir = tempDir("serve-http3-unix-worker", {
+      "worker.ts": `
+        using s = Bun.serve({ unix: process.env.H3_SOCK, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") });
+      `,
+    });
+    const sock = join(String(dir), "h3.sock");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `new Worker("./worker.ts").addEventListener("close", e => console.log("worker close", e.code));`,
+      ],
+      env: { ...bunEnv, H3_SOCK: sock },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("worker close 0\n");
+    expect(stderr).toContain("http3: true with a unix socket — HTTP/3 listener skipped");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own
@@ -830,10 +889,11 @@ async function withCustomServer(
     send: (cmd: string) => void,
     waitForStderr: (re: RegExp) => Promise<RegExpMatchArray>,
   ) => Promise<void>,
+  args: string[] = [],
 ) {
   using dir = tempDir("serve-http3-custom", { "server.mjs": script });
   const proc = Bun.spawn({
-    cmd: [bunExe(), "server.mjs"],
+    cmd: [bunExe(), ...args, "server.mjs"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "inherit",
@@ -1019,7 +1079,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/").then(r => r.text())).toBe("ok");
-      const inflight = fetchH3(port, "/stop", {
+      // Handled from the start: the close can reach the client before "STOPPED" is read from the pipe.
+      const outcome = fetchH3(port, "/stop", {
         method: "POST",
         body: new ReadableStream({
           start(c) {
@@ -1027,10 +1088,12 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
             c.close();
           },
         }),
-      });
+      }).then(
+        r => r.text(),
+        e => e.code,
+      );
       await waitForStderr(/STOPPED/);
-      const outcome = await inflight.then(r => r.text()).catch(e => e.code);
-      expect(outcome).toBe("HTTP3StreamReset");
+      expect(await outcome).toBe("HTTP3StreamReset");
     });
   });
 
@@ -1493,6 +1556,54 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("server.stop(true) after server.stop() closes the H3 connections that are still draining", async () => {
+    using dir = tempDir("serve-http3-stop-twice", {
+      "server.mjs": `
+        const server = Bun.serve({
+          port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+          fetch() {
+            console.error("HELD");
+            return new Promise(() => {});
+          },
+        });
+        console.error("PORT=" + server.port);
+        process.stdin.once("data", () => {
+          server.stop();
+          server.stop(true);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+    let buf = "";
+    const r = proc.stderr.getReader();
+    const waitFor = async (text: string) => {
+      while (!buf.includes(text)) {
+        const { value, done } = await r.read();
+        if (done) break;
+        buf += new TextDecoder().decode(value);
+      }
+    };
+    await waitFor("PORT=");
+    const port = Number(buf.match(/PORT=(\d+)/)![1]);
+    const held = fetchH3(port, "/", { method: "POST", body: "held" }).then(
+      res => res.status,
+      err => err.code,
+    );
+    await waitFor("HELD");
+    r.releaseLock();
+    proc.stdin!.write("stop\n");
+    proc.stdin!.end();
+    expect(await held).toBe("HTTP3StreamReset");
+    // No process.exit() in the script: the connection no longer holds the loop.
+    expect(await proc.exited).toBe(0);
+  });
+
   // The HEADERS of the first response on a connection wait for the QPACK encoder
   // stream, and lsquic takes no DATA until they are out. A small streamed body is
   // therefore written, and the response ended, from the stream's writable
@@ -1827,6 +1938,161 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  test("enforces the header size limit it advertises, counted as in RFC 9114 section 4.2.2", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return Response.json(Object.fromEntries(req.headers));
+      },
+    });
+
+    const limit = 16 * 1024;
+    const sizeOf = (headers: Record<string, string>) =>
+      Object.entries(headers).reduce((size, [name, value]) => size + name.length + value.length + 32, 0);
+    const fieldsOfSize = (size: number) => {
+      const fields: Record<string, string> = {};
+      for (let i = 0; i < 100; i++) fields[`x-field-${i}`] = "";
+      const spare = size - sizeOf(requestHeaders("/", fields));
+      for (const name in fields) fields[name] = Buffer.alloc(Math.floor(spare / 100), "v").toString();
+      fields["x-field-0"] += Buffer.alloc(spare % 100, "v").toString();
+      return fields;
+    };
+    const exchange = (size: number) => h3Exchange(server.port!, requestHeaders("/", fieldsOfSize(size)));
+
+    const atTheLimit = await exchange(limit);
+    expect(JSON.parse(atTheLimit.slice("200 ".length))).toEqual({ host: "localhost", ...fieldsOfSize(limit) });
+    expect({
+      atTheLimit: atTheLimit.slice(0, 3),
+      overTheLimit: await exchange(limit + 1),
+      farOverTheLimit: await exchange(limit * 3),
+      after: await h3Exchange(server.port!, requestHeaders("/")),
+    }).toEqual({
+      atTheLimit: "200",
+      overTheLimit: "431 ",
+      farOverTheLimit: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      after: "200 " + JSON.stringify({ host: "localhost" }),
+    });
+  });
+
+  test("serves the next request of a connection after it answered 431", async () => {
+    await withServer(async port => {
+      const tooLarge = await fetchH3(port, "/hello", {
+        headers: { "x-large": Buffer.alloc(20 * 1024, "v").toString() },
+      });
+      expect(tooLarge.status).toBe(431);
+      expect(await tooLarge.text()).toBe("");
+      const next = await fetchH3(port, "/hello");
+      expect(await next.text()).toBe("hello over h3");
+      expect(next.status).toBe(200);
+    });
+  });
+
+  test("accepts as many request fields as HTTP/1 and HTTP/2 do", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(String([...req.headers].length));
+      },
+    });
+    const request = async (fields: number) => {
+      const headers: Record<string, string> = {};
+      for (let i = 0; i < fields; i++) headers[`x-${i}`] = "";
+      const res = await fetchH3(server.port!, "/", { headers });
+      return `${res.status} ${await res.text()}`;
+    };
+    // What fetch() sends by itself. :authority is the Host header, and :method, :scheme and :path count too.
+    const own = Number((await request(0)).slice("200 ".length)) + 3;
+
+    expect({
+      atTheLimit: await request(200 - own),
+      overTheLimit: await request(200 - own + 1),
+      after: await request(0),
+    }).toEqual({
+      atTheLimit: `200 ${200 - 3}`,
+      overTheLimit: "431 ",
+      after: `200 ${own - 3}`,
+    });
+  });
+
+  test("header blocks and values of more than 64 KB arrive intact in both directions, up to the size limit", async () => {
+    const limit = 250_000;
+    await withCustomServer(
+      `
+      const server = Bun.serve({
+        port: 0,
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        fetch(req) {
+          const headers = new Headers();
+          let size = 0;
+          for (const [name, value] of req.headers) {
+            size += name.length + value.length + 32;
+            if (name.startsWith("x-field-")) headers.set(name, value);
+          }
+          return new Response(String(size), { headers });
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+      `,
+      async port => {
+        const echo = async (sent: Record<string, string>) => {
+          const res = await fetchH3(port, "/", { headers: sent });
+          const received = Object.fromEntries([...res.headers].filter(([name]) => name.startsWith("x-field-")));
+          // Not toEqual(sent): a mismatch would print the values.
+          return { status: res.status, intact: Bun.deepEquals(received, sent) };
+        };
+        const block: Record<string, string> = {};
+        // QPACK sends "~" as it is.
+        for (let i = 0; i < 30; i++) block[`x-field-${i}`] = String(i).padEnd(4_000, "~");
+        expect({
+          block: await echo(block),
+          value70000: await echo({ "x-field-0": Buffer.alloc(70_000, "v").toString() }),
+          value200000: await echo({ "x-field-0": Buffer.alloc(200_000, "~").toString() }),
+          name70000: await echo({ ["x-field-" + Buffer.alloc(70_000, "n")]: "v" }),
+        }).toEqual({
+          block: { status: 200, intact: true },
+          value70000: { status: 200, intact: true },
+          value200000: { status: 200, intact: true },
+          name70000: { status: 200, intact: true },
+        });
+
+        // RFC 9114 section 4.2.2 counts the name, the value and 32 more bytes for each field. The
+        // server saw :authority as Host, and :method, :scheme and :path count too.
+        const own =
+          Number(await (await fetchH3(port, "/")).text()) +
+          (":authority".length - "host".length) +
+          (":method".length + "GET".length + 32) +
+          (":scheme".length + "https".length + 32) +
+          (":path".length + "/".length + 32);
+        const oneValue = (size: number) =>
+          fetchH3(port, "/", {
+            headers: { "x-field-0": Buffer.alloc(size - own - ("x-field-0".length + 32), "v").toString() },
+          }).then(
+            res => res.status,
+            err => err.code,
+          );
+        expect({
+          atTheLimit: await oneValue(limit),
+          overTheLimit: await oneValue(limit + 1),
+          farOverTheLimit: await oneValue(limit * 3),
+          after: (await fetchH3(port, "/")).status,
+        }).toEqual({
+          atTheLimit: 200,
+          overTheLimit: 431,
+          farOverTheLimit: "HTTP3StreamReset",
+          after: 200,
+        });
+      },
+      [`--max-http-header-size=${limit}`],
+    );
+  });
+
   test("request.url falls back to the :path when :authority is not a valid host", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -1891,6 +2157,43 @@ describe("Bun.serve HTTP/3 request validation", () => {
     const chained = await h3Exchange(server.port!, requestHeaders("/"), clientIdentity("agent1"));
 
     expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
+
+  test("a `ca` without requestCert serves cert-less QUIC clients, and a per-serverName rejectUnauthorized: false tolerates an unverifiable certificate", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    const credentials = { key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem"), ca: pem("ca1-cert.pem") };
+    await using server = Bun.serve({
+      port: 0,
+      tls: [
+        // No requestCert: the `ca` must not make the server ask for a certificate.
+        credentials,
+        // Asks, but accepts whatever comes back. agent2 is self-signed, so ca1 cannot verify it.
+        { ...credentials, serverName: "lenient.example.com", requestCert: true, rejectUnauthorized: false },
+      ],
+      http3: true,
+      fetch: () => new Response("served"),
+    });
+
+    const agent2 = {
+      keys: [createPrivateKey(pem("agent2-key.pem"))],
+      certs: [readFileSync(join(keysDir, "agent2-cert.pem"))],
+    };
+    const lenient = { servername: "lenient.example.com" };
+    const results = {
+      defaultNoCert: await h3Exchange(server.port!, requestHeaders("/")),
+      lenientNoCert: await h3Exchange(server.port!, requestHeaders("/", { ":authority": lenient.servername }), lenient),
+      lenientUnverifiable: await h3Exchange(server.port!, requestHeaders("/", { ":authority": lenient.servername }), {
+        ...lenient,
+        ...agent2,
+      }),
+    };
+
+    expect(results).toEqual({
+      defaultNoCert: "200 served",
+      lenientNoCert: "200 served",
+      lenientUnverifiable: "200 served",
+    });
   });
 });
 
@@ -2029,5 +2332,130 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       fetch: expectedOrder,
       route: expectedOrder,
     });
+  });
+});
+
+describe("Bun.serve HTTP/3 SNI", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const pem = (name: string) => readFileSync(join(tlsFixtures, name), "utf8");
+  // Each agent certificate has its own CN, which tells the entries apart.
+  const identity = (agent: string) => ({ key: pem(`${agent}-key.pem`), cert: pem(`${agent}-cert.pem`) });
+
+  // fetch() lowercases the URL host. node:quic sends `servername` as written
+  // and exposes the certificate the server picked.
+  async function servedCN(port: number, servername: string): Promise<string> {
+    const session = await connect(
+      { address: "127.0.0.1", port } as SocketAddress,
+      { alpn: "h3", servername, verifyPeer: "manual" } as SessionOptions,
+    );
+    try {
+      await session.opened;
+      const cert = session.peerCertificate;
+      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert as any));
+      return x509.subject.match(/CN=([^\s,]+)/)![1];
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("a later entry with the same serverName replaces the earlier one", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "admin.example.com", ...identity("agent2") },
+        { serverName: "admin.example.com.", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served = {
+      admin: await servedCN(server.port!, "admin.example.com"),
+      dottedAdmin: await servedCN(server.port!, "admin.example.com."),
+      other: await servedCN(server.port!, "other.example.com"),
+    };
+    // The TCP listener selects the same entry for these names.
+    expect(served).toEqual({ admin: "agent3", dottedAdmin: "agent3", other: "agent1" });
+  });
+
+  test("serverName entries match regardless of case and a wildcard covers one label", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "Agent2.Example", ...identity("agent2") },
+        { serverName: "*.wild.example", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served: Record<string, string> = {};
+    const overTCP: Record<string, string> = {};
+    for (const servername of [
+      "Agent2.Example",
+      "agent2.example",
+      "AGENT2.EXAMPLE",
+      "a.wild.example",
+      "A.WILD.EXAMPLE",
+      "a.b.wild.example",
+      "wild.example",
+      "other.example",
+    ]) {
+      served[servername] = await servedCN(server.port!, servername);
+      const socket = connectTLS({ host: "127.0.0.1", port: server.port, servername, rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      overTCP[servername] = socket.getPeerCertificate().subject.CN as string;
+      socket.destroy();
+    }
+    expect(overTCP).toEqual(served);
+    expect(served).toEqual({
+      "Agent2.Example": "agent2",
+      "agent2.example": "agent2",
+      "AGENT2.EXAMPLE": "agent2",
+      "a.wild.example": "agent3",
+      "A.WILD.EXAMPLE": "agent3",
+      "a.b.wild.example": "agent1",
+      "wild.example": "agent1",
+      "other.example": "agent1",
+    });
+  });
+
+  // The client picks the SNI, so a spelling that misses the entry would skip its policy.
+  test("a strict entry is enforced for every spelling of its name", async () => {
+    const strict = { ...identity("agent3"), ca: pem("ca1-cert.pem"), requestCert: true, rejectUnauthorized: true };
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent2"),
+        { serverName: "Admin.Example.com", ...strict },
+        { serverName: "*.gated.example", ...strict },
+      ],
+      http3: true,
+      fetch: () => new Response("served"),
+    });
+    const client = (agent: string) => ({
+      keys: [createPrivateKey(pem(`${agent}-key.pem`))],
+      certs: [readFileSync(join(tlsFixtures, `${agent}-cert.pem`))],
+    });
+    const spellings = [
+      "admin.example.com",
+      "ADMIN.EXAMPLE.COM",
+      "aDmIn.eXaMpLe.CoM.",
+      "a.gated.example",
+      "A.GATED.EXAMPLE",
+      "a.Gated.Example.",
+    ];
+    const exchange = (servername: string, options = {}) =>
+      h3Exchange(server.port!, requestHeaders("/"), { servername, ...options });
+    const outcomes = await Promise.all(
+      spellings.map(async name => [
+        name,
+        await exchange(name),
+        await exchange(name, client("agent3")), // issued by ca2
+        await exchange(name, client("agent1")), // issued by ca1
+      ]),
+    );
+    expect(outcomes).toEqual(spellings.map(name => [name, "closed", "closed", "200 served"]));
+    expect(await exchange("other.example")).toBe("200 served");
   });
 });

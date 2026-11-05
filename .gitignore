@@ -46,6 +46,7 @@ Library/Caches
 *.tmp
 *.trace
 *.wat
+!test/aot/parallel/**/*.wat
 *.zip
 **/.verdaccio-db.json
 **/*.dir
@@ -96,6 +97,9 @@ misctools/sha
 myscript.sh
 node_modules
 node_modules_*
+!test/aot/parallel/**/node_modules/
+!test/aot/parallel/**/dist/
+!test/aot/ir/**/node_modules/
 out
 out.*
 outcss
@@ -153,7 +157,6 @@ codegen-for-zig-team.tar.gz
 /src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
-/src/deps/libarchive
 /src/deps/libdeflate
 /src/deps/libuv
 /src/deps/lol*html
@@ -201,6 +204,7 @@ Heap-*.json
 Heap-*.json.*
 isolate-*.log
 core
+!test/aot/**/core/
 core.[0-9]*
 # Legacy codegen outputs (no longer written, but old build trees still have
 # them on disk; keep ignored so they don't show as untracked).
@@ -218,3 +222,6 @@ src/jsc/bindings/GeneratedBindings.zig
 
 # hawk analysis scaffolding (see tools/hawk/); generated per-run, never committed
 src/runtime/hawk_root.rs
+__pycache__/
+rustc-ice-*.txt
+fuzz-out/

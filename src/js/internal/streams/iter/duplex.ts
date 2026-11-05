@@ -85,7 +85,7 @@ function duplex(options: DuplexOptions = { __proto__: null }) {
         aReadableIterator = null;
       }
     },
-    [Symbol.asyncDispose]() {
+    [Symbol.asyncDispose](this: { close(): Promise<void> }) {
       return this.close();
     },
   };
@@ -114,7 +114,7 @@ function duplex(options: DuplexOptions = { __proto__: null }) {
         bReadableIterator = null;
       }
     },
-    [Symbol.asyncDispose]() {
+    [Symbol.asyncDispose](this: { close(): Promise<void> }) {
       return this.close();
     },
   };

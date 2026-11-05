@@ -129,7 +129,7 @@ if (options["write-behind"]) {
       if (listed.has(row.name) && row.name.startsWith("everyday-"))
         pins[row.name] ??= { typed: rounded(row.typed.instructions), untyped: rounded(row.untyped.instructions) };
     const sorted = Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1)));
-    writeFileSync(everydayPinsPath, JSON.stringify(sorted, null, 2) + "\n");
+    writeFileSync(everydayPinsPath, `{\n${Object.keys(sorted).map(name => `${JSON.stringify(name)}: ${JSON.stringify(sorted[name])}`).join(",\n")}\n}\n`);
   }
 }
 

@@ -824,64 +824,56 @@ function attempt(run) { try { return run(); } catch (e) { return "threw " + (e i
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="steps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="mk"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
 // CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="mk"
-// CHECK-NEXT: v6 = Call v5 calleeName="mk"
-// CHECK-NEXT: v7 = Yield v6
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+// CHECK-NEXT: v4 = Call v0 calleeName="mk"
+// CHECK-NEXT: v5 = Yield v4
+// CHECK-NEXT: v6 = ResultAt v5
+// CHECK-NEXT: v7 = ResultAt v5 index=1
+// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v8
+// CHECK-NEXT: Throw v6
 // CHECK-NEXT: b2():
-// CHECK-NEXT: Return v8
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="mk"
-// CHECK-NEXT: v12 = Call v11 calleeName="mk"
-// CHECK-NEXT: v13 = Yield v12
-// CHECK-NEXT: v14 = ResultAt v13
-// CHECK-NEXT: v15 = ResultAt v13 index=1
-// CHECK-NEXT: Switch v15 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+// CHECK-NEXT: v8 = Call v0 calleeName="mk"
+// CHECK-NEXT: v9 = Yield v8
+// CHECK-NEXT: v10 = ResultAt v9
+// CHECK-NEXT: v11 = ResultAt v9 index=1
+// CHECK-NEXT: Switch v11 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
 // CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v14
+// CHECK-NEXT: Throw v10
 // CHECK-NEXT: b5():
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: Return v10
 // CHECK-NEXT: b6():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
+// CHECK-NEXT: v12 = Undefined
+// CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="steps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: anything, v2: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="mk"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
 // CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="mk"
-// CHECK-NEXT: v6 = Call v5 calleeName="mk"
-// CHECK-NEXT: v7 = Yield v6
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+// CHECK-NEXT: v4 = Call v0 calleeName="mk"
+// CHECK-NEXT: v5 = Yield v4
+// CHECK-NEXT: v6 = ResultAt v5
+// CHECK-NEXT: v7 = ResultAt v5 index=1
+// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v8
+// CHECK-NEXT: Throw v6
 // CHECK-NEXT: b2():
-// CHECK-NEXT: Return v8
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="mk"
-// CHECK-NEXT: v12 = Call v11 calleeName="mk"
-// CHECK-NEXT: v13 = Yield v12
-// CHECK-NEXT: v14 = ResultAt v13
-// CHECK-NEXT: v15 = ResultAt v13 index=1
-// CHECK-NEXT: Switch v15 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+// CHECK-NEXT: v8 = Call v0 calleeName="mk"
+// CHECK-NEXT: v9 = Yield v8
+// CHECK-NEXT: v10 = ResultAt v9
+// CHECK-NEXT: v11 = ResultAt v9 index=1
+// CHECK-NEXT: Switch v11 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
 // CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v14
+// CHECK-NEXT: Throw v10
 // CHECK-NEXT: b5():
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: Return v10
 // CHECK-NEXT: b6():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
+// CHECK-NEXT: v12 = Undefined
+// CHECK-NEXT: Return v12
 // CHECK-NEXT: }

@@ -401,10 +401,6 @@ impl RuntimeUses {
         self.modules.iter().any(has_source)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.modules.is_empty() && self.functions.is_empty()
-    }
-
     /// The code that is reached by values and not by bindings: the language, the helpers of the compiler, what the host loads to print an object with a method of its own,
     /// and what an open world enters. Facts says which of it runs.
     pub fn of_every_program(platform: Platforms) -> RuntimeUses {

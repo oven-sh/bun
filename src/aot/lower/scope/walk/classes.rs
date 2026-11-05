@@ -52,17 +52,20 @@ impl Walker<'_, '_> {
         for binding in bindings_of(&self.metadata_uses, class) {
             self.record_binding_use(context, binding, false);
         }
-        let evaluates_fields =
-            class::assigns_fields_in_constructor(hir, bound, compiled, signed, class);
-        let function_of_fields = match evaluates_fields {
-            true => constructor,
-            false => instance_initializer,
+        let in_constructor =
+            class::fields_evaluated_in_constructor(hir, bound, compiled, signed, class);
+        let function_of_field = |member: MemberId| match in_constructor.binary_search(&member) {
+            Ok(_) => constructor,
+            Err(_) => instance_initializer,
         };
         let (of_instances, of_class) = (Some(instance_initializer), Some(static_initializer));
         for &slot in &slots {
             let users = match slot {
                 ClassSlot::ClassToken => [of_instances, None],
-                ClassSlot::ComputedKey(_) => [Some(function_of_fields), of_class],
+                ClassSlot::ComputedKey(member) if bound.is_field_assigned_behind_class(member) => {
+                    [Some(creator), None]
+                }
+                ClassSlot::ComputedKey(member) => [Some(function_of_field(member)), of_class],
                 ClassSlot::DecoratorState => [of_instances, of_class],
                 ClassSlot::ClassObject | ClassSlot::StaticField(_) => [None, of_class],
                 ClassSlot::PrivateMethod(_) => [None, None],
@@ -90,7 +93,7 @@ impl Walker<'_, '_> {
             self.push_function_code(function, inner);
         }
         self.push_task(slot_initialization(scope, ClassSlot::ClassObject), context);
-        self.push_members(class, function_of_fields, &slots, context);
+        self.push_members(class, &function_of_field, &slots, context);
         self.push_initialization(inner_name, context);
         for &slot in &slots {
             match slot {
@@ -113,11 +116,11 @@ impl Walker<'_, '_> {
                 continue;
             }
             match node.kind {
-                MemberKind::Property => {
-                    if node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, static_initializer);
-                    }
+                MemberKind::Property if !node.flags.contains(Flags::STATIC) => {}
+                MemberKind::Property if bound.is_field_assigned_behind_class(member) => {
+                    self.push_field_assigned_behind_class(member, context);
                 }
+                MemberKind::Property => self.push_field_initializer(member, static_initializer),
                 MemberKind::StaticBlock => self.visit_function(node.func, static_initializer),
                 MemberKind::Method
                 | MemberKind::Getter
@@ -136,7 +139,7 @@ impl Walker<'_, '_> {
     fn push_members(
         &mut self,
         class: ClassId,
-        function_of_fields: WalkedFunctionId,
+        function_of_field: &dyn Fn(MemberId) -> WalkedFunctionId,
         slots: &[ClassSlot],
         context: Context,
     ) {
@@ -167,7 +170,7 @@ impl Walker<'_, '_> {
                 }
                 MemberKind::Property => {
                     if !node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, function_of_fields);
+                        self.push_field_initializer(member, function_of_field(member));
                     }
                 }
                 _ => continue,
@@ -188,6 +191,21 @@ impl Walker<'_, '_> {
         let context = self.enter_unit(function, scope);
         self.walk.function_of_field.push((member, function));
         self.push_expressions([initializer], context);
+    }
+
+    // The value is evaluated where the class stands: in the loops and under the branches around it, and its `this` is the one there.
+    fn push_field_assigned_behind_class(&mut self, member: MemberId, around_class: Context) {
+        let scope = self.bound.field_initializer_scope(member);
+        let scope = scope.expect("a field that is assigned has a value");
+        let context = Context {
+            lexical_scope: self.lexical_owners[scope.idx()],
+            ..around_class
+        };
+        self.enter_scope(scope, context);
+        self.use_this(around_class);
+        let function = context.function;
+        self.walk.function_of_field.push((member, function));
+        self.push_expressions([self.hir[member].init], context);
     }
 
     fn add_accessor_functions(

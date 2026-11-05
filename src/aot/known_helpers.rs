@@ -22,6 +22,7 @@ pub use self::resolve::{
     resolve_loaded_reference, resolve_private_field_call, resolve_reference,
 };
 
+use crate::builtins::id::BuiltinId;
 use crate::ir::{InParallel, for_each_mut};
 use crate::modules::ModuleGraph;
 use bun_sema::atom::Atom;
@@ -73,6 +74,15 @@ impl KnownHelpers {
     }
 
     pub fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
+        KnownHelpers::compute_below_added_names(files, &[], in_parallel)
+    }
+
+    /// `names_added_to_builtins`: `ProgramContents::names_added_to_builtins`, in the atoms of `files`.
+    pub fn compute_below_added_names(
+        files: &Files<'_>,
+        names_added_to_builtins: &[(BuiltinId, Atom)],
+        in_parallel: InParallel<'_>,
+    ) -> KnownHelpers {
         let mut found: Vec<(FileId, FileHelpers)> = files
             .compiled_files()
             .iter()
@@ -82,7 +92,7 @@ impl KnownHelpers {
         for_each_mut(&mut found, in_parallel, &|(file, helpers)| {
             let is_held_early =
                 || held_early.get_or_init(|| find_files_held_early(files))[file.idx()];
-            *helpers = find::find_in_file(files, *file, &is_held_early);
+            *helpers = find::find_in_file(files, *file, names_added_to_builtins, &is_held_early);
         });
         let file_count = files.modules.len();
         let mut known = KnownHelpers::default();

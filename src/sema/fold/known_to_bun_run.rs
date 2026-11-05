@@ -573,7 +573,7 @@ impl<'s> Folder<'_, 's> {
             return None;
         };
         let written = hir.text.get(hir[e].pos as usize..)?;
-        let end = written.iter().position(|&byte| byte == b'n')?;
+        let end = bun_core::strings::index_of_char_usize(written, b'n')?;
         Some(&written[..end])
     }
 

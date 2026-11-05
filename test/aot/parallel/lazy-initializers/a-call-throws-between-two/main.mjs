@@ -1,4 +1,0 @@
-// The body of the file throws. A variable whose declaration it never reached stays in its dead zone, and one that it passed holds its value.
-import { registry } from "./registry.mjs";
-try { await import("./m.mjs"); } catch (e) { console.log("caught", e.message); }
-for (const f of registry) { try { console.log(f()); } catch (e) { console.log(e.name + ": " + e.message); } }

@@ -31,7 +31,7 @@ use self::effects::ProgramOrigins;
 use crate::RoundReport;
 use crate::{CompilerOption, Diagnostic, Incomplete, Libs, Progress};
 use bun_sema::atom::Interner;
-use bun_sema::check::aot::{DiagnosticClass, Effect, FileOrigin, LeftOutBodies};
+use bun_sema::check::aot::{Effect, FileOrigin, LeftOutBodies};
 use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
@@ -87,7 +87,6 @@ pub struct LoadedProgram<'s> {
     pub brings_bun_types: bool,
     without_bun_types: Option<WithoutBunTypes>,
     has_configuration_file: bool,
-    is_read_again: bool,
 }
 
 pub(crate) struct WithoutBunTypes {
@@ -116,20 +115,11 @@ impl<'s> LoadedProgram<'s> {
         self.origins[file.idx()]
     }
 
-    pub fn set_is_read_again(&mut self, is_read_again: bool) {
-        self.is_read_again = is_read_again;
-        // SAFETY: `&mut self`.
-        unsafe { &mut *self.program.get() }.keep_what_is_reported(is_read_again);
-    }
-
-    /// Frees most of the HIR and of the binder's tables of every file, unless the files are read again.
+    /// Frees most of the HIR and of the binder's tables of every file.
     ///
     /// # Safety
     /// Every program that reads the files is lowered, and nothing reads a tree from now on.
     pub unsafe fn free_trees(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
-        if self.is_read_again {
-            return;
-        }
         let files = self.files();
         in_parallel(files.modules.len(), &|index| {
             // SAFETY: caller contract.
@@ -137,12 +127,12 @@ impl<'s> LoadedProgram<'s> {
         });
     }
 
-    /// Frees the types, the tables and everything else that the checker has made, unless the files are read again.
+    /// Frees the types, the tables and everything else that the checker has made.
     ///
     /// # Safety
     /// Nothing asks the checker anything from now on, and nothing that it has made is referred to.
     pub unsafe fn free_checker(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
-        if self.is_read_again || self.is_checker_freed.swap(true, Ordering::Relaxed) {
+        if self.is_checker_freed.swap(true, Ordering::Relaxed) {
             return;
         }
         // SAFETY: caller contract.
@@ -152,7 +142,7 @@ impl<'s> LoadedProgram<'s> {
         }
     }
 
-    /// Frees what `free_checker` frees and puts a checker in its place that knows nothing yet, unless the files are read again.
+    /// Frees what `free_checker` frees and puts a checker in its place that knows nothing yet.
     /// What the checker holds grows with every file that it has looked at, and a file asks about few of the others.
     ///
     /// # Safety
@@ -161,7 +151,7 @@ impl<'s> LoadedProgram<'s> {
         &self,
         in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
     ) {
-        if self.is_read_again || self.is_checker_freed.load(Ordering::Relaxed) {
+        if self.is_checker_freed.load(Ordering::Relaxed) {
             return;
         }
         // SAFETY: caller contract. The old program lies in an arena and is never dropped.
@@ -281,15 +271,6 @@ impl RoleDecision {
         demotions
             .take_while(|demotion| demotion.file == file)
             .any(|demotion| demotion.cause == DemotionCause::EarlyError)
-    }
-
-    /// True if `diagnostics` has an early error in `file`. The file keeps its role and is not checked for early errors
-    /// again, so lowering has to ask here.
-    pub fn reported_early_error(&self, file: FileId) -> bool {
-        self.diagnostics.iter().any(|reported| {
-            reported.diagnostic.file == Some(file)
-                && reported.diagnostic.class == DiagnosticClass::EarlyError
-        })
     }
 }
 

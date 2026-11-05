@@ -1,3 +1,0 @@
-function* failing(limit: number): Generator<number> { try { for (let i = 0; i < limit; i++) yield i; throw new Error("in the body"); } finally { console.log("finally of the body"); } }
-class Broken { [Symbol.iterator]() { let i = 0; return { next() { if (i++ === 2) throw new Error("in next"); return { done: false, value: i }; }, return() { console.log("return is called"); return {}; } }; } }
-for (const make of [() => [...failing(2)], () => [...new Broken()], () => ["head", ...failing(0)]]) { try { console.log(make().join()); } catch (error) { console.log("caught", (error as Error).message); } }

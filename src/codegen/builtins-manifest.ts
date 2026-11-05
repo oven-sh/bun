@@ -15,7 +15,6 @@ import {
   sourceFiles,
   specifierOf,
 } from "./builtins-manifest-model";
-import { encodeNumbers, moveBundledNamesToSecondText } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { rangesSeenByEveryFile } from "./part-seen-by-every-file";
 import { define, globalsToPrefix, nativeFunctions, nativeGlobals } from "./replacements";
@@ -169,35 +168,8 @@ for (const [file, text] of [
   lines.push(`declares-for-every-file\t${file}\t${seen.join(" ")}\t${asked.join(" ") || "-"}`);
 }
 
-// The positions of each file stand behind its id and their length. The files of functions follow on the modules.
-const firstIdOfFunctionFiles = 1 << 20;
-const bundledPositions: Uint8Array[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
-  const [kind, file, encoded] = line.split("\t");
-  if (line === "") continue;
-  if (kind === "evaluated-functions" || kind === "place" || kind === "part") {
-    lines.push(line);
-    continue;
-  }
-  if (kind !== "positions") {
-    // The names are those of the text that was bundled.
-    const bundled = path.join(import.meta.dir, "../js", file);
-    if (locate(file) === bundled) lines.push(line);
-    else
-      lines.push(
-        ...moveBundledNamesToSecondText(
-          [line],
-          fs.readFileSync(locate(file), "utf8"),
-          fs.readFileSync(bundled, "utf8"),
-        ),
-      );
-    continue;
-  }
-  const positions = Buffer.from(encoded, "base64");
-  const id = file.startsWith("builtins/")
-    ? firstIdOfFunctionFiles + functionFiles.indexOf(file)
-    : moduleList.indexOf(file);
-  bundledPositions.push(encodeNumbers([id, positions.length]), positions);
+  if (line.startsWith("part\t")) lines.push(line);
 }
 
 const manifest = lines.join("\n") + "\n";
@@ -302,7 +274,6 @@ if (archive) {
   for (const [file, text] of engineTexts) files.push([file, Buffer.from(text)]);
   files.push(["tsconfig.json", Buffer.from(mergeTsconfig())]);
   files.push(...declarationsOfRuntime());
-  files.push(["positions", Buffer.concat(bundledPositions)]);
   files.push(["manifest", Buffer.from(manifest)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
   // The installed types of node:zlib do not list `pledgedSrcSize`, with which the frame says how long its text is.

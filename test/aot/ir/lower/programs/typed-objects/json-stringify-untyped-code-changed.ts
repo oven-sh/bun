@@ -147,7 +147,7 @@ export const deeds = {
 // CHECK-NEXT: v0 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v1 = PropGet v0 key="aotRuntimeCounters" [isFreeName, isForTypeOf]
 // CHECK-NEXT: v2 = TypeTest v1 testedType=function
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b8(| 0)
+// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b6(| 0)
 // CHECK-NEXT: b1(v3):
 // CHECK-NEXT: v4 = Builtin builtin=Number
 // CHECK-NEXT: v5 = NewRegExp pattern="(\\d+)\\tcounter:JSONStringifySlowPaths"
@@ -158,26 +158,21 @@ export const deeds = {
 // CHECK-NEXT: v10 = Call v6, v5, v9 calleeKey="exec" calleeName="exec"
 // CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
 // CHECK-NEXT: v12 = TypeTest v11 testedType=undefined|null
-// CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3(| 0)
+// CHECK-NEXT: Branch v12 -> taken b3(), notTaken b2(| 0)
 // CHECK-NEXT: b2(v13):
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Jump -> next b4(v14)
-// CHECK-NEXT: b3(v15):
-// CHECK-NEXT: v16 = Integer integer=1
-// CHECK-NEXT: v17 = ElemGet v15, v16
-// CHECK-NEXT: Jump -> next b4(v17)
+// CHECK-NEXT: v14 = Integer integer=1
+// CHECK-NEXT: v15 = ElemGet v13, v14
+// CHECK-NEXT: v16 = TypeTest v15 testedType=undefined|null
+// CHECK-NEXT: Branch v16 -> taken b3(), notTaken b4(| 0)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v17 = Integer
+// CHECK-NEXT: Jump -> next b5(v17)
 // CHECK-NEXT: b4(v18):
-// CHECK-NEXT: v19 = TypeTest v18 testedType=undefined|null
-// CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v20):
-// CHECK-NEXT: v21 = Integer
-// CHECK-NEXT: Jump -> next b7(v21)
-// CHECK-NEXT: b6(v22):
-// CHECK-NEXT: Jump -> next b7(v22)
-// CHECK-NEXT: b7(v23):
-// CHECK-NEXT: v24 = Call v4, -, v23 calleeName="Number"
-// CHECK-NEXT: ReturnCall v24 casts=[{declared={type=number}}]
-// CHECK-NEXT: b8(v25):
-// CHECK-NEXT: v26 = Integer
-// CHECK-NEXT: Return v26
+// CHECK-NEXT: Jump -> next b5(v18)
+// CHECK-NEXT: b5(v19):
+// CHECK-NEXT: v20 = Call v4, -, v19 calleeName="Number"
+// CHECK-NEXT: ReturnCall v20 casts=[{declared={type=number}}]
+// CHECK-NEXT: b6(v21):
+// CHECK-NEXT: v22 = Integer
+// CHECK-NEXT: Return v22
 // CHECK-NEXT: }

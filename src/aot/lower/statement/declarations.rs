@@ -203,6 +203,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.leaves_function_unmade(decl.pat) {
             return;
         }
+        if let Some(made) = self
+            .file
+            .find_object_created_for_maker(decl.pat, initializer, behind)
+        {
+            self.object_created_for_maker = Some(made);
+        }
         let dynamic_scope = bound.dynamic_lookup_scope(NodeData::Pat(decl.pat));
         let target = dynamic_scope.map(|_| self.resolve_pattern_target(decl.pat));
         let value = match hir[decl.pat].kind {

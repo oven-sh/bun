@@ -53,17 +53,16 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-LABEL: function {{*}}name="once"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = NewObject layout=[[L_1]]
-// CHECK-NEXT: v2 = NewClosure v1 function=[[f_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[f_2]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v1, v5 layout=[[L_1]]
-// CHECK-NEXT: v7 = Data data=[[d_3]]
-// CHECK-NEXT: v8 = NewObject -, v0, v7 layout=[[L_4]] fields=[1, 0]
-// CHECK-NEXT: v9 = FinishObject v8
-// CHECK-NEXT: PutEnvironmentField v1, v9 layout=[[L_1]] field=1
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: v1 = Undefined
+// CHECK-NEXT: v2 = NewObject layout=[[L_1]]
+// CHECK-NEXT: v3 = Integer
+// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: PutEnvironmentField v2, v4 layout=[[L_1]]
+// CHECK-NEXT: v6 = Data data=[[d_2]]
+// CHECK-NEXT: v7 = NewObject -, v0, v6 layout=[[L_3]] fields=[1, 0]
+// CHECK-NEXT: v8 = FinishObject v7
+// CHECK-NEXT: v9 = NewClosure v2, v8 function=[[f_4]]
+// CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generated"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {

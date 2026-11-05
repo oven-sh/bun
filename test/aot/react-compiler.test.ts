@@ -52,6 +52,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     ["parser-rewrites-before-the-compiler", "impure"],
     ["commonjs-component", "impure"],
     ["pure-components", "pure"],
+    ["code-that-nothing-reaches-beside-a-component", "pure"],
   ])("same-as-bundle/%s", (name, purity) => {
     // TODO: Macros.tsx calls a macro, and --aot refuses every macro at build time (TS100053: Macros are disabled).
     (name === "parser-rewrites-before-the-compiler" ? test.todo : test.concurrent).each(["none", "syntax", "all"])(

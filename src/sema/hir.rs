@@ -2701,12 +2701,25 @@ pub enum CommentDirectiveKind {
     Ignore,
 }
 
+/// What a value may be besides the `require` that a way through the text leads to, and besides nothing at all.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum OtherValues {
+    None,
+    /// `flag && made` is `flag` where that is falsy.
+    Falsy,
+    /// `given || require`
+    Any,
+}
 /// `import { export } from "specifier"` binds the `require` of the file at `path`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImportedRequire {
     pub specifier: Atom,
     pub export: Atom,
     pub path: Atom,
+    /// `createRequire` made it for that file. Otherwise it is the file's own.
+    pub is_made: bool,
+    /// Of what the export holds.
+    pub other_values: OtherValues,
 }
 
 /// What code reads through the import statement `import`: the export `export` of the file that the statement names, or, with a

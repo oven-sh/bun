@@ -126,6 +126,62 @@ fn member_decorators_run_inside_class() {
     );
 }
 
+fn analyzed_with_legacy_decorators(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
+    let source = Source {
+        experimental_decorators: true,
+        ..Source::new("a.ts", text)
+    };
+    analyzed_source(&source, test);
+}
+
+const DECORATED_MEMBERS: &str = "declare const d: any; \
+    @d class C { @d(() => C) a; @d(() => C) static b; @d(() => C) m(@d(() => C) p) {} \
+    constructor(@d(() => C) q) {} n() { C; } }";
+
+#[test]
+fn legacy_decorators_of_members_run_behind_class_declaration() {
+    analyzed_with_legacy_decorators(DECORATED_MEMBERS, |s| {
+        let around_class = Symbol(s.class_symbol("C"));
+        for nth in 0..5 {
+            assert_eq!(s.binding("C", nth), around_class, "{nth}");
+        }
+        let inner = s.bound.inner_class_symbol(s.class("C"));
+        assert_eq!(s.binding("C", 5), Symbol(inner));
+    });
+}
+
+#[test]
+fn standard_decorators_of_members_run_inside_class_declaration() {
+    analyzed("a.ts", DECORATED_MEMBERS, |s| {
+        let inner = s.bound.inner_class_symbol(s.class("C"));
+        for nth in 0..6 {
+            assert_eq!(s.binding("C", nth), Symbol(inner), "{nth}");
+        }
+    });
+}
+
+#[test]
+fn value_of_static_field_with_legacy_decorators_runs_behind_class() {
+    let text = "declare const d: any; \
+        class C { @d static a = () => C; static b = () => C; @d c = () => C; @d static accessor e = () => C; }";
+    analyzed_with_legacy_decorators(text, |s| {
+        let members: Vec<MemberId> = s.hir[s.class("C")].members.iter().collect();
+        let is_behind_class = |member: &MemberId| s.bound.is_field_assigned_behind_class(*member);
+        let behind_class: Vec<bool> = members.iter().map(is_behind_class).collect();
+        assert_eq!(behind_class, [true, false, false, false]);
+        assert_eq!(s.binding("C", 0), Symbol(s.class_symbol("C")));
+        let inner = s.bound.inner_class_symbol(s.class("C"));
+        for nth in 1..4 {
+            assert_eq!(s.binding("C", nth), Symbol(inner), "{nth}");
+        }
+        let scope = s.bound.field_initializer_scope(members[0]).unwrap();
+        assert_eq!(
+            s.bound.code_unit(scope),
+            CodeUnit::FieldInitializer(members[0])
+        );
+    });
+}
+
 #[test]
 fn runtime_parent_of_other_scopes_is_parent() {
     analyzed(

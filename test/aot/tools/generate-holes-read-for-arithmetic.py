@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-holes-read-for-arithmetic.py <folder>: one-shape programs: a counted loop reads a list of numbers that has holes, and does one thing with what it reads: arithmetic, which makes NaN of undefined, or something that tells undefined from NaN.
+# generate-holes-read-for-arithmetic.py <folder>: all 504; ../parallel/holes-read-for-arithmetic/ holds 8 of them: one-shape programs: a counted loop reads a list of numbers that has holes, and does one thing with what it reads: arithmetic, which makes NaN of undefined, or something that tells undefined from NaN.
 # No turn calls anything or writes a list, so a compiler may test the list once, in front of the loop. Each program holds one list, one place for the hole and one use. What is printed is primitive. The reference is `bun <file>`.
 import os, sys
 

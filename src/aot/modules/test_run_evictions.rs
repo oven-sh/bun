@@ -153,7 +153,7 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
             }
         }
     }
-    found.throwers.clear(); // HOOKS.txt takes the line out: G1t
+    found.throwers.clear();
     found
 }
 
@@ -268,7 +268,7 @@ pub(super) fn fill_plan_of_copies(
     let mut changed = input.run.loads.files_changed_on_disk.iter();
     let is_code_changed = changed.any(|&file| input.sources.kind(file) != SourceKind::Data);
     let mut is_every_file = is_code_changed || mocked.is_every_module();
-    is_every_file |= !evicted.modules().is_empty(); // HOOKS.txt takes the line out: G1n
+    is_every_file |= !evicted.modules().is_empty();
     let mut named: Vec<ModuleRef> = Vec::new();
     // The original beside its mock is a copy from disk too: `vi.importActual()`, `importOriginal()`, a mock without a factory.
     let copies = evicted.modules().iter().chain(mocked.iter());

@@ -1,5 +1,5 @@
 // Prints the call sites of Reflect.construct(target, list) where the target is handed in: a constructor that throws, and values that cannot be constructed.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 function Thrower() {
   throw new Error("thrown");
 }

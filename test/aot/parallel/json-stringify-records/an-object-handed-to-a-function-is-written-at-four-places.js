@@ -1,5 +1,5 @@
-// STATISTIC: SerializersCreated = 1
-// STATISTIC: InlineFramesEmitted = 0
+// STATISTIC: SerializersCreated = 1 Todo: a small record is written out at each place that writes it, and no serializer is made
+// STATISTIC: InlineFramesEmitted = 0 Todo: one call is copied into its caller
 const word = process.argv[2] ?? "word";
 const note = { role: word + "-role", text: word + "-text" };
 function four(o) {

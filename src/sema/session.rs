@@ -80,7 +80,7 @@ pub struct Session {
 /// A session that its user empties once it's done with it, while others still refer to the slot.
 pub struct SessionSlot(UnsafeCell<Session>);
 
-// SAFETY: a `Session` is `Sync`, and by its contract `empty` runs while nothing else uses the slot.
+// SAFETY: a `Session` is `Sync`, and by its contract `empty_in_parallel` runs while nothing else uses the slot.
 unsafe impl Sync for SessionSlot {}
 
 impl SessionSlot {
@@ -89,31 +89,19 @@ impl SessionSlot {
     }
 
     pub fn session(&self) -> &Session {
-        // SAFETY: `empty` runs only when no such reference is used again.
+        // SAFETY: `empty_in_parallel` runs only when no such reference is used again.
         unsafe { &*self.0.get() }
     }
 
-    /// Frees everything that was allocated in the session, on any thread. Afterwards the session is like new.
+    /// Frees everything that was allocated in the session, on any thread, with the work of `Session::drop_in_parallel`.
+    /// Afterwards the session is like new.
     ///
     /// # Safety
     /// No reference to the session or into its arenas is used again, and no other thread uses the slot during the call.
-    pub unsafe fn empty(&self) {
-        // SAFETY: caller contract.
-        drop(unsafe { self.0.get().replace(Session::new()) });
-    }
-
-    /// `empty`, with the work of `Session::drop_in_parallel`.
-    ///
-    /// # Safety
-    /// As for `empty`.
     pub unsafe fn empty_in_parallel(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
         // SAFETY: caller contract.
         let session = unsafe { self.0.get().replace(Session::new()) };
         session.drop_in_parallel(in_parallel);
-    }
-
-    pub fn into_session(self) -> Session {
-        self.0.into_inner()
     }
 }
 
@@ -138,11 +126,6 @@ impl Session {
             first: OnceLock::new(),
             kept: AppendVec::new(),
         }
-    }
-
-    /// No thread has asked for an arena.
-    pub fn is_unused(&self) -> bool {
-        self.first.get().is_none()
     }
 
     /// Returns the calling thread's arena, creating it on the thread's first call.
@@ -396,7 +379,7 @@ mod tests {
         slot.session().arena().alloc_slice_copy(&[1u32; 100]);
         for _ in 0..3 {
             // SAFETY: nothing refers to the session or into its arenas.
-            unsafe { slot.empty() };
+            unsafe { slot.empty_in_parallel(&|count, work| (0..count).for_each(work)) };
             assert_eq!(slot.session().thread_count(), 0);
             assert_eq!(
                 *slot.session().arena().alloc_slice_copy(&[7u32; 100]),

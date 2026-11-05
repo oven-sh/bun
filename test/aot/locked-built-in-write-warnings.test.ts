@@ -10,6 +10,9 @@ const attempt = (statement: string) =>
 const attemptToAdd = (statement: string) =>
   `try {\n  ${statement};\n  console.log(new Response("").upper());\n} catch (error) {\n  console.log(error.constructor.name);\n}\n`;
 
+const attemptToAddToFunctions = (statement: string) =>
+  `try {\n  ${statement};\n  console.log((() => 1).upper());\n} catch (error) {\n  console.log(error.constructor.name);\n}\n`;
+
 type Program = { source: string; files?: Record<string, string>; code?: string; warnings: string[]; stdout: string };
 const programs: Record<string, Program> = {
   "a descriptor that gets its value behind the literal": {
@@ -151,11 +154,24 @@ const programs: Record<string, Program> = {
     source: attemptToAdd(`Object.assign(Response.prototype, require("./helpers.cjs"))`),
     files: { "helpers.cjs": `module.exports = { upper: () => "up" };\n` },
     warnings: ["main.mjs:2:10"],
-    stdout: "TypeError\n",
+    stdout: "up\n",
   },
   "a name that the object lacks, stored behind the literal": {
     source:
       `const helpers = {};\nhelpers.upper = () => "up";\n` + attemptToAdd(`Object.assign(Response.prototype, helpers)`),
+    warnings: [],
+    stdout: "up\n",
+  },
+  "a name that Function.prototype lacks, out of another file": {
+    source: attemptToAddToFunctions(`Object.assign(Function.prototype, require("./helpers.cjs"))`),
+    files: { "helpers.cjs": `module.exports = { upper: () => "up" };\n` },
+    warnings: ["main.mjs:2:10"],
+    stdout: "TypeError\n",
+  },
+  "a name that Function.prototype lacks, stored behind the literal": {
+    source:
+      `const helpers = {};\nhelpers.upper = () => "up";\n` +
+      attemptToAddToFunctions(`Object.assign(Function.prototype, helpers)`),
     warnings: ["main.mjs:4:10"],
     stdout: "TypeError\n",
   },

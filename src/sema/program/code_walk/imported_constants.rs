@@ -51,7 +51,7 @@ pub(super) struct NamesLookedUp {
     parsed_since: Vec<u32>,
     /// Those of them that mock a file.
     mocking_since: Vec<u32>,
-    /// Those of them with a statement of `CodeTarget::has_shared_type`.
+    /// Those of them with a statement or a call of `CodeTarget::has_type_of_shared_kind`.
     with_shared_types_since: Vec<u32>,
     /// A file, and a file that reads a variable of it under a name. A file that is asked again enters its pairs again.
     readers: Vec<(u32, u32)>,
@@ -65,10 +65,11 @@ pub(super) struct NamesLookedUp {
     mocked_variables: FxHashSet<(u32, SymbolId)>,
     /// A test mocks a file under a path that the build does not know.
     mocks_any_file: bool,
-    /// For a path, the forms that statements ask for under a `type` other than "json": `CodeTarget::has_shared_type`.
+    /// For a path, the forms that statements and calls ask for under a `type` other than "json": `CodeTarget::has_type_of_shared_kind`.
     forms_of_shared_types: FxHashMap<Vec<u8>, Vec<u32>>,
     /// The forms of a path that has two. All the statements get the one that the loader comes to first, and which that is shows when every file is
-    /// there: `share_modules_among_types`. Until then nobody knows what a statement that names one of them reads.
+    /// there: `share_modules_among_types`. Until then nobody knows what a statement that names one of them reads. Where an `import()` asks for one of them
+    /// nobody knows it behind that either: the call may run in front of the statement, and then the statement gets the form of the call.
     forms_that_share_a_module: FxHashSet<u32>,
 }
 
@@ -83,7 +84,12 @@ impl NamesLookedUp {
         if sites.any(|site| matches!(site.kind, ImportSiteKind::MockModule(_))) {
             self.mocking_since.push(file);
         }
-        if parsed.code.targets.iter().any(|it| it.has_shared_type) {
+        if parsed
+            .code
+            .targets
+            .iter()
+            .any(|it| it.has_type_of_shared_kind)
+        {
             self.with_shared_types_since.push(file);
         }
     }
@@ -559,7 +565,7 @@ fn find_forms_of_mocked_files(
 }
 
 /// `import a from "./a.json" with { type: "yaml" }` beside `import b from "./a.json" with { type: "text" }`, in one file or in two. Returns the forms
-/// that are found to share a module with another.
+/// that are found to share a module with another. `import("./a.json", { with: { type: "yaml" } })` asks for a form as a statement does.
 fn find_forms_that_share_a_module(
     files: &[WalkedFile<'_, '_>],
     looked_up: &mut NamesLookedUp,
@@ -574,7 +580,7 @@ fn find_forms_that_share_a_module(
     for &importer in parsed {
         let importer = &files[importer as usize];
         for (target, &form) in importer.code_targets().iter().zip(&importer.targets) {
-            if !target.has_shared_type || form == NOT_LOADED {
+            if !target.has_type_of_shared_kind || form == NOT_LOADED {
                 continue;
             }
             let forms = match forms_of_shared_types.get_mut(target.key.path) {

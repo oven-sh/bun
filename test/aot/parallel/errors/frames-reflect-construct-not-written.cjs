@@ -183,7 +183,7 @@ for (const [name, way] of Object.entries(failing)) {
     console.log(name, error.name, error.message, "|", frames(error));
   }
 }
-// Todo: only frames (stack-trace-only differences are fine, 11-02): frames stored as data in its last comment
+// Todo: only frames (stack-trace-only differences are fine): frames stored as data in its last comment
 /* Output:
 written 0 new F < written
 written 1 new F < written

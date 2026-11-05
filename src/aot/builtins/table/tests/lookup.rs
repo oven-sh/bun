@@ -351,6 +351,12 @@ fn assert_mutability(ids: &[BuiltinId], mutability: Mutability) {
 #[test]
 fn members_of_locked_object_are_locked() {
     assert_flag(BuiltinId::ObjectPrototype, IS_LOCKED_OBJECT, true);
+    let is_locked_object = |id: &BuiltinId| has_flag(*id, IS_LOCKED_OBJECT);
+    assert!(
+        all_ids()
+            .filter(is_locked_object)
+            .all(|id| canonical_id(id) == BuiltinId::ObjectPrototype)
+    );
     assert_mutability(members(BuiltinId::ObjectPrototype), AlwaysLocked);
     assert_flag(BuiltinId::Math, HAS_LOCKED_MEMBERS, true);
     assert_mutability(&[BuiltinId::MathFloor], AlwaysLocked);
@@ -474,9 +480,14 @@ fn only_holder_locked_by_name_leaves_member_writable() {
 }
 
 #[test]
-fn regexp_prototype_is_closed_entirely() {
-    assert_flag(BuiltinId::RegExpPrototype, IS_LOCKED_OBJECT, true);
-    assert_flag(BuiltinId::RegExpPrototype, HAS_LOCKED_MEMBERS, false);
+fn regexp_prototype_locks_members_and_stays_extensible() {
+    assert_flag(BuiltinId::RegExpPrototype, HAS_LOCKED_MEMBERS, true);
+    assert_flag(BuiltinId::RegExpPrototype, IS_LOCKED_OBJECT, false);
+    assert_flag(
+        BuiltinId::RegExpPrototype,
+        BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES,
+        false,
+    );
     let locked = [
         BuiltinId::RegExpPrototypeExec,
         BuiltinId::RegExpPrototypeSymbolReplace,
@@ -578,9 +589,15 @@ fn object_closed_to_other_names_locks_members() {
 }
 
 #[test]
-fn generator_prototypes_are_closed_entirely() {
-    assert_flag(BuiltinId::GeneratorPrototype, IS_LOCKED_OBJECT, true);
-    assert_flag(BuiltinId::AsyncGeneratorPrototype, IS_LOCKED_OBJECT, true);
+fn generator_prototypes_lock_members_and_stay_extensible() {
+    for prototype in [
+        BuiltinId::GeneratorPrototype,
+        BuiltinId::AsyncGeneratorPrototype,
+    ] {
+        assert_flag(prototype, HAS_LOCKED_MEMBERS, true);
+        assert_flag(prototype, IS_LOCKED_OBJECT, false);
+        assert_flag(prototype, BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES, false);
+    }
     let links = [
         (
             BuiltinId::GeneratorFunctionPrototypePrototype,

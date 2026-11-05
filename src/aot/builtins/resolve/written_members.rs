@@ -518,10 +518,15 @@ impl Resolver<'_, '_> {
     /// Every key that `key` may be: a constant, one of a known set, a well-known symbol, a key of the object literal that a loop walks, what the calls of a function of the file pass.
     /// `None`: nobody can read them all.
     fn find_written_keys(&self, key: ExprId) -> Option<WrittenKeys> {
-        self.find_written_keys_through(key, 0)
+        self.find_written_keys_once(key, &mut SmallVec::new())
     }
 
-    fn find_written_keys_through(&self, key: ExprId, functions_passed: u32) -> Option<WrittenKeys> {
+    /// `asked`: the keys that the search has come to. One that it comes to again adds nothing: whoever asked first gets what it may be.
+    fn find_written_keys_once(
+        &self,
+        key: ExprId,
+        asked: &mut SmallVec<[ExprId; 4]>,
+    ) -> Option<WrittenKeys> {
         let input = self.input;
         let symbol = self.value_of(key);
         if let Some(symbol) = symbol.and_then(|it| table::well_known_symbol(it.path.id)) {
@@ -541,18 +546,21 @@ impl Resolver<'_, '_> {
             }
         };
         if values.is_empty() {
+            let mut keys = WrittenKeys::new();
+            if asked.contains(&key) {
+                return Some(keys);
+            }
+            asked.push(key);
             // `function put(name) { Object.defineProperty(Object.prototype, name, d); }`, where every mention of `put` calls it.
             let passed = find_values_of_parameter(input.hir, input.bound, input.decisions, key);
-            if let Some(passed) = passed.filter(|_| functions_passed < 4) {
-                let mut keys = WrittenKeys::new();
+            if let Some(passed) = passed {
                 for value in passed {
-                    keys.extend(self.find_written_keys_through(value, functions_passed + 1)?);
+                    keys.extend(self.find_written_keys_once(value, asked)?);
                 }
                 return Some(keys);
             }
             let object = self.find_object_whose_keys_are_walked(key)?;
-            let mut keys = WrittenKeys::new();
-            return (self.push_keys_of_written_object(object, &mut keys)).then_some(keys);
+            return (self.push_keys_of_written_object(object, asked, &mut keys)).then_some(keys);
         }
         let mut keys = WrittenKeys::new();
         for &value in values {
@@ -616,8 +624,13 @@ impl Resolver<'_, '_> {
 
     /// The keys of an object literal, which may spread another. `Object.getOwnPropertyDescriptors(mixin)` has the keys of `mixin`.
     /// A function of the file may return it, `make()`, `Object.freeze()` hands it on, and `new Mixin()` has the fields of its class.
-    /// Whether these are all of them: what a name holds may have got more since it was made.
-    fn push_keys_of_written_object(&self, object: ExprId, keys: &mut WrittenKeys) -> bool {
+    /// Whether these are all of them: what a name holds may have got more since it was made. `asked`: as for `find_written_keys_once`.
+    fn push_keys_of_written_object(
+        &self,
+        object: ExprId,
+        asked: &mut SmallVec<[ExprId; 4]>,
+        keys: &mut WrittenKeys,
+    ) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut knows_all = true;
         let mut seen: SmallVec<[ExprId; 4]> = SmallVec::new();
@@ -634,10 +647,12 @@ impl Resolver<'_, '_> {
                         let property = &hir[property];
                         match property.key {
                             PropKey::Name(name) => keys.push(WrittenKey::Text(name)),
-                            PropKey::Computed(key) => match self.find_written_keys(key) {
-                                Some(computed) => keys.extend(computed),
-                                None => knows_all = false,
-                            },
+                            PropKey::Computed(key) => {
+                                match self.find_written_keys_once(key, asked) {
+                                    Some(computed) => keys.extend(computed),
+                                    None => knows_all = false,
+                                }
+                            }
                             PropKey::None if property.kind == PropKind::Spread => {
                                 pending.push(property.value);
                             }
@@ -739,7 +754,7 @@ impl Resolver<'_, '_> {
 
     fn note_keys_of_operand(&self, holders: &[BuiltinId], source: ExprId, found: &mut WritesFound) {
         let mut keys = WrittenKeys::new();
-        let knows_all = self.push_keys_of_written_object(source, &mut keys);
+        let knows_all = self.push_keys_of_written_object(source, &mut SmallVec::new(), &mut keys);
         for &holder in holders {
             for &key in &keys {
                 self.note_written_key(holder, key, WriteRuns::Always, found);
@@ -908,9 +923,13 @@ impl Resolver<'_, '_> {
             }
             // `typeof Bun.jest(path, true).suite === "function"` asks what the runner has, and what the call answers goes nowhere. The build writes that question itself
             // into each file that is no test file and names `jest`, as react-dom's development build does: load/test_runner_names.rs.
+            // So does `Bun.jest(path, true, true) | 0`: an operator looks at what the call answers, and nobody keeps it.
             Writer::TestRunner => {
-                let member = self.find_member_of(expr);
-                if !member.is_some_and(|member| self.is_only_tested(member)) {
+                let goes_nowhere = match self.find_member_of(expr) {
+                    Some(member) => self.is_only_tested(member),
+                    None => matches!(self.classify_use(expr), MentionUse::Inspected),
+                };
+                if !goes_nowhere {
                     found.note_writer_out_of_sight(writer);
                 }
             }

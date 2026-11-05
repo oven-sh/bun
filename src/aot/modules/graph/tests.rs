@@ -117,13 +117,14 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         load_failures: Vec::new(),
         files_that_sites_name: vec![false; file_count],
         mocked_library_modules: Vec::new(),
-        mocks_any_module: false,
         wrapped: WrappedModules::default(),
         commonjs_exports: CommonJsExports::default(),
         plan: Plan::new(OrderParts::without_sites(file_count), Vec::new()),
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: Vec::new(),
+        star_names_left_out: StarNamesLeftOut::default(),
+        names_laid_on_object_prototype: Vec::new(),
     }
 }
 
@@ -355,6 +356,7 @@ fn candidates_are_rebased_per_file() {
     let spelled = |spelling, module| SpelledModule {
         spelling: Atom(spelling),
         module,
+        is_left_to_loader: false,
     };
     let runtime = ModuleRef::Runtime(RuntimeModule::NodeFs);
     let import_call = ImportSiteKind::ImportCall(ExprId(1));
@@ -577,15 +579,12 @@ fn mocked_library_modules_are_listed_once_in_order() {
     let (first, second) = (fs.min(path), fs.max(path));
     let graph = ModuleGraph {
         mocked_library_modules: vec![second, first, second],
-        mocks_any_module: true,
         ..unfinished_graph(0, Vec::new())
     }
     .finish();
     assert_eq!(graph.mocked_library_modules(), [first, second]);
-    assert!(graph.mocks_any_module());
     let without_mocks = graph_of(0, Vec::new());
     assert!(without_mocks.mocked_library_modules().is_empty());
-    assert!(!without_mocks.mocks_any_module());
 }
 
 #[test]

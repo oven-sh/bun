@@ -460,6 +460,55 @@ fn function_files_of_bun_have_only_positions() {
     });
 }
 
+const GRAPH_WITH_A_MISTAKE: [(&str, &str); 4] = [
+    (
+        "above.js",
+        "import './sibling.js';\nimport { part } from './broken.js';\nconsole.log(part);\n",
+    ),
+    ("sibling.js", "export {};\n"),
+    (
+        "broken.js",
+        "import './below.js';\nexport let part = 1;\nlet part = 2;\n",
+    ),
+    ("below.js", "export {};\n"),
+];
+
+fn targets_of(program: &Program, path_suffix: &str, kind: ModuleRequestKind) -> Vec<ModuleId> {
+    let requests = record_named(program, path_suffix).requests.iter();
+    let of_kind = requests.filter(|request| request.kind == kind);
+    of_kind.map(|request| request.target).collect()
+}
+
+#[test]
+fn a_load_that_leads_to_a_module_that_throws_follows_the_way_there_alone() {
+    let mut files = vec![("graph.test.js", "import './above.js';\n")];
+    files.extend_from_slice(&GRAPH_WITH_A_MISTAKE);
+    let program = link_test_run(&files);
+    let named = |path_suffix| module_named(&program, path_suffix);
+    let imports_of = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Import);
+    let flags = record_named(&program, "broken.js").flags;
+    assert!(flags.contains(ModuleFlags::THROWS_AT_LOAD));
+    assert!(imports_of("broken.js").is_empty());
+    assert_eq!(imports_of("above.js"), [named("broken.js")]);
+    assert_eq!(imports_of("graph.test.js"), [named("above.js")]);
+    assert!(record_named(&program, "above.js").required_names.is_empty());
+    // The verifier of the engine asks that a module lead to what it names.
+    let only_named = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Require);
+    assert_eq!(only_named("broken.js"), [named("below.js")]);
+    assert_eq!(only_named("above.js"), [named("sibling.js")]);
+}
+
+#[test]
+fn a_mock_in_place_of_a_module_that_throws_lets_the_load_pass() {
+    let test = "import { mock } from 'bun:test';\nmock.module('./broken.js', () => ({ part: 1 }));\nawait import('./above.js');\n";
+    let mut files = vec![("graph.test.js", test)];
+    files.extend_from_slice(&GRAPH_WITH_A_MISTAKE);
+    let program = link_test_run(&files);
+    let imports_of = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Import);
+    assert!(imports_of("broken.js").is_empty());
+    assert!(imports_of("above.js").contains(&module_named(&program, "sibling.js")));
+}
+
 #[test]
 fn top_level_await_is_flagged() {
     let program = link_program(&[

@@ -50,6 +50,7 @@ impl Fixture {
                 created_at: 0,
                 hoisted_to: None,
                 is_made_late: false,
+                is_only_called_directly: false,
             }],
             bindings: Vec::new(),
             uses: Vec::new(),
@@ -67,6 +68,7 @@ impl Fixture {
             created_at,
             hoisted_to: None,
             is_made_late: false,
+            is_only_called_directly: false,
         });
         WalkedFunctionId(index)
     }

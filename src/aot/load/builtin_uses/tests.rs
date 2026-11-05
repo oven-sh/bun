@@ -479,6 +479,23 @@ fn text_left_to_run_time_is_read_each_time_the_file_is_finished() {
 }
 
 #[test]
+fn a_module_named_in_a_text_is_kept_however_the_text_spells_it() {
+    let named_in = |spelled: &str| {
+        let text = format!("new Function('load', \"return load('{spelled}')\")(require);");
+        let mut source = ParsedSource::new(SourceKind::Program, Loader::Ts);
+        with_finished_file(PROGRAM_PATH, &text, |input, request| {
+            finish_application_file(input, false, request, &mut source);
+        });
+        source.library_modules_named_in_text_left_to_run_time
+    };
+    assert_eq!(named_in("node:zlib"), [RuntimeModule::NodeZlib]);
+    assert_eq!(named_in("zlib"), [RuntimeModule::NodeZlib]);
+    assert_eq!(named_in("sys"), [RuntimeModule::NodeUtil]);
+    assert!(named_in("./zlib").is_empty());
+    assert!(named_in("no-such-module").is_empty());
+}
+
+#[test]
 fn react_declarations_come_last() {
     let text = "process.stdout;";
     with_finished_file(PROGRAM_PATH, text, |input, request| {

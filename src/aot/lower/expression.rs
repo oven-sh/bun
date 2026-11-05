@@ -19,7 +19,7 @@ use super::{
     operator, scope, template,
 };
 use crate::builtins::{BuiltinId, Mutability, Resolved, table};
-use crate::compile::removable::is_read_left_out_by_bun_run;
+use crate::compile::removable::{is_name_left_out_by_bun_run, is_read_left_out_by_bun_run};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
 use crate::ir::{BlockId, DeclaredType, ValueId};
 
@@ -717,6 +717,17 @@ impl FileLowering<'_, '_, '_, '_> {
                             .bound
                             .dynamic_lookup_scope(bun_sema::hir::NodeData::Expr(part))
                             .is_none() =>
+                {
+                    reads_member = true
+                }
+                ExprKind::Ident(name)
+                    if self.bound.is_evaluated_ident(part)
+                        && self.bound.binding(part) == bun_sema::bind::Binding::Free
+                        && self
+                            .bound
+                            .dynamic_lookup_scope(bun_sema::hir::NodeData::Expr(part))
+                            .is_none()
+                        && is_name_left_out_by_bun_run(self.queries.atom_bytes(name)) =>
                 {
                     reads_member = true
                 }

@@ -1,7 +1,10 @@
 use bun_sema::bind::{Binding, Bound, ClassOwner, CodeUnit, Decl, ScopeId};
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
 
-use super::{ClassPlan, InitializerCall, InjectionPoint, fields, is_derived_class};
+use super::{
+    ClassElement, ClassPlan, ClassTransform, FieldSemantics, InitializerCall, InjectionPoint,
+    fields, is_derived_class,
+};
 use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind, SourceRange,
 };
@@ -33,8 +36,8 @@ impl FileLowering<'_, '_, '_, '_> {
             ClassOwner::Stmt(statement) => hir[statement].loc.end,
         };
         header.text = SourceRange {
-            start: self.type_ranges.map_start(node.text_start),
-            end: self.type_ranges.map_end(end),
+            start: node.text_start,
+            end,
         };
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,
@@ -146,12 +149,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Arguments::Values(mut values) => {
                 self.convert_arguments(call, &mut values);
                 self.set_position(position);
+                self.quote_if_next_fails(call);
                 self.builder
                     .super_construct(layout, parent, new_target, &values)
             }
             Arguments::List(list) => {
                 self.convert_argument_list(call, list);
                 self.set_position(position);
+                self.quote_if_next_fails(call);
                 self.builder
                     .super_construct_list(layout, parent, new_target, list)
             }
@@ -279,6 +284,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_injected_steps(&mut self, class: ClassId, plan: &ClassPlan, this: ValueId) {
+        // `bun run` writes the fields that legacy decorators move in front of what stands there for the parameter properties.
+        let (first, last): (&[ClassElement], &[ClassElement]) = match plan.field_semantics {
+            FieldSemantics::Define if plan.transform == ClassTransform::Legacy => {
+                (&plan.injected_elements, &[])
+            }
+            FieldSemantics::Define | FieldSemantics::Assign => (&[], &plan.injected_elements),
+        };
+        for &element in first {
+            self.emit_class_element(class, element, this);
+        }
         let caller_position = self.position();
         for &parameter in &plan.parameter_properties {
             self.emit_parameter_property(parameter, this);
@@ -287,7 +302,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if plan.initializer_call == InitializerCall::AtInjectionPoint {
             self.emit_instance_initializer_call(class, plan, this);
         }
-        for &element in &plan.injected_elements {
+        for &element in last {
             self.emit_class_element(class, element, this);
         }
     }

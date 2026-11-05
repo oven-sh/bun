@@ -2,7 +2,7 @@
 // IR-UNTIL ApplyFlowResults
 // IR= 0 nameOf  = Check\b
 // IR= 1 nameOfParsed  = Check\b
-// STATISTIC: ConversionsOutsideFamily = 0
+// An earlier compiler counted the layouts that flow into a type whose family does not list them: ConversionsOutsideFamily = 0. A build stops at the first one now.
 class Item {
   name: string;
   count: number;

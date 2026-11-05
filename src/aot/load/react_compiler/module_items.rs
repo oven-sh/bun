@@ -2,8 +2,9 @@ use bun_core::fmt::{ItoaBuf, itoa};
 use bun_react_compiler::{JsxImportKind, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, ListAt,
-    PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, VarDecl, VarKind,
+    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, Keyword,
+    ListAt, PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
+    VarDecl, VarKind,
 };
 use bun_sema::import_sites::JsxImport;
 use bun_sema::module_format::ModuleFormat;
@@ -14,6 +15,7 @@ use std::borrow::Cow;
 // What is added has no text of its own: it stands at the start of the file, where `TextRange::default()` is.
 pub(crate) const POSITION: u32 = 0;
 const NAME_PREFIX: &[u8] = b"%react:";
+const OUTLINED: &[u8] = b"outlined:";
 const SYMBOL_KEY_PREFIX: &[u8] = b"react.";
 const MEMO_CACHE_SENTINEL: &[u8] = b"memo_cache_sentinel";
 const EARLY_RETURN_SENTINEL: &[u8] = b"early_return_sentinel";
@@ -69,10 +71,20 @@ impl ModuleItems {
                 let mut digits = ItoaBuf::new();
                 let number = itoa(&mut digits, self.outlined_count);
                 self.outlined_count += 1;
-                intern_item_name(atoms, b"outlined:", number)
+                intern_item_name(atoms, OUTLINED, &[number, b":", symbol.name].concat())
             }
             SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", symbol.name),
         }
+    }
+
+    /// The text under which the symbol is registered, for a name that stands for one.
+    pub(super) fn key_of_sentinel(atoms: &Interner<'_>, origin: SymbolOrigin) -> Option<Atom> {
+        let sentinel = match origin {
+            SymbolOrigin::MemoCacheSentinel => MEMO_CACHE_SENTINEL,
+            SymbolOrigin::EarlyReturnSentinel => EARLY_RETURN_SENTINEL,
+            _ => return None,
+        };
+        Some(atoms.intern(&[SYMBOL_KEY_PREFIX, sentinel].concat()))
     }
 
     pub(super) fn name_shadowing_local(atoms: &Interner<'_>, name: &[u8]) -> Atom {
@@ -116,10 +128,10 @@ impl ModuleItems {
             }
         }
         if self.needs_memo_cache_sentinel {
-            before.push(write_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
+            before.push(declare_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
         }
         if self.needs_early_return_sentinel {
-            before.push(write_sentinel(file, atoms, EARLY_RETURN_SENTINEL));
+            before.push(declare_sentinel(file, atoms, EARLY_RETURN_SENTINEL));
         }
         put_around_body(file, &before, &self.outlined);
     }
@@ -133,6 +145,13 @@ fn jsx_import_of(kind: JsxImportKind) -> JsxImport {
         JsxImportKind::Fragment => JsxImport::Fragment,
         JsxImportKind::CreateElement => JsxImport::CreateElement,
     }
+}
+
+/// `_temp` for `%react:outlined:0:_temp`: what the compiler calls the function that it has outlined. Its `.name` says so, and a message that quotes it.
+pub(crate) fn name_of_outlined_function(name: &[u8]) -> Option<&[u8]> {
+    let numbered = name.strip_prefix(NAME_PREFIX)?.strip_prefix(OUTLINED)?;
+    let colon = numbered.iter().position(|&byte| byte == b':')?;
+    Some(&numbered[colon + 1..])
 }
 
 fn intern_item_name(atoms: &Interner<'_>, item: &[u8], detail: &[u8]) -> Atom {
@@ -246,14 +265,23 @@ pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId
     file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
-fn write_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
-    let global = file.expr(ExprKind::Ident(known::globalThis), POSITION, POSITION);
-    let constructor = add_member(file, global, known::Symbol);
-    let callee = add_member(file, constructor, atoms.intern(b"for"));
-    let key = atoms.intern(&[SYMBOL_KEY_PREFIX, sentinel].concat());
+/// `var sentinel`. Whoever reads it first fills it: an import cycle can call a function of the file before the body of the file begins.
+fn declare_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
     let name = intern_item_name(atoms, sentinel, b"");
     let pat = file.pat(PatKind::Ident(name), POSITION, POSITION);
-    write_constant(file, pat, callee, key)
+    let ty = match file.is_js {
+        true => TypeNodeId::NONE,
+        false => file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION),
+    };
+    let declarations = file.add_var_decls(&[VarDecl {
+        pat,
+        ty,
+        init: ExprId::NONE,
+        kind: VarKind::Var,
+        flags: Flags::empty(),
+        loc: TextRange::default(),
+    }]);
+    file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
 pub(crate) fn put_around_body(file: &mut FileBuilder, before: &[StmtId], after: &[StmtId]) {

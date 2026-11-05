@@ -337,7 +337,7 @@ fn reports_follow_explain() {
         (ExplainSet::FORMS, ReportSet::FLOW),
         (ExplainSet::ALLOCATIONS, ReportSet::ALLOCATIONS),
         (ExplainSet::RUNTIME_USE, ReportSet::default()),
-        (ExplainSet::STATISTICS, ReportSet::default()),
+        (ExplainSet::STATISTICS, ReportSet::ACCESS_COUNTS),
         (
             ExplainSet::TEXT | ExplainSet::ALLOCATIONS,
             sites_and_counts | ReportSet::ALLOCATIONS,

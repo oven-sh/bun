@@ -178,6 +178,54 @@ fn class_that_is_only_compared_with_keeps_no_constructor() {
     assert_eq!(left_out, ["constructor() { console.log(1); }"]);
 }
 
+// `Symbol.hasInstance` runs with the class as `this`.
+#[test]
+fn class_that_may_test_instances_itself_is_handed_to_the_test() {
+    let compared = |class: &str, before: &str| {
+        find_lines_left_out(&format!(
+            "export function make() {{
+                {before}
+                {class}
+                    static test(value: unknown) {{ return value === 2; }}
+                    check(value: unknown) {{ return value === 2; }}
+                }}
+                return (value: unknown) => value instanceof Even;
+            }}"
+        ))
+    };
+    let both = [
+        "static test(value: unknown) { return value === 2; }",
+        "check(value: unknown) { return value === 2; }",
+    ];
+    assert_eq!(compared("class Even {", ""), both);
+    assert_eq!(compared("const Even = class {", ""), both);
+    assert_eq!(compared("class Even { [Symbol.iterator]() {}", ""), both);
+    let hook = "static [Symbol.hasInstance](value: unknown) { return this.test(value); }";
+    for (class, before) in [
+        (format!("class Even {{ {hook}"), String::new()),
+        (format!("const Even = class {{ {hook}"), String::new()),
+        (
+            "class Even { static get [Symbol.hasInstance]() { return this.test; }".to_owned(),
+            String::new(),
+        ),
+        (
+            "class Even extends Kind {".to_owned(),
+            format!("class Kind {{ {hook} static test(value: unknown) {{ return false; }} }}"),
+        ),
+        (
+            "class Even extends Kind {".to_owned(),
+            "class Kind {}".to_owned(),
+        ),
+        (
+            "class Even extends (Object as any) {".to_owned(),
+            String::new(),
+        ),
+    ] {
+        let left_out = compared(&class, &before);
+        assert!(left_out.is_empty(), "{class} {left_out:?}");
+    }
+}
+
 #[test]
 fn extended_class_waits_for_somebody_who_gets_hold_of_the_extending_one() {
     let source = |last: &str| {
@@ -191,7 +239,7 @@ fn extended_class_waits_for_somebody_who_gets_hold_of_the_extending_one() {
             }}"
         )
     };
-    let left_out = find_lines_left_out(&source("(value: unknown) => value instanceof Zebra"));
+    let left_out = find_lines_left_out(&source("() => typeof Zebra"));
     assert_eq!(left_out, ["constructor() { console.log(1); }"]);
     let left_out = find_lines_left_out(&source("new Zebra()"));
     assert!(left_out.is_empty(), "{left_out:?}");

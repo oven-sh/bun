@@ -97,23 +97,15 @@ pub struct LinkedProgram {
 pub struct Compilation {
     pub engine: EngineResult,
     pub summary: ProgramSummary,
-    #[cfg_attr(
-        test,
-        allow(dead_code, reason = "linked.rs reads it, which no test build holds")
-    )]
+    // linked.rs alone reads the three that follow, and no test build holds it.
+    #[cfg(not(test))]
     pub(crate) started_workers: StartedWorkers,
     /// `Sources::holds_source_paths`
-    #[cfg_attr(
-        test,
-        allow(dead_code, reason = "linked.rs reads it, which no test build holds")
-    )]
+    #[cfg(not(test))]
     pub(crate) holds_source_paths: bool,
     /// `Program::opened_names`, for a run from source, which has no image to list them: the number of the holder in the table of built-ins, and the bytes of the name.
     /// Ascending by holder, then by the bytes of the name.
-    #[cfg_attr(
-        test,
-        allow(dead_code, reason = "linked.rs reads it, which no test build holds")
-    )]
+    #[cfg(not(test))]
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
 }
 
@@ -234,6 +226,7 @@ fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
 }
 
 /// `Compilation::names_added_to_builtins`
+#[cfg(not(test))]
 fn collect_names_added_to_builtins(program: &Program) -> Vec<(u32, Vec<u8>)> {
     let opened = program.opened_names.iter();
     opened
@@ -255,6 +248,7 @@ struct FrontEndOutput {
     entry_points: Vec<EntryPointPaths>,
     folders: Vec<FolderPaths>,
     /// `Sources::holds_source_paths`
+    #[cfg(not(test))]
     holds_source_paths: bool,
     modules: Option<ListedModules>,
 }
@@ -344,7 +338,7 @@ fn describe_library_modules_lacked(
         let module = record.module_id().index();
         let found = paths_of_modules_without_bodies.binary_search_by_key(&module, |entry| entry.0);
         names.push(match found {
-            Ok(at) => String::from_utf8_lossy(&paths_of_modules_without_bodies[at].1).into_owned(),
+            Ok(at) => bstr::BStr::new(&paths_of_modules_without_bodies[at].1).to_string(),
             Err(_) => format!("number {}", record.module),
         });
     }
@@ -428,6 +422,7 @@ pub fn compile(
         Ok(output) => output,
         Err(stage) => return Err(build.finish::<()>(Err(stage), log).unwrap_err()),
     };
+    #[cfg(not(test))]
     let names_added_to_builtins = collect_names_added_to_builtins(&output.program);
     let (bytes, output) = match build.emit(output) {
         Ok(emitted) => emitted,
@@ -444,17 +439,22 @@ pub fn compile(
     build.finish_started_workers(&engine, &output);
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
+    #[cfg(not(test))]
     let started_workers = core::mem::take(&mut build.started_workers);
     build.clock.add_to(&mut build.statistics);
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
+    #[cfg(not(test))]
     let holds_source_paths = output.holds_source_paths;
     let (_, summary) = output.into_parts(statistics.clone(), Some(&engine));
     let compilation = Compilation {
         engine,
         summary,
+        #[cfg(not(test))]
         started_workers,
+        #[cfg(not(test))]
         holds_source_paths,
+        #[cfg(not(test))]
         names_added_to_builtins,
     };
     match has_errors {
@@ -756,12 +756,8 @@ impl<'a> Build<'a> {
         }
         for record in engine.worker_starts_without_name() {
             self.started_workers.code = CodeOfWorkers::Unseen;
-            self.diagnostics.add_at_witness(
-                Code::WorkerStartedFromUnknownValue,
-                &[],
-                &record.witness,
-                &output.texts,
-            );
+            self.diagnostics
+                .add_worker_start_without_name(&record.witness, &output.texts);
         }
         // A build that only checks looks for no file of a Worker.
         if options.aot.checks_only {

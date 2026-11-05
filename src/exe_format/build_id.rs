@@ -34,9 +34,9 @@ fn chunks_of_parts<'a>(parts: &[&'a [u8]]) -> Vec<Cow<'a, [u8]>> {
             chunks.push(core::mem::take(&mut last));
         }
         if !others.is_empty() {
-            let whole = others.chunks_exact(CHUNK_SIZE);
-            last = Cow::Borrowed(whole.remainder());
-            chunks.extend(whole.map(Cow::Borrowed));
+            let (whole, rest) = others.as_chunks::<CHUNK_SIZE>();
+            last = Cow::Borrowed(rest);
+            chunks.extend(whole.iter().map(|chunk| Cow::Borrowed(chunk.as_slice())));
         }
     }
     if !last.is_empty() {

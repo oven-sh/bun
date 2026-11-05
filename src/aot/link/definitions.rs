@@ -320,7 +320,7 @@ fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
     let chosen = chosen.into_iter().map(AtomicU64::into_inner);
     chosen
         .map(|number| {
-            (number != NO_DEFINITION).then(|| DefinitionSite {
+            (number != NO_DEFINITION).then_some(DefinitionSite {
                 unit: ((number & !WITHOUT_PARAMETERS) >> 32) as u32,
                 index: number as u32,
             })
@@ -883,9 +883,10 @@ fn collect_runtime_functions(merged: &Merged<'_>) -> Vec<RuntimeFunctionRoot> {
 pub(super) fn empty_layout(key: &LayoutKey) -> Layout {
     let kind = match key {
         LayoutKey::Container(_) => LayoutKind::Container,
-        LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_) => {
-            LayoutKind::Instance
-        }
+        LayoutKey::Class(_)
+        | LayoutKey::ConstructorFunction(_)
+        | LayoutKey::Library(_)
+        | LayoutKey::CreatedObject { .. } => LayoutKind::Instance,
         LayoutKey::Environment { .. } => LayoutKind::Environment,
         _ => LayoutKind::Record,
     };

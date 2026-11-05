@@ -1,4 +1,3 @@
-// STATISTIC: StoresLeftInLoopsForOthers >= 1
 const turns: number = JSON.parse("6");
 class Box {
   v = 1.5;

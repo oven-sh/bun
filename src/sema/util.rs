@@ -584,7 +584,13 @@ impl Window {
     /// Returns the window of any other key.
     #[inline]
     pub fn of_hash<T: std::hash::Hash + ?Sized>(key: &T) -> Window {
-        Window::new(3, (fx_hash(key) >> 32) as u32 % Self::HASHED)
+        Window::of_hashed(fx_hash(key))
+    }
+
+    /// Returns `of_hash` for a key whose `fx_hash` is `hash`.
+    #[inline]
+    pub fn of_hashed(hash: u64) -> Window {
+        Window::new(3, (hash >> 32) as u32 % Self::HASHED)
     }
 }
 

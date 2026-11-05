@@ -33,7 +33,7 @@ export const Request = b.class({
   memoryCost: true,
   estimatedSize: true,
   types: [table.viewType("Request"), table.exactType("$Bindgen.Request")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   construct: { args: { input: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream"],
   proto: {
@@ -72,7 +72,7 @@ export const Response = b.class({
   rustTraits: body.rustTraits,
   estimatedSize: true,
   types: [table.viewType("Response"), table.exactType("$Bindgen.Response")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   construct: { args: { body: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream", "transform"],
   proto: {

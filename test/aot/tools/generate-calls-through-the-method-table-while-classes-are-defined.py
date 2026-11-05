@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 105; ../parallel/calls-through-the-method-table-while-classes-are-defined/ holds 2 of them.
 """Writes test/aot/parallel/calls-through-the-method-table-while-classes-are-defined/.
 
 `measure(s: Shape)` calls `s.area(1)` on one of several classes: compiled code goes through a table of methods by the shape of the receiver, tests no guard and asks no object.

@@ -9,8 +9,8 @@ use super::{
 };
 use crate::atom::Atom;
 use crate::bind::{
-    Bound, BoundBuilder, BoundIn, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId,
-    TableId,
+    Bound, BoundBuilder, BoundIn, ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId,
+    ScopeKind, SymbolId, TableId,
 };
 use crate::hir::*;
 
@@ -80,7 +80,13 @@ impl<S: Storage> BoundIn<S> {
 
     /// A parameter of a sloppy function that names `arguments` is one variable with the element of that object. Nobody can tell the two apart where nothing is stored to the parameter and the function only reads members and elements of the object: a read that misses ends at `Object.prototype`, which holds no accessor of the program's.
     /// Nor where the function reads members by name alone, `arguments.length`, whatever is stored to the parameter: nobody ever looks at an element.
-    pub fn is_mapped_argument(&self, hir: &File, symbol: SymbolId) -> bool {
+    /// `names_lie_on_object_prototype`: a test run lays some there, or nobody knows yet whether it does. One of them may be an accessor, which gets the object as `this`: a read that may miss hands the object on.
+    pub fn is_mapped_argument(
+        &self,
+        hir: &File,
+        symbol: SymbolId,
+        names_lie_on_object_prototype: bool,
+    ) -> bool {
         let scope = self.scopes.get(self.symbol_scope(symbol).idx());
         let Some(ScopeKind::Fn(function)) = scope.map(|scope| scope.kind) else {
             return false;
@@ -91,9 +97,12 @@ impl<S: Storage> BoundIn<S> {
         {
             return false;
         }
-        let other_ways = FunctionFlags::HANDS_ARGUMENTS_ON
+        let mut other_ways = FunctionFlags::HANDS_ARGUMENTS_ON
             | FunctionFlags::HAS_ARGUMENTS_VARIABLE
             | FunctionFlags::HAS_DIRECT_EVAL;
+        if names_lie_on_object_prototype {
+            other_ways |= FunctionFlags::MAY_READ_ABOVE_ARGUMENTS;
+        }
         let references = &self.runtime.references;
         if !flags.intersects(other_ways | FunctionFlags::READS_ELEMENTS_OF_ARGUMENTS)
             && !has_bit(&references.eval_visible_symbols, symbol.idx())
@@ -156,10 +165,12 @@ impl<S: Storage> BoundIn<S> {
             return self.scopes[scope.idx()].parent;
         };
         let around_class = self.scopes[self.class_scope[class.idx()].idx()].parent;
-        if hir[class].name.is_some() {
-            self.scopes[around_class.idx()].parent
-        } else {
-            around_class
+        // The name of a class expression has a scope of its own.
+        match self.class_owner[class.idx()] {
+            ClassOwner::Expr(_) if hir[class].name.is_some() => {
+                self.scopes[around_class.idx()].parent
+            }
+            ClassOwner::Expr(_) | ClassOwner::Stmt(_) => around_class,
         }
     }
 
@@ -386,6 +397,20 @@ impl Bound<'_> {
         !has_bit(&self.runtime.declarations.valueless_symbols, symbol.idx())
     }
 
+    /// The member whose value a read of the name of `member` may be taken for: the last one that a declaration of the enum makes under the name.
+    /// `declare enum` makes nothing, though an enum of its name beside it makes the object. Where a later declaration of the enum writes the name again, it stores over the entry:
+    /// `bun run` has that value in place of every read, though no name reaches the later member.
+    pub fn last_made_enum_member(&self, member: EnumMemberId) -> Option<EnumMemberId> {
+        let symbol = self.declared_symbol(Decl::EnumMember(member));
+        let is_made = |written: Decl| self.has_runtime_value(self.declared_symbol(written));
+        let mut written_again = self.redeclarations.iter().rev();
+        let last = written_again.find_map(|it| match it.decl {
+            Decl::EnumMember(later) if it.symbol == symbol && is_made(it.decl) => Some(later),
+            _ => None,
+        });
+        last.or_else(|| self.has_runtime_value(symbol).then_some(member))
+    }
+
     /// The variable that a declaration under `export` shows to other files. `export declare class K {}` shows none, though `namespace K {}` beside it makes one.
     pub fn exported_variable(&self, declaration: Decl) -> Option<SymbolId> {
         let local = self.declared_symbol(declaration).some()?;
@@ -459,6 +484,17 @@ impl Bound<'_> {
 
     pub fn field_initializer_scope(&self, member: MemberId) -> Option<ScopeId> {
         find_entry(&self.runtime.field_initializer_scopes, member).copied()
+    }
+
+    /// `C.size = value` stands behind the class in what `bun run` prints: the function around the class evaluates the value of the static field.
+    pub fn is_field_assigned_behind_class(&self, member: MemberId) -> bool {
+        self.field_initializer_scope(member).is_some_and(|scope| {
+            let around = self.scopes[scope.idx()].parent;
+            matches!(
+                self.scopes[around.idx()].kind,
+                ScopeKind::ClassDecorators(_)
+            )
+        })
     }
 
     pub fn code_unit(&self, scope: ScopeId) -> CodeUnit {

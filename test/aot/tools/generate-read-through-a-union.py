@@ -1,3 +1,4 @@
+# all 19,656; ../parallel/read-through-a-union/ holds 3 of them.
 # read-through-a-union.py <outdir>: for LinkFlow::fieldReadThrough(): a read `value.x` through a declared union ties only the members that LIST x one by one. A member that does not list it answers with undefined,
 # with what somebody has laid on it under the name, and with what lies beside its fields. So: x is laid on a member that does not list it, IN EVERY WAY, in front of the read or behind a first read, and looked at
 # through the union and through what lists an object's own values. way x value x how the union is read x what is looked at x when. ONE SHAPE A FILE. Every program prints what plain Bun prints.

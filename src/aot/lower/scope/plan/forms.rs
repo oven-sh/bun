@@ -57,7 +57,7 @@ pub(super) fn compute_forms(
                 continue;
             }
             // A mapped parameter lives in the object, so every read and store of it needs the object. It is one only where somebody can tell.
-            if bound.is_mapped_argument(hir, symbol) {
+            if bound.is_mapped_argument(hir, symbol, context.input.names_lie_on_object_prototype) {
                 forms[symbol.idx()] = BindingForm::MappedArgument { unit, index };
             }
         }

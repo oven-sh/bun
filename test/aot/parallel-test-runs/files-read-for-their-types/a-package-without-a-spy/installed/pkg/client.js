@@ -1,1 +1,0 @@
-exports.Client = class Client {};

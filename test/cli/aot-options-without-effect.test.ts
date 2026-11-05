@@ -1,10 +1,9 @@
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { describe, test } from "../aot/listed";
 
 const files = {
   "app.ts": "console.log(1);\n",

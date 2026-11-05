@@ -1,9 +1,8 @@
 // What `bun check --aot` and `bun build --compile --aot` say about their own flags, and about a store that replaces a member of a built-in object.
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { describe, test } from "../aot/listed";
 
 async function bun(cwd: string, ...args: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd);
@@ -19,7 +18,7 @@ const tsconfig = JSON.stringify({
     types: [],
   },
 });
-const reports = "text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
+const reports = "text, json, guards, guards-json, trim, allocations, forms, statistics";
 
 // Adding a name to Array.prototype is allowed. Replacing one is not, and here the store always runs.
 const replaces = `(Array.prototype as any).last = function () {};\n(Array.prototype as any).push = function () {};\n`;
@@ -117,10 +116,10 @@ test.skipIf(!!unsupported)(
 
 describe.concurrent("--help", () => {
   test.each([
-    [[], ["--aot ", "--aot-log-type-mismatches"]],
-    [["run"], ["--aot ", "--aot-log-type-mismatches"]],
-    [["test"], ["--aot", "--aot-log-type-mismatches"]],
-    [["build"], ["--aot ", "--explain", "--aot-log-type-mismatches", "--aot-huge-heap"]],
+    [[], ["--aot ", "--aot-allow-code-from-disk"]],
+    [["run"], ["--aot ", "--aot-allow-code-from-disk"]],
+    [["test"], ["--aot"]],
+    [["build"], ["--aot ", "--explain", "--aot-allow-code-from-disk", "--aot-huge-heap"]],
     [["check"], ["--aot ", "--explain"]],
   ] as [string[], string[]][])("bun %p", async (command, flags) => {
     using dir = tempDir("aot-help", {});

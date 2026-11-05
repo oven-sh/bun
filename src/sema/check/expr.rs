@@ -1363,6 +1363,11 @@ impl<'p, 's> Checker<'p, 's> {
             // `isJSLiteralType`. A property missing from a JavaScript object literal's type is
             // `any`.
             let is_unchecked_js = self.is_unchecked_js_suggestion(file, e, left);
+            if !target.written
+                && let Some(held) = self.type_of_name_that_some_literals_have(left, name)
+            {
+                return (held, may_short_circuit);
+            }
             if !is_unchecked_js && self.is_js_literal_type(left) {
                 return (TypeId::ANY, may_short_circuit);
             }
@@ -3879,6 +3884,39 @@ impl<'p, 's> Checker<'p, 's> {
         let usage = super::symbols::IterationUse::DestructuringInFlow;
         self.iterated_type_or_element_type(usage, target, TypeId::UNDEFINED, None)
             .unwrap_or(TypeId::UNKNOWN)
+    }
+
+    /// In a compile build object literals of an untyped file may be widened each by itself (`are_widened_each_by_itself`), and
+    /// then none has the names of the others. A name that only some of them have reads as `getWidenedType` would have it: what
+    /// those hold, or `undefined`.
+    pub(super) fn type_of_name_that_some_literals_have(
+        &mut self,
+        literals: TypeId,
+        name: Atom,
+    ) -> Option<TypeId> {
+        self.property_that_some_literals_have(literals, name)?;
+        let mut held: SmallVec<[TypeId; 8]> = SmallVec::new();
+        for &member in self.parts(literals) {
+            held.extend(self.type_of_property(member, name));
+        }
+        held.push(TypeId::UNDEFINED);
+        Some(self.union(&held))
+    }
+
+    /// The property `name` of the first of the object literals of an untyped file in the union `literals` that has one, in a
+    /// compile build.
+    pub(super) fn property_that_some_literals_have(
+        &mut self,
+        literals: TypeId,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        if !self.p.files.is_compile_build()
+            || !self.is_union(literals)
+            || !self.is_js_literal_type(literals)
+        {
+            return None;
+        }
+        (self.parts(literals).iter()).find_map(|&member| self.prop_ref(member, name))
     }
 
     /// `isJSLiteralType`

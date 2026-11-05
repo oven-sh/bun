@@ -649,7 +649,7 @@ function mutation(root: string, rejected: Set<string>): Source | undefined {
   };
 }
 
-function storedPrograms(
+export function storedPrograms(
   root: string,
   source: string,
   pick: (seed: number, count: number) => number,
@@ -659,19 +659,22 @@ function storedPrograms(
   if (!files.length) return;
   return (seed, runner) => {
     if (runner.name !== "product") return;
-    const path = files[pick(seed, files.length)];
-    const stored = textOf(path);
-    if (stored.length > 60_000 || differsByDesign.test(stored)) return;
-    const extension = path.endsWith(".ts") ? "ts" : "js";
-    const text = rewrite(stored, extension);
-    if (text === undefined) return;
-    return {
-      source,
-      seed,
-      text: extension === "js" && !/^(import|export)\b/m.test(text) ? scriptMarker + text : text,
-      extension,
-      notes: relative(root, path),
-    };
+    // A refused file is drawn again a prime stride further on: the next file would get every seed of a refused family.
+    for (let draw = 0; draw < files.length; draw++) {
+      const path = files[pick(seed + draw * 1_000_003, files.length)];
+      const stored = textOf(path);
+      if (stored.length > 60_000 || differsByDesign.test(stored)) continue;
+      const extension = path.endsWith(".ts") ? "ts" : "js";
+      const text = rewrite(stored, extension);
+      if (text === undefined) continue;
+      return {
+        source,
+        seed,
+        text: extension === "js" && !/^(import|export)\b/m.test(text) ? scriptMarker + text : text,
+        extension,
+        notes: relative(root, path),
+      };
+    }
   };
 }
 

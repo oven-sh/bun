@@ -115,7 +115,8 @@ fn decode_utf8_lossy(contents: &[u8]) -> Cow<'_, [u8]> {
     let mut decoded = Vec::with_capacity(contents.len() + REPLACEMENT_CHARACTER.len());
     for chunk in contents.utf8_chunks() {
         decoded.extend_from_slice(chunk.valid().as_bytes());
-        if !chunk.invalid().is_empty() {
+        // The bundler puts the character in the place of each byte, of a sequence that is cut off too.
+        for _ in chunk.invalid() {
             decoded.extend_from_slice(REPLACEMENT_CHARACTER);
         }
     }
@@ -434,7 +435,8 @@ mod tests {
     fn text_replaces_ill_formed_sequences() {
         assert_string_module(Loader::Text, b"plain", b"plain");
         assert_string_module(Loader::Text, b"a\xFFb", "a\u{FFFD}b".as_bytes());
-        assert_eq!(&*decode_utf8_lossy(b"a\xE2\x82b"), "a\u{FFFD}b".as_bytes());
+        let replaced = "a\u{FFFD}\u{FFFD}b\u{FFFD}\u{FFFD}\u{FFFD}".as_bytes();
+        assert_eq!(&*decode_utf8_lossy(b"a\xE2\x82b\xF0\x9F\x98"), replaced);
         assert!(matches!(decode_utf8_lossy(b"valid"), Cow::Borrowed(_)));
     }
 

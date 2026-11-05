@@ -11,6 +11,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(known) = helpers.function(self.file.file, source) else {
             return;
         };
+        self.file.known_helpers_lowered.functions += 1;
         match known.shape {
             Shape::CreateBindingReusesDescriptor => {
                 if let [_, getter] = known.functions[..] {

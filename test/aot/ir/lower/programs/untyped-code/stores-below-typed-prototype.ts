@@ -83,9 +83,9 @@ console.log("and deleted:", attempt(loose[7], 18));
 // CHECK-LABEL: function {{*}}name="heirOf"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeName="Object.create"
+// CHECK-NEXT: v2 = NewObject layout=[[L_2]]
+// CHECK-NEXT: SetLiteralPrototype v2, v0 [refusesOtherValues]
+// CHECK-NEXT: v4 = FinishObject v2
 // CHECK-NEXT: PropSet v4, v1 key="value"
 // CHECK-NEXT: PropSet v4, v1 key="args"
 // CHECK-NEXT: v7 = String string="own"
@@ -95,14 +95,14 @@ console.log("and deleted:", attempt(loose[7], 18));
 // CHECK-LABEL: function {{*}}name="set"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="log"
 // CHECK-NEXT: v4 = PropGet v3 key="push"
 // CHECK-NEXT: v5 = String string="setter on the prototype "
 // CHECK-NEXT: v6 = Add v5, v1
 // CHECK-NEXT: v7 = String string=" "
 // CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v10 = CheckInitialized v9 name="loose"
 // CHECK-NEXT: v11 = Integer integer=1
 // CHECK-NEXT: v12 = ElemGet v10, v11

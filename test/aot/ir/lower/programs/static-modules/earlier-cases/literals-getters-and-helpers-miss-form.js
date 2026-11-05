@@ -140,7 +140,7 @@ exports.p = "p4";
 // CHECK-NEXT: v15 = String string=" "
 // CHECK-NEXT: v16 = Call v14, v13, v15 calleeKey="join" calleeName="join"
 // CHECK-NEXT: v17 = Call v6, v4, v0, v16 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b9()
+// CHECK-NEXT: Jump -> next b8()
 // CHECK-NEXT: b2() role=CatchHandler:
 // CHECK-NEXT: v18 = CatchValue
 // CHECK-NEXT: v19 = Builtin builtin=GlobalThis
@@ -150,25 +150,23 @@ exports.p = "p4";
 // CHECK-NEXT: v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
 // CHECK-NEXT: v24 = String string="threw"
 // CHECK-NEXT: v25 = ToBoolean v18
-// CHECK-NEXT: Branch v25 -> taken b3(| 0), notTaken b4(| 0)
+// CHECK-NEXT: Branch v25 -> taken b3(| 0), notTaken b6(| 0)
 // CHECK-NEXT: b3(v26):
 // CHECK-NEXT: v27 = PropGet v18 key="constructor"
-// CHECK-NEXT: Jump -> next b5(v27)
-// CHECK-NEXT: b4(v28):
-// CHECK-NEXT: Jump -> next b5(v28)
-// CHECK-NEXT: b5(v29):
-// CHECK-NEXT: v30 = ToBoolean v29
-// CHECK-NEXT: Branch v30 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v31):
-// CHECK-NEXT: v32 = PropGet v18 key="constructor"
-// CHECK-NEXT: v33 = PropGet v32 key="name"
-// CHECK-NEXT: Jump -> next b8(v33)
+// CHECK-NEXT: v28 = ToBoolean v27
+// CHECK-NEXT: Branch v28 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v29):
+// CHECK-NEXT: v30 = PropGet v18 key="constructor"
+// CHECK-NEXT: v31 = PropGet v30 key="name"
+// CHECK-NEXT: Jump -> next b7(v31)
+// CHECK-NEXT: b5(v32):
+// CHECK-NEXT: Jump -> next b7(v32)
+// CHECK-NEXT: b6(v33):
+// CHECK-NEXT: Jump -> next b7(v33)
 // CHECK-NEXT: b7(v34):
-// CHECK-NEXT: Jump -> next b8(v34)
-// CHECK-NEXT: b8(v35):
-// CHECK-NEXT: v36 = Call v23, v21, v0, v24, v35 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b9()
-// CHECK-NEXT: b9():
-// CHECK-NEXT: v37 = Undefined
-// CHECK-NEXT: Return v37
+// CHECK-NEXT: v35 = Call v23, v21, v0, v24, v34 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: Jump -> next b8()
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v36 = Undefined
+// CHECK-NEXT: Return v36
 // CHECK-NEXT: }

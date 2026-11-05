@@ -1,4 +1,0 @@
-function interop(it) {
-  return it && it.__esModule ? it : { "default": it };
-}
-((module.exports = interop), (module.exports.__esModule = true), (module.exports["default"] = module.exports));

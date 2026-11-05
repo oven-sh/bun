@@ -207,13 +207,14 @@ impl FileLowering<'_, '_, '_, '_> {
             false => &self.hir.text,
         };
         let embeds_function_text = self.inputs.options.embeds_function_text && !is_placeholder;
+        let types_in_function_text = embeds_function_text.then(|| self.finish_function_texts());
         let mut positions = crate::emit::source_positions(text, compute_ecma_line_starts(text));
         (positions.quoted_texts, positions.text_of_quotes) = self.take_quoted_texts();
         ModuleFragment {
             body: roots.body,
             data: roots.data,
             positions,
-            types_in_function_text: embeds_function_text.then(|| self.type_ranges.pack()),
+            types_in_function_text,
             throws_at_load: false,
         }
     }

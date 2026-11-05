@@ -1,9 +1,9 @@
 //! What the text of one CommonJS file says of its exports.
 
 use super::{CommonJsInput, find_literal_exported_under_name};
+use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
-use crate::builtins::{ResolvedBuiltins, table};
 use crate::known_helpers::Quiet;
 use crate::load::sources::parsed_source;
 use crate::modules::order::FileText;
@@ -473,17 +473,8 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    /// False for a name that a plain object resolves without an own property (a member of `Object.prototype`, `__proto__`) and for an array index, which is not stored as a named property.
     fn can_be_variable(&self, name: Atom) -> bool {
-        let is_index = self
-            .atoms
-            .bytes(name)
-            .first()
-            .is_some_and(u8::is_ascii_digit);
-        let listed = self.input.bind.builtin_names.get(name);
-        let is_inherited = listed
-            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-        !is_index && !is_inherited && name != known::__proto__
+        self.input.bind.is_plain_name(name)
     }
 
     fn name_of_key(&self, key: MemberKey) -> Option<Atom> {

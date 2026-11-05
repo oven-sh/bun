@@ -2,7 +2,13 @@
 //!
 //! `delete require.cache[path]` makes the next `require()` or `import()` of the file load it again, and so does a store to the entry. Load says which files a test run
 //! takes out (`test_run_loads`), and `test_run_evictions` who leaves with them. Where nobody can say which, one place counts for every module.
-//! Without it a CommonJS file still runs again where its last run threw, because `require()` takes such a file out of the cache. That takes somebody who caught the throw.
+//! Without it a CommonJS file still runs again where its last run threw, because `require()` takes such a file out of the cache. That takes somebody who asks for it behind
+//! the throw: whoever caught it, or what the host still calls where nobody did: a listener for uncaught exceptions, a hook for the exit, and behind such a listener every callback.
+
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+mod tests_of_test_runs;
 
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
@@ -127,7 +133,7 @@ pub(super) fn find_files_that_run_again(
             }
     };
     let is_commonjs = |file: FileId| kind_of(file) == ModuleKind::CommonJs;
-    if evicted.is_any_module_taken_out || !files.clone().any(|file| is_commonjs(file)) {
+    if evicted.is_any_module_taken_out || !files.clone().any(&is_commonjs) {
         say_files_that_may_run_again(0);
         return files.filter(may_load_again).map(ModuleRef::File).collect();
     }
@@ -138,13 +144,6 @@ pub(super) fn find_files_that_run_again(
     for &file in written_and_found.skip(input.written_entry_point_count) {
         is_found_by_load[file.idx()] = true;
     }
-    // A Worker may start at a test file as well, and the load lists no file as found that the build was given. `ProgramContents::names_worker_constructor`
-    let names_worker_constructor = |file: FileId| {
-        parsed_source(input.files, file)
-            .is_none_or(|source| source.contents.names_worker_constructor)
-    };
-    let may_start_workers =
-        input.runner_starts_entry_points && files.clone().any(names_worker_constructor);
     let (mut started, mut possible_loads) = (Vec::new(), Vec::new());
     for entry_point in input.sources.entry_points() {
         let is_started = match entry_point.kind {
@@ -159,24 +158,33 @@ pub(super) fn find_files_that_run_again(
         };
         // A host that starts an entry point once more has outlived what the first run threw.
         let is_started = is_started && !input.entry_points_run_again;
-        // Any other entry point is there to be found by name, by a thread in which nothing has run. A Worker that starts at a test file is such a thread.
-        // One that starts at the first file does what the startup does.
-        if !is_started || (may_start_workers && !started.is_empty()) {
+        // Any other entry point is there to be found by name, by a thread in which nothing has run.
+        if !is_started {
             possible_loads.push(PossibleLoad {
                 earliest_time: 0,
                 target: Some(entry_point.file),
                 may_be_caught: input.entry_points_run_again,
             });
         }
+        // The runner goes on behind a test file that fails to load, so what a test file asks for may have thrown under another one, in whatever order they run.
+        // What the first alone asks for is asked for once. A Worker that starts at a test file asks for no more than the file does.
+        if is_started && !started.is_empty() {
+            let loads = loads.of(entry_point.file).iter();
+            possible_loads.extend(loads.map(|load| PossibleLoad {
+                earliest_time: 0,
+                target: load.target,
+                may_be_caught: true,
+            }));
+        }
         if is_started {
             started.push(entry_point.file);
         }
     }
-    let start_times = walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
-    let may_first_run_be_caught = find_files_whose_first_run_may_be_caught(
+    let settled_times = walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
+    let may_be_loaded_behind_throw = find_files_that_may_be_loaded_behind_throw(
         &loads,
         &modules.compiled_files,
-        &start_times,
+        &settled_times,
         possible_loads,
     );
     // A file that leaves runs again anyway, and is not counted.
@@ -184,7 +192,7 @@ pub(super) fn find_files_that_run_again(
     let run_again: Vec<ModuleRef> = files
         .filter(|file| {
             let leaves = may_load_again(file);
-            let runs_after_throw = is_commonjs(*file) && may_first_run_be_caught[file.idx()];
+            let runs_after_throw = is_commonjs(*file) && may_be_loaded_behind_throw[file.idx()];
             after_throw_alone += usize::from(runs_after_throw && !leaves);
             leaves || runs_after_throw
         })
@@ -199,7 +207,7 @@ const NEVER: u32 = u32::MAX;
 /// When a site that loads a file runs, and whether somebody may catch what the file throws.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum LoadTiming {
-    /// Every run of the body reaches it, with no handler around it: a throw ends the process.
+    /// Every run of the body reaches it, with no handler around it: a throw ends the startup.
     Unconditional,
     /// The body may skip it: it is in a branch or a loop, or comes after `&&` or a `return`. Or it is an import statement whose file runs at one of two times.
     Conditional,
@@ -216,6 +224,9 @@ struct Load {
     timing: LoadTiming,
     /// An import statement, which loads ahead of the body of its file.
     is_hoisted: bool,
+    /// `import()` that nobody awaits at once: its job asks for the file when the body that called it has gone on, or has thrown.
+    is_asked_by_job: bool,
+    /// `BodyText::place_of`
     position: u32,
 }
 
@@ -223,7 +234,7 @@ struct Load {
 struct FileLoads {
     first: u32,
     end: u32,
-    /// The position of the first statement of the body that does more than load a file and keep the result. Until then the file has called none of its functions and
+    /// The place of the first statement of the body that does more than load a file and keep the result. Until then the file has called none of its functions and
     /// has handed none to anybody. Computed for a file with a deferred load alone.
     first_effect_position: u32,
 }
@@ -262,6 +273,7 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
             bound: files.bound(file),
             decisions: &analysis.decisions,
             file_text: FileText::new(files, &modules.wrapped, file),
+            moved_statements: find_moved_statements(files.hir(file)),
         };
         let hir = text.hir;
         let first = loads.all.len();
@@ -274,21 +286,26 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
                 }
                 calls.push(call);
             }
+            let mut is_asked_by_job = false;
             let (mut timing, is_hoisted, position) = match site.kind {
                 ImportSiteKind::Require(call)
                 | ImportSiteKind::ImportMetaRequire(call)
-                | ImportSiteKind::RequireByTestRunner(call) => {
-                    (text.find_timing_of_call(call), false, hir[call].pos)
-                }
+                | ImportSiteKind::RequireByTestRunner(call) => (
+                    text.find_timing_of_call(call),
+                    false,
+                    text.place_of(hir[call].pos),
+                ),
                 ImportSiteKind::ImportCall(call) | ImportSiteKind::ImportByTestRunner(call) => {
                     let timing = text.find_timing_of_call(call);
-                    match text.is_awaited_at_once(call) {
-                        true => (timing, false, hir[call].pos),
-                        false => (timing.max(LoadTiming::Guarded), false, hir[call].pos),
-                    }
+                    is_asked_by_job = !text.is_awaited_at_once(call);
+                    let timing = match is_asked_by_job {
+                        false => timing,
+                        true => timing.max(LoadTiming::Guarded),
+                    };
+                    (timing, false, text.place_of(hir[call].pos))
                 }
                 ImportSiteKind::ImportEquals(import) => {
-                    let position = hir[hir[import].stmt].start;
+                    let position = text.place_of(hir[hir[import].stmt].start);
                     (LoadTiming::Unconditional, false, position)
                 }
                 ImportSiteKind::Import(import) if hir[import].is_deferred => {
@@ -327,6 +344,7 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
                     _ => timing,
                 },
                 is_hoisted,
+                is_asked_by_job,
                 position,
             };
             match answer {
@@ -368,9 +386,46 @@ struct BodyText<'a, 's> {
     bound: &'a Bound<'s>,
     decisions: &'a Decisions<'s>,
     file_text: FileText<'a, 's>,
+    /// `find_moved_statements`
+    moved_statements: Vec<(u32, u32)>,
+}
+
+/// `load::hoisted_mocks` moves `vi.mock()` and `vi.hoisted()` of a test file in front of its imports, so a position in the text no longer says what runs first.
+/// Of each statement of such a body, ascending: where it starts in the text, and where it would start if the text were written in the order of the body. Empty: the body runs as written.
+fn find_moved_statements(hir: &hir::File<'_>) -> Vec<(u32, u32)> {
+    let starts = hir.ids(hir.body).map(|statement| hir[statement].start);
+    if starts.is_sorted() {
+        return Vec::new();
+    }
+    let mut place = 0;
+    let mut moved: Vec<(u32, u32)> = hir
+        .ids(hir.body)
+        .map(|statement| {
+            let (start, end) = (hir[statement].start, hir[statement].loc.end);
+            let moved = (start, place);
+            place += end.saturating_sub(start) + 1;
+            moved
+        })
+        .collect();
+    moved.sort_by_key(|&(start, _)| start);
+    moved
 }
 
 impl BodyText<'_, '_> {
+    /// A position in the body, such that what runs first has the lesser one.
+    fn place_of(&self, position: u32) -> u32 {
+        let behind = self
+            .moved_statements
+            .partition_point(|&(start, _)| start <= position);
+        match behind
+            .checked_sub(1)
+            .map(|index| self.moved_statements[index])
+        {
+            Some((start, place)) => place + (position - start),
+            None => position,
+        }
+    }
+
     fn find_timing_of_call(&self, call: ExprId) -> LoadTiming {
         let (hir, bound) = (self.hir, self.bound);
         let mut timing = LoadTiming::Unconditional;
@@ -422,6 +477,10 @@ impl BodyText<'_, '_> {
                             StmtKind::Try { finalizer, .. } if finalizer == statement => {
                                 LoadTiming::Unconditional
                             }
+                            // `finally { continue; }` drops what the handler throws.
+                            StmtKind::Try {
+                                handler, finalizer, ..
+                            } if handler == statement && finalizer.is_some() => LoadTiming::Guarded,
                             _ => LoadTiming::Conditional,
                         });
                         statement = parent;
@@ -479,7 +538,7 @@ impl BodyText<'_, '_> {
             }
             let scope = bound.scope_of_stmt(statement);
             if scope.is_some() && bound.code_unit(scope) == CodeUnit::File {
-                first = first.min(hir[statement].start);
+                first = first.min(self.place_of(hir[statement].start));
             }
         }
         first
@@ -507,7 +566,9 @@ impl BodyText<'_, '_> {
             _ => true,
         };
         let first = hir.ids(hir.body).find(has_effect);
-        first.map_or(u32::MAX, |statement: StmtId| hir[statement].start)
+        first.map_or(u32::MAX, |statement: StmtId| {
+            self.place_of(hir[statement].start)
+        })
     }
 
     /// `require("a")`, `require("a").b`, `require("a")("name")`
@@ -607,6 +668,7 @@ struct StartupWalk<'a> {
     possible_loads: &'a mut Vec<PossibleLoad>,
     time: u32,
     start_times: Vec<u32>,
+    settled_times: Vec<u32>,
     depth_of_starting_file: Vec<u32>,
     stack: Vec<StartingFile>,
     files_run_at_link: Vec<FileId>,
@@ -619,8 +681,10 @@ struct StartupWalk<'a> {
     graph_count: u32,
 }
 
-/// Follows the unconditional loads down from the entry points that the host starts, in the order in which they run, and answers by file the time at which it starts.
-/// A file with such a time has run, or has ended the process, when a load with a later time asks for it. Every other load is added to `possible_loads`.
+/// Follows the unconditional loads down from the entry points that the host starts, in the order in which they run, and answers by file the time from which no load runs it again.
+/// For a CommonJS file that `require()` runs that is the end of its body: had the file thrown, the startup would have ended there and a load that cannot run before that time would
+/// never have come to be. A file that has only started by then may have thrown. Whatever the loader of ES modules runs is settled when it starts: the loader keeps what it throws.
+/// Every other load is added to `possible_loads`.
 fn walk_startup(
     loads: &Loads,
     started: &[FileId],
@@ -634,6 +698,7 @@ fn walk_startup(
         possible_loads,
         time: 0,
         start_times: vec![NEVER; file_count],
+        settled_times: vec![NEVER; file_count],
         depth_of_starting_file: vec![NEVER; file_count],
         stack: Vec::new(),
         files_run_at_link: Vec::new(),
@@ -645,14 +710,18 @@ fn walk_startup(
     for &entry_point in started {
         walk.start_entry_point(entry_point);
     }
-    walk.start_times
+    walk.settled_times
 }
 
 impl StartupWalk<'_> {
     /// `is_root_of_graph`: the file is an ES module, and something other than an import statement of an ES module loads it.
-    fn start(&mut self, file: FileId, depth: u32, is_root_of_graph: bool) {
+    /// `is_run_by_loader`: it is an entry point, an ES module, or a CommonJS file under an import statement of an ES module.
+    fn start(&mut self, file: FileId, depth: u32, is_root_of_graph: bool, is_run_by_loader: bool) {
         self.time += 1;
         self.start_times[file.idx()] = self.time;
+        if is_run_by_loader {
+            self.settled_times[file.idx()] = self.time;
+        }
         self.depth_of_starting_file[file.idx()] = depth;
         let files_run_at_link = match is_root_of_graph {
             true => self.collect_files_run_at_link(file),
@@ -726,7 +795,7 @@ impl StartupWalk<'_> {
         // called, and through it every ES module that starts below it.
         let (mut cycle_depth, mut cycle_time) = (NEVER, NEVER);
         let is_root_of_graph = !(self.is_commonjs)(entry_point);
-        self.start(entry_point, 0, is_root_of_graph);
+        self.start(entry_point, 0, is_root_of_graph, true);
         while let Some(top) = self.stack.last_mut() {
             let file = top.file;
             let depth = self.depth_of_starting_file[file.idx()];
@@ -734,7 +803,7 @@ impl StartupWalk<'_> {
                 self.files_yet_to_run_at_link -= 1;
                 let imported = self.files_run_at_link[index as usize];
                 if self.start_times[imported.idx()] == NEVER {
-                    self.start(imported, depth + 1, false);
+                    self.start(imported, depth + 1, false, true);
                 }
                 continue;
             }
@@ -774,6 +843,10 @@ impl StartupWalk<'_> {
                         may_be_caught: true,
                     }));
                 self.depth_of_starting_file[file.idx()] = NEVER;
+                self.time += 1;
+                if self.settled_times[file.idx()] == NEVER {
+                    self.settled_times[file.idx()] = self.time;
+                }
                 self.stack.pop();
                 continue;
             };
@@ -790,13 +863,21 @@ impl StartupWalk<'_> {
                 Some(target) if self.depth_of_starting_file[target.idx()] != NEVER => {
                     cycle_depth = cycle_depth.min(self.depth_of_starting_file[target.idx()]);
                     cycle_time = cycle_time.min(self.time);
+                    if load.is_asked_by_job {
+                        self.possible_loads.push(PossibleLoad {
+                            earliest_time: self.time,
+                            target: Some(target),
+                            may_be_caught: true,
+                        });
+                    }
                 }
                 Some(target) if is_in_order => {
                     if self.start_times[target.idx()] == NEVER {
                         let is_linked_with_importer = load.is_hoisted && !is_importer_commonjs;
-                        let is_root_of_graph =
-                            !is_linked_with_importer && !(self.is_commonjs)(target);
-                        self.start(target, depth + 1, is_root_of_graph);
+                        let is_es_module = !(self.is_commonjs)(target);
+                        let is_root_of_graph = !is_linked_with_importer && is_es_module;
+                        let is_run_by_loader = is_linked_with_importer || is_es_module;
+                        self.start(target, depth + 1, is_root_of_graph, is_run_by_loader);
                     }
                 }
                 target => self.possible_loads.push(PossibleLoad {
@@ -809,24 +890,25 @@ impl StartupWalk<'_> {
     }
 }
 
-/// By file: a load that somebody may catch, or a load below such a load, may be the first to run the file. What it throws then ends nothing, and the next load runs it again.
-fn find_files_whose_first_run_may_be_caught(
+/// By file: a load that somebody may catch, or a load below such a load, may run before the file is settled. It is the first to run the file, and what the file throws then ends
+/// nothing: the next load runs it again. Or it comes behind a throw that has ended the startup, and is that next load.
+fn find_files_that_may_be_loaded_behind_throw(
     loads: &Loads,
     all_files: &[FileId],
-    start_times: &[u32],
+    settled_times: &[u32],
     mut possible_loads: Vec<PossibleLoad>,
 ) -> Vec<bool> {
     // What a file leads to at one time it leads to at every earlier time, so the first visit of a file finds all that a later one would.
     possible_loads.sort_by_key(|load| load.earliest_time);
     // Whether the loads of the file were followed, first where nobody catches and then where somebody may.
-    let mut is_followed = vec![[false; 2]; start_times.len()];
+    let mut is_followed = vec![[false; 2]; settled_times.len()];
     let mut is_any_file_followed = [false; 2];
     let mut to_follow: Vec<(Option<FileId>, bool)> = Vec::new();
     for possible in possible_loads {
         to_follow.push((possible.target, possible.may_be_caught));
         while let Some((target, may_be_caught)) = to_follow.pop() {
             let seen = match target {
-                Some(target) if start_times[target.idx()] <= possible.earliest_time => continue,
+                Some(target) if settled_times[target.idx()] <= possible.earliest_time => continue,
                 Some(target) => &mut is_followed[target.idx()],
                 None => &mut is_any_file_followed,
             };

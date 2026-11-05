@@ -109,6 +109,7 @@ fn set_compile_context(ctx: &mut ContextData, options: &Options, cwd: &[u8]) {
     let mut aot = AotOptions {
         explain,
         thread_count: NonZeroU32::new(u32::try_from(options.threads).unwrap_or(u32::MAX)),
+        looks_for_type_errors: true,
         ..Default::default()
     };
     aot.code_generation_from_strings =

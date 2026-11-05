@@ -218,6 +218,8 @@ const environment = {
   // A Bun that a signal ends starts a command that sends a report. It goes where scripts/runner.node.ts says, or nowhere.
   ...(!inherited.BUN_CRASH_REPORT_URL && { BUN_ENABLE_CRASH_REPORTING: "0" }),
   ...(isASAN && {
+    // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas: it would see no string, Vector or hash table.
+    Malloc: "1",
     // The slow unwinder aborts in a frame of compiled code and cuts the report off.
     ASAN_OPTIONS:
       (inherited.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0") +

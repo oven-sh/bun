@@ -10,7 +10,7 @@ use bun_sema::import_sites::{
 use smallvec::SmallVec;
 
 use super::walker::bindings_of;
-use super::{ArgumentRead, Context, PatternRole, Task, Walker};
+use super::{ArgumentRead, Context, DeclarationRead, PatternRole, Task, Walker};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
@@ -174,14 +174,15 @@ impl Walker<'_, '_> {
                 if let Some(owner) = owner
                     && let Some(function) = find_declaration_made_at_first_read(hir, bound, symbol)
                 {
-                    let reader = (
+                    let time = self.tick();
+                    self.walk.declaration_reads.push(DeclarationRead {
                         symbol,
-                        context.function,
                         function,
-                        context.enclosing_loop,
                         owner,
-                    );
-                    self.walk.readers_of_declarations.push(reader);
+                        reader: context.function,
+                        enclosing_loop: context.enclosing_loop,
+                        time,
+                    });
                     // In a loop each turn would ask anew whether the function object is there.
                     let is_made_at_entry =
                         !context.is_conditional || context.enclosing_loop.is_some();

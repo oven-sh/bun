@@ -1,5 +1,5 @@
 // Every call goes to a function object that was made for it and that nothing else holds. Each has a name of its own, which its stack frame shows however deep the frame lies and however many collections have run since the call.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): one side shows no frame in a line, so that line is the same whatever the frames are
+// Todo: only frames (stack-trace-only differences are fine): one side shows no frame in a line, so that line is the same whatever the frames are
 let returns = 0;
 const make = name =>
   Object.defineProperty(

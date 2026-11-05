@@ -104,6 +104,8 @@ pub(super) struct Folder<'a, 's> {
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: FxHashMap<ExprId, bool>,
     pub(super) short_circuited_links: PositionSet,
+    /// `Decisions::operators_that_go_on_to_the_right`
+    pub(super) goes_on_to_the_right: Vec<ExprId>,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
@@ -161,6 +163,7 @@ pub(super) fn run<'s>(
         nullish_logical_results: FxHashMap::default(),
         conditions: FxHashMap::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
+        goes_on_to_the_right: Vec::new(),
         is_main_of_import_meta_written: OnceCell::new(),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),
@@ -424,6 +427,7 @@ impl<'s> Folder<'_, 's> {
                 &self.collect_constants_under_minify_syntax(),
                 arena,
             ),
+            goes_on_to_the_right: slice_in(&self.goes_on_to_the_right, arena),
             folded_with: *self.inputs,
         };
         let call_errors = self.call_errors.iter();

@@ -1,5 +1,5 @@
 // A call that is written `Reflect.construct(..)` lists no frame of that function, whatever `Reflect` names there, and lists the function that it finds in its place.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 function Thrower() { throw new Error("thrown"); }
 function listSites(run) {
   Error.prepareStackTrace = (error, sites) => sites.slice(0, 4).map(site => site.getFunctionName() + " " + site.getLineNumber() + ":" + site.getColumnNumber()).join(" < ");

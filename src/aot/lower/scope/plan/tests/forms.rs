@@ -2,7 +2,7 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{BindingKind, CodeUnit, CommonJsVariable, Decl, SymbolId};
 use bun_sema::hir::{ModuleName, PatKind};
 
-use super::{Probe, analyze_files, analyze_source};
+use super::{Probe, analyze_files, analyze_source, analyze_test_file};
 use crate::ir::generated::FunctionFlags;
 use crate::lower::captures::Capture;
 use crate::lower::scope::testing::{function_named, with_runtime_dialect_input};
@@ -214,6 +214,45 @@ fn parameter_is_mapped_only_where_that_can_be_told() {
     let one_stored = "other = 1; return () => arguments[0] + once + other;";
     assert!(!mapped(one_stored, "once"));
     assert!(mapped(one_stored, "other"));
+}
+
+#[test]
+fn read_that_may_miss_hands_arguments_on_below_a_name_that_a_test_run_lays() {
+    let mapped = |lays: &str, body: &str| {
+        let source = format!(
+            "{lays} function probe(once, other) {{ {body} return () => once; }} module.exports = probe;"
+        );
+        analyze_test_file("main.test.cjs", &source, |probe| {
+            matches!(probe.form_of("once"), BindingForm::MappedArgument { .. })
+        })
+    };
+    let getter = "Object.defineProperty(Object.prototype, 'extra', { get() { return this; } });";
+    for may_miss in [
+        "arguments.extra;",
+        "arguments[other];",
+        "arguments['0'];",
+        "typeof arguments?.extra;",
+        "(() => arguments.toString)();",
+    ] {
+        assert!(mapped(getter, may_miss), "{may_miss}");
+        assert!(
+            mapped("Object.prototype.other = 1;", may_miss),
+            "{may_miss}"
+        );
+        // A test run that lays nothing there compiles what an executable compiles.
+        assert!(!mapped("", may_miss), "{may_miss}");
+        assert!(
+            !mapped("Array.prototype.extra = 1;", may_miss),
+            "{may_miss}"
+        );
+    }
+    for own in [
+        "arguments.length;",
+        "arguments.callee;",
+        "arguments[0] + arguments[1.5];",
+    ] {
+        assert!(!mapped(getter, own), "{own}");
+    }
 }
 
 #[test]

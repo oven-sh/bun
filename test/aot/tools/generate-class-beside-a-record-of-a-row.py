@@ -1,3 +1,4 @@
+# all 7,718; ../parallel/class-beside-a-record-of-a-row/ holds 3 of them.
 # class-beside-a-record-of-a-row.py <outdir>: AN OBJECT OF A BUILT-IN CLASS (an array, a promise, a map ..) AND A RECORD THAT A ROW MAKES (a step of an iterator, a descriptor, an entry of allSettled ..) MEET AT ONE PLACE,
 # so Link unites their sites into one family, of which it holds that it may hold cells of compiled layouts. A SECOND PLACE HOLDS THE OBJECT OF THE CLASS ALONE, A THIRD THE RECORD ALONE.
 # LinkFlow::toTypeID(): the flag is asked of a type that names the class Object alone: what names another class has met no record (joinClasses(): two classes are Mixed).

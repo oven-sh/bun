@@ -160,8 +160,8 @@ console.log("async closures:", makeLater().prototype !== makeLater().prototype)
 // CHECK-LABEL: function {{*}}name="outer"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_1]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=[[f_1]] flags=[IsFromCompiler]}
+// CHECK-NEXT: v1 = Undefined
+// CHECK-NEXT: v2 = NewClosure v0 function=[[f_1]]
 // CHECK-NEXT: v3 = Call v2 calleeName="inner"
 // CHECK-NEXT: v4 = NewArray v3, v2 contents=anything
 // CHECK-NEXT: Return v4

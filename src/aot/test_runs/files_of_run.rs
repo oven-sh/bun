@@ -26,8 +26,8 @@ use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 use bun_sys::Fd;
 
 use super::texts::{inputs_of_file_that_nobody_describes, without_extension};
-use super::{FoundInTexts, LeftOpenByText, RunInput, WhoseFile};
-use crate::ir::parallel::{InParallel, map_each, run_serially};
+use super::{RunInput, WhoseFile};
+use crate::ir::parallel::{InParallel, map_each};
 use crate::load::contents::load_names::resolve_loads_through_imported_loaders;
 use crate::load::sources::parsed_source;
 use crate::load::{is_in_node_modules, read_file_bytes};
@@ -172,7 +172,7 @@ fn package_of(path: &[u8]) -> &[u8] {
         return b"";
     };
     let name = &path[at + FOLDER.len()..];
-    let mut parts = name.split(|&byte| byte == b'/');
+    let mut parts = strings::split(name, b"/");
     let first = parts.next().map_or(0, <[u8]>::len);
     let length = match name.starts_with(b"@") {
         true => first + 1 + parts.next().map_or(0, <[u8]>::len),
@@ -349,7 +349,7 @@ fn find_last_word(file: &[u8]) -> &[u8] {
 
 /// Whether the text holds one of the words as a part of a path: between slashes and quotes, with an extension or without. One pass over the text, however many words are sought.
 fn may_write_path_to(text: &[u8], last_words: &FxHashSet<&[u8]>) -> bool {
-    let mut parts = text.split(|&byte| matches!(byte, b'/' | b'"' | b'\'' | b'`'));
+    let mut parts = strings::split_any(text, b"/\"'`");
     parts.any(|part| last_words.contains(part) || last_words.contains(without_extension(part)))
 }
 
@@ -450,10 +450,8 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
 }
 
 /// For the runner, behind a run that has refused a load which `file` asked for: the file on disk that makes `file` the product's. Native paths.
-#[cfg_attr(
-    test,
-    allow(dead_code, reason = "linked.rs calls it, which no test build holds")
-)]
+/// linked.rs calls it, which no test build holds.
+#[cfg(not(test))]
 pub(crate) fn find_importer_outside_run(
     root: &[u8],
     file: &[u8],
@@ -463,9 +461,9 @@ pub(crate) fn find_importer_outside_run(
         root: &from_native(root),
         in_memory_files: &[],
         is_compiled: &|path| is_compiled(to_native(path)),
-        in_parallel: &run_serially,
+        in_parallel: &crate::ir::parallel::run_serially,
     };
-    let importer = find_importers_outside_run(&disk, &[from_native(file).to_vec()]).pop()??;
+    let importer = find_importers_outside_run(&disk, &[from_native(file)]).pop()??;
     Some(to_native(&importer).to_vec())
 }
 
@@ -565,26 +563,18 @@ fn loads_what_it_is_told(files: &Files<'_>, file: FileId) -> bool {
 }
 
 /// What a file of the tests is given and a file of the product is not: it loads what nobody has compiled, its writes to the built-in objects are honored, and the texts that it holds
-/// are read as code. A file that does none of that runs alike on either side, and on the side of the product it is compiled as the executable has it.
+/// are read as code. A file that does neither of the first two runs alike on either side, and on the side of the product it is compiled as the executable has it.
+/// A text takes no file across: nobody knows where it runs. `export const MOD = "globalThis.ArrayBuffer = .."` is for a context of `node:vm` as often as not, and read as code of
+/// this realm it opens the built-in for every file of the run. Where it does run here, the write is refused by name.
 fn asks_for_what_tests_are_given(files: &Files<'_>, file: FileId) -> bool {
     let Some(source) = parsed_source(files, file) else {
         return true;
     };
-    let says_something = |texts: &FoundInTexts| {
-        texts.left_open != LeftOpenByText::Nothing
-            || !texts.names_spied.is_empty()
-            || !texts.modules_replaced.is_empty()
-            || !texts.replaced_members.is_empty()
-            || !texts.opened_holders.is_empty()
-            || !texts.names_added.is_empty()
-    };
-    let (builtins, of_run) = (&source.builtins, &source.of_run);
+    let builtins = &source.builtins;
     loads_what_it_is_told(files, file)
-        || of_run.runs_unseen_code
+        || source.of_run.runs_unseen_code
         || !builtins.replaced_members().is_empty()
         || !builtins.opened_holders().is_empty()
-        || says_something(&of_run.in_texts_written)
-        || says_something(&of_run.in_texts_handed_on)
 }
 
 /// By `FileId::idx()`: whose each file is, and `ModuleFlags::LOADS_COMPILED_FILES_ALONE`.

@@ -1,5 +1,5 @@
 // Every syntactic position a call can be in: the stack trace taken inside the callee shows whether the caller gave up its frame, as in plain Bun. A cast is no call and no test: `return probe() as unknown as number` is a tail call like `return probe()`.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): one side shows no frame in a line, so that line is the same whatever the frames are
+// Todo: only frames (stack-trace-only differences are fine): one side shows no frame in a line, so that line is the same whatever the frames are
 declare const console: any;
 let seen: string = "";
 function frames(): string { return String(new Error("x").stack).split("\n").filter(l => /t_[a-zA-Z0-9_]+/.test(l)).map(l => /(t_[a-zA-Z0-9_]+)/.exec(l)![1]).join(" "); }

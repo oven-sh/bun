@@ -5,7 +5,7 @@ import * as table from "../../codegen/builtins/lib.ts";
 export default b.module({ rustPath: "crate::node::node_fs_binding" });
 
 /** Arguments are parsed in `node_fs.rs`, which throws Node's errors. */
-const operation = (length: number, ...returns: Parameters<typeof b.any.returning>) =>
+const operation = (length: number, ...returns: readonly (string | table.TableType["spec"])[]) =>
   ({
     args: { args: b.any.variadic },
     returns: b.any.returning(...returns),

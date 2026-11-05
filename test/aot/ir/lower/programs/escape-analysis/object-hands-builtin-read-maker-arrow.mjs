@@ -3007,53 +3007,47 @@ for (const report of reports) report();
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="steps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: anything, v2: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
 // CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="v"
-// CHECK-NEXT: v6 = Yield v5
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+// CHECK-NEXT: v4 = Yield v0
+// CHECK-NEXT: v5 = ResultAt v4
+// CHECK-NEXT: v6 = ResultAt v4 index=1
+// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v7
+// CHECK-NEXT: Throw v5
 // CHECK-NEXT: b2():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="steps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_3]], v1: anything, v2: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_3]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="v"
-// CHECK-NEXT: v6 = Yield v5
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="steps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_4]], v1: anything, v2: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="v"
 // CHECK-NEXT: Return v5
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v7 = Undefined
+// CHECK-NEXT: Return v7
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="steps"
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
+// CHECK-NEXT: InitialYield
+// CHECK-NEXT: v4 = Yield v0
+// CHECK-NEXT: v5 = ResultAt v4
+// CHECK-NEXT: v6 = ResultAt v4 index=1
+// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: Throw v5
+// CHECK-NEXT: b2():
+// CHECK-NEXT: Return v5
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v7 = Undefined
+// CHECK-NEXT: Return v7
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="steps"
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
+// CHECK-NEXT: InitialYield
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="keep"
 // CHECK-NEXT: v3 = Call v2, -, v0 calleeName="keep"
 // CHECK-NEXT: v4 = String string="GET"
@@ -3062,12 +3056,12 @@ for (const report of reports) report();
 // CHECK-LABEL: function {{*}}name="[Symbol.asyncIterator]"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewObject layout=[[L_6]]
+// CHECK-NEXT: v1 = NewObject layout=[[L_3]]
 // CHECK-NEXT: v2 = Boolean
 // CHECK-NEXT: v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_6]]
-// CHECK-NEXT: v5 = NewClosure v1, v0 function=[[f_7]]
-// CHECK-NEXT: v6 = NewObject -, v5 layout=[[L_8]] fields=[0]
+// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_3]]
+// CHECK-NEXT: v5 = NewClosure v1, v0 function=[[f_4]]
+// CHECK-NEXT: v6 = NewObject -, v5 layout=[[L_5]] fields=[0]
 // CHECK-NEXT: v7 = FinishObject v6
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }

@@ -35,12 +35,13 @@ exports.Fragment = "fragment";
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = PropGet v0 key="createElement"
-// CHECK-NEXT: v2 = String string="a"
-// CHECK-NEXT: v3 = String string="v"
-// CHECK-NEXT: v4 = NewObject -, v3 layout=[[L_3]] fields=[0]
-// CHECK-NEXT: v5 = FinishObject v4
-// CHECK-NEXT: v6 = String string="x"
-// CHECK-NEXT: v7 = Call v1, v0, v2, v5, v6 calleeKey="createElement" calleeName="createElement"
-// CHECK-NEXT: ReturnCall v7
+// CHECK-NEXT: v1 = CheckInitialized v0 name="React"
+// CHECK-NEXT: v2 = PropGet v1 key="createElement"
+// CHECK-NEXT: v3 = String string="a"
+// CHECK-NEXT: v4 = String string="v"
+// CHECK-NEXT: v5 = NewObject -, v4 layout=[[L_3]] fields=[0]
+// CHECK-NEXT: v6 = FinishObject v5
+// CHECK-NEXT: v7 = String string="x"
+// CHECK-NEXT: v8 = Call v2, v1, v3, v6, v7 calleeKey="createElement" calleeName="createElement"
+// CHECK-NEXT: ReturnCall v8
 // CHECK-NEXT: }

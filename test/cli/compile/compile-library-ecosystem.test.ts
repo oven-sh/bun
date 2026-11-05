@@ -1,11 +1,10 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import * as esbuild from "esbuild";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join, posix } from "path";
 import { slot, unsupported } from "../../aot/harness/commands";
 import { withoutDebugInformation } from "../../aot/harness/without-debug-information";
-import { afterAll, describe, test } from "../../aot/listed";
 
 setDefaultTimeout(120_000);
 
@@ -456,7 +455,12 @@ describe.each(Object.entries(makers))("a package from %s", (_, maker) => {
         const { app } = await installed();
         expect(await compileAheadOfTime(app, entry)).toEqual({
           read: inPackage("index.aot.ts", "version.aot.ts"),
-          accessesOfPackages: "3 free, 0 tested, 0 by name",
+          // What `require` has run stays with the loader, so the build lets all that the module exports go: its functions have callers that the build does not see, and what they are given may have any shape.
+          // The free ones count each copy that the build makes of a function, so that number moves with the compiler. The number by name is what the test is for.
+          accessesOfPackages:
+            entry === "app.cjs"
+              ? expect.stringMatching(/^\d+ free, 0 tested, 4 by name$/)
+              : "4 free, 0 tested, 0 by name",
           ran: { stdout: printed, stderr: "", exitCode: 0 },
         });
       },
@@ -687,7 +691,7 @@ describe.concurrent("a package from bun compile --library --splitting", () => {
       const { app, chunk } = await installed();
       expect(await compileAheadOfTime(app, "app.ts")).toEqual({
         read: [chunk, "index", "version"].map(stem => `node_modules/@acme/shapes/${stem}.aot.ts`),
-        accessesOfPackages: "3 free, 0 tested, 0 by name",
+        accessesOfPackages: "4 free, 0 tested, 0 by name",
         ran: { stdout: printed, stderr: "", exitCode: 0 },
       });
     },

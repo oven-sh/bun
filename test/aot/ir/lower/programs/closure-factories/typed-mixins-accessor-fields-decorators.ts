@@ -461,7 +461,8 @@ function acc(v: ClassAccessorDecoratorTarget<any, number>, c: ClassAccessorDecor
 // CHECK-LABEL: function {{*}}name="#v"
 // CHECK: module=[[m_0]] position={{*}} kind=Setter flags=[HasThis, IsChecked] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: classtoken, v1: anything, v2: anything):
-// CHECK-NEXT: PrivateSet v1, v0, v2 layout=[[L_6]] field=1
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
+// CHECK-NEXT: v3 = Convert v2 declared={type=number}
+// CHECK-NEXT: PrivateSet v1, v0, v3 layout=[[L_6]] field=1
+// CHECK-NEXT: v5 = Undefined
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }

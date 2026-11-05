@@ -1,5 +1,5 @@
 // Prints whether each stack frame shows the name of its function object, for function objects that one place makes under many names: at every depth of long chains of calls, from frames of several sizes, between collections, behind chains that have returned or were left by an error, and where one takes the place of another in a tail call.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): one side shows no frame in a line, so that line is the same whatever the frames are
+// Todo: only frames (stack-trace-only differences are fine): one side shows no frame in a line, so that line is the same whatever the frames are
 Error.stackTraceLimit = Infinity;
 const namesIn = stack =>
   stack

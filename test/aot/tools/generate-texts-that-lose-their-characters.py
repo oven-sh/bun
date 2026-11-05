@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 413; ../parallel/texts-that-lose-their-characters/ holds 2 of them.
 # generate-texts-that-lose-their-characters.py <folder>: a loop reads the characters of a text that was made flat in front of it, through a raw pointer, and in some turns something is done
 # that takes the characters away from the text's cell, or the cell away from everybody: the text becomes a key for which an equal key of another buffer (and of the other width) exists,
 # nobody but the loop holds the text, a collection runs, and what is freed is filled again. Held to `bun <file>`. No suspension anywhere: test/aot/parallel/flat-texts-over-suspensions has those.

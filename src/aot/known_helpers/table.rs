@@ -140,6 +140,7 @@ pub(super) fn analyze<R>(
             jsx_fragment_root: None,
             emits_decorator_metadata: false,
             hoists_top_level_variables: false,
+            object_prototype_takes_names: false,
         }),
         ..BindOptions::default()
     };
@@ -160,9 +161,11 @@ pub(super) fn analyze<R>(
         atoms: &atoms,
         hir: &hir,
         bound: &bound,
+        analysis: &analysis,
         decisions: &analysis.decisions,
         builtins: &builtins,
         module_format: analysis.module_format,
+        names_added_to_builtins: &[],
         is_held_early: &|| true,
     })
 }

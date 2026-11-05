@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 78; ../parallel/proxy-above-what-is-asked/ holds 3 of them.
 # generate-proxy-above-what-is-asked.py test/aot/parallel/proxy-above-what-is-asked: a proxy whose get trap answers every key, on top or ABOVE what is handed over, and each way in which the engine or the host asks an object for a method of its own. One deed a program:
 # what a build makes of a program goes by all that the build holds, and beside others a fault may not show.
 import os, sys

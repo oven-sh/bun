@@ -103,7 +103,7 @@ show("a call that makes a decorator", declaresDecoratorThatIsCalled);
 show("a field of a class without decorators", () => new FieldWithoutDecorator());
 show("a decorated field", () => new DecoratedField());
 show("a decorated field of a class with a constructor", () => new DecoratedFieldAndConstructor());
-// Todo: only frames (stack-trace-only differences are fine, 11-02): frames stored as data in its last comment
+// Todo: only frames (stack-trace-only differences are fine): frames stored as data in its last comment
 /* Output:
 a member of an enum | mark@6:23 < declaresEnum@22:14 < show@16:3 < @96:1
 a statement of a namespace | mark@6:23 < @29:25

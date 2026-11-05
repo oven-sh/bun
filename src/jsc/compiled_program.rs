@@ -485,7 +485,7 @@ pub fn lets_test_run_load_addon(global: &JSGlobalObject, path: &bun_core::String
 pub fn is_file_in_executable(path: &bun_core::String) -> bool {
     let path = path.to_utf8();
     let path = path.slice();
-    let path = path.split(|&byte| byte == b'?').next().unwrap_or(path);
+    let path = bun_core::strings::split(path, b"?").next().unwrap_or(path);
     is_bun_standalone_file_path(path)
         && standalone_module_graph()
             .is_some_and(|graph| graph.find_assume_standalone_path(path).is_some())

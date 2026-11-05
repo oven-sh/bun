@@ -122,7 +122,7 @@ fn find_twin<'a>(other: &'a Layout, index: usize, field: &Field) -> Option<&'a F
 // `leave_open` gets the index of a field whose definitions name types that `types` has no union of, and what they say.
 fn unite_layouts<'a>(
     united: &mut Layout,
-    others: impl Iterator<Item = &'a Layout> + Clone,
+    others: &(impl Iterator<Item = &'a Layout> + Clone),
     types: &TypeTable,
     leave_open: &mut dyn FnMut(u32, OpenPosition),
 ) {
@@ -250,7 +250,7 @@ fn collect_views_of_literals(
         let rest = definitions[1..].iter().map(|&(_, definition)| definition);
         let layout = UnitedLayout::View(united.views.len() as u32);
         let open_fields = &mut united.open_fields;
-        unite_layouts(&mut view, rest, types, &mut |field, position| {
+        unite_layouts(&mut view, &rest, types, &mut |field, position| {
             open_fields.push(OpenField {
                 layout,
                 field,
@@ -313,7 +313,7 @@ pub(super) fn unite_layout_definitions(
             collect_views_of_literals(id, layout, &definitions, known_types, &mut united);
             let open_fields = &mut united.open_fields;
             let others = definitions.iter().copied();
-            unite_layouts(layout, others, known_types, &mut |field, position| {
+            unite_layouts(layout, &others, known_types, &mut |field, position| {
                 open_fields.push(OpenField {
                     layout: UnitedLayout::OfProgram(id),
                     field,

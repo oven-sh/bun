@@ -1,5 +1,5 @@
 // Each function object of the factory gets a name of its own, and only its call holds it. A collection that runs during the call leaves it alone: its stack frame shows its name afterwards. The first collection behind the call collects it, however far down that collection is started.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): one side shows no frame in a line, so that line is the same whatever the frames are
+// Todo: only frames (stack-trace-only differences are fine): one side shows no frame in a line, so that line is the same whatever the frames are
 const watched = [];
 const nameOf = made => Object.getOwnPropertyDescriptor(made, "name").value;
 function make(name, run) {

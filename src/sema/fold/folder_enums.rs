@@ -194,7 +194,7 @@ impl<'s> Folder<'_, 's> {
             found = bound.lookup(holder.exports, name)?;
         }
         match *bound.symbol(found).decls {
-            [Decl::EnumMember(member)] => Some(member),
+            [Decl::EnumMember(member)] => bound.last_made_enum_member(member),
             _ => None,
         }
     }
@@ -205,10 +205,7 @@ impl<'s> Folder<'_, 's> {
         }
         let member = self.find_enum_member(read)?;
         let found = self.enum_members.values[member.idx()]?;
-        let owner = Decl::Enum(self.bound.enum_member_owner[member.idx()]);
-        let has_object = (self.bound).has_runtime_value(self.bound.declared_symbol(owner));
-        if !has_object
-            || self.is_assignment_target(read)
+        if self.is_assignment_target(read)
             || self.is_delete_operand(read)
             || !is_member_visited_before(self.hir, member, read)
         {

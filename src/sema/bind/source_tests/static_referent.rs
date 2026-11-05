@@ -421,6 +421,81 @@ fn last_part_of_a_comma_and_arms_that_name_one_thing() {
     );
 }
 
+// Each arm is walked from the name before: without a memory of what was found from it, 2^64 walks.
+#[test]
+fn row_of_names_that_each_stand_for_one_of_two_of_the_name_before() {
+    let row = |first: &str, last: &str| {
+        let mut text = format!("function f() {{}} function g() {{}} f.m = g; const a0 = {first};");
+        for index in 1..=64 {
+            let before = index - 1;
+            text += &format!(" const a{index} = x ? a{before} : a{before};");
+        }
+        &*(text + last).leak()
+    };
+    with_program(&[("a.mjs", row("x ? f : f", " a64;"))], |program| {
+        let expected = Resolved {
+            referent: program.function(0, "f"),
+            certainty: Expected,
+        };
+        assert_eq!(program.resolve(), expected);
+    });
+    assert_unknown(
+        "a.mjs",
+        row("x ? f : g", " a64;"),
+        UnknownReferent::NotAReference,
+    );
+    assert_unknown(
+        "a.mjs",
+        row("x ? f : f", " a64.m;"),
+        UnknownReferent::NotAReference,
+    );
+    assert_unknown(
+        "a.mjs",
+        row("x ? a64 : a64", " a64;"),
+        UnknownReferent::NotAReference,
+    );
+    with_program(
+        &[("a.mjs", row("x ? f : f", " export default a64;"))],
+        |program| {
+            let found = program.resolve_default_export(Some("m")).referent;
+            assert_eq!(found, program.function(0, "g"));
+        },
+    );
+    // Two rows, each name one of the two names before.
+    let mut text = String::from("function f() {} const a0 = f; const b0 = f;");
+    for index in 1..=64 {
+        let before = index - 1;
+        text += &format!(
+            " const a{index} = x ? a{before} : b{before}; const b{index} = x ? b{before} : a{before};"
+        );
+    }
+    with_program(&[("a.mjs", (text + " a64;").leak())], |program| {
+        assert_eq!(program.resolve().referent, program.function(0, "f"));
+    });
+}
+
+// What a trail has a say in is walked anew from each arm: the names on the way are asked what is stored on them.
+#[test]
+fn arms_that_come_to_a_member_stored_on_a_name_on_the_way() {
+    const STORED: &[&str] = &[
+        "function f() {} function g() {} const a = f; a.m = g; const b = x ? a : a; export default b;",
+        "function f() {} function g() {} const a = f; const c = f; a.m = g; const b = x ? a : (y ? a : a); export default b;",
+        "function f() {} function g() {} f.m = g; const a = x ? f : f; const b = x ? a : a; export default b;",
+    ];
+    for &text in STORED {
+        with_program(&[("a.mjs", text)], |program| {
+            let found = program.resolve_default_export(Some("m")).referent;
+            assert_eq!(found, program.function(0, "g"), "{text}");
+        });
+    }
+    // Behind `c` the store on `a` is not on the way.
+    let text = "function f() {} function g() {} const a = f; const c = f; a.m = g; const b = x ? a : c; export default b;";
+    with_program(&[("a.mjs", text)], |program| {
+        let found = program.resolve_default_export(Some("m")).referent;
+        assert!(matches!(found, StaticReferent::Unknown(_)), "{found:?}");
+    });
+}
+
 #[test]
 fn parameter_that_stands_for_more_than_one_argument() {
     const OPAQUE: &[&str] = &[

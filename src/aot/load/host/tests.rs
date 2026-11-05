@@ -16,6 +16,7 @@ use super::*;
 use crate::builtins::RuntimeModule;
 use crate::compile::testing::{
     TemporaryDirectory, default_settings, lower_program_with_provider, with_loaded_build,
+    with_loaded_test_run,
 };
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::Diagnostics;
@@ -208,6 +209,7 @@ impl<'s> Fixture<'_, 's> {
     fn parse_text(&self, path: &[u8], loader: HostLoader, text: &[u8]) -> ParsedCode<'s> {
         let settings = default_settings();
         let request = CodeParseRequest {
+            package_module_type: DeclaredModuleType::Unknown,
             path,
             loader,
             options: ParseOptions::default(),
@@ -1348,4 +1350,121 @@ fn blank_json_fails_where_a_test_run_loads_it() {
     with_host(&files, |fixture| {
         assert_eq!(fixture.parse_failure_of(blank), None);
     });
+}
+
+#[test]
+fn json_that_json_parse_refuses_fails_where_a_test_run_loads_it() {
+    let files = [
+        ("hexadecimal.json", "{\"n\": 0x10}"),
+        ("two.json", "{\"a\": 1} {\"b\": 2}"),
+        ("quotes.json", "{'a': 1}"),
+        ("tsconfig.json", "{\"n\": 0x10}"),
+        ("strict.json", " {\"n\": [16, 1e3, \"\\u0041\"]}\n"),
+    ];
+    let refused = Some(&b"JSON Parse error: Unable to parse JSON string"[..]);
+    let path_of = |name: &str| [b"/project/", name.as_bytes()].concat();
+    with_test_run_host(&files, |fixture| {
+        for name in ["hexadecimal.json", "two.json", "quotes.json"] {
+            let said = fixture.parse_failure_of(&path_of(name));
+            assert_eq!(said.as_deref(), refused, "{name}");
+        }
+        // Its name makes it jsonc: what its parser says of it stands.
+        let said = fixture.parse_failure_of(&path_of("tsconfig.json"));
+        assert_ne!(said.as_deref(), refused);
+        assert_eq!(fixture.parse_failure_of(&path_of("strict.json")), None);
+    });
+    // The plain executable holds what the bundler's parser has read, so that parser is asked alone.
+    with_host(&files, |fixture| {
+        for (name, _) in files {
+            let said = fixture.parse_failure_of(&path_of(name));
+            assert_ne!(said.as_deref(), refused, "{name}");
+        }
+    });
+}
+
+// The statements of the first file in their order, how many names in it the build has made, and how many `import()` it holds.
+fn describe_file_of_test_run(name: &str, text: &str) -> String {
+    let files = [
+        (name, text),
+        ("config.js", "export const mode = 1;"),
+        (
+            "reads.js",
+            "import { mode } from './config.js'; export const seen = mode;",
+        ),
+    ];
+    with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+        let project = loaded.project(crate::load::ProjectId::Application);
+        let files = project.loaded.files();
+        let path = format!("/project/{name}");
+        let file = files.by_path.get(path.as_bytes());
+        let tree = files.hir(file.expect("the file is in the program"));
+        let statements = tree.ids(tree.body).map(|it| match tree[it].kind {
+            hir::StmtKind::Import(import) => {
+                format!("import {}", BStr::new(files.atoms.bytes(tree[import].spec)))
+            }
+            hir::StmtKind::Var(_) => "declaration".to_string(),
+            hir::StmtKind::Expr(_) => "expression".to_string(),
+            _ => "statement".to_string(),
+        });
+        let statements = statements.collect::<Vec<String>>().join(" | ");
+        let count = |is_counted: &dyn Fn(hir::ExprKind) -> bool| {
+            let expressions = tree.exprs.iter();
+            expressions.filter(|it| is_counted(it.kind)).count()
+        };
+        let is_made = |name| files.atoms.bytes(name).starts_with(b"%");
+        let made = count(&|kind| matches!(kind, hir::ExprKind::Ident(name) if is_made(name)));
+        let loads = count(&|kind| matches!(kind, hir::ExprKind::ImportCall { .. }));
+        format!("{statements} | {made} made | {loads} import()")
+    })
+}
+
+#[test]
+fn a_test_run_leaves_a_file_under_the_mark_as_it_is_written() {
+    let rows = [
+        (
+            "typeof jest; expect(1);",
+            "expression | expression | 0 made | 0 import()",
+        ),
+        (
+            "import { vi } from 'bun:test'; import { seen } from './reads.js'; vi.mock('./config.js', () => ({ mode: 2 })); seen;",
+            "import bun:test | import ./reads.js | expression | expression | 0 made | 0 import()",
+        ),
+        (
+            "import { jest } from 'bun:test'; import './reads.js'; jest.mock('./config.js', () => ({ mode: 2 }));",
+            "import bun:test | import ./reads.js | expression | 0 made | 0 import()",
+        ),
+        (
+            "import { vi } from 'bun:test'; import './reads.js'; const made = vi.hoisted(() => 1);",
+            "import bun:test | import ./reads.js | declaration | 0 made | 0 import()",
+        ),
+        (
+            "import { vi } from 'bun:test'; vi.doMock(import('./config.js'), () => ({ mode: 2 }));",
+            "import bun:test | expression | 0 made | 1 import()",
+        ),
+        (
+            "import { assert } from 'vitest'; assert;",
+            "import vitest | expression | 0 made | 0 import()",
+        ),
+    ];
+    for (text, as_written) in rows {
+        for mark in [
+            "// @bun\n",
+            "// @bun @bytecode\n",
+            "#!/usr/bin/env bun\n// @bun\n",
+        ] {
+            let described = describe_file_of_test_run("a.test.js", &format!("{mark}{text}"));
+            assert_eq!(described, as_written, "{mark}{text}");
+        }
+        for no_mark in ["", "\n// @bun\n", "/* @bun */\n"] {
+            let described = describe_file_of_test_run("a.test.js", &format!("{no_mark}{text}"));
+            assert_ne!(described, as_written, "{no_mark}{text}");
+        }
+    }
+    let as_written = "expression | expression | 0 made | 0 import()";
+    let head = "(function(exports, require, module, __filename, __dirname) {";
+    let marked = format!("// @bun @bun-cjs\n{head}typeof jest; expect(1);}})");
+    let described = describe_file_of_test_run("a.test.cjs", &marked);
+    assert_eq!(described, as_written);
+    let described = describe_file_of_test_run("a.test.cjs", "typeof jest; expect(1);");
+    assert_ne!(described, as_written);
 }

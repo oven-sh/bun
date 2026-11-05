@@ -1,19 +1,17 @@
 # Tests of Bun's own suites that pass as they are and fail where the programs they start run compiled: `<file>: <test>`. See harness/runner-suites.ts, holdProgramsOfSuites().
 # A line goes out with the fix that makes its test pass. `~ ` before a line: that test fails in some runs and passes in others.
 # Most of it is what an executable refuses on purpose, as `bun build --compile` does too:
-#   a query string in an import path (?raw ?url ?worker, import.meta.glob's `query`) . code that a path computed at run time names . plugins of the run time . a fixture in TypeScript with a type error
+#   a query string in an import path (?raw ?url, ?worker in a require(), import.meta.glob's `query`) . code that a path computed at run time names . plugins of the run time . a fixture in TypeScript with a type error
 #   (one such fixture stands behind the 110 lines of "ES decorators lowering matrix > .ts") . the words of a syntax error or of a failed resolution, which are the checker's.
 # The faults among them: CSS modules . hoisted mocks and coverage with import.meta.glob . `.cjs` for `.cts` inside node_modules . import.meta.glob as a value (plain's --compile too).
 test/js/bun/css/css-loader.test.ts: css module exports > :local and :global
 test/js/bun/css/css-loader.test.ts: css module exports > CSS the bundler only warns about doesn't throw
-test/js/bun/css/css-loader.test.ts: css module exports > a file that was deleted after it was resolved
 test/js/bun/css/css-loader.test.ts: css module exports > a module without classes or ids
 test/js/bun/css/css-loader.test.ts: css module exports > classes and ids, wherever they appear
 test/js/bun/css/css-loader.test.ts: css module exports > composes
 test/js/bun/css/css-loader.test.ts: css module exports > composes cycle that the exported class is not part of
 test/js/bun/css/css-loader.test.ts: css module exports > import, import(), require()
 test/js/bun/css/css-loader.test.ts: css module exports > names depend on the path relative to the working directory
-test/js/bun/css/css-loader.test.ts: css module: a composes chain too deep for the stack is an error
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?init instantiates a WebAssembly module
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline in import.meta.glob and static imports returns a URL that fetch() can read
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on a file that cannot be read
@@ -21,21 +19,11 @@ test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import p
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on an asset file returns a base64 data: URL with its MIME type
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?url returns a native path that fs, pathToFileURL and Worker accept
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker and ?sharedworker read the global constructor when called, like Vite
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.cjs in a CommonJS package
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.cts in a CommonJS package
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.js in a CommonJS package
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.jsx in a CommonJS package
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.mjs in a CommonJS package
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.tsx in a CommonJS package
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: ?worker&inline
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: import
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: import()
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: require()
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker without new, without options, in a directory with a name that needs escaping
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > a plugin sees the path with its suffix first
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > a suffix on an absolute native path, a relative native path and a path with forward slashes
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > an error in the wrapper is shown with the wrapper's source
-test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > combined suffixes follow a fixed precedence, and look-alike queries are ignored
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > an import attribute takes precedence over the suffix
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > in the query of import.meta.glob
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > other kinds of files
 test/js/bun/resolve/import-query.test.ts: dynamic import of a .node addon ignores a query string suffix
@@ -76,7 +64,6 @@ test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a module whose 
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a pattern or base that is too long
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > feature detection succeeds in modules whose calls are replaced
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a CommonJS module > an eager call throws when it is reached, and the others are replaced
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a CommonJS module > feature detection around an eager call takes the fallback
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a virtual module from a plugin
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > names > that no import path can have are skipped: { import: 'default' }
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > names > that no import path can have are skipped: { import: 'default', eager: true }
@@ -221,7 +208,6 @@ test/js/bun/resolve/import-meta-glob.test.ts: symlinks > are followed > (unnamed
 test/js/bun/resolve/import-meta-glob.test.ts: tsconfig.json "paths" and "baseUrl" > (unnamed)
 test/js/bun/resolve/import-meta-glob.test.ts: tsconfig.json "paths" without "baseUrl" > (unnamed)
 # Since `bun -e <text>` runs compiled too, from a file: a test that looks for "[eval]" in a position, or for a query string in what the text imports.
-test/js/bun/util/inspect-error.test.js: prints the source preview for an error positioned at the end of the source text
 test/js/node/v8/capture-stack-trace.test.js: Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing the stack threw
 test/js/node/v8/capture-stack-trace.test.js: a stack that a collection materializes reads the same as one materialized on access
 test/js/node/v8/capture-stack-trace.test.js: an error whose stack a collection materialized behaves as one whose stack is materialized on access
@@ -398,8 +384,6 @@ test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/NamespaceObjectsOnlyForImportedChunks
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/PreRegisteredClosure
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/PreRegisteredClosure+bytecode
-test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk
-test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk+minify
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/SplitRequireLoadsChunkSynchronously-bytecode
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/SplitRequireLoadsChunkSynchronously-source
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/StartupModulesPrecedeLazyChunks

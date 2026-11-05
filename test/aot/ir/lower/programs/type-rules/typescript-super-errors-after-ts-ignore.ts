@@ -92,7 +92,7 @@ console.log(new NoBase().describe(), new InArrow().name, new InParameter().name,
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: int[0, 4294967295], v1: anything, v2: Array):
 // CHECK-NEXT: v3 = CreateUnmappedArguments v0, v2, v1
 // CHECK-NEXT: v4 = TypeTest v1 testedType=undefined

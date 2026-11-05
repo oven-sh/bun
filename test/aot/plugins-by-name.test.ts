@@ -5,7 +5,7 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // `bun build --compile` links a name that is written out in the call that loads, and no plugin of the run time is asked about it. Every other name it leaves to
-// the run time, where a plugin answers first. `--aot` follows a name further, through a constant: that brings the file into the executable and decides nothing.
+// the run time, where a plugin answers first. `--aot` follows a name further, through a constant, a choice or a text with a hole: that brings the files into the executable and decides nothing.
 // Where no plugin answers, the compiled file does: the executables run in a folder without the files.
 // One thing of the reference is not followed, on purpose: a file of an extension that nobody knows, named by a constant, that no plugin answers for. `bun run` and
 // `--aot` answer with its path. `bun build --compile` runs it as JavaScript ("ReferenceError: x is not defined"), which is a fault of its own and no form of this test.
@@ -39,6 +39,10 @@ const files: Record<string, string> = {
     const moved = "./lib/m10.js";
     const unasked = "./lib/m11.js";
     const unaskedToo = "./lib/c11.cjs";
+    const chosen = yes ? "./lib/c6.cjs" : "./lib/c7.cjs";
+    const requiredChoice = yes ? "./lib/c8.cjs" : "./lib/c9.cjs";
+    const unaskedChoice = yes ? "./lib/m12.js" : "./lib/m11.js";
+    const digit = [2][JSON.parse("0")];
     say("a text", await import("./lib/m1.js"));
     say("a template without substitutions", await import(\`./lib/m2.js\`));
     say("texts joined", await import("./lib/" + "m3.js"));
@@ -55,9 +59,14 @@ const files: Record<string, string> = {
     say("data", await import(data));
     say("a text file", await import(text));
     say("an extension that nobody knows", await import(unknown));
+    say("a choice behind a const", await import(chosen));
+    say("require of a choice behind a const", require(requiredChoice));
+    say("a text with a hole", await import("./lib/c" + digit + ".cjs"));
     say("onResolve into a namespace", await import(moved));
     say("a const that no filter matches", await import(unasked));
     say("require of a const that no filter matches", require(unaskedToo));
+    say("a choice that no filter matches", await import(unaskedChoice));
+    say("a text with a hole that no filter matches", await import(\`./lib/m1\${digit}.js\`));
     say("a const, again", await import(held));`,
 };
 const linked = [
@@ -79,6 +88,9 @@ const asked = [
   "data",
   "a text file",
   "an extension that nobody knows",
+  "a choice behind a const",
+  "require of a choice behind a const",
+  "a text with a hole",
 ];
 
 test("a plugin of the run time is asked about the names that bun build leaves to the run time", async () => {
@@ -101,6 +113,8 @@ test("a plugin of the run time is asked about the names that bun build leaves to
     "onResolve into a namespace: THE NAMESPACE",
     "a const that no filter matches: the file",
     "require of a const that no filter matches: the file",
+    "a choice that no filter matches: the file",
+    "a text with a hole that no filter matches: the file",
     "a const, again: THE PLUGIN",
   ]);
   const ran = await run([compiled], String(elsewhere), bunEnv);

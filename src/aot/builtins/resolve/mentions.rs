@@ -99,7 +99,6 @@ impl Resolver<'_, '_> {
     // By a way on which `note_use_of_module_cache` follows nothing.
     pub(super) fn mention(&mut self, id: BuiltinId) {
         self.output.gets_at_entries_of_module_cache |= is_module_cache(id);
-        self.output.reads_entries_of_module_cache |= is_module_cache(id);
         self.output.mentioned.push(id);
     }
 

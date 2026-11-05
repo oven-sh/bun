@@ -47,6 +47,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         use_counts: walk.use_counts.clone(),
         calls_by_name: walk.calls_by_name.clone(),
         made_at_first_read: walk.made_at_first_read.clone(),
+        functions_created_before_loops: walk.functions_created_before_loops.clone(),
         names_called: walk.names_called.clone(),
         symbol_placements: parts.placements.symbols,
         slot_placements: parts.placements.slots,

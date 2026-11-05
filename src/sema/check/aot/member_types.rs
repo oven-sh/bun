@@ -205,22 +205,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    pub(super) fn is_inferred_member(&mut self, prop: &'p Prop<'p>) -> bool {
-        match &prop.source {
-            PropSource::Type(_) | PropSource::Copy(..) | PropSource::Mapped(..) => false,
-            PropSource::Literal(..) | PropSource::ReverseMapped(..) => true,
-            PropSource::Symbol(symbol) => {
-                let declarations = self.c.declarations_of_property(*symbol);
-                declarations.iter().any(|&(file, decl)| {
-                    matches!(self.annotation_of(file, decl), Annotation::Missing)
-                })
-            }
-            PropSource::Intersected(_, parts) => {
-                parts.iter().any(|part| self.is_inferred_member(part))
-            }
-        }
-    }
-
     pub(super) fn index_signature(
         &mut self,
         owner: TypeId,

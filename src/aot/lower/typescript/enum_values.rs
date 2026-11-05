@@ -1,5 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, Decl, SymbolId};
+use bun_sema::bind::{Binding, Decl, InitialState, SymbolId};
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, UnOp};
 use bun_sema::program::Sym;
@@ -7,7 +7,7 @@ use bun_sema::types::EnumValue;
 use smallvec::SmallVec;
 
 use crate::lower::FileLowering;
-use crate::modules::{KnownObjects, Validity};
+use crate::modules::{ImportBinding, KnownObjects, Validity};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum EnumMemberValue {
@@ -49,14 +49,60 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(&read) = self.enum_member_reads.get(&access) {
             return Some(read);
         }
-        let read = self.find_known_member_read(access)?;
+        let (read, validity) = self.find_known_member_read(access)?;
         self.enum_member_reads.insert(access, read);
+        if validity == Validity::Always && self.is_value_written_by_bundling(access) {
+            self.values_written_in_place.get_mut().push((access, read));
+        }
         Some(read)
+    }
+
+    /// `l.Level` of `l.Level.High`, where the enum is found on what `require` answers: `l` is the call, or a variable that holds its answer.
+    /// The value of the member is known. Evaluating `l` still runs the file, or throws where `l` holds nothing yet. A name that `import * as` binds does neither.
+    pub(in crate::lower) fn find_member_of_loaded_module(&self, access: ExprId) -> Option<ExprId> {
+        let (member, root) = self.find_member_and_root(access)?;
+        let is_imported = self.find_variable(root).is_some_and(|name| {
+            let binding = self.inputs.modules.import_binding(self.file, name);
+            matches!(binding, ImportBinding::Namespace { .. })
+        });
+        (!is_imported).then_some(member)
+    }
+
+    // `bun build` writes `1` for `l.Level.High` where `l` is imported, or is a `const` or a `let` that holds what `require` answers. Behind a `var` and behind a call it leaves the path.
+    fn is_value_written_by_bundling(&self, access: ExprId) -> bool {
+        let Some((_, root)) = self.find_member_and_root(access) else {
+            return true;
+        };
+        self.find_variable(root)
+            .is_some_and(|name| self.bound.initial_state(name) != InitialState::Undefined)
+    }
+
+    // `l.Level` and `l` of `l.Level.High`, where the graph of modules knows what `l.Level` is.
+    fn find_member_and_root(&self, access: ExprId) -> Option<(ExprId, ExprId)> {
+        let (hir, modules) = (self.hir, self.inputs.modules);
+        let member = self.skip_type_syntax(hir.member_key(access)?.0);
+        let mut root = self.skip_type_syntax(hir.member_key(member)?.0);
+        if modules.member_binding(self.file, member).is_none()
+            && modules.member(self.file, member).is_none()
+        {
+            return None;
+        }
+        while let Some((object, _)) = hir.member_key(root) {
+            root = self.skip_type_syntax(object);
+        }
+        Some((member, root))
+    }
+
+    fn find_variable(&self, expression: ExprId) -> Option<SymbolId> {
+        match (self.hir[expression].kind, self.bound.binding(expression)) {
+            (ExprKind::Ident(_), Binding::Symbol(name)) => Some(name),
+            _ => None,
+        }
     }
 
     /// Reach keeps neither the enum nor the object of a module for a read that this answers, so nothing may leave such a read to the run time.
     /// `KnownObjects::find_enum` has turned away an enum that a mock or a spy may replace.
-    fn find_known_member_read(&self, access: ExprId) -> Option<Constant> {
+    fn find_known_member_read(&self, access: ExprId) -> Option<(Constant, Validity)> {
         let members = KnownObjects::new(
             self.queries.files(),
             self.inputs.modules,
@@ -70,7 +116,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 left_out.is_object_never_handed_on(read.object.file, read.object.id)
             }
         };
-        is_valid.then_some(read.value)
+        is_valid.then_some((read.value, read.validity))
     }
 
     /// `-Level.Low`
@@ -81,7 +127,10 @@ impl FileLowering<'_, '_, '_, '_> {
             &self.modules.known_member_values,
         );
         let number = members.find_signed_member_in_place(self.file, expression)?;
-        Some(Constant::Number(number))
+        let number = Constant::Number(number);
+        let mut written = self.values_written_in_place.borrow_mut();
+        written.push((self.hir.skip_type_assertions(expression), number));
+        Some(number)
     }
 
     /// The value that stands in the place of a name that is imported from a module of data.

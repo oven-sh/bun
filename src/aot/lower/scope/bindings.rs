@@ -283,12 +283,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         function: FnId,
     ) -> ValueId {
         let held = self.get_checked(symbol, name);
-        self.lower_unless_nullish(held, |lowering| {
+        if self.builder.is_new_closure(held)
+            || self.scopes.created_functions.get(&symbol) == Some(&held)
+        {
+            return held;
+        }
+        let create = |lowering: &mut Self| {
             let id = function::declare_source_function(lowering.file, function, None);
             let closure = lowering.emit_closure(id, None);
             lowering.write_symbol(symbol, name, closure, BindingStore::Assign, None);
             closure
-        })
+        };
+        if self.builder.is_undefined_or_null(held) {
+            return create(self);
+        }
+        let closure = self.lower_unless_nullish(held, create);
+        if let Some(local) = self.scopes.find_local(BindingRef::Symbol(symbol)) {
+            self.builder.write_variable(local.variable, closure);
+            self.scopes.created_functions.insert(symbol, closure);
+        }
+        closure
     }
 
     fn write_symbol(

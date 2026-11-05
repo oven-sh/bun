@@ -722,8 +722,12 @@ pub mod fs {
     }
 
     enum HeldEntriesLock {
-        Shared(#[allow(dead_code)] RwLockReadGuard<'static, ()>),
-        Exclusive(#[allow(dead_code)] RwLockWriteGuard<'static, ()>),
+        Shared {
+            _guard: RwLockReadGuard<'static, ()>,
+        },
+        Exclusive {
+            _guard: RwLockWriteGuard<'static, ()>,
+        },
     }
 
     /// Releases the `EntriesLock` on `Drop`. Like a `MutexGuard` it does not borrow the owner of the lock.
@@ -739,7 +743,7 @@ pub mod fs {
         }
 
         fn is_exclusive(&self) -> bool {
-            matches!(self.held, HeldEntriesLock::Exclusive(_))
+            matches!(self.held, HeldEntriesLock::Exclusive { .. })
         }
 
         fn change_counts(&self, change: fn(u32) -> u32) {
@@ -777,13 +781,17 @@ pub mod fs {
         /// Exclusive, as `Mutex::lock_guard` is: for whoever may rewrite a listing in place or takes one out of the map.
         #[must_use = "the lock is released as soon as the guard is dropped"]
         pub fn lock_guard(&self) -> EntriesGuard {
-            EntriesGuard::new(HeldEntriesLock::Exclusive(self.lock().write()))
+            EntriesGuard::new(HeldEntriesLock::Exclusive {
+                _guard: self.lock().write(),
+            })
         }
 
         /// For whoever only probes listings.
         #[must_use = "the lock is released as soon as the guard is dropped"]
         pub fn shared_guard(&self) -> EntriesGuard {
-            EntriesGuard::new(HeldEntriesLock::Shared(self.lock().read()))
+            EntriesGuard::new(HeldEntriesLock::Shared {
+                _guard: self.lock().read(),
+            })
         }
 
         /// For whoever has found, under `guard`, a listing that it has to rewrite: the exclusive lock in place of

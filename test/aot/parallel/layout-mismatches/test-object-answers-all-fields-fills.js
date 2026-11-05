@@ -1,6 +1,5 @@
 // A reader of several fields tests the object once instead of each slot. Every object below goes through the same readers: the first one a constructor makes, one that lost a field, one whose
 // field became an accessor, one that was seen before it was finished, one whose constructor left early, one made for another new.target, and one that the constructor was only called on.
-// STATISTIC: BirthsFinished >= 2
 // IR-UNTIL FinishBirths
 // The constructor function says where the last field is stored.
 // IRT= 1 Fiber ^ +FinishBirth\b

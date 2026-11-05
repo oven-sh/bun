@@ -1,7 +1,0 @@
-const attempt = (f) => { try { return f(); } catch (e) { return "threw " + e.name; } };
-function F(x) { this.x = x; }
-function G(y) { this.y = y; }
-function is(v) { return v instanceof F ? 1 : 0; }
-function isG(v) { return v instanceof G ? 1 : 0; }
-function all(list) { let t = ""; for (let i = 0; i < list.length; i++) t += is(list[i]) + "" + isG(list[i]); return t; }
-const o = new F(1); console.log(is(o), isG(o)); Object.setPrototypeOf(o, G.prototype); console.log(is(o), isG(o));

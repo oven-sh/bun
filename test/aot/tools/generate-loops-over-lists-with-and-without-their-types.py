@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 40; ../parallel/loops-over-lists-with-and-without-their-types/ holds 3 of them.
 # generate-loops-over-lists-with-and-without-their-types.py <folder>: one loop over a list, written twice: with its types declared and without. Writing the type must not make the loop slower.
 import re, sys, os
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

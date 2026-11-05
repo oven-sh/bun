@@ -7,6 +7,7 @@ use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
 use crate::options::EntryText;
 use bun_ast::{ImportKind, Loader};
 use bun_core::fmt::hex_byte_lower;
+use bun_core::strings::BOM;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, normalize_string_buf};
 use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
@@ -407,7 +408,8 @@ impl<'a> PluginModules<'a> {
         if self.virtual_module(path).is_some() {
             return None;
         }
-        if !reads_raw_bytes(loader) {
+        // The checker reads a program as well, and both read one text of it: what TypeScript decodes.
+        if loader.is_javascript_like() {
             return self.disk.read(path);
         }
         let in_memory_path = to_path(path, self.disk.is_case_sensitive());
@@ -415,7 +417,13 @@ impl<'a> PluginModules<'a> {
             Some(contents) => contents.to_vec(),
             None => read_file_bytes(path)?,
         };
-        Some(Cow::Owned(bytes))
+        // `bun` knows two byte order marks, and none in a file of fewer than three bytes. Whatever else a file begins with is its text.
+        Some(Cow::Owned(match BOM::detect(&bytes) {
+            Some(mark) if !reads_raw_bytes(loader) => {
+                mark.remove_and_convert_to_utf8_and_free(bytes)
+            }
+            _ => bytes,
+        }))
     }
 
     fn unanswered_read(&self, host_path: &[u8]) -> Option<&OnceLock<Option<StoredModule>>> {

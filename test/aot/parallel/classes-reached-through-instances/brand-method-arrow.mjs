@@ -1,4 +1,4 @@
-// STATISTIC: FlowFunctionsWhoseReceiverLeaves >= 1
+// Under: --aot-testing=CheckProofsAtRunTime: native code calls the getter on any receiver, and the arrow has the receiver from the getter
 const hide = value => JSON.parse("0", () => value);
 const tell = act => {
   try {

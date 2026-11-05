@@ -40,6 +40,8 @@ pub struct RuntimeBindOptions {
     pub jsx_fragment_root: Option<Atom>,
     pub emits_decorator_metadata: bool,
     pub hoists_top_level_variables: bool,
+    /// A test run: its files may lay names on `Object.prototype`, accessors among them. Which names is known once every file is bound.
+    pub object_prototype_takes_names: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -162,6 +164,8 @@ bitflags::bitflags! {
         const HANDS_ARGUMENTS_ON = 1 << 5;
         /// Somewhere `arguments[key]` is read. `arguments.name` never names an element.
         const READS_ELEMENTS_OF_ARGUMENTS = 1 << 6;
+        /// Only where `RuntimeBindOptions::object_prototype_takes_names`: somewhere a member of `arguments` is read that the object may lack, so that the read goes on to `Object.prototype`.
+        const MAY_READ_ABOVE_ARGUMENTS = 1 << 7;
     }
 }
 

@@ -96,7 +96,7 @@ pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
 
 /// The path of the file that a form is made of: what `path_of_form` was given. `None`: the path holds no `?`.
 pub fn path_without_form(path: &[u8]) -> Option<&[u8]> {
-    let mark = path.iter().rposition(|&byte| byte == b'?')?;
+    let mark = bun_core::strings::last_index_of_char(path, b'?')?;
     Some(&path[..mark])
 }
 

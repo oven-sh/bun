@@ -125,8 +125,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return SourceRange::default();
         };
         SourceRange {
-            start: self.type_ranges.map_start(self.hir[function].text_start),
-            end: self.type_ranges.map_end(end),
+            start: self.hir[function].text_start,
+            end,
         }
     }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-views-read-inside-their-length.py <folder>: one-shape programs: a position is held against the length of a typed array, and then the array is read or written there.
+# generate-views-read-inside-their-length.py <folder>: all 540; ../parallel/views-read-inside-their-length/ holds 8 of them: one-shape programs: a position is held against the length of a typed array, and then the array is read or written there.
 # Each program holds one way to ask for the bound, one way to come by the position, one access, one kind of view, and one thing that happens between the question and the access.
 # What is printed is primitive. The reference is `bun <file>`.
 import os, sys

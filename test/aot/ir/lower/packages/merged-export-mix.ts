@@ -2291,26 +2291,24 @@ export namespace Outer { export enum K { two = 2 } }
 // CHECK-NEXT: v19 = TryPutIndex v17, v18, v3
 // CHECK-NEXT: v20 = Convert v19 declared={type=boolean}
 // CHECK-NEXT: v21 = ToBoolean v20
-// CHECK-NEXT: Branch v21 -> taken b3(| 0), notTaken b4(| 0)
+// CHECK-NEXT: Branch v21 -> taken b3(| 0), notTaken b6(| 0)
 // CHECK-NEXT: b3(v22):
 // CHECK-NEXT: v23 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]}
 // CHECK-NEXT: v24 = ArrayStorageKind v23
 // CHECK-NEXT: v25 = StrictEq v24, v1
-// CHECK-NEXT: Jump -> next b5(v25)
-// CHECK-NEXT: b4(v26):
-// CHECK-NEXT: Jump -> next b5(v26)
-// CHECK-NEXT: b5(v27):
-// CHECK-NEXT: v28 = ToBoolean v27
-// CHECK-NEXT: Branch v28 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v29):
-// CHECK-NEXT: v30 = PropGet v0 key="length"
-// CHECK-NEXT: v31 = StrictEq v30, v2
-// CHECK-NEXT: Jump -> next b8(v31)
+// CHECK-NEXT: v26 = ToBoolean v25
+// CHECK-NEXT: Branch v26 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v27):
+// CHECK-NEXT: v28 = PropGet v0 key="length"
+// CHECK-NEXT: v29 = StrictEq v28, v2
+// CHECK-NEXT: Jump -> next b7(v29)
+// CHECK-NEXT: b5(v30):
+// CHECK-NEXT: Jump -> next b7(v30)
+// CHECK-NEXT: b6(v31):
+// CHECK-NEXT: Jump -> next b7(v31)
 // CHECK-NEXT: b7(v32):
-// CHECK-NEXT: Jump -> next b8(v32)
-// CHECK-NEXT: b8(v33):
-// CHECK-NEXT: v34 = Convert v33 declared={type=boolean}
-// CHECK-NEXT: Return v34
+// CHECK-NEXT: v33 = Convert v32 declared={type=boolean}
+// CHECK-NEXT: Return v33
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="trySortNumbersInPlace"
 // CHECK: module=[[m_31]] position={{*}} text={{*}} role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=boolean}] {
@@ -4198,26 +4196,21 @@ export namespace Outer { export enum K { two = 2 } }
 // CHECK-NEXT: v1 = Builtin builtin=Object
 // CHECK-NEXT: v2 = Builtin builtin=ObjectCreate
 // CHECK-NEXT: v3 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: Branch v3 -> taken b2(), notTaken b1(| 0)
 // CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_70]]
-// CHECK-NEXT: v8 = Call v7 calleeName="metadataSymbol"
-// CHECK-NEXT: v9 = ElemGet v6, v8
-// CHECK-NEXT: Jump -> next b3(v9)
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_70]]
+// CHECK-NEXT: v6 = Call v5 calleeName="metadataSymbol"
+// CHECK-NEXT: v7 = ElemGet v4, v6
+// CHECK-NEXT: v8 = TypeTest v7 testedType=undefined|null
+// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3(| 0)
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v9 = Null
+// CHECK-NEXT: Jump -> next b4(v9)
 // CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = TypeTest v10 testedType=undefined|null
-// CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v12):
-// CHECK-NEXT: v13 = Null
-// CHECK-NEXT: Jump -> next b6(v13)
-// CHECK-NEXT: b5(v14):
-// CHECK-NEXT: Jump -> next b6(v14)
-// CHECK-NEXT: b6(v15):
-// CHECK-NEXT: v16 = Call v2, v1, v15 calleeName="Object.create"
-// CHECK-NEXT: ReturnCall v16
+// CHECK-NEXT: Jump -> next b4(v10)
+// CHECK-NEXT: b4(v11):
+// CHECK-NEXT: v12 = Call v2, v1, v11 calleeName="Object.create"
+// CHECK-NEXT: ReturnCall v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="setDecoratorMetadata"
 // CHECK: module=[[m_65]] position={{*}} text={{*}} kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=DecoratorsSetDecoratorMetadata thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -4273,24 +4266,20 @@ export namespace Outer { export enum K { two = 2 } }
 // CHECK-NEXT: v4 = Call v3, -, v1 calleeName="Object"
 // CHECK-NEXT: v5 = StrictEq v4, v1
 // CHECK-NEXT: v6 = ToBoolean v5
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b3()
 // CHECK-NEXT: b1(v7):
 // CHECK-NEXT: v8 = PropGet v0 key="call"
 // CHECK-NEXT: v9 = Call v8, v0, v1 calleeKey="call" calleeName="test.call"
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Jump -> next b3(v10)
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: v12 = ToBoolean v11
-// CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v13):
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b5(v14):
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_69]]
-// CHECK-NEXT: v16 = String string="Cannot "
-// CHECK-NEXT: v17 = Add v16, v2
-// CHECK-NEXT: v18 = Call v15, -, v17 calleeName="throwTypeError"
-// CHECK-NEXT: ReturnCall v18
+// CHECK-NEXT: v10 = ToBoolean v9
+// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3()
+// CHECK-NEXT: b2(v11):
+// CHECK-NEXT: Return v11
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_69]]
+// CHECK-NEXT: v13 = String string="Cannot "
+// CHECK-NEXT: v14 = Add v13, v2
+// CHECK-NEXT: v15 = Call v12, -, v14 calleeName="throwTypeError"
+// CHECK-NEXT: ReturnCall v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="testPrivateState"
 // CHECK: module=[[m_65]] position={{*}} text={{*}} role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -5651,26 +5640,33 @@ export namespace Outer { export enum K { two = 2 } }
 // CHECK-LABEL: function {{*}}name="closeIteratorAfterThrow"
 // CHECK: module=[[m_113]] position={{*}} text={{*}} kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b5():
-// CHECK-NEXT: v1 = PropGet v0 key="return"
-// CHECK-NEXT: v2 = TypeTest v1 testedType=undefined|null
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v3) handler=b5():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b3(v4) handler=b5():
-// CHECK-NEXT: v5 = Call v4, v0
-// CHECK-NEXT: v6 = RequireObject v5 runtimeError=IteratorResultNotObject
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v7 = Undefined
+// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v2):
+// CHECK-NEXT: v3 = Undefined
+// CHECK-NEXT: Return v3
+// CHECK-NEXT: b2(v4):
+// CHECK-NEXT: v5 = NarrowByTest v0, v4
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b3() handler=b7():
+// CHECK-NEXT: v6 = PropGet v5 key="return"
+// CHECK-NEXT: v7 = TypeTest v6 testedType=undefined|null
+// CHECK-NEXT: Branch v7 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v8) handler=b7():
 // CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b5() role=CatchHandler:
-// CHECK-NEXT: v8 = CatchValue
+// CHECK-NEXT: b5(v9) handler=b7():
+// CHECK-NEXT: v10 = Call v9, v5
+// CHECK-NEXT: v11 = RequireObject v10 runtimeError=IteratorResultNotObject
 // CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
+// CHECK-NEXT: b6() handler=b7():
+// CHECK-NEXT: v12 = Undefined
+// CHECK-NEXT: Jump -> next b8()
+// CHECK-NEXT: b7() role=CatchHandler:
+// CHECK-NEXT: v13 = CatchValue
+// CHECK-NEXT: Jump -> next b8()
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v14 = Undefined
+// CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="importRejectedByLoader"
 // CHECK: module=[[m_124]] position={{*}} text={{*}} kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=RejectedImportsImportRejectedByLoader thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise<never> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
@@ -5906,143 +5902,160 @@ export namespace Outer { export enum K { two = 2 } }
 // CHECK: module=[[m_126]] position={{*}} text={{*}} kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=WrittenListsArrayOfUndefined thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=number
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b10()
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b12()
 // CHECK-NEXT: b1(v2):
 // CHECK-NEXT: v3 = NarrowByTest v0, v2
 // CHECK-NEXT: v4 = Integer
 // CHECK-NEXT: v5 = BitOr v3, v4
 // CHECK-NEXT: v6 = StrictEq v5, v3
-// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b10()
+// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b12()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v7 = Integer
 // CHECK-NEXT: v8 = GreaterEq v5, v7
-// CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10()
+// CHECK-NEXT: Branch v8 -> taken b3(), notTaken b12()
 // CHECK-NEXT: b3():
 // CHECK-NEXT: v9 = Undefined
 // CHECK-NEXT: v10 = Convert v5 declared={type=int flags=[IsFromCompiler, IsClaim]}
 // CHECK-NEXT: v11 = NewArrayLike v10, v9
-// CHECK-NEXT: v12 = Integer
-// CHECK-NEXT: v13 = Convert v12 declared={type=number}
-// CHECK-NEXT: Jump -> next b4(v13)
-// CHECK-NEXT: b4(v14: number):
+// CHECK-NEXT: v12 = Undefined
+// CHECK-NEXT: v13 = Convert v11 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+// CHECK-NEXT: v14 = TryFillNewArray v13, v12
+// CHECK-NEXT: v15 = ToBoolean v14
+// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v16):
+// CHECK-NEXT: v17 = Convert v11 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v17
+// CHECK-NEXT: b5(v18):
+// CHECK-NEXT: v19 = Integer
+// CHECK-NEXT: v20 = Convert v19 declared={type=number}
+// CHECK-NEXT: Jump -> next b6(v20)
+// CHECK-NEXT: b6(v21: number):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: Jump -> next b5(v14)
-// CHECK-NEXT: b5(v16: number):
+// CHECK-NEXT: Jump -> next b7(v21)
+// CHECK-NEXT: b7(v23: number):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v18 = Less v16, v5
-// CHECK-NEXT: Branch v18 -> taken b6(), notTaken b9()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v19 = Undefined
-// CHECK-NEXT: v20 = Convert v11 declared={type=Array flags=[IsFromCompiler, IsClaim]}
-// CHECK-NEXT: v21 = Convert v16 declared={type=int flags=[IsFromCompiler, IsClaim]}
-// CHECK-NEXT: v22 = TryPutByValDirect v20, v21, v19
-// CHECK-NEXT: v23 = Convert v22 declared={type=boolean}
-// CHECK-NEXT: v24 = ToBoolean v23
-// CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v25):
-// CHECK-NEXT: v26 = Increment v16
-// CHECK-NEXT: v27 = Convert v26 declared={type=number}
-// CHECK-NEXT: Jump -> next b5(v27)
-// CHECK-NEXT: b8(v28):
-// CHECK-NEXT: v29 = Undefined
-// CHECK-NEXT: ElemSet v11, v16, v29
-// CHECK-NEXT: v31 = Integer integer=1
-// CHECK-NEXT: v32 = Add v16, v31
-// CHECK-NEXT: v33 = Integer
-// CHECK-NEXT: v34 = URShift v32, v33
-// CHECK-NEXT: v35 = Convert v34 declared={type=number}
-// CHECK-NEXT: Jump -> next b4(v35)
-// CHECK-NEXT: b9():
-// CHECK-NEXT: v36 = Convert v11 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v36
-// CHECK-NEXT: b10():
-// CHECK-NEXT: v37 = NewObject -, v0 layout=[[L_127]] fields=[0]
-// CHECK-NEXT: v38 = FinishObject v37
-// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|Array<undefined> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v40 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v41 = IsPristineArray v39
-// CHECK-NEXT: Branch v41 -> taken b11(), notTaken b12()
+// CHECK-NEXT: v25 = Less v23, v5
+// CHECK-NEXT: Branch v25 -> taken b8(), notTaken b11()
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v26 = Undefined
+// CHECK-NEXT: v27 = Convert v11 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+// CHECK-NEXT: v28 = Convert v23 declared={type=int flags=[IsFromCompiler, IsClaim]}
+// CHECK-NEXT: v29 = TryPutByValDirect v27, v28, v26
+// CHECK-NEXT: v30 = Convert v29 declared={type=boolean}
+// CHECK-NEXT: v31 = ToBoolean v30
+// CHECK-NEXT: Branch v31 -> taken b9(| 0), notTaken b10(| 0)
+// CHECK-NEXT: b9(v32):
+// CHECK-NEXT: v33 = Increment v23
+// CHECK-NEXT: v34 = Convert v33 declared={type=number}
+// CHECK-NEXT: Jump -> next b7(v34)
+// CHECK-NEXT: b10(v35):
+// CHECK-NEXT: v36 = Undefined
+// CHECK-NEXT: ElemSet v11, v23, v36
+// CHECK-NEXT: v38 = Integer integer=1
+// CHECK-NEXT: v39 = Add v23, v38
+// CHECK-NEXT: v40 = Integer
+// CHECK-NEXT: v41 = URShift v39, v40
+// CHECK-NEXT: v42 = Convert v41 declared={type=number}
+// CHECK-NEXT: Jump -> next b6(v42)
 // CHECK-NEXT: b11():
-// CHECK-NEXT: v42 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v42, v39
-// CHECK-NEXT: v44 = Convert v42 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: Jump -> next b14(v44)
+// CHECK-NEXT: v43 = Convert v11 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v43
 // CHECK-NEXT: b12():
-// CHECK-NEXT: v45 = TypeTest v39 testedType=string
-// CHECK-NEXT: Branch v45 -> taken b13(| 0), notTaken b15(| 0)
-// CHECK-NEXT: b13(v46):
-// CHECK-NEXT: v47 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v47, v46
-// CHECK-NEXT: v49 = Convert v47 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: Jump -> next b14(v49)
-// CHECK-NEXT: b14(v50):
-// CHECK-NEXT: v51 = Convert v50 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: Return v51
-// CHECK-NEXT: b15(v52):
-// CHECK-NEXT: v53 = Builtin builtin=Array [isNotReadFromHolder]
-// CHECK-NEXT: v54 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
-// CHECK-NEXT: v55 = Call v54, v53, v52
-// CHECK-NEXT: ReturnCall v55 casts=[{declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v44 = NewObject -, v0 layout=[[L_127]] fields=[0]
+// CHECK-NEXT: v45 = FinishObject v44
+// CHECK-NEXT: v46 = Convert v45 declared={type=undefined|null|Array<undefined> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v47 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v48 = IsPristineArray v46
+// CHECK-NEXT: Branch v48 -> taken b13(), notTaken b14()
+// CHECK-NEXT: b13():
+// CHECK-NEXT: v49 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v49, v46
+// CHECK-NEXT: v51 = Convert v49 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b16(v51)
+// CHECK-NEXT: b14():
+// CHECK-NEXT: v52 = TypeTest v46 testedType=string
+// CHECK-NEXT: Branch v52 -> taken b15(| 0), notTaken b17(| 0)
+// CHECK-NEXT: b15(v53):
+// CHECK-NEXT: v54 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v54, v53
+// CHECK-NEXT: v56 = Convert v54 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b16(v56)
+// CHECK-NEXT: b16(v57):
+// CHECK-NEXT: v58 = Convert v57 declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+// CHECK-NEXT: Return v58
+// CHECK-NEXT: b17(v59):
+// CHECK-NEXT: v60 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v61 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v62 = Call v61, v60, v59
+// CHECK-NEXT: ReturnCall v62 casts=[{declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined> flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="filledArray"
 // CHECK: module=[[m_126]] position={{*}} text={{*}} kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: v2 = TypeTest v0 testedType=number
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b10()
+// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b12()
 // CHECK-NEXT: b1(v3):
 // CHECK-NEXT: v4 = NarrowByTest v0, v3
 // CHECK-NEXT: v5 = Integer
 // CHECK-NEXT: v6 = BitOr v4, v5
 // CHECK-NEXT: v7 = StrictEq v6, v4
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b10()
+// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b12()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v8 = Integer
 // CHECK-NEXT: v9 = GreaterEq v6, v8
-// CHECK-NEXT: Branch v9 -> taken b3(), notTaken b10()
+// CHECK-NEXT: Branch v9 -> taken b3(), notTaken b12()
 // CHECK-NEXT: b3():
 // CHECK-NEXT: v10 = Undefined
 // CHECK-NEXT: v11 = Convert v6 declared={type=int flags=[IsFromCompiler, IsClaim]}
 // CHECK-NEXT: v12 = NewArrayLike v11, v10
-// CHECK-NEXT: v13 = Integer
-// CHECK-NEXT: v14 = Convert v13 declared={type=number}
-// CHECK-NEXT: Jump -> next b4(v14)
-// CHECK-NEXT: b4(v15: number):
+// CHECK-NEXT: v13 = Convert v12 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+// CHECK-NEXT: v14 = TryFillNewArray v13, v1
+// CHECK-NEXT: v15 = ToBoolean v14
+// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v16):
+// CHECK-NEXT: v17 = Convert v12 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v17
+// CHECK-NEXT: b5(v18):
+// CHECK-NEXT: v19 = Integer
+// CHECK-NEXT: v20 = Convert v19 declared={type=number}
+// CHECK-NEXT: Jump -> next b6(v20)
+// CHECK-NEXT: b6(v21: number):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: Jump -> next b5(v15)
-// CHECK-NEXT: b5(v17: number):
+// CHECK-NEXT: Jump -> next b7(v21)
+// CHECK-NEXT: b7(v23: number):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v19 = Less v17, v6
-// CHECK-NEXT: Branch v19 -> taken b6(), notTaken b9()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v20 = Convert v12 declared={type=Array flags=[IsFromCompiler, IsClaim]}
-// CHECK-NEXT: v21 = Convert v17 declared={type=int flags=[IsFromCompiler, IsClaim]}
-// CHECK-NEXT: v22 = TryPutByValDirect v20, v21, v1
-// CHECK-NEXT: v23 = Convert v22 declared={type=boolean}
-// CHECK-NEXT: v24 = ToBoolean v23
-// CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v25):
-// CHECK-NEXT: v26 = Increment v17
-// CHECK-NEXT: v27 = Convert v26 declared={type=number}
-// CHECK-NEXT: Jump -> next b5(v27)
-// CHECK-NEXT: b8(v28):
-// CHECK-NEXT: ElemSet v12, v17, v1
-// CHECK-NEXT: v30 = Integer integer=1
-// CHECK-NEXT: v31 = Add v17, v30
-// CHECK-NEXT: v32 = Integer
-// CHECK-NEXT: v33 = URShift v31, v32
-// CHECK-NEXT: v34 = Convert v33 declared={type=number}
-// CHECK-NEXT: Jump -> next b4(v34)
-// CHECK-NEXT: b9():
-// CHECK-NEXT: v35 = Convert v12 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v35
-// CHECK-NEXT: b10():
-// CHECK-NEXT: v36 = Builtin builtin=Array [isNotReadFromHolder]
-// CHECK-NEXT: v37 = Convert v0 declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: v38 = Construct v36, -, v37 calleeName="Array"
-// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v40 = PropGet v39 key="fill"
-// CHECK-NEXT: v41 = Call v40, v39, v1 calleeKey="fill" calleeName="made.fill"
-// CHECK-NEXT: ReturnCall v41 casts=[{declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v25 = Less v23, v6
+// CHECK-NEXT: Branch v25 -> taken b8(), notTaken b11()
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v26 = Convert v12 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+// CHECK-NEXT: v27 = Convert v23 declared={type=int flags=[IsFromCompiler, IsClaim]}
+// CHECK-NEXT: v28 = TryPutByValDirect v26, v27, v1
+// CHECK-NEXT: v29 = Convert v28 declared={type=boolean}
+// CHECK-NEXT: v30 = ToBoolean v29
+// CHECK-NEXT: Branch v30 -> taken b9(| 0), notTaken b10(| 0)
+// CHECK-NEXT: b9(v31):
+// CHECK-NEXT: v32 = Increment v23
+// CHECK-NEXT: v33 = Convert v32 declared={type=number}
+// CHECK-NEXT: Jump -> next b7(v33)
+// CHECK-NEXT: b10(v34):
+// CHECK-NEXT: ElemSet v12, v23, v1
+// CHECK-NEXT: v36 = Integer integer=1
+// CHECK-NEXT: v37 = Add v23, v36
+// CHECK-NEXT: v38 = Integer
+// CHECK-NEXT: v39 = URShift v37, v38
+// CHECK-NEXT: v40 = Convert v39 declared={type=number}
+// CHECK-NEXT: Jump -> next b6(v40)
+// CHECK-NEXT: b11():
+// CHECK-NEXT: v41 = Convert v12 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v41
+// CHECK-NEXT: b12():
+// CHECK-NEXT: v42 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v43 = Convert v0 declared={type=number} illTypedCause=Assertion
+// CHECK-NEXT: v44 = Construct v42, -, v43 calleeName="Array"
+// CHECK-NEXT: v45 = Convert v44 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v46 = PropGet v45 key="fill"
+// CHECK-NEXT: v47 = Call v46, v45, v1 calleeKey="fill" calleeName="made.fill"
+// CHECK-NEXT: ReturnCall v47 casts=[{declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="map"
 // CHECK: module=[[m_126]] position={{*}} text={{*}} kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=WrittenListsMappedFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] {

@@ -135,6 +135,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) use_counts: Vec<u8>,
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
+    pub(super) functions_created_before_loops: Vec<(StmtId, SymbolId)>,
     pub(super) names_called: Vec<SymbolId>,
     pub(super) symbol_placements: Vec<Placement>,
     pub(super) slot_placements: Vec<(SlotKey, Placement)>,
@@ -189,6 +190,17 @@ impl ScopeAnalysis {
     /// The function that the name is declared as, where its function object is made by whoever reads the name first.
     pub(in crate::lower) fn function_made_at_first_read(&self, symbol: SymbolId) -> Option<FnId> {
         find_by_key(&self.made_at_first_read, symbol)
+    }
+
+    /// The declared functions that the loop reads and whose closures are created in front of it.
+    pub(in crate::lower) fn functions_created_before_loop(
+        &self,
+        statement: StmtId,
+    ) -> &[(StmtId, SymbolId)] {
+        let functions = &self.functions_created_before_loops;
+        let first = functions.partition_point(|entry| entry.0 < statement);
+        let end = functions.partition_point(|entry| entry.0 <= statement);
+        &functions[first..end]
     }
 
     /// The call enters the function itself: nobody reads the name of the callee.

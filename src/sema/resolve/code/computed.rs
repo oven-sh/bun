@@ -131,8 +131,7 @@ impl<'h> Resolver<'h> {
     fn find_name_of_other_package(&self, own_folder: &[u8], folder: &[u8]) -> Option<Vec<u8>> {
         const INSTALLED_IN: &[u8] = b"/node_modules/";
         let folder = [strings::without_trailing_slash(folder), b"/"].concat();
-        let mut windows = folder.windows(INSTALLED_IN.len());
-        if let Some(at) = windows.rposition(|window| window == INSTALLED_IN) {
+        if let Some(at) = strings::last_index_of(&folder, INSTALLED_IN) {
             let start = at + INSTALLED_IN.len();
             let name = written_package_name(&folder[start..]).filter(|name| !name.is_empty())?;
             let is_own = is_inside(own_folder, &folder[..start + name.len()]);

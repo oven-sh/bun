@@ -58,7 +58,12 @@ pub(super) fn can_lose_trust(origin: FileOrigin) -> bool {
     effect_of(origin, DiagnosticClass::EarlyError, Category::Error) == Effect::WithdrawsTrust
 }
 
-pub(super) fn requested_diagnostics(origin: FileOrigin) -> Requested {
+pub(super) fn requested_diagnostics(origin: FileOrigin, looks_for_type_errors: bool) -> Requested {
+    if looks_for_type_errors
+        && effect_of(origin, DiagnosticClass::Semantic, Category::Error) == Effect::StopsBuild
+    {
+        return Requested::All;
+    }
     match effect_of(origin, DiagnosticClass::EarlyError, Category::Error) {
         Effect::StopsBuild | Effect::Warns | Effect::WithdrawsTrust => Requested::EarlyErrors,
         // No build looks for mistakes in Bun's own modules.
@@ -330,7 +335,15 @@ mod tests {
             (EvaluatedText, Requested::EarlyErrors),
         ];
         for (origin, requested) in expected {
-            assert!(requested_diagnostics(origin) == requested, "{origin:?}");
+            assert!(
+                requested_diagnostics(origin, false) == requested,
+                "{origin:?}"
+            );
+            let checked = match origin {
+                NoFile | ProgramSource => Requested::All,
+                _ => requested,
+            };
+            assert!(requested_diagnostics(origin, true) == checked, "{origin:?}");
         }
     }
 

@@ -5743,11 +5743,17 @@ impl<'p, 's> Checker<'p, 's> {
                     let scope = self.begin_scope();
                     let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                     let is_union = self.is_union(*whole);
-                    for part in parts.iter() {
-                        let ty = self.type_of_prop(part, MapperId::IDENTITY);
-                        let single = (&parts[0], types.first());
-                        if is_union || !Self::is_merged_instantiation(single, (part, ty)) {
-                            types.push(ty);
+                    let grown = self.types_of_property_of_grown_union(*whole, prop, parts);
+                    match grown {
+                        Some(so_far_and_added) => types.extend(so_far_and_added),
+                        None => {
+                            for part in parts.iter() {
+                                let ty = self.type_of_prop(part, MapperId::IDENTITY);
+                                let single = (&parts[0], types.first());
+                                if is_union || !Self::is_merged_instantiation(single, (part, ty)) {
+                                    types.push(ty);
+                                }
+                            }
                         }
                     }
                     let all = match types[..] {
@@ -5799,6 +5805,40 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             ty
         }
+    }
+
+    /// For `prop`, the property of the union `whole` that combines `parts`: the type of that property of the union that
+    /// `whole` has grown from (`Growth`), and the type of the part that has come with the new member. Their union is the
+    /// union of the types of `parts`: all of them are object types, which no reduction of literal types touches.
+    fn types_of_property_of_grown_union(
+        &mut self,
+        whole: TypeId,
+        prop: &Prop,
+        parts: &[Prop],
+    ) -> Option<[TypeId; 2]> {
+        let growth = *self.grown_unions.get(&whole)?;
+        // Each member has a part of its own, at its own place. What stands for the members that lack the name comes last.
+        if prop
+            .flags
+            .intersects(PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL)
+            || parts.len() != self.parts(whole).len()
+        {
+            return None;
+        }
+        let key = (growth.from, prop.name);
+        let so_far = self.p.intersected_props.get(&self.task, &key)?;
+        // They're in the order of their flags.
+        let [first, .., last] = *self.parts(so_far) else {
+            return None;
+        };
+        if self.flags(first) != tf::OBJECT
+            || self.flags(last) != tf::OBJECT
+            || self.has_named_unions(so_far)
+        {
+            return None;
+        }
+        let added = self.type_of_prop(&parts[growth.at], MapperId::IDENTITY);
+        (self.flags(added) == tf::OBJECT).then_some([so_far, added])
     }
 
     /// `m.MapsThisOnly() && isThisless(symbol)`: true if `instantiateSymbol` returns `sym`, a member of a class or
@@ -8826,6 +8866,9 @@ impl<'p, 's> Checker<'p, 's> {
         let built = self.shape_memo_or(
             ty,
             |c| {
+                if let Some(grown) = c.members_of_grown_union(ty) {
+                    return grown;
+                }
                 // `t.Types()` are in the order of `CompareTypes`.
                 let parts = c.parts(ty);
                 Shape {
@@ -8841,6 +8884,74 @@ impl<'p, 's> Checker<'p, 's> {
             resolved: built.resolved,
             mapper: MapperId::IDENTITY,
         }
+    }
+
+    /// What `resolveUnionTypeMembers` sets for a union that has grown by a member (`Growth`), made of what it has set for
+    /// the union that `ty` has grown from, where that is one call signature that combines one of each member, without type
+    /// parameters and `this` types, and the new member has one that matches. `None`: `resolveUnionTypeMembers` makes it.
+    fn members_of_grown_union(&mut self, ty: TypeId) -> Option<Shape<'s>> {
+        let growth = *self.grown_unions.get(&ty)?;
+        let so_far = self.resolved_union_type_members(growth.from)?.resolved;
+        let ([combined], [], []) = (
+            &so_far.shape.call[..],
+            &so_far.shape.construct[..],
+            &so_far.shape.index[..],
+        ) else {
+            return None;
+        };
+        let SigData::Synth {
+            type_params,
+            params,
+            ret: TypeId::UNRESOLVED,
+            this: None,
+            of,
+            is_union: true,
+        } = self.types().sig(*combined)
+        else {
+            return None;
+        };
+        let fewer = self.parts(growth.from);
+        // The signature that is cloned comes first in `of`, whichever member has it: only where that's the first member are
+        // they in the order of the members. The first member without a construct signature ends the search for those.
+        if growth.at == 0
+            || !type_params.is_empty()
+            || of.len() != fewer.len()
+            || *self.signatures(fewer[0], false) != [of[0]]
+            || !self.signatures(fewer[0], true).is_empty()
+        {
+            return None;
+        }
+        let [added] = *self.signatures(growth.added, false) else {
+            return None;
+        };
+        let is_function = self.is_global_ref(growth.added, known::Function, 0);
+        if is_function.is_some() || of.contains(&added) {
+            return None;
+        }
+        let matching =
+            self.find_matching_signature(&[added], of[0], PartialMatch::No, IgnoreReturnTypes::Yes);
+        if matching.is_none() || self.sig_this_type(added).is_some() {
+            return None;
+        }
+        let mut all = of.to_vec();
+        all.insert(growth.at, added);
+        let so_far = *combined;
+        let combined = self.types().intern_sig(SigData::Synth {
+            type_params: ArenaBox::empty(),
+            params: self.list(params),
+            ret: TypeId::UNRESOLVED,
+            this: None,
+            of: self.list(&all),
+            is_union: true,
+        });
+        self.grown_signatures.insert(combined, (so_far, added));
+        // `getUnionIndexInfos`
+        let apparent = self.apparent_type(growth.added);
+        self.structured_members(apparent);
+        Some(Shape {
+            call: vec_from_iter_in([combined], self.arena),
+            ..Shape::new_in(self.arena)
+        })
     }
 
     /// The members that `resolveUnionTypeMembers` has set for the union `ty`

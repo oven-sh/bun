@@ -4,14 +4,15 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl, SymbolId};
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId,
+    self, BinOp, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId, OtherValues,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
     ResolvedForm, ResolvedFrom, does_import_meta_resolve_ask_resolver,
-    find_holder_of_require_made_for_choice, find_module_printed_as_require, find_own_require,
-    find_require_call, holds_import_meta_require, is_create_require_behind_get_builtin_module,
-    is_made_require, is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
+    find_holder_of_require_made_for_choice, find_module_printed_as_require,
+    find_other_values_of_own_require, find_own_require, find_require_call,
+    holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
+    is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::{FileId, Sym};
 use bun_sema::resolve::ExternalKind;
@@ -30,7 +31,8 @@ use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
 use crate::modules::{
-    Candidates, ModuleFailureId, ModuleKind, ModuleRef, Site, SiteAnswer, SpelledModule,
+    Candidates, ImportBinding, ModuleFailureId, ModuleKind, ModuleRef, Site, SiteAnswer,
+    SpelledModule,
 };
 
 #[derive(Copy, Clone)]
@@ -483,6 +485,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return None;
         }
+        // A mock over the file that exports the `require`, or over one that hands it on, puts another function behind the name, and so does a spy.
+        let own_require = find_own_require(hir, bound, decisions, made);
+        let is_of_other_file = matches!(
+            own_require,
+            Some(OwnRequire::OfOtherFile(_) | OwnRequire::MadeInOtherFile(_))
+        );
+        let other_values = match is_of_other_file
+            && resolved_from.is_none_or(|from| self.may_require_of_file_be_replaced(from))
+        {
+            true => OtherValues::Any,
+            false => find_other_values_of_own_require(hir, bound, decisions, made),
+        };
+        // Nothing tells what `createRequire` made in another file from another function: the call is left to whatever the name holds.
+        let is_told_by_identity =
+            matches!(own_require, Some(OwnRequire::OfOtherFile(_))) && resolved_from.is_some();
+        if is_of_other_file && other_values == OtherValues::Any && !is_told_by_identity {
+            return None;
+        }
+        let test_of_value = match (other_values, resolved_from) {
+            (OtherValues::None, _) => CalleeTest::IsFilled,
+            (OtherValues::Any, Some(exporter)) if is_of_other_file => {
+                CalleeTest::IsRequireOf(exporter)
+            }
+            (OtherValues::Falsy | OtherValues::Any, _) => CalleeTest::IsTruthy,
+        };
         let written = self.file.skip_type_syntax(callee);
         let given = require_call.map_or(arguments, |found| found.args);
         let modules = self.file.inputs.modules;
@@ -530,7 +557,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             CalleeTest::Method {
                 expected,
                 form: found.form,
-                require: find_own_require(hir, bound, decisions, found.require)?,
+                require: own_require?,
+                is_truthy: matches!(test_of_value, CalleeTest::IsTruthy),
+                exporter: match test_of_value {
+                    CalleeTest::IsRequireOf(exporter) => Some(exporter),
+                    _ => None,
+                },
             }
         } else if holds_import_meta_require(hir, bound, callee) {
             match bound.import_meta_may_be_modified() {
@@ -540,6 +572,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             match self.file.classify_callee(callee) {
                 CalleeKnowledge::Unresolved if is_require_made_for_own_file(hir, bound, callee) => {
+                    if other_values != OtherValues::None {
+                        return Some(lower_tested_call(
+                            self,
+                            call,
+                            chain_exit,
+                            test_of_value,
+                            operation,
+                            &site,
+                        ));
+                    }
                     if !may_still_be_undefined(hir, bound, callee) {
                         self.lower_expression(callee);
                         return Some(self.lower_untested_call(call, arguments, operation, &site));
@@ -550,8 +592,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     match find_own_require(hir, bound, decisions, callee)? {
                         OwnRequire::OfFile => CalleeTest::Expected(BuiltinId::ModuleRequire),
                         OwnRequire::OfOtherFile(_)
+                        | OwnRequire::MadeInOtherFile(_)
                         | OwnRequire::Made
-                        | OwnRequire::MadeForPath(_) => CalleeTest::IsFilled,
+                        | OwnRequire::MadeForPath(_) => test_of_value,
                         OwnRequire::MadeForChoice(holder) => CalleeTest::IsMadeForOwnFile(holder),
                     }
                 }
@@ -666,6 +709,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .ensure_variable(VariableKey::RequireMadeForOwnFile(holder))
     }
 
+    fn may_require_of_file_be_replaced(&self, exporter: FileId) -> bool {
+        let modules = self.file.inputs.modules;
+        let mut imported = modules.import_bindings(self.file.file).iter();
+        modules.may_be_mocked(ModuleRef::File(exporter))
+            || imported.any(|&(_, binding)| match binding {
+                ImportBinding::Variable(variable) => {
+                    variable.file == exporter && modules.is_replaceable(variable)
+                }
+                ImportBinding::Namespace { module, .. }
+                | ImportBinding::NamespaceRead { module, .. } => modules.may_be_mocked(module),
+                _ => false,
+            })
+    }
+
+    // Whether the value is what `test` lets pass. `None`: the test asks for what is there at all, which whoever asks here has seen.
+    fn emit_test_of_value(&mut self, value: ValueId, test: CalleeTest) -> Option<ValueId> {
+        match test {
+            CalleeTest::IsTruthy => Some(self.builder.to_boolean(value)),
+            CalleeTest::IsRequireOf(file) => {
+                let module = self.file.fragment.declare_module(ModuleRef::File(file));
+                let expected = self
+                    .builder
+                    .module_builtin(BuiltinId::ModuleRequire, module);
+                Some(self.builder.strict_eq(value, expected))
+            }
+            _ => None,
+        }
+    }
     fn emit_test_of_made_require(&mut self, made: ValueId, holder: SymbolId) -> ValueId {
         let variable = self.variable_of_require_made_for_own_file(holder);
         let kept = self.builder.get_module_variable(variable);
@@ -756,6 +827,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .map(|it| SpelledModule {
                 spelling: it.name,
                 module: ModuleRef::Runtime(it.module),
+                is_left_to_loader: false,
             })
             .collect();
         // Every value has its arm, so no name is left to `require`, which takes paths.
@@ -829,6 +901,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         callee: Callee,
         expected: BuiltinId,
         require: OwnRequire,
+        of_receiver: CalleeTest,
     ) -> ValueId {
         let receiver = callee.this.expect("the call of a member has a receiver");
         let is_followed = self.builder.create_variable(None);
@@ -850,8 +923,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder.strict_eq(receiver, expected_receiver)
             }
             // Nothing else stores to the binding that holds it, and where that is still empty the read of the method has thrown.
-            OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::OfOtherFile(_) => {
-                self.builder.boolean(true)
+            OwnRequire::Made
+            | OwnRequire::MadeForPath(_)
+            | OwnRequire::OfOtherFile(_)
+            | OwnRequire::MadeInOtherFile(_) => {
+                match self.emit_test_of_value(receiver, of_receiver) {
+                    Some(is_require) => is_require,
+                    None => self.builder.boolean(true),
+                }
             }
             OwnRequire::MadeForChoice(holder) => self.emit_test_of_made_require(receiver, holder),
         };
@@ -1486,6 +1565,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let spelled_modules = candidates.spelled_modules();
         let all_names_are_known =
             (self.file).finds_module_under_every_name(written, spelled_modules);
+        // A plugin answers first for a name that is left to the loader.
+        let linked: Vec<SpelledModule>;
+        let spelled_modules = match spelled_modules.iter().any(|it| it.is_left_to_loader) {
+            true => {
+                let is_linked = |it: &&SpelledModule| !it.is_left_to_loader;
+                linked = spelled_modules.iter().filter(is_linked).copied().collect();
+                &linked[..]
+            }
+            false => spelled_modules,
+        };
         if let Some(form) = self.file.find_resolved_form(node) {
             let candidates = AnswersOfResolver {
                 form,
@@ -1497,7 +1586,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules_of_every_value = self.file.find_modules_of_every_value(node, spelled_modules);
         let spelled_modules = modules_of_every_value.as_deref().unwrap_or(spelled_modules);
         if spelled_modules.is_empty() {
-            return self.emit_load_by_name(load, referrer, specifier, false);
+            return self.emit_load_by_name(load, referrer, specifier, all_names_are_known);
         }
         let result = self.builder.create_variable(None);
         let mut strings: Vec<StringId> = Vec::with_capacity(spelled_modules.len());
@@ -1920,11 +2009,18 @@ enum CalleeTest {
     Expected(BuiltinId),
     // The callee is a binding that one statement fills with `import.meta.require`, with what `createRequire` makes or with the `require` of the file that exports it, and nothing else stores to.
     IsFilled,
+    // As `IsFilled`, where the way to the binding passes an `&&`: the callee may be the falsy value on the left of it.
+    IsTruthy,
+    // The callee may be anything, and the load stands for a call of the `require` of this file, which exports it.
+    IsRequireOf(FileId),
     // `require.call(receiver, p)` and `require.apply(receiver, [p])`.
     Method {
         expected: BuiltinId,
         form: RequireCallForm,
         require: OwnRequire,
+        // `IsTruthy` and `IsRequireOf`, asked of the receiver.
+        is_truthy: bool,
+        exporter: Option<FileId>,
     },
     // `OwnRequire::MadeForChoice`
     IsMadeForOwnFile(SymbolId),
@@ -1966,9 +2062,23 @@ fn lower_tested_call(
             other_callee.function = empty;
             lowering.builder.strict_eq(callee.function, empty)
         }
+        CalleeTest::IsTruthy | CalleeTest::IsRequireOf(_) => lowering
+            .emit_test_of_value(callee.function, test)
+            .expect("both ask something of the value"),
         CalleeTest::Method {
-            expected, require, ..
-        } => lowering.emit_test_of_method(callee, expected, require),
+            expected,
+            require,
+            is_truthy,
+            exporter,
+            ..
+        } => {
+            let of_receiver = match (exporter, is_truthy) {
+                (Some(exporter), _) => CalleeTest::IsRequireOf(exporter),
+                (None, true) => CalleeTest::IsTruthy,
+                (None, false) => CalleeTest::IsFilled,
+            };
+            lowering.emit_test_of_method(callee, expected, require, of_receiver)
+        }
         CalleeTest::IsMadeForOwnFile(holder) => {
             lowering.emit_test_of_made_require(callee.function, holder)
         }
@@ -1984,19 +2094,20 @@ fn lower_tested_call(
             (Edge::to(matched), Edge::with_proofs(other, &[0]))
         }
         CalleeTest::IsFilled => (Edge::to(other), Edge::to(matched)),
-        CalleeTest::Method { .. } | CalleeTest::IsMadeForOwnFile(_) => {
-            (Edge::to(matched), Edge::to(other))
-        }
+        CalleeTest::IsTruthy
+        | CalleeTest::IsRequireOf(_)
+        | CalleeTest::Method { .. }
+        | CalleeTest::IsMadeForOwnFile(_) => (Edge::to(matched), Edge::to(other)),
     };
     lowering.builder.branch(condition, if_true, if_false);
 
     lowering.continue_in(matched);
     let (is_other_arm_read, specifier) = match test {
-        CalleeTest::Expected(_) | CalleeTest::IsMadeForOwnFile(_) => {
+        CalleeTest::Expected(_) | CalleeTest::IsRequireOf(_) | CalleeTest::IsMadeForOwnFile(_) => {
             (true, values.first().copied())
         }
         // The other arm calls `undefined` and throws.
-        CalleeTest::IsFilled => (false, values.first().copied()),
+        CalleeTest::IsFilled | CalleeTest::IsTruthy => (false, values.first().copied()),
         CalleeTest::Method { form, .. } => (
             true,
             match (form, site.answer) {

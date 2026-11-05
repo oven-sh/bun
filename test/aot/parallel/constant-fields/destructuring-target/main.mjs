@@ -1,5 +1,0 @@
-// `const E = {}; E.A = 0;`: a read of E.A becomes 0 where every store is known and none can be caught, refused or followed by another value.
-const say = run => { try { console.log(run()); } catch (e) { console.log(e.name + ": " + e.message); } };
-import { read, whole } from "./m.mjs";
-({ x: whole().A } = { x: 7 });
-say(() => read());

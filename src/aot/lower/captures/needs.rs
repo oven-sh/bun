@@ -3,7 +3,7 @@ use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::{Capture, CaptureInput, CaptureList, CapturePlan, CapturedBinding};
-use crate::lower::scope::{BindingRef, WalkedFunction, WalkedFunctionId};
+use crate::lower::scope::{BindingRef, Initialization, WalkedFunction, WalkedFunctionId};
 
 type OwnedEnvironment = (ScopeId, WalkedFunctionId);
 
@@ -49,27 +49,50 @@ pub(in crate::lower) fn compute_captures(input: &CaptureInput<'_>) -> CapturePla
         is_called_by_name: &is_called_by_name,
     };
     let plan = plan_captures(&problem, &[]);
-    match holds_scope_beside_copy_of_its_field(input, &plan) {
-        true => plan_captures(&problem, &plan.fields),
-        false => plan,
+    match find_bindings_read_in_held_scopes(input, &plan) {
+        Some(read_in_scopes) => plan_captures(&problem, &read_in_scopes),
+        None => plan,
     }
 }
 
-fn holds_scope_beside_copy_of_its_field(input: &CaptureInput<'_>, plan: &CapturePlan) -> bool {
+// A closure that holds a scope reads there what the scope holds anyway, and the declared functions that are instantiated with the scope.
+// None: no closure holds a scope beside a copy of one of those.
+fn find_bindings_read_in_held_scopes(
+    input: &CaptureInput<'_>,
+    plan: &CapturePlan,
+) -> Option<Vec<BindingRef>> {
+    let mut copies_field = false;
+    let mut sibling_functions = Vec::new();
     let lists = input.functions.iter().zip(&plan.captures);
-    let mut lists = lists.filter(|(function, _)| !function.is_made_late);
-    lists.any(|(_, list)| {
+    for (_, list) in lists.filter(|(function, _)| !function.is_only_called_directly) {
         let number_of_scopes =
             list.partition_point(|capture| matches!(capture, Capture::Environment(_)));
         let (scopes, values) = list.split_at(number_of_scopes);
-        !scopes.is_empty()
-            && values.iter().any(|&capture| match capture {
-                Capture::Value(binding) if plan.fields.binary_search(&binding).is_ok() => {
-                    scopes.contains(&Capture::Environment(find_binding(input, binding).scope))
-                }
-                _ => false,
-            })
-    })
+        if scopes.is_empty() {
+            continue;
+        }
+        for &capture in values {
+            let Capture::Value(binding) = capture else {
+                continue;
+            };
+            let captured = find_binding(input, binding);
+            if !scopes.contains(&Capture::Environment(captured.scope)) {
+                continue;
+            }
+            if plan.fields.binary_search(&binding).is_ok() {
+                copies_field = true;
+            } else if captured.initialization == Some(Initialization::WITH_HOISTED_FUNCTIONS) {
+                sibling_functions.push(binding);
+            }
+        }
+    }
+    if !copies_field && sibling_functions.is_empty() {
+        return None;
+    }
+    sibling_functions.extend_from_slice(&plan.fields);
+    sibling_functions.sort_unstable();
+    sibling_functions.dedup();
+    Some(sibling_functions)
 }
 
 fn plan_captures(problem: &CaptureProblem<'_>, fields_of_scopes: &[BindingRef]) -> CapturePlan {
@@ -210,7 +233,7 @@ fn list_captures(
             false => captures.push(Capture::Environment(captured.scope)),
         }
     }
-    let is_made_as_closure = !input.functions[function.index()].is_made_late;
+    let is_made_as_closure = !input.functions[function.index()].is_only_called_directly;
     let number_of_scopes = captures.len();
     for (binding, scope) in copied {
         let is_read_in_scope = is_made_as_closure

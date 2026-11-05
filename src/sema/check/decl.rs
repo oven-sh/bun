@@ -5188,6 +5188,9 @@ impl<'p, 's> Checker<'p, 's> {
                 ref type_params,
                 ..
             } if of.len() > 1 => self.resolve_return_type(sig, |c| {
+                if let Some(as_before) = c.return_type_of_grown_signature(sig) {
+                    return as_before;
+                }
                 let returns: Vec<TypeId> = of.iter().map(|&member| c.sig_return(member)).collect();
                 let combined = if is_union {
                     c.union_reduced(&returns)
@@ -5235,6 +5238,15 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiate(declared, mapper)
             }
         }
+    }
+
+    /// The return type of a signature that combines one signature more than another (`grown_signatures`), none with type
+    /// parameters, if the one more returns what one of the others returns: the same types are united and reduced.
+    fn return_type_of_grown_signature(&mut self, sig: SigId) -> Option<TypeId> {
+        let &(so_far, added) = self.grown_signatures.get(&sig)?;
+        let so_far = self.p.resolved_return_types.get(&self.task, &so_far)?;
+        let added = self.sig_return(added);
+        self.parts(so_far).contains(&added).then_some(so_far)
     }
 
     /// True if `WithReturn { sig: of, ret: UNRESOLVED }` is the clone that

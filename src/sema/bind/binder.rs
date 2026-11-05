@@ -3861,6 +3861,7 @@ impl<'f, 's> Binder<'f, 's> {
         if self.is_static(m, MemberOwner::Class(class)) {
             self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
         }
+        self.push_scope_of_code_behind_class(class);
         // `forEachYieldExpression` visits only the computed name of a method, an accessor or a
         // constructor.
         let counted = self.yields.len();
@@ -4158,6 +4159,9 @@ impl<'f, 's> Binder<'f, 's> {
                 if !is_static {
                     self.associated_declaration = PatId::NONE;
                 }
+                let is_behind_class = is_static
+                    && decorator_metadata::is_field_moved_by_legacy_decorators(self.f, m)
+                    && self.push_scope_of_code_behind_class(class);
                 let has_unit = matches!(owner, MemberOwner::Class(_))
                     && self.push_runtime_scope(ScopeKind::FieldInitializer(m));
                 if constructor.is_some() {
@@ -4171,6 +4175,7 @@ impl<'f, 's> Binder<'f, 's> {
                     self.pop_scope();
                 }
                 self.pop_runtime_scope(has_unit);
+                self.pop_runtime_scope(is_behind_class);
                 self.scope_change_of = scope_change_of;
                 self.associated_declaration = associated;
             }

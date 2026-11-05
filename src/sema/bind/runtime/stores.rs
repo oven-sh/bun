@@ -158,6 +158,27 @@ pub(super) fn is_object_of_element(hir: &File<'_>, bound: &BoundBuilder, object:
     }
 }
 
+/// `arguments.length`, `arguments.callee` and `arguments[0]`: the object has the two names itself until somebody deletes them, and no object above it takes a name that is a number.
+pub(super) fn is_object_of_own_member_of_arguments(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    object: ExprId,
+) -> bool {
+    let object = find_outermost_cast(hir, bound, object);
+    let Parent::Expr(access) = bound.parent_of_expr(object) else {
+        return false;
+    };
+    match hir.exprs.get(access.idx()).map(|access| access.kind) {
+        Some(ExprKind::Dot { obj, name, .. }) => {
+            obj == object && (name == known::length || name == known::callee)
+        }
+        Some(ExprKind::Index { obj, index, .. }) => {
+            obj == object && matches!(hir[index].kind, ExprKind::Number(_))
+        }
+        _ => false,
+    }
+}
+
 /// `object.name` and `object[key]` where the program takes the value and nothing else: no store, no `delete`, and no call, which would hand the object over as `this`.
 pub(super) fn is_object_of_read(hir: &File<'_>, bound: &BoundBuilder, object: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, object);

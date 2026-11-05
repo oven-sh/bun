@@ -1474,6 +1474,8 @@ fn find_imported_requires(
                     specifier,
                     export: require.export,
                     path: (require.path).unwrap_or_else(|| atoms.intern(exporter.target.key.path)),
+                    is_made: require.is_made,
+                    other_values: require.other_values,
                 });
             }
         }

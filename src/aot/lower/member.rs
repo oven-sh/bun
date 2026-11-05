@@ -178,7 +178,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(constant) = self.file.find_data_member_read(access) {
             return Some(self.emit_constant(constant));
         }
-        let value = match self.file.find_enum_member_read(access)? {
+        let constant = self.file.find_enum_member_read(access)?;
+        if let Some(member) = self.file.find_member_of_loaded_module(access) {
+            self.check_member_root(member);
+        }
+        let value = match constant {
             Constant::Number(number) => self.emit_number(number),
             constant => self.emit_constant(constant),
         };

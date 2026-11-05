@@ -186,22 +186,23 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=1
 // CHECK-NEXT: v3 = ToNumeric v2
 // CHECK-NEXT: v4 = Increment v3
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_6]] field=1
-// CHECK-NEXT: v7 = Integer integer=2
-// CHECK-NEXT: v8 = Mod v3, v7
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = StrictEq v8, v9
-// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: PrivateSet v0, v6, v5 layout=[[L_6]] field=1
+// CHECK-NEXT: v8 = Integer integer=2
+// CHECK-NEXT: v9 = Mod v3, v8
+// CHECK-NEXT: v10 = Integer
+// CHECK-NEXT: v11 = StrictEq v9, v10
+// CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v11 = String string="name"
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v12 = Null
+// CHECK-NEXT: v12 = String string="name"
 // CHECK-NEXT: Jump -> next b3(v12)
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsUndefined]}
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v13 = Null
+// CHECK-NEXT: Jump -> next b3(v13)
+// CHECK-NEXT: b3(v14):
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsUndefined]}
+// CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsUndefined]}] results=[{type=anything}] {

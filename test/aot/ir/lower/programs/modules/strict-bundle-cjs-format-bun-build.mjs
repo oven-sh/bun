@@ -39,8 +39,9 @@ exports.late = 2;
 // CHECK-NEXT: v6 = PropGet v5 key="stringify"
 // CHECK-NEXT: v7 = Convert v6 declared={type=builtin(JSONStringify) flags=[IsExpected]}
 // CHECK-NEXT: v8 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v9 = Call v7, v5, v8 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v10 = Call v4, v2, v9 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
+// CHECK-NEXT: v9 = CheckInitialized v8 name="m"
+// CHECK-NEXT: v10 = Call v7, v5, v9 calleeKey="stringify" calleeName="JSON.stringify"
+// CHECK-NEXT: v11 = Call v4, v2, v10 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v12 = Undefined
+// CHECK-NEXT: Return v12
 // CHECK-NEXT: }

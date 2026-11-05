@@ -1,5 +1,5 @@
 // One required file calls require() with a constant name and holds a direct eval. A class out of a third file, which has nothing to do with it, is used beside a class with the same text in this file.
-// COUNT: operations <= 50 Todo: the class out of the required file is unknown where it is constructed: the exports variable of every CommonJS file is open (start-up-and-deferral-2, O4): 26 operationAOTAllocateSlow. The old compiler counted 26.
+// COUNT: operations <= 50 Todo: the class out of the required file is unknown where it is constructed: the exports variable of every CommonJS file is open: 26 operationAOTAllocateSlow. An earlier compiler counted 26.
 // COUNT: operations <= 70
 const Required = require("./counter.cjs");
 const isMap = require("./is-map.cjs");

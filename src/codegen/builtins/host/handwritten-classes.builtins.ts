@@ -17,7 +17,7 @@ const webCoreClass = (name: string, instanceCppClass: b.CppClassRef, options: b.
 
 const lockedNativeValue = (structureSlot: string): b.ClassOptions => ({
   instanceStructureCppExpression: `globalObject->domStructure(WebCore::DOMStructureSlot::${structureSlot})`,
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   stateHeap: "ExternalState",
 });
 
@@ -55,7 +55,7 @@ export default b.declarations(
       "globalObject->m_JSBunRequestStructure.getInitializedOnMainThread(globalObject)->storedPrototypeObject()",
     instanceStructureCppExpression: "globalObject->m_JSBunRequestStructure.getConcurrently()",
     hasConstructor: false,
-    lockedObjects: ["prototype"],
+    lockedMembers: ["prototype"],
     types: [b.viewType("bun.BunRequest")],
     proto: {
       clone: {

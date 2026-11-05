@@ -1,3 +1,4 @@
+mod asked;
 mod commonjs;
 mod entries;
 #[cfg(test)]
@@ -5,8 +6,8 @@ mod tests;
 
 pub(super) use entries::collect_export_entries;
 
+use self::asked::{AskedNames, Stars};
 use self::commonjs::{CommonJsNames, resolve_commonjs_names};
-use super::ModuleRef;
 use super::bindings::{ExportBinding, ModuleExport, RequiredName};
 use super::commonjs_exports::{CommonJsImport, CommonJsTexts};
 use super::compare_code_units;
@@ -16,6 +17,7 @@ use super::interop::ImportPhase;
 use super::module_set::ModuleSet;
 use super::requests::{ScannedSite, Scans};
 use super::synthetic_exports::SyntheticExports;
+use super::{BindInput, ModuleRef};
 use crate::builtins::{RuntimeModule, table};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::atom::{Atom, known};
@@ -338,12 +340,14 @@ struct StarExports {
     dynamic_targets: DynamicStarTargets,
 }
 
+/// `askers`: where to look for who asks for what. Without them every name has a place.
 fn compute_star_exports(
     scans: &Scans,
     entries: &[ExportEntries],
     files: &[FileId],
     mocked: &MockedModules,
-) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>) {
+    askers: Option<(&BindInput<'_, '_>, &ModuleSet)>,
+) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>, AskedNames) {
     // A mock that stands in place of a file answers for every name, and a star hands on what it answers.
     let targets_of_mock =
         |module: &ExportEntries| match mocked.contains(ModuleRef::File(module.file)) {
@@ -360,6 +364,35 @@ fn compute_star_exports(
         is_taken_by_star[target as usize] = true;
     }
     let (component_of, components) = strongly_connected_components(&edges);
+    let mut dynamic_targets: Vec<DynamicStarTargets> = Vec::with_capacity(components.len());
+    for (component, members) in components.iter().enumerate() {
+        let members = members.iter().map(|&member| &entries[member]);
+        let mut targets = DynamicStarTargets::Empty;
+        for module in members.clone() {
+            targets = targets.join(targets_of_mock(module));
+        }
+        for target in members.flat_map(|module| star_targets(scans, module)) {
+            targets = targets.join(match find_table(files, target) {
+                None => DynamicStarTargets::One(target),
+                Some(table) if component_of[table] as usize == component => continue,
+                Some(table) => dynamic_targets[component_of[table] as usize],
+            });
+        }
+        dynamic_targets.push(targets);
+    }
+    let asked = match askers {
+        None => AskedNames::everything(components.len()),
+        Some((input, modules)) => {
+            let stars = Stars {
+                edges: &edges,
+                is_taken_by_star: &is_taken_by_star,
+                component_of: &component_of,
+                components: &components,
+                dynamic_targets: &dynamic_targets,
+            };
+            AskedNames::find(input, scans, modules, entries, files, mocked, &stars)
+        }
+    };
     let mut star_exports: Vec<StarExports> = Vec::with_capacity(components.len());
     for (component, members) in components.iter().enumerate() {
         // Most files: no `export *` in them, and none that names them. Nobody asks for the list.
@@ -369,7 +402,7 @@ fn compute_star_exports(
         {
             star_exports.push(StarExports {
                 names: Vec::new(),
-                dynamic_targets: targets_of_mock(&entries[member]),
+                dynamic_targets: dynamic_targets[component],
             });
             continue;
         }
@@ -377,30 +410,24 @@ fn compute_star_exports(
         let (mut names, mut seen) = (Vec::new(), FxHashSet::default());
         let own_names = members.clone().flat_map(|module| &module.own);
         let own_names = own_names.map(|&(name, _)| name);
-        names.extend(own_names.filter(|&name| name != known::default && seen.insert(name)));
-        let mut dynamic_targets = DynamicStarTargets::Empty;
-        for module in members.clone() {
-            dynamic_targets = dynamic_targets.join(targets_of_mock(module));
-        }
+        let mut is_listed = |&name: &Atom| asked.contains(component, name) && seen.insert(name);
+        names.extend(own_names.filter(|&name| name != known::default && is_listed(&name)));
         for target in members.flat_map(|module| star_targets(scans, module)) {
             let Some(table) = find_table(files, target) else {
-                dynamic_targets = dynamic_targets.join(DynamicStarTargets::One(target));
                 continue;
             };
             let target_component = component_of[table] as usize;
             if target_component != component {
-                let passed = &star_exports[target_component];
-                let passed_names = passed.names.iter().copied();
-                names.extend(passed_names.filter(|&name| seen.insert(name)));
-                dynamic_targets = dynamic_targets.join(passed.dynamic_targets);
+                let passed_names = star_exports[target_component].names.iter().copied();
+                names.extend(passed_names.filter(&mut is_listed));
             }
         }
         star_exports.push(StarExports {
             names,
-            dynamic_targets,
+            dynamic_targets: dynamic_targets[component],
         });
     }
-    (component_of, star_exports, edges)
+    (component_of, star_exports, edges, asked)
 }
 
 struct FileTable {
@@ -409,6 +436,8 @@ struct FileTable {
     dynamic_targets: DynamicStarTargets,
     follows_every_star: bool,
     may_be_mocked: bool,
+    /// `AskedNames::left_out`: those of them that `export *` brings the file have no place here.
+    leaves_out_names: bool,
 }
 
 impl FileTable {
@@ -430,6 +459,7 @@ impl NameNodes {
         module: &ExportEntries,
         star_exports: &StarExports,
         may_be_mocked: bool,
+        leaves_out_names: bool,
     ) {
         let start = self.keys.len() as u32;
         let own_names = module.own.iter().map(|&(name, _)| name);
@@ -450,6 +480,7 @@ impl NameNodes {
             dynamic_targets: star_exports.dynamic_targets,
             follows_every_star: false,
             may_be_mocked,
+            leaves_out_names,
         });
     }
 
@@ -717,12 +748,58 @@ fn find_absent_name(
 }
 
 pub(super) fn resolve_exports(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    entries: CollectedEntries,
+    commonjs: &CommonJsTexts,
+    mocked: &MockedModules,
+) -> ExportTables {
+    #[cfg(debug_assertions)]
+    let with_every_name = resolve_every_export(
+        input.files,
+        scans,
+        modules,
+        entries.clone(),
+        commonjs,
+        mocked,
+    );
+    let askers = Some((input, modules));
+    let tables = resolve_exports_for(
+        input.files,
+        scans,
+        modules,
+        entries,
+        commonjs,
+        mocked,
+        askers,
+    );
+    #[cfg(debug_assertions)]
+    tables.assert_lacks_only_what_nobody_asks_for(&with_every_name);
+    tables
+}
+
+/// With a place for every name that `export *` brings a file.
+#[cfg(any(test, debug_assertions))]
+pub(super) fn resolve_every_export(
     files: &Files<'_>,
     scans: &Scans,
     modules: &ModuleSet,
     entries: CollectedEntries,
     commonjs: &CommonJsTexts,
     mocked: &MockedModules,
+) -> ExportTables {
+    resolve_exports_for(files, scans, modules, entries, commonjs, mocked, None)
+}
+
+fn resolve_exports_for(
+    files: &Files<'_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    entries: CollectedEntries,
+    commonjs: &CommonJsTexts,
+    mocked: &MockedModules,
+    askers: Option<(&BindInput<'_, '_>, &ModuleSet)>,
 ) -> ExportTables {
     let CollectedEntries {
         tables: entries,
@@ -734,8 +811,8 @@ pub(super) fn resolve_exports(
     let files_with_table = modules.record_files.iter().filter(has_table);
     debug_assert!(table_files.iter().eq(files_with_table));
     let mut steps = StepClock::new(Stage::BindModules);
-    let (component_of, star_exports, star_tables) =
-        compute_star_exports(scans, &entries, &table_files, mocked);
+    let (component_of, star_exports, star_tables, asked) =
+        compute_star_exports(scans, &entries, &table_files, mocked, askers);
     steps.end("exports: stars");
     let mut nodes = NameNodes::default();
     let own_names: usize = entries.iter().map(|module| module.own.len()).sum();
@@ -743,7 +820,9 @@ pub(super) fn resolve_exports(
     nodes.index.reserve(own_names);
     for (module, &component) in entries.iter().zip(&component_of) {
         let may_be_mocked = mocked.contains(ModuleRef::File(module.file));
-        nodes.add_file(module, &star_exports[component as usize], may_be_mocked);
+        let leaves_out_names = !module.stars.is_empty() && !asked.is_whole(component as usize);
+        let star_exports = &star_exports[component as usize];
+        nodes.add_file(module, star_exports, may_be_mocked, leaves_out_names);
     }
     steps.end("exports: a node for each name");
     let mut graph = ResolutionGraph {
@@ -791,6 +870,7 @@ pub(super) fn resolve_exports(
         results,
         indirect_sites,
         index: nodes.index,
+        names_left_out: asked.left_out,
         failures,
         ..ExportTables::default()
     };
@@ -851,6 +931,8 @@ pub(super) struct ExportTables {
     /// Of each own name that stands for a name of another module: its place in `results`, the import site that names the module, and the name there. Sorted.
     indirect_sites: Vec<(u32, u32, Atom)>,
     index: FxHashMap<NodeKey, u32>,
+    /// `AskedNames::left_out`
+    names_left_out: FxHashSet<Atom>,
     failures: Vec<PendingFailure>,
     pub(super) commonjs: CommonJsNames,
     /// The names that import statements and `export { .. } from` of ES modules read of CommonJS files.
@@ -893,6 +975,7 @@ impl ExportTables {
         if let Some(&node) = self.index.get(&(module, name)) {
             return self.results[node as usize].1;
         }
+        self.assert_has_place_for(module, name);
         let resolved = ResolvedName::new(match self.table_of(module) {
             None => captured_resolution(modules, ModuleRef::File(module), name),
             Some(table) if name == known::default && !table.may_be_mocked => Resolution::NotFound,
@@ -943,6 +1026,7 @@ impl ExportTables {
         if name == known::default || self.index.contains_key(&(file, name)) {
             return None;
         }
+        self.assert_has_place_for(file, name);
         match self.table_of(file)?.dynamic_targets {
             DynamicStarTargets::One(target) => modules.find_commonjs_file(target),
             DynamicStarTargets::Empty | DynamicStarTargets::Many => None,
@@ -958,6 +1042,55 @@ impl ExportTables {
     ) -> bool {
         let exporter = self.find_commonjs_exporter(modules, named, name);
         exporter.is_some_and(|exporter| self.commonjs.is_hidden(ModuleRef::File(exporter), name))
+    }
+
+    /// Whoever finds no place for a name in a table takes the file to lack the name. A name that was left out is one that nobody was seen to ask for.
+    fn assert_has_place_for(&self, file: FileId, name: Atom) {
+        assert!(
+            !self.names_left_out.contains(&name) || !self.leaves_out_names(file),
+            "{file:?} is asked for {name:?}, which `export *` may bring it, and nobody was seen to ask for that name"
+        );
+    }
+
+    /// Of the names that `export *` brings the file, those of `names_left_out` have no place in its table.
+    pub(super) fn leaves_out_names(&self, file: FileId) -> bool {
+        self.table_of(file)
+            .is_some_and(|table| table.leaves_out_names)
+    }
+
+    /// `AskedNames::left_out`
+    pub(super) fn names_left_out(&self) -> &FxHashSet<Atom> {
+        &self.names_left_out
+    }
+
+    /// `with_every_name`: `resolve_every_export` of the same program.
+    #[cfg(debug_assertions)]
+    fn assert_lacks_only_what_nobody_asks_for(&self, with_every_name: &ExportTables) {
+        assert!(self.files == with_every_name.files);
+        for (&(file, name), &node) in &with_every_name.index {
+            let expected = with_every_name.results[node as usize].1;
+            match self.index.get(&(file, name)) {
+                Some(&node) => {
+                    assert_eq!(self.results[node as usize].1, expected, "{file:?} {name:?}")
+                }
+                None => assert!(
+                    self.leaves_out_names(file)
+                        && self.names_left_out.contains(&name)
+                        && matches!(expected.resolution, Resolution::Variable(_))
+                        && expected.required_name.is_none(),
+                    "{file:?} has no place for {name:?}, which is {expected:?}"
+                ),
+            }
+        }
+        assert!(
+            self.index
+                .keys()
+                .all(|key| with_every_name.index.contains_key(key))
+        );
+        for (table, expected) in self.tables.iter().zip(&with_every_name.tables) {
+            assert!(table.follows_every_star == expected.follows_every_star);
+        }
+        assert!(self.failures.len() == with_every_name.failures.len());
     }
 
     pub(super) fn names(&self, module: FileId) -> &[(Atom, ResolvedName)] {

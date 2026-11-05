@@ -81,7 +81,7 @@ fn find_folder(path: &[u8]) -> Option<&[u8]> {
         [named @ .., b'/'] if named.len() >= root_length => named,
         _ => path,
     };
-    let last = path.iter().rposition(|&byte| byte == b'/')?;
+    let last = strings::last_index_of_char(path, b'/')?;
     Some(&path[..last.max(root_length)])
 }
 

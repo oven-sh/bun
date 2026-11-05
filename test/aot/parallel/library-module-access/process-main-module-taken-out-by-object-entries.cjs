@@ -1,7 +1,4 @@
 // process.mainModule, taken out by Object.entries in a program in which no file names a way to a module object.
-// It is compiled again, and holds every start-up module the first time: the second load takes nothing over from the first.
-// STATISTIC: EngineRuns = 2
-// STATISTIC: WholeEngineRuns = 1
-// STATISTIC: SourceFilesOfBunParsed >= 100
+// An earlier compiler compiled it again, with every start-up module: EngineRuns = 2, WholeEngineRuns = 1, SourceFilesOfBunParsed >= 100. A build runs the engine once now.
 const found = Object.entries(process).filter(([key]) => key.startsWith("mainM"));
 console.log(found.map(([key, value]) => key + ":" + typeof value + " " + value.id).join());

@@ -134,7 +134,7 @@ fn outlined_function_is_appended() {
                 return <ul>{items.map(item => <li>{item}</li>)}</ul>;\n\
                 }\n";
     with_compiled_tree(text, |tree| {
-        let name = "%react:outlined:0";
+        let name = "%react:outlined:0:_temp";
         let last = *tree.top_level_statements().last().unwrap();
         let StmtKind::Fn(outlined) = tree.hir()[last].kind else {
             panic!("expected a function declaration");
@@ -154,7 +154,7 @@ fn function_with_captures_is_not_outlined() {
                 }\n";
     with_compiled_tree(text, |tree| {
         assert!(tree.cache_size(tree.function_named("List")).is_some());
-        assert_eq!(tree.count_names("%react:outlined:0"), 0);
+        assert_eq!(tree.count_names("%react:outlined:0:_temp"), 0);
         let last = *tree.top_level_statements().last().unwrap();
         let StmtKind::Fn(function) = tree.hir()[last].kind else {
             panic!("expected a function declaration");

@@ -905,13 +905,18 @@ impl Follower<'_, '_, '_> {
                 };
                 let decisions = self.inputs.decisions;
                 match find_values_passed_for_pattern(hir, bound, decisions, name, &find_written) {
-                    Some((passed, path)) => self.values_of_any(passed).and_then(|mut values| {
-                        for &key in &path {
-                            let key = self.inputs.atoms.bytes(key).to_vec();
-                            values = self.read_member(&values, Some(&[key]), Chain::No)?;
-                        }
-                        Some(values)
-                    }),
+                    Some((passed, path, is_left_out)) => {
+                        self.values_of_any(passed).and_then(|mut values| {
+                            if is_left_out {
+                                add(&mut values, Held::Primitive(Constant::Undefined));
+                            }
+                            for &key in &path {
+                                let key = self.inputs.atoms.bytes(key).to_vec();
+                                values = self.read_member(&values, Some(&[key]), Chain::No)?;
+                            }
+                            Some(values)
+                        })
+                    }
                     None => {
                         let handed = self.values_handed_by_walk(symbol);
                         if handed.is_none() {

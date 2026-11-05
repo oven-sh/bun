@@ -120,9 +120,9 @@ exports.pattern = a + renamed(5);
 // CHECK-NEXT: v37 = Integer integer=2
 // CHECK-NEXT: v38 = Call v35, v36, v37 calleeName="forEs.g"
 // CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v40 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v40 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v41 = CheckInitialized v40 name="theDefault"
-// CHECK-NEXT: v42 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v42 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v43 = TypeTest v42 testedType=absent
 // CHECK-NEXT: Branch v43 -> taken b7(| 0), notTaken b8(| 0)
 // CHECK-NEXT: b7(v44):

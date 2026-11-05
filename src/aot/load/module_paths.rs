@@ -8,9 +8,11 @@ use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
-use crate::diagnostics::InternalError;
+use crate::diagnostic_codes::Code;
+use crate::diagnostics::{Diagnostic, InternalError};
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, to_host_loader,
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, script_kind_of,
+    to_host_loader,
 };
 use crate::load::plugin_modules::ENTRY_TEXT_NAMESPACE;
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
@@ -211,7 +213,15 @@ fn is_data_that_only_an_attribute_asks_for(
     context: &PathContext<'_>,
     input: &PathInput<'_>,
 ) -> bool {
-    let is_file_with_data = input.kind == SourceKind::Data && input.plugin_module.is_none();
+    // An empty program stands in the place of a file of data whose text its parser refuses.
+    let is_data = match input.kind {
+        SourceKind::Data => true,
+        SourceKind::Program => {
+            script_kind_of(requested_loader(input.host_loader, input.file_name)).is_none()
+        }
+        _ => false,
+    };
+    let is_file_with_data = is_data && input.plugin_module.is_none();
     if !is_file_with_data || context.maps.entry_point_indexes.contains_key(&input.file) {
         return false;
     }
@@ -325,16 +335,36 @@ pub(super) fn are_all_different<'a>(mut paths: impl Iterator<Item = &'a [u8]>) -
     paths.all(|path| seen.insert(path))
 }
 
-fn check_unique_public_paths_of(
-    mut modules: Vec<(FileId, ModulePaths<'_>)>,
-) -> Result<(), InternalError> {
+fn find_files_with_one_public_path<'a>(
+    mut modules: Vec<(FileId, ModulePaths<'a>)>,
+) -> Option<[ModulePaths<'a>; 2]> {
     if are_all_different(modules.iter().map(|it| it.1.public_path)) {
-        return Ok(());
+        return None;
     }
     modules.shared_sort_unstable_by_key(|&(file, paths)| (paths.public_path, file));
     let mut neighbors = modules.iter().zip(modules.iter().skip(1));
     let collision = neighbors.find(|(first, second)| first.1.public_path == second.1.public_path);
-    let Some(((_, first), (_, second))) = collision else {
+    collision.map(|(first, second)| [first.1, second.1])
+}
+
+/// `sub/_.._/a.mjs` beside `a.mjs`, where `sub` is the root: `append_sanitized_path` spells the `..` of the one as the folder of the other is named.
+pub(super) fn find_folder_named_as_parent_is_spelled<'a>(
+    paths: impl Iterator<Item = (FileId, ModulePaths<'a>)>,
+) -> Option<Diagnostic> {
+    let [first, second] = find_files_with_one_public_path(paths.collect())?;
+    let lies_in_such_folder = |paths: ModulePaths<'_>| {
+        strings::split(paths.display_path, b"/").any(|folder| folder == b"_.._")
+    };
+    (lies_in_such_folder(first) || lies_in_such_folder(second)).then(|| {
+        let arguments = [first.public_path, first.display_path, second.display_path];
+        Diagnostic::new(Code::FolderNamedAsParentIsSpelled, None, &arguments)
+    })
+}
+
+fn check_unique_public_paths_of(
+    modules: Vec<(FileId, ModulePaths<'_>)>,
+) -> Result<(), InternalError> {
+    let Some([first, second]) = find_files_with_one_public_path(modules) else {
         return Ok(());
     };
     let parts: [&[u8]; 6] = [

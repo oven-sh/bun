@@ -97,11 +97,6 @@ impl BuiltinTypeSymbols {
         self.classes.get(&symbol).copied()
     }
 
-    pub fn classes(&self) -> impl Iterator<Item = (Sym, BuiltinTypeClass)> + '_ {
-        let classes = self.classes.iter();
-        classes.map(|(&symbol, &class)| (symbol, class))
-    }
-
     pub fn types_of(&self, class: BuiltinClassIndex) -> impl Iterator<Item = Sym> + '_ {
         let first = self.types_by_class.partition_point(|entry| entry.0 < class);
         let types = self.types_by_class[first..].iter();

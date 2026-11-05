@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-lone-calls-of-built-in-methods.py <folder>: one call of a method of a built-in class, alone in a function that is called by value, on a receiver whose class is WRITTEN and not proven: what comes is what is written, or lies: one program each, held to `bun <file>`.
+# generate-lone-calls-of-built-in-methods.py <folder>: all 677; ../parallel/lone-calls-of-built-in-methods/ holds 8 of them: one call of a method of a built-in class, alone in a function that is called by value, on a receiver whose class is WRITTEN and not proven: what comes is what is written, or lies: one program each, held to `bun <file>`.
 # The compiler tests what comes and puts the code of the method in line behind the test. Whatever fails the test goes the way of any call by name: an own method, a method of a class below, another prototype, a proxy, another class, nothing at all.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)
@@ -68,4 +68,13 @@ function safely(value: any): string {{
 for (turn = 0; turn < 3; turn++) console.log(safely({made}), calls);
 '''
             open(f'{out}/{parameter}-{method}-on-{receiver}.ts', 'w').write(program); count += 1
+            # The same with one more use of the receiver behind the call, which gains nothing by a proof.
+            if parameter in ('text', 'number'):
+                again = program.replace(f'''    return {call};
+''', f'''    const answer = {call};
+    noted({parameter});
+    return answer;
+''').replace('const handlers = {', 'let notes = 0;\nconst noting = [(value: unknown) => { notes += value === undefined ? 1 : 2; }];\nfunction noted(value: unknown) { noting[notes & 0](value); }\nconst handlers = {')
+                assert again != program
+                open(f'{out}/{parameter}-{method}-and-another-use-on-{receiver}.ts', 'w').write(again); count += 1
 print(count, 'programs')

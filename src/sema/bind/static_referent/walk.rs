@@ -496,6 +496,16 @@ impl<T: Copy + Eq + Hash> Trail<T> {
     }
 }
 
+/// All that a walk goes on by from a name, but for the trails.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PlaceOfWalk {
+    name: Sym,
+    pending_members: SmallVec<[Atom; 4]>,
+    entered_calls: SmallVec<[(FileId, CallId); 2]>,
+    certainty: ReferentCertainty,
+    follows_stored_members: bool,
+}
+
 pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
     context: &'c C,
     visited: Trail<Sym>,
@@ -507,6 +517,12 @@ pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
     followed_stores: Trail<(FileId, ExprId)>,
     certainty: ReferentCertainty,
     follows_stored_members: bool,
+    open_branches: u32,
+    /// What a branch found from a place without an answer of a trail. `c ? a : a` goes on from `a` twice: without this a row of names that each stand for one of two of the name before takes
+    /// twice as long with each name.
+    found_from: FxHashMap<PlaceOfWalk, ResolvedReferent<C::Builtin, C::Module>>,
+    /// How often a trail has had a say in where the walk goes: it ended a walk that came round, or its names were asked what is stored on them. A stack too low for a branch counts as well.
+    answers_of_trails: u32,
     session: PhantomData<&'s ()>,
 }
 
@@ -522,6 +538,9 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             followed_stores: Trail::new(),
             certainty: ReferentCertainty::Proven,
             follows_stored_members: false,
+            open_branches: 0,
+            found_from: FxHashMap::default(),
+            answers_of_trails: 0,
             session: PhantomData,
         }
     }
@@ -550,10 +569,40 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.run(Step::Symbol(symbol))
     }
 
-    fn run(&mut self, mut step: StepOf<'s, C>) -> ResolvedReferent<C::Builtin, C::Module> {
+    fn run(&mut self, step: StepOf<'s, C>) -> ResolvedReferent<C::Builtin, C::Module> {
+        let answers_of_trails = self.answers_of_trails;
+        let mut places = SmallVec::new();
+        let found = self.run_from(step, &mut places);
+        if self.answers_of_trails == answers_of_trails {
+            self.found_from
+                .extend(places.into_iter().map(|place| (place, found)));
+        }
+        found
+    }
+
+    /// `places`: takes the places that a branch comes to.
+    fn run_from(
+        &mut self,
+        mut step: StepOf<'s, C>,
+        places: &mut SmallVec<[PlaceOfWalk; 2]>,
+    ) -> ResolvedReferent<C::Builtin, C::Module> {
         loop {
             step = match step {
                 Step::Expression(file, expr) => self.step_expression(file, expr),
+                Step::Symbol(name) if self.open_branches != 0 => {
+                    let place = PlaceOfWalk {
+                        name,
+                        pending_members: self.pending_members.clone(),
+                        entered_calls: self.entered_calls.clone(),
+                        certainty: self.certainty,
+                        follows_stored_members: self.follows_stored_members,
+                    };
+                    if let Some(&found) = self.found_from.get(&place) {
+                        return found;
+                    }
+                    places.push(place);
+                    self.step_symbol(name)
+                }
                 Step::Symbol(symbol) => self.step_symbol(symbol),
                 Step::Linked(LinkedBinding::Binding(symbol)) => Step::Symbol(symbol),
                 Step::Linked(LinkedBinding::Namespace(module)) => {
@@ -579,15 +628,22 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    /// The functor walks on from here. Behind it this walk stands where it stood.
-    fn branch_off<R>(&mut self, walk_on: impl FnOnce(&mut Self) -> R) -> R {
+    /// The functor walks on from here. Behind it this walk stands where it stood. Nothing where the stack is too low for one more branch: each branch is a call, and a row of names may be as long
+    /// as a file.
+    fn branch_off<R>(&mut self, walk_on: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.answers_of_trails += 1;
+            return None;
+        }
         let visited = self.visited.place();
         let entered_callees = self.entered_callees.place();
         let open_calls = self.open_calls.place();
         let followed_stores = self.followed_stores.place();
         let pending_members = self.pending_members.clone();
         let (certainty, follows_stored_members) = (self.certainty, self.follows_stored_members);
+        self.open_branches += 1;
         let result = walk_on(self);
+        self.open_branches -= 1;
         self.visited.go_back_to(visited);
         self.entered_callees.go_back_to(entered_callees);
         self.entered_calls.truncate(entered_callees.len);
@@ -595,7 +651,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.followed_stores.go_back_to(followed_stores);
         self.pending_members = pending_members;
         (self.certainty, self.follows_stored_members) = (certainty, follows_stored_members);
-        result
+        Some(result)
     }
 
     fn resolve_from_here(
@@ -603,7 +659,11 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         file: FileId,
         expr: ExprId,
     ) -> ResolvedReferent<C::Builtin, C::Module> {
-        self.branch_off(|walk| walk.run(Step::Expression(file, expr)))
+        let found = self.branch_off(|walk| walk.run(Step::Expression(file, expr)));
+        found.unwrap_or(ResolvedReferent {
+            referent: StaticReferent::Unknown(UnknownReferent::Cycle),
+            certainty: self.certainty,
+        })
     }
 
     fn step_export_of_common_js(&mut self, file: FileId, name: Option<Atom>) -> StepOf<'s, C> {
@@ -616,8 +676,8 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                     marked.run(step).referent
                 });
                 match marked {
-                    StaticReferent::Unknown(_) => self.step_module_exports(file),
-                    found => {
+                    None | Some(StaticReferent::Unknown(_)) => self.step_module_exports(file),
+                    Some(found) => {
                         self.pending_members.clear();
                         Step::Found(found)
                     }
@@ -634,7 +694,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     fn step_into_call(&mut self, callee: FunctionRef, file: FileId, call: CallId) -> StepOf<'s, C> {
         let context = self.context;
         if self.entered_callees.contains(callee) {
-            return unknown(UnknownReferent::Cycle);
+            return self.end_walk_that_came_round();
         }
         let (hir, bound) = (context.hir(callee.file), context.bound(callee.file));
         match find_only_returned_value(hir, bound, callee.function) {
@@ -661,6 +721,11 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let (file, call) = self.entered_calls[self.entered_callees.last_place_of(callee)?];
         let argument = find_argument_at(self.context.hir(file), call, index)?;
         Some((file, argument))
+    }
+
+    fn end_walk_that_came_round(&mut self) -> StepOf<'s, C> {
+        self.answers_of_trails += 1;
+        unknown(UnknownReferent::Cycle)
     }
 
     fn visit(&mut self, symbol: Sym) -> bool {
@@ -691,7 +756,21 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 let yes = self.resolve_from_here(file, branches.yes).referent;
-                let no = self.resolve_from_here(file, branches.no).referent;
+                if !matches!(yes, StaticReferent::Function(_) | StaticReferent::Class(_)) {
+                    return unknown(UnknownReferent::NotAReference);
+                }
+                // From one name, with the trails as they stand here, the walk goes one way.
+                let symbol_named_by = |arm: ExprId| {
+                    let arm = hir.skip_type_assertions(arm);
+                    match (hir[arm].kind, context.bound(file).binding(arm)) {
+                        (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
+                        _ => None,
+                    }
+                };
+                let no = match symbol_named_by(branches.yes) {
+                    Some(symbol) if symbol_named_by(branches.no) == Some(symbol) => yes,
+                    Some(_) | None => self.resolve_from_here(file, branches.no).referent,
+                };
                 let name_one_thing = match (&yes, &no) {
                     (StaticReferent::Function(yes), StaticReferent::Function(no)) => yes == no,
                     (StaticReferent::Class(yes), StaticReferent::Class(no)) => yes == no,
@@ -756,7 +835,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let context = self.context;
         let hir = context.hir(file);
         if self.open_calls.contains((file, site)) {
-            return unknown(UnknownReferent::Cycle);
+            return self.end_walk_that_came_round();
         }
         self.open_calls.push((file, site));
         let callee = self.branch_off(|walk_to_callee| {
@@ -764,7 +843,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             walk_to_callee.certainty = ReferentCertainty::Proven;
             walk_to_callee.run(Step::Expression(file, hir[site].callee))
         });
-        let StaticReferent::Function(callee) = callee.referent else {
+        let Some(StaticReferent::Function(callee)) = callee.map(|callee| callee.referent) else {
             return unknown(UnknownReferent::NotAReference);
         };
         let (hir_of_callee, bound_of_callee) =
@@ -942,7 +1021,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
 
     fn step_export_stores(&mut self, exported: Sym, stores: &[ExportStore]) -> StepOf<'s, C> {
         if !self.visit(exported) {
-            return unknown(UnknownReferent::Cycle);
+            return self.end_walk_that_came_round();
         }
         let file = exported.file;
         let context = self.context;
@@ -967,7 +1046,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
 
     fn step_symbol(&mut self, symbol: Sym) -> StepOf<'s, C> {
         if !self.visit(symbol) {
-            return unknown(UnknownReferent::Cycle);
+            return self.end_walk_that_came_round();
         }
         let Sym { file, id } = symbol;
         let context = self.context;
@@ -1066,6 +1145,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     }
 
     fn step_stored_member(&mut self, name: Atom) -> StepOf<'s, C> {
+        self.answers_of_trails += 1;
         let mut stored = None;
         for &holder in self.visited.seen() {
             for value in self.values_stored_in_member(holder, name) {

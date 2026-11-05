@@ -6,6 +6,8 @@ declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 declare var $overriddenName: string;
 declare function $newArrayLike<T>(n: number, a: unknown[] | undefined): T[];
 declare function $tryPutByValDirect(out: unknown[], k: number, value: unknown): boolean;
+// Every place of a list that this file has just made, in a row. False, with nothing stored, where its storage does not take any value.
+declare function $tryFillNewArray(out: unknown[], value: unknown): boolean;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $isJSArray(value: unknown): boolean;
 
@@ -77,6 +79,7 @@ export function arrayOfUndefined(length: unknown): undefined[] {
     const count = length | 0;
     if (count === length && count >= 0) {
       const made = $newArrayLike<undefined>(count, undefined);
+      if ($tryFillNewArray(made, undefined)) return made;
       let index = 0;
       entered: for (;;) {
         for (; index < count; index++) {
@@ -103,6 +106,7 @@ export function filledArray(length: unknown, value: unknown): unknown[] {
     const count = length | 0;
     if (count === length && count >= 0) {
       const made = $newArrayLike<unknown>(count, undefined);
+      if ($tryFillNewArray(made, value)) return made;
       let index = 0;
       entered: for (;;) {
         for (; index < count; index++) {

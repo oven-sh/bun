@@ -85,6 +85,8 @@ pub struct AotOptions {
     pub runs_in_place: bool,
     pub missing_tsconfig_override: Option<Box<[u8]>>,
     pub checks_only: bool,
+    /// `bun check --aot`: the program's own TypeScript is checked file by file, as `bun check` checks it.
+    pub looks_for_type_errors: bool,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
     /// `bun test --globals=vitest`.
@@ -152,6 +154,7 @@ impl Default for AotOptions {
             runs_in_place: false,
             missing_tsconfig_override: None,
             checks_only: false,
+            looks_for_type_errors: false,
             runs_tests: false,
             has_globals_of_vitest: false,
             counts_executions: false,
@@ -210,6 +213,7 @@ mod tests {
             runs_in_place,
             missing_tsconfig_override,
             checks_only,
+            looks_for_type_errors,
             runs_tests,
             has_globals_of_vitest,
             counts_executions,
@@ -256,6 +260,7 @@ mod tests {
         assert!(!runs_in_place);
         assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);
+        assert!(!looks_for_type_errors);
         assert!(!runs_tests);
         assert!(!has_globals_of_vitest);
         assert!(!counts_executions);

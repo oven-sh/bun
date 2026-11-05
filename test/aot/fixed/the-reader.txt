@@ -2,7 +2,7 @@
 console.log("counted");
 #### flags-and-counts.js flags --aot-erase-types
 #### flags-and-counts.js counts
-EngineRuns = 1
+SourceFilesInferred = 1
 ImageFunctionsEmitted >= 1
 #### flags-and-counts.js prints
 counted

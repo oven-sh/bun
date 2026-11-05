@@ -281,7 +281,8 @@ impl StabilityPass<'_, '_> {
         if !kind.is_immutable() && has_bit(eval_visible_symbols, symbol.idx()) {
             return BindingStability::VisibleToEval;
         }
-        if kind == BindingKind::Parameter && bound.is_mapped_argument(self.hir, symbol) {
+        // What the files of a test run lay on `Object.prototype` is known once all of them are bound.
+        if kind == BindingKind::Parameter && bound.is_mapped_argument(self.hir, symbol, true) {
             return BindingStability::MappedArgument;
         }
         if kind == BindingKind::Var && self.is_mapped_wrapper_parameter(symbol) {

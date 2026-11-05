@@ -59,6 +59,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             is_linked_by_bundler: matches!(site.specifier, ImportSpecifier::Constant(_))
                 && is_linked_by_bundler(hir, bound, site.kind),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+            may_have_unread_type: may_have_unread_type(hir, site),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
             is_statement: matches!(
                 site.kind,
@@ -567,6 +568,18 @@ fn loader_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     type_attribute(hir, site).filter(|&value| value != known::r#macro)
 }
 
+/// `import(path, options)`: the call has options, and the build reads no `type` in them. The program may ask under any type there.
+fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
+    let ImportSiteKind::ImportCall(call) = site.kind else {
+        return false;
+    };
+    let has_options = match hir[call].kind {
+        ExprKind::ImportCall { args } => args.len() > 1,
+        _ => true,
+    };
+    has_options && type_attribute(hir, site).is_none()
+}
+
 fn embed_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     let attributes = site.attributes.some()?;
     hir.import_attribute(attributes, known::embed)
@@ -586,6 +599,7 @@ struct TargetOrigin<'a> {
     kind: CodeImportKind,
     is_linked_by_bundler: bool,
     type_attribute: Option<&'a [u8]>,
+    may_have_unread_type: bool,
     embed_attribute: Option<&'a [u8]>,
     is_statement: bool,
     increases_depth: bool,
@@ -595,6 +609,7 @@ const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     kind: CodeImportKind::Import,
     is_linked_by_bundler: true,
     type_attribute: None,
+    may_have_unread_type: false,
     embed_attribute: None,
     is_statement: true,
     increases_depth: false,
@@ -611,6 +626,7 @@ fn add_target<'r>(
         kind,
         is_linked_by_bundler,
         type_attribute,
+        may_have_unread_type,
         embed_attribute,
         is_statement,
         increases_depth,
@@ -625,13 +641,16 @@ fn add_target<'r>(
         loader,
     };
     let index = targets.len() as u32;
+    let has_type_of_shared_kind =
+        may_have_unread_type || type_attribute.is_some_and(|it| it != b"json");
     targets.push(CodeTarget {
         key: find_file_required_before(context, key).unwrap_or(key),
         host_module: file.host_module,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
         is_loaded_with_importer: is_statement,
-        has_shared_type: is_statement && type_attribute.is_some_and(|it| it != b"json"),
+        has_shared_type: is_statement && has_type_of_shared_kind,
+        has_type_of_shared_kind,
     });
     index
 }

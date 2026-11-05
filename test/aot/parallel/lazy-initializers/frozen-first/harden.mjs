@@ -1,1 +1,0 @@
-Object.freeze(Object.prototype);

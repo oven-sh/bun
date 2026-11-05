@@ -65,6 +65,7 @@ export const {
   functionsOnlyNamed,
   proxiesPrintedAsTargets,
   generic,
+  handedOutFrom,
   handedOver,
   handwritten,
   hostCall,

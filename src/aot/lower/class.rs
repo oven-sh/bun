@@ -22,7 +22,7 @@ pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_fu
 pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
 pub(in crate::lower) use self::plan::{
-    assigns_fields_in_constructor, brand_is_of_methods, class_slots, decorators_of,
+    brand_is_of_methods, class_slots, decorators_of, fields_evaluated_in_constructor,
     find_fields_under_signed_members, has_decorators, has_instance_brand,
     has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
     is_derived_class, is_evaluated_in_constructor, runtime_members,
@@ -82,6 +82,7 @@ pub(in crate::lower) struct ClassPlan {
     pub(in crate::lower) instance_elements: Vec<ClassElement>,
     pub(in crate::lower) injected_elements: Vec<ClassElement>,
     pub(in crate::lower) static_elements: Vec<ClassElement>,
+    pub(in crate::lower) elements_behind_class: Vec<ClassElement>,
     pub(in crate::lower) decorations: Vec<Decoration>,
     pub(in crate::lower) instance_method_initializers: Option<u32>,
     pub(in crate::lower) initializer_list_count: u32,

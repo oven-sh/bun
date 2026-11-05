@@ -31,7 +31,7 @@ for (const [word, file] of [
   }
   if (pins.size === 0) continue;
   const sorted = Object.fromEntries([...pins].sort(([a], [b]) => (a < b ? -1 : 1)));
-  writeFileSync(join(import.meta.dir, file), JSON.stringify(sorted, null, 2) + "\n");
+  writeFileSync(join(import.meta.dir, file), `{\n${Object.keys(sorted).map(name => `${JSON.stringify(name)}: ${JSON.stringify(sorted[name])}`).join(",\n")}\n}\n`);
   console.log(`${file}: ${pins.size} idioms`);
 }
 

@@ -1,9 +1,8 @@
-import { expect } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunExe, isASAN, isCI, isDebug } from "harness";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { run as runCommand } from "../../../../aot/harness/run";
-import { afterAll, describe, test } from "../../../../aot/listed";
 import recorded from "./expected.json";
 
 // Each fixture drives a node:http server through many small cases and prints what every case did: return values,

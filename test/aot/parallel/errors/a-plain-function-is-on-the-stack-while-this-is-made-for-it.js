@@ -1,6 +1,6 @@
 // `new.target.prototype` is read to make `this`, and reading it may run any code: a getter, a trap of a proxy, or the error of a revoked proxy.
 // A plain function is on the stack by then, as `new A`, at the first position that it records, or at its parameters where it records none.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 function frames(stack) {
   const lines = String(stack).split("\n").slice(1);
   return lines.map(line => line.trim().replace(/\(?[^ (]*[\\/]/, "(").replace(/^at \(/, "at (")).filter(line => line.includes(".js:")).join(" | ");

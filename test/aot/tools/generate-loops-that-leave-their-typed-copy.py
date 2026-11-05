@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-loops-that-leave-their-typed-copy.py <folder>: one-shape programs: a loop is bounded by the length of a typed array, and in the middle of some turn the array stops being as its class makes it.
+# generate-loops-that-leave-their-typed-copy.py <folder>: all 273; ../parallel/loops-that-leave-their-typed-copy/ holds 8 of them: one-shape programs: a loop is bounded by the length of a typed array, and in the middle of some turn the array stops being as its class makes it.
 # From the next turn on the loop goes by what the array answers then, with all that the turns before have left. Each program holds one loop, one deed and one turn. What is printed is primitive. The reference is `bun <file>`.
 import os, sys
 

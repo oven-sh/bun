@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-unions-told-by-a-tag.py <folder>: a union of records told apart by a written tag; the program tests the tag in one way, something arrives, and a member's own field is used behind the test: one program each, held to `bun <file>`.
+# generate-unions-told-by-a-tag.py <folder>: all 760; ../parallel/unions-told-by-a-tag/ holds 8 of them: a union of records told apart by a written tag; the program tests the tag in one way, something arrives, and a member's own field is used behind the test: one program each, held to `bun <file>`.
 # Behind the program's test only the members whose written tag fits are expected. That is a guess: the tag may lie, may be stored later, and what arrives may be no member at all.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

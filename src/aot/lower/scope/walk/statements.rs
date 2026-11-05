@@ -167,11 +167,13 @@ impl Walker<'_, '_> {
     fn enter_loop(&mut self, statement: StmtId, boundary: ScopeId, outer: Context) -> Context {
         let index = self.walk.loops.len() as u32;
         let around = outer.enclosing_loop;
+        let entered_at = self.tick();
         self.walk.loops.push(WalkedLoop {
             statement,
             boundary,
             function: outer.function,
             parent: around,
+            entered_at,
             outermost: around.map_or(index, |around| self.walk.loops[around as usize].outermost),
             stored: Vec::new(),
             symbols_stored_within: Vec::new(),

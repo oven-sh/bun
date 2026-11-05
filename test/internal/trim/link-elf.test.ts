@@ -504,7 +504,8 @@ const rustFiles = (toy: string) => ({
   "main.c": rustMain,
 });
 
-const endedByTrap = 128 + constants.signals.SIGTRAP;
+// What fills a removed range of code: `hlt` on x86-64, which only the kernel may run, and `udf #0` on arm64.
+const endedByTrap = 128 + (process.arch === "x64" ? constants.signals.SIGSEGV : constants.signals.SIGILL);
 
 async function wrappedRust(folder: string, isBitcode: boolean) {
   const crate = await findGuardCrate();

@@ -1,5 +1,5 @@
 // Prints the call sites of a default constructor that hands its arguments on, and the frames under a local variable that is named Reflect.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 function Thrower() {
   throw new Error("thrown");
 }

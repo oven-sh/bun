@@ -145,6 +145,8 @@ fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
     let inner = file.skip_type_syntax(expression);
     let folded = match file.decisions().constant(file.hir, inner) {
         FoldedValue::Unknown => match file.find_enum_member_read(inner) {
+            // `case require("./levels").Level.High:` runs the file when the clause is come to.
+            Some(_) if file.find_member_of_loaded_module(inner).is_some() => FoldedValue::Unknown,
             Some(value) => FoldedValue::Constant(value),
             None => FoldedValue::Unknown,
         },

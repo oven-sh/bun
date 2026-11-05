@@ -264,6 +264,9 @@ pub(super) struct CodeTarget<'r> {
     pub(super) is_loaded_with_importer: bool,
     /// The statement writes a `type` other than "json". The loader of `bun run` keeps one module for a path and all of those.
     pub(super) has_shared_type: bool,
+    /// A statement or an `import()` writes such a `type`, or the call has options in which the build reads none. Which of the forms a statement gets then shows when the program
+    /// runs: a call may have loaded another one first.
+    pub(super) has_type_of_shared_kind: bool,
 }
 
 impl<'r> CodeTarget<'r> {
@@ -275,6 +278,7 @@ impl<'r> CodeTarget<'r> {
             has_loader_attribute: false,
             is_loaded_with_importer: false,
             has_shared_type: false,
+            has_type_of_shared_kind: false,
         }
     }
 }
@@ -288,7 +292,6 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) declared_module_type: DeclaredModuleType,
     pub(super) type_where_imported: DeclaredModuleType,
     pub(super) runs_inside_require: bool,
-    pub(super) is_only_imported_from_above: bool,
     pub(super) is_package_type_module: bool,
     pub(super) package: Option<EnclosingPackage<'r>>,
     pub(super) side_effects: DeclaredSideEffects<'r>,

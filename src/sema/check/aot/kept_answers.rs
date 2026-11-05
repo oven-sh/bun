@@ -1,8 +1,8 @@
 //! What a checker has answered about a type, a signature or a declaration holds in every file that it visits, and neighbors in the program ask about the same ones.
 
 use super::answers::{
-    CheckedMember, ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember,
-    PositionTypes, SignatureShape, WrittenType,
+    ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember, PositionTypes,
+    SignatureShape, WrittenType,
 };
 use super::class_stores::StoreIndex;
 use super::queries::AliasScan;
@@ -40,17 +40,12 @@ pub(super) type HandOn = fn(
 pub struct RowsCarriedOver<'a> {
     /// By the number that a row had: one more than the number that it has now, or 0.
     new_rows: &'a [u32],
-    rows: &'a ByType,
     count: usize,
 }
 
 impl RowsCarriedOver<'_> {
     pub fn new_row(&self, old_row: u32) -> Option<u32> {
         self.new_rows.get(old_row as usize)?.checked_sub(1)
-    }
-
-    pub fn holds(&self, ty: TypeId) -> bool {
-        self.rows.get(ty) != 0
     }
 
     pub fn count(&self) -> usize {
@@ -102,7 +97,6 @@ impl KeptAnswers {
         let memo = unsafe { memo.outliving_its_borrow() };
         let carried = RowsCarriedOver {
             new_rows: &new_rows,
-            rows: &memo.rows,
             count: memo.types.len(),
         };
         let hand_on = self.hand_on_of_lowering;
@@ -206,7 +200,6 @@ pub(super) struct ObjectAnswers<'c> {
     pub(super) accepted_builtins: Option<&'c [BuiltinShape]>,
     pub(super) accepted_class_constructors: Option<&'c [ClassRef]>,
     pub(super) members: Option<&'c [ObjectMember]>,
-    pub(super) checked_members: Option<&'c [CheckedMember]>,
     pub(super) listed_members: Option<&'c [ListedMember]>,
     pub(super) index_signatures: Option<&'c [IndexSignature]>,
     first_member_type: u32,
@@ -344,7 +337,6 @@ impl<'c> KeptMemo<'c> {
                         accepted_class_constructors: (object.accepted_class_constructors)
                             .map(|it| copy_list(it, arena)),
                         members: object.members.map(|it| copy_list(it, arena)),
-                        checked_members: object.checked_members.map(|it| copy_list(it, arena)),
                         listed_members: object.listed_members.map(|it| copy_list(it, arena)),
                         index_signatures: object.index_signatures.map(|it| copy_list(it, arena)),
                         first_member_type,

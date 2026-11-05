@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 962; ../parallel/numbers-in-lists-of-every-storage/ holds 8 of them.
 """Writes test/aot/parallel/numbers-in-lists-of-every-storage/: one list, one way to put a number into it or to read one out of it, one number: a program each.
 
 A list declared `number[]` has the storage that its maker and the numbers so far have given it: for int32, for doubles, for any value, or none of the three.

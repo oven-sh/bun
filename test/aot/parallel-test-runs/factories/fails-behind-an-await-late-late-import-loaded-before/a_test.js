@@ -1,0 +1,28 @@
+import { vi, mock, test } from "bun:test";
+globalThis.booms ??= 0;
+let step = "";
+const ask = async (how, read) => {
+  let got;
+  try {
+    got = String(await read());
+  } catch (e) {
+    got = "threw " + String(e.message).slice(0, 40);
+  }
+  console.log(step, how, got);
+};
+test("one", async () => {
+  step = "0 start";
+  await ask("import", async () => (await import("./dep.js")).flag);
+  await ask("late", async () => (await import("./user-late.js")).values());
+  vi.doMock("./dep.js", async () => { await 0; throw new Error("boom " + ++globalThis.booms); });
+  step = "1 mocked";
+  await ask("late", async () => (await import("./user-late.js")).values());
+  await ask("late", async () => (await import("./user-late.js")).values());
+  await ask("import", async () => (await import("./dep.js")).flag);
+});
+test("the next test", async () => {
+  step = "2 next test";
+  await ask("import", async () => (await import("./dep.js")).flag);
+  await ask("late", async () => (await import("./user-late.js")).values());
+  await ask("require", () => import.meta.require("./dep.js").flag);
+});

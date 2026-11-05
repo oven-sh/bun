@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-instances-that-stay-as-made.py <folder>: one-shape programs: an object of one of the engine's classes arrives at a parameter whose callers are all in sight, and is asked for what its class gives it.
+# generate-instances-that-stay-as-made.py <folder>: all 851; ../parallel/instances-that-stay-as-made/ holds 8 of them: one-shape programs: an object of one of the engine's classes arrives at a parameter whose callers are all in sight, and is asked for what its class gives it.
 # In each program somebody lays something in front of that, in one way. What is printed is primitive. The reference is `bun <file>`.
 import os, sys
 

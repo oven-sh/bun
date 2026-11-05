@@ -6,12 +6,11 @@ use super::interop::{ImportPhase, ModuleKind};
 use super::order::{PlannedSite, SiteKey, SitePosition};
 use super::plan::{Member, ModuleRef, View};
 use super::wrapped::InnerModuleKind;
-use crate::builtins::id::BuiltinId;
-use crate::builtins::{BuiltinNames, table};
+use crate::builtins::table;
 use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as HelperShape};
 use crate::load::sources::parsed_source;
-use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
+use bun_sema::atom::{Atom, known};
+use bun_sema::bind::{Binding, Bound, Decl, InitialState, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, StmtKind,
@@ -611,7 +610,7 @@ impl FileBinder<'_, '_> {
         let (context, module) = (self.context, stands_for.module());
         let is_copy = matches!(stands_for, StandsFor::Copy { .. });
         let is_exports = is_copy || matches!(stands_for, StandsFor::Exports(_));
-        if is_exports && !is_plain_name(&context.files.atoms, context.builtin_names, name) {
+        if is_exports && !context.input.is_plain_name(name) {
             return None;
         }
         // A name that the module gets later has no getter.
@@ -656,6 +655,18 @@ impl FileBinder<'_, '_> {
         }
     }
 
+    // `if (wanted) { var a = require(K); }`
+    fn may_be_undefined(&self, reference: ExprId) -> bool {
+        let reference = self.hir.skip_type_assertions(reference);
+        matches!(self.hir[reference].kind, ExprKind::Ident(_))
+            && match self.bound.binding(reference) {
+                Binding::Symbol(holder) => {
+                    self.bound.initial_state(holder) == InitialState::Undefined
+                }
+                _ => false,
+            }
+    }
+
     // The member that the reference is the object of, and what that member stands for in its turn.
     fn bind_enclosing_member(
         &mut self,
@@ -666,10 +677,11 @@ impl FileBinder<'_, '_> {
         let (member, name) = enclosing_member(hir, bound, reference)?;
         let module = stands_for.module();
         let is_exports = matches!(stands_for, StandsFor::Exports(_) | StandsFor::Copy { .. });
-        // Whether a store or a `delete` succeeds depends on the object itself. `module.exports` may be null, so `a?.n` needs its value.
+        // Whether a store or a `delete` succeeds depends on the object itself. `module.exports` may be null, and a `var` is undefined until its initializer has run, so `a?.n` needs the value.
         if is_assignment_target(hir, bound, member)
             || is_deleted(hir, bound, member)
-            || (is_exports && !is_outside_optional_chain(hir, member))
+            || (!is_outside_optional_chain(hir, member)
+                && (is_exports || self.may_be_undefined(reference)))
         {
             return None;
         }
@@ -864,15 +876,6 @@ fn eager_namespace_module(binding: PendingBinding) -> Option<ModuleRef> {
         | PendingBinding::Synthetic { .. }
         | PendingBinding::CapturedBuiltin { .. } => None,
     }
-}
-
-/// False for an array index, a name inherited from `Object.prototype` and `__proto__`: an ordinary object does not keep those as plain own properties.
-fn is_plain_name(atoms: &Interner<'_>, names: &BuiltinNames, name: Atom) -> bool {
-    let is_index = atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
-    let is_inherited = names
-        .get(name)
-        .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-    !is_index && !is_inherited && name != known::__proto__
 }
 
 fn parent_expression(bound: &Bound<'_>, expression: ExprId) -> Option<ExprId> {

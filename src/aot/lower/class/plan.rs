@@ -370,6 +370,7 @@ pub(super) fn plan_class(
         instance_elements: Vec::new(),
         injected_elements: Vec::new(),
         static_elements: Vec::new(),
+        elements_behind_class: Vec::new(),
         decorations: Vec::new(),
         instance_method_initializers: None,
         initializer_list_count: 0,
@@ -421,17 +422,21 @@ fn find_member_slot(
     }
 }
 
-/// The constructor evaluates the values of the instance fields itself.
-pub(in crate::lower) fn assigns_fields_in_constructor(
+/// The instance fields whose values the constructor evaluates itself, in the order of the text.
+pub(in crate::lower) fn fields_evaluated_in_constructor(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     compiled: &CompiledModule<'_>,
     fields_under_signed_members: &[MemberId],
     class: ClassId,
-) -> bool {
+) -> SmallVec<[MemberId; 4]> {
     let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
-    let mut injected = plan.injected_elements.iter();
-    injected.any(|element| matches!(element, ClassElement::AssignedField { .. }))
+    let injected = plan.injected_elements.iter();
+    let fields = injected.filter_map(|element| match *element {
+        ClassElement::AssignedField { member } => Some(member),
+        _ => None,
+    });
+    fields.collect()
 }
 
 /// The constructor evaluates the value of this field itself.

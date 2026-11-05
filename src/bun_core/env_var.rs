@@ -84,10 +84,6 @@ new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
 #[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
-#[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
 // Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
 // executable.

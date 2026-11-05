@@ -17,6 +17,7 @@ use bun_sema::resolve::{EarlyTransformRequest, JsxSettings, TreeChange};
 use bun_sema::session::Arena;
 use bun_sema_driver::host::to_native;
 
+pub(crate) use self::module_items::POSITION;
 use self::writer::{TreeWriter, UnsupportedNode};
 use crate::diagnostics::LoadMessages;
 use crate::load::is_in_node_modules;

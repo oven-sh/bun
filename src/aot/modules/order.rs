@@ -13,7 +13,7 @@ use crate::ir::for_each_mut;
 use crate::load::{EntryPointKind, SourceKind};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
-    Binding, Bound, CodeUnit, CommonJsVariable, FnOwner, Parent, SymbolId, has_mapped_arguments,
+    Binding, Bound, CodeUnit, CommonJsVariable, FnOwner, Parent, has_mapped_arguments,
 };
 use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
@@ -159,12 +159,6 @@ impl EvaluationOrder {
         number.is_some_and(|number| set[number])
     }
 
-    /// A late site names the module, or a module that a late site may run asks for it.
-    #[cfg(test)]
-    pub(super) fn exposed(&self, module: ModuleRef) -> bool {
-        self.has(&self.parts.is_exposed, module)
-    }
-
     /// Somebody may look at the module while its body runs.
     pub(super) fn half(&self, module: ModuleRef) -> bool {
         self.has(&self.parts.is_half, module)
@@ -206,7 +200,6 @@ impl EvaluationOrder {
 pub(super) struct OrderParts {
     pub numbers: ModuleNumbers,
     pub is_code_of_program: Vec<bool>,
-    pub is_exposed: Vec<bool>,
     pub is_half: Vec<bool>,
     /// The strongly connected component of each module in the graph of all requests.
     pub component_of: Vec<u32>,
@@ -232,7 +225,6 @@ impl OrderParts {
         OrderParts {
             numbers: ModuleNumbers::new(file_count, Vec::new()),
             is_code_of_program: vec![false; file_count],
-            is_exposed: vec![false; file_count],
             is_half: vec![false; file_count],
             component_of: (0..file_count as u32).collect(),
             is_required_at_any_time: vec![false; file_count],
@@ -366,15 +358,6 @@ impl<'a, 's> FileText<'a, 's> {
     ) -> impl Iterator<Item = (ExprId, ModuleRef)> + '_ {
         let calls = self.wrapped.calls_in(self.file);
         calls.filter_map(|(call, inner)| Some((call, self.as_commonjs_module(inner)?)))
-    }
-
-    /// The inner modules of the file that `__commonJS(cb)` makes, each with the parameter that names its exports.
-    pub(super) fn inner_commonjs_modules(
-        &self,
-    ) -> impl Iterator<Item = (ModuleRef, Option<SymbolId>)> + '_ {
-        let inner_modules = self.inner_modules.iter();
-        inner_modules
-            .filter_map(|inner| Some((self.as_commonjs_module(inner)?, inner.exports_parameter)))
     }
 
     pub(super) fn always_evaluates(&self, parent: ExprId, operand: ExprId) -> bool {
@@ -1072,7 +1055,6 @@ pub(super) fn compute_order(
     let parts = OrderParts {
         numbers,
         is_code_of_program,
-        is_exposed,
         is_half,
         component_of,
         is_required_at_any_time,

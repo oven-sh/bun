@@ -1,3 +1,4 @@
+# all 6,237; ../parallel/made-by-the-library/ holds 3 of them.
 # generate-made-by-the-library.py <outdir>: what a built-in makes is ONE object, whoever types it: Link by the row, the walk by the row, by the function of the library that it calls, or by the body that it copies in line.
 # The object is made, kept somewhere, touched through the keeper, read back, and held against itself. maker x keeper x company of the keeper x observer. ONE SHAPE A FILE. Every program prints what plain Bun prints.
 import sys, os

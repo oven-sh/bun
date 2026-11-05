@@ -1,5 +1,5 @@
 // Reference: bun build --compile
-// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run` (11-02).
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // Two reads by name that compile to one stub call (`a.b.c`, `[a.x, a.y]`, `[a.x, b.y]`) and a read fused with its test (`if (a.flag)`, `a.kind === "leaf"`), on plain objects, class instances, getters and proxies. When one of the reads throws, the error names that read's property and its stack has that read's line and column. Five rows of `sameReceiverOnTwoLines` differ from plain Bun: its transpiler puts a constant that is used once in the place of its use, so the read of `const x = a.x` is reported a line below where it stands.
 const lines = [];
 const say = (...parts) => lines.push(parts.map(String).join(" "));

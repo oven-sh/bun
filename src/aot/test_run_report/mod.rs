@@ -35,8 +35,7 @@ pub(crate) enum FileLeavesOpen {
     MocksUnspelledModule,
     HandsOnUnspelledModule,
     LetsSpyOnGo,
-    SpiesUnderUnspelledName,
-    /// `export const watch = (object, name) => spyOn(object, name)`: the same, with how many texts the other files pass to it.
+    /// `export const watch = (object, name) => spyOn(object, name)`: with how many texts the other files pass to it.
     SpiesUnderNamesFromOutside {
         texts_passed: usize,
     },
@@ -226,9 +225,6 @@ fn line_of_file_that_leaves_open(path: &[u8], what: FileLeavesOpen) -> String {
         FileLeavesOpen::LetsSpyOnGo => {
             format!("AOT test run | {path} lets spyOn go where nobody sees what it is called with")
         }
-        FileLeavesOpen::SpiesUnderUnspelledName => format!(
-            "AOT test run | {path} spies on an object from somewhere under a name that it does not spell"
-        ),
         FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed } => format!(
             "AOT test run | {path} spies on an object from somewhere under a name that it does not spell: {texts_passed} texts are passed to it"
         ),

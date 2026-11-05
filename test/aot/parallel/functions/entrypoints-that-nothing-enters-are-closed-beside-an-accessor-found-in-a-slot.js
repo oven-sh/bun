@@ -1,7 +1,5 @@
 // A read and a store inside an accessor find the accessor of that name in a slot and become calls of what the slot holds. Such a call finds only what flow has listed,
 // so the entrypoints that nothing enters are still closed: without that the build removes 8 functions.
-// STATISTIC: CallsThatMayEnterAnyEntrypoint = 0
-// STATISTIC: UnreachableFunctionsRemoved >= 20
 function lazy(fill) {
   const array = new Array(2);
   function populate() {

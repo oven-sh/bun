@@ -11,8 +11,8 @@ use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
 use crate::util::memory::{OWN, Placeholder, Placeholders, Segmented};
 use crate::util::{
-    FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, spread_in_window,
-    spread_of,
+    FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, fx_hash,
+    spread_in_window, spread_of,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use bun_sort_by_number::SortByNumber;
@@ -2735,6 +2735,14 @@ impl Windowed for SigData<'_> {
 impl Windowed for TypeData<'_> {
     #[inline]
     fn window(&self) -> Window {
+        self.window_by(|| fx_hash(self))
+    }
+}
+
+impl TypeData<'_> {
+    /// `hash` returns `fx_hash(self)`.
+    #[inline]
+    fn window_by(&self, hash: impl Fn() -> u64) -> Window {
         let list =
             |types: &[TypeId]| window_of_youngest(types).unwrap_or_else(|| Window::of_type(0));
         match self {
@@ -2749,7 +2757,9 @@ impl Windowed for TypeData<'_> {
             TypeData::Cond {
                 file, node, mapper, ..
             } => window_of_mapper(*mapper, || Window::of_file_index(file.0, node.0)),
-            TypeData::Anon { mapper, .. } => window_of_mapper(*mapper, || Window::of_hash(self)),
+            TypeData::Anon { mapper, .. } => {
+                window_of_mapper(*mapper, || Window::of_hashed(hash()))
+            }
             TypeData::Fns { decls, mapper } => window_of_functions(decls, *mapper),
             TypeData::Union(members) | TypeData::Intersection(members) => list(members),
             TypeData::Tuple {
@@ -2767,7 +2777,7 @@ impl Windowed for TypeData<'_> {
             | TypeData::StringMapping { ty: operand, .. }
             | TypeData::EvolvingArray(operand) => Window::of_type(operand.0),
             TypeData::StringLit { value, .. } => Window::of_atom(value.0),
-            _ => Window::of_hash(self),
+            _ => Window::of_hashed(hash()),
         }
     }
 }
@@ -2777,6 +2787,16 @@ impl Windowed for OwnedTypeKey<'_> {
     fn window(&self) -> Window {
         self.0.window()
     }
+}
+
+/// `spread_in_window(created)`. The data, whose hash may decide on the window, is hashed once: a property of a union of n
+/// types lists n properties.
+fn spread_of_owned_key(created: &OwnedTypeKey) -> u64 {
+    let mut hasher = FxHasher::default();
+    created.0.hash(&mut hasher);
+    let hash_of_data = hasher.finish();
+    created.1.hash(&mut hasher);
+    spread_of(created.0.window_by(|| hash_of_data), hasher.finish())
 }
 
 /// Returns the same window as the `OwnedTypeKey` with this key.
@@ -4184,10 +4204,12 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     fn intern_new(&self, created: OwnedTypeKey<'s>) -> TypeId {
+        let spread = spread_of_owned_key(&created);
+        debug_assert_eq!(spread, spread_in_window(&created));
         TypeId(intern_record(
             (&self.published.types, self.own),
             |own| &own.types,
-            (spread_in_window(&created), created),
+            (spread, created),
             |created| created.is_bound(self.own),
             |created| created.mentions_own(),
             |record, created| record.created == *created,
@@ -4437,6 +4459,11 @@ pub trait Visitor {
     fn handle(&mut self, handle: u32) {
         self.plain(&handle);
     }
+    /// True if nothing that is still to come changes what the visitor has found.
+    #[inline]
+    fn is_done(&self) -> bool {
+        false
+    }
 }
 
 /// A value that can reference an atom, a list of index components, a mapper, a signature or a type:
@@ -4575,6 +4602,9 @@ impl<T: Follow> Follow for [T] {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         visitor.plain(&self.len());
         for it in self {
+            if visitor.is_done() {
+                return;
+            }
             it.visit(visitor);
         }
     }
@@ -5133,9 +5163,9 @@ struct IsOfVisitedFile<'a, 's> {
 impl IsOfVisitedFile<'_, '_> {
     #[inline]
     fn id(&mut self, kind: Kind, id: u32) {
-        if id & LOCAL == 0 {
+        if id & LOCAL == 0 && !self.is_of_visited_file {
             let records = self.own.of_visited_files[kind as usize].borrow();
-            self.is_of_visited_file |= records.has(id as usize);
+            self.is_of_visited_file = records.has(id as usize);
         }
     }
 }
@@ -5161,10 +5191,15 @@ impl Visitor for IsOfVisitedFile<'_, '_> {
     }
     #[inline]
     fn file(&mut self, file: FileId) {
-        self.is_of_visited_file |= self.own.visited_files.has(file.0 as usize);
+        self.is_of_visited_file =
+            self.is_of_visited_file || self.own.visited_files.has(file.0 as usize);
     }
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.is_of_visited_file
+    }
 }
 
 /// See `Follow::is_bound`.
@@ -5199,6 +5234,10 @@ impl Visitor for IsBound<'_, '_> {
     }
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.is_bound
+    }
 }
 
 /// See `Follow::mentions_own`.
@@ -5229,6 +5268,10 @@ impl Visitor for MentionsOwn {
     fn file(&mut self, _: FileId) {}
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.0
+    }
 }
 
 /// A multiply-and-fold hash of a record's content, independent of the task that created it.

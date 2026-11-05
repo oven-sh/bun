@@ -1,13 +1,17 @@
+#[cfg(test)]
+mod tests;
+
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::CommonJsVariable;
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, MemberKey};
+use bun_sema::hir::{BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::import_sites::find_module_printed_as_require;
 
 use super::Callee;
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
+use crate::load::test_runner_names::skip_to_written_use;
 use crate::lower::commonjs::BodyForm;
 use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::quoted_text::{append_printed_name, append_printed_number, append_printed_text};
@@ -185,6 +189,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         // `bun build` has the value in place of the member, so nothing is `this`.
         if let Some(constant) = self.file.find_enum_member_read(access) {
+            if let Some(member) = self.file.find_member_of_loaded_module(access) {
+                self.check_member_root(member);
+            }
             return Callee::without_key(self.emit_constant(constant), None, name);
         }
         self.lower_ordinary_member_callee(access, exit, name)
@@ -235,6 +242,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn find_name_behind_choice_of_build(&self, callee: ExprId) -> Option<ExprId> {
+        let file = &*self.file;
+        let written = skip_to_written_use(file.hir, |name| file.queries.atom_bytes(name), callee);
+        let scope = file.bound.dynamic_lookup_scope(NodeData::Expr(written));
+        (written != callee && scope.is_some()).then_some(written)
+    }
+
+    // The value of a choice is no reference: each arm is lowered as the name that it is, so the object of a `with` that has the name is `this`.
+    fn lower_callee_chosen_by_build(&mut self, choice: ExprId, written: ExprId) -> Callee {
+        let name = self.file.find_callee_name(written);
+        let join = self.create_block();
+        let function_variable = self.builder.create_variable(None);
+        let this_variable = self.builder.create_variable(None);
+        self.lower_conditional_arms(choice, false, &mut |lowering, arm| {
+            let arm = lowering.file.skip_type_syntax(arm);
+            lowering.set_position(lowering.file.hir[arm].pos);
+            let (function, this) = lowering.lower_identifier_callee(arm);
+            let this = this.unwrap_or_else(|| lowering.builder.undefined());
+            lowering.builder.write_variable(function_variable, function);
+            lowering.builder.write_variable(this_variable, this);
+            lowering.jump(join);
+        });
+        self.continue_in(join);
+        let function = self.builder.read_variable(function_variable);
+        let this = self.builder.read_variable(this_variable);
+        Callee::without_key(function, Some(this), name)
+    }
+
     fn lower_plain_callee(
         &mut self,
         callee: ExprId,
@@ -245,6 +280,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(access) = self.find_member_of_answer_behind_number(inner) {
             let function = self.lower_callee_of_answer(access, None);
             return Callee::without_key(function, None, None);
+        }
+        if let Some(written) = self.find_name_behind_choice_of_build(inner) {
+            return self.lower_callee_chosen_by_build(inner, written);
         }
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
             // `(await a.b)()`

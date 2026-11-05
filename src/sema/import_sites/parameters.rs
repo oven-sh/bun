@@ -214,18 +214,19 @@ pub fn find_values_passed_for(
     mention: ExprId,
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
-    let (values, path) =
+    let (values, path, _) =
         find_values_passed_for_pattern(hir, bound, decisions, mention, find_written)?;
     path.is_empty().then_some(values)
 }
 
+/// The last: whether a call leaves the argument out where no default stands in. The parameter is `undefined` there, which no expression of the file says.
 pub(super) fn find_values_passed_for_pattern(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
     mention: ExprId,
     find_written: FindWritten<'_>,
-) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>)> {
+) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
     let Binding::Symbol(parameter) = bound.binding(mention) else {
         return None;
     };
@@ -265,6 +266,8 @@ pub(super) fn find_values_passed_for_pattern(
         return None;
     }
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    let has_default = hir[id].default.is_some();
+    let mut is_left_out = false;
     let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
     if hir[id].default.is_some() {
         values.push(hir[id].default);
@@ -275,8 +278,10 @@ pub(super) fn find_values_passed_for_pattern(
         if passed.clone().any(is_spread) {
             return None;
         }
-        values.extend(passed.nth(index));
-        return Some((values, path));
+        let value = passed.nth(index);
+        is_left_out |= value.is_none() && !has_default;
+        values.extend(value);
+        return Some((values, path, is_left_out));
     };
     let text = bound.symbol(name).name;
     for callee in find_written(text) {
@@ -296,7 +301,9 @@ pub(super) fn find_values_passed_for_pattern(
         if hir[call].callee != callee || passed.clone().any(is_spread) {
             return None;
         }
-        values.extend(passed.nth(index));
+        let value = passed.nth(index);
+        is_left_out |= value.is_none() && !has_default;
+        values.extend(value);
     }
-    Some((values, path))
+    Some((values, path, is_left_out))
 }

@@ -43,6 +43,7 @@ import {
   neverTakenSuffix,
   ownCopiesSuffix,
   rewrittenSuffix,
+  storedPrograms,
 } from "./fuzz/sources";
 import { bunTypesFolder, typeChecker } from "./fuzz/type-check";
 
@@ -761,6 +762,27 @@ test(
   },
   timeout,
 );
+
+test("a refused stored program costs no seed, and a refused family does not give its seeds to one program", () => {
+  using folder = tempDir("aot-fuzzer-refused-stored-programs", {
+    ...Object.fromEntries(
+      Array.from({ length: 30 }, (_, index) => [`a/${index + 10}.ts`, "console.log(process.argv.length);\n"]),
+    ),
+    ...Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`b/${index}.ts`, `console.log(${index});\n`])),
+  });
+  const source = storedPrograms(String(folder), "stored-programs", (seed, count) => seed % count)!;
+  const drawn = Array.from(
+    { length: 37 },
+    (_, seed) =>
+      source(
+        seed,
+        standIn(() => {}),
+      )?.notes ?? "nothing",
+  );
+  expect(drawn.slice(30)).toEqual(Array.from({ length: 7 }, (_, index) => join("b", `${index}.ts`)));
+  expect(drawn.slice(0, 30).filter(notes => !notes.startsWith("b"))).toEqual([]);
+  expect(new Set(drawn.slice(0, 30)).size).toBeGreaterThan(1);
+});
 
 // Alone, after the others: it loads every generator, and their data makes each collection slower.
 one.skipIf(isWindows)(

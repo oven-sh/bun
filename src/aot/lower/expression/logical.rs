@@ -1,4 +1,4 @@
-use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind};
+use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, UnOp};
 use smallvec::SmallVec;
 
 use super::{Evaluation, ResultUsage, Tail, is_decided};
@@ -10,6 +10,59 @@ pub(super) enum LogicalOperator {
     And,
     Or,
     Nullish,
+}
+
+#[derive(Copy, Clone)]
+struct Level {
+    operator: LogicalOperator,
+    result: Option<LocalVariable>,
+    rhs: BlockId,
+    join: BlockId,
+}
+
+fn where_left_side_goes_at_once(
+    levels: &[Level],
+    number: usize,
+) -> (Option<LocalVariable>, BlockId) {
+    let is_truthy = match levels[number].operator {
+        LogicalOperator::And => false,
+        LogicalOperator::Or => true,
+        LogicalOperator::Nullish => return (levels[number].result, levels[number].join),
+    };
+    for outer in number + 1..levels.len() {
+        match (levels[outer].operator, is_truthy) {
+            (LogicalOperator::And, false)
+            | (LogicalOperator::Or | LogicalOperator::Nullish, true) => {}
+            (LogicalOperator::And, true) | (LogicalOperator::Or, false) => {
+                return (None, levels[outer].rhs);
+            }
+            (LogicalOperator::Nullish, false) => {
+                return (levels[outer - 1].result, levels[outer - 1].join);
+            }
+        }
+    }
+    let last = levels[levels.len() - 1];
+    (last.result, last.join)
+}
+
+fn is_written_as_boolean(kind: ExprKind) -> bool {
+    match kind {
+        ExprKind::True | ExprKind::False | ExprKind::Unary { op: UnOp::Not, .. } => true,
+        ExprKind::Binary { op, .. } => matches!(
+            op,
+            BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge
+                | BinOp::EqEq
+                | BinOp::NotEq
+                | BinOp::EqEqEq
+                | BinOp::NotEqEq
+                | BinOp::In
+                | BinOp::Instanceof
+        ),
+        _ => false,
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -82,19 +135,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             innermost = left;
         }
 
-        let mut value = self.lower_expression(innermost);
-        for &(node, operator, right) in spine.iter().rev() {
-            // Folding has it that the left side decides.
-            if decisions.is_dead_expr(right) {
-                continue;
-            }
+        spine.retain(|&mut (_, _, right)| !decisions.is_dead_expr(right));
+        spine.reverse();
+        let passes_by_operators = spine.len() > 1
+            && std::iter::once(innermost)
+                .chain(spine[..spine.len() - 1].iter().map(|&(_, _, right)| right))
+                .any(|tested| !is_written_as_boolean(hir[tested].kind));
+        let levels: SmallVec<[Level; 4]> = spine
+            .iter()
+            .map(|&(node, operator, _)| {
+                let needs_result = usage == ResultUsage::Value || node != expression;
+                Level {
+                    operator,
+                    result: needs_result.then(|| self.builder.create_variable(None)),
+                    rhs: self.create_block(),
+                    join: self.create_block(),
+                }
+            })
+            .collect();
+
+        let mut exit_of_chain =
+            (!spine.is_empty() && self.file.is_chain_root(innermost)).then(|| self.create_block());
+        let mut value = match exit_of_chain {
+            Some(exit) => self.lower_expression_in(innermost, Evaluation::in_chain(exit, Tail::No)),
+            None => self.lower_expression(innermost),
+        };
+        for (number, &(node, operator, right)) in spine.iter().enumerate() {
             self.set_position(hir[node].pos);
             let is_outermost = node == expression;
-            let needs_result = usage == ResultUsage::Value || !is_outermost;
-            let result = needs_result.then(|| self.builder.create_variable(None));
-            let rhs = self.create_block();
-            let join = self.create_block();
-            self.branch_on_logical_operator(value, operator, result, rhs, join);
+            let Level {
+                result, rhs, join, ..
+            } = levels[number];
+            let (result_at_once, at_once) = match passes_by_operators {
+                true => where_left_side_goes_at_once(&levels, number),
+                false => (result, join),
+            };
+            self.branch_on_logical_operator(value, operator, result_at_once, rhs, at_once);
+            if let Some(exit) = exit_of_chain.take() {
+                self.continue_in(exit);
+                match (operator, result_at_once) {
+                    (LogicalOperator::And, Some(result)) => {
+                        let skipped = self.builder.undefined();
+                        self.builder.write_variable(result, skipped);
+                        self.jump(at_once);
+                    }
+                    (LogicalOperator::And, None) => self.jump(at_once),
+                    (LogicalOperator::Or | LogicalOperator::Nullish, _) => self.jump(rhs),
+                }
+            }
             self.continue_in(rhs);
             let right_tail = if is_outermost { tail } else { Tail::No };
             self.lower_arm(right, result, usage, right_tail);

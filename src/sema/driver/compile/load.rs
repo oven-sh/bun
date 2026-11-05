@@ -254,7 +254,6 @@ fn load<'u: 's, 's>(
         brings_bun_types,
         without_bun_types,
         has_configuration_file,
-        is_read_again: false,
     })
 }
 

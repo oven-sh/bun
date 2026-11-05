@@ -15,7 +15,9 @@ import { copyApp } from "../../servers/run-servers";
 raiseDefaultTimeout(120_000);
 
 // express: 34 of them are what the top loads behind lib/view.js, whose constructor requires a name that nobody knows: a function that the top calls may be the first to load them.
-const markedAtMost: Record<string, number> = { express: 46, fastify: 42, koa: 12 };
+// 3 more are the files that are still running when that constructor comes to be (lib/express.js, lib/application.js, lib/view.js): behind a throw that ends the startup
+// a listener for uncaught exceptions or a hook for the exit may call it with their names. index.js runs under the import statement of the app: the loader keeps what it throws.
+const markedAtMost: Record<string, number> = { express: 48, fastify: 42, koa: 12 };
 
 describe("CommonJS files that may run again: servers", () => {
   const work = String(tempDir("aot-servers-run-again", {}));

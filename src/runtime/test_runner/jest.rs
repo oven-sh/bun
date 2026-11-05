@@ -583,6 +583,7 @@ pub(crate) fn jest(
     cx: &mut JsScope<'_>,
     path: Option<&[u8]>,
     by_who_loads: bool,
+    own_globals: bool,
 ) -> JsResult<JSValue> {
     let global_object = cx.global();
     let vm = global_object.bun_vm();
@@ -600,6 +601,11 @@ pub(crate) fn jest(
                 bstr::BStr::new(path)
             )));
         }
+    }
+
+    if own_globals {
+        let left_alone = vm.transpiler.options.own_test_globals;
+        return Ok(JSValue::js_number(f64::from(left_alone)));
     }
 
     let is_of_vitest = by_who_loads

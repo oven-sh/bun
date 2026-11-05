@@ -6,18 +6,18 @@ use super::functions::{self, create_tasks_for_shared_functions};
 use super::layout::{Source, Task};
 use super::tables::{create_table_tasks, write_strings};
 use super::{
-    EmitError, ExternalFunctionBodies, FunctionsWithoutCode, ProgramBytes,
-    emit_with_bodies_in_bytes, emit_with_external_bodies, source_positions,
+    ExternalFunctionBodies, FunctionsWithoutCode, ProgramBytes, emit_with_bodies_in_bytes,
+    emit_with_external_bodies, source_positions,
 };
 use crate::builtins::{BuiltinId, RuntimeFunction};
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
     AmbiguousExport, Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult,
     Field, Function, FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout,
-    LayoutKind, LimitId, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
-    ModuleRequestKind, OpenedName, ProgramList, QuotedText, ReplaceableBuiltin, RequiredName,
-    RuntimeFunctionEntry, SCHEMA_HASH, SourcePositions, SourceStamp, StaticField, SyntheticExport,
-    TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
+    LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind,
+    OpenedName, ProgramList, QuotedText, ReplaceableBuiltin, RequiredName, RuntimeFunctionEntry,
+    SCHEMA_HASH, SourcePositions, SourceStamp, StaticField, SyntheticExport, TypeSite,
+    TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -259,6 +259,7 @@ fn create_full_program() -> Program {
     });
     program.replaceable_builtins.push(ReplaceableBuiltin {
         member: BuiltinId::MathMin,
+        stays_locked: false,
     });
     let name = program.strings.intern(b"added");
     program.opened_names.push(OpenedName {
@@ -826,10 +827,4 @@ fn large_table_crosses_tasks() {
     let emitted = emit_serially(create_program());
     let header = read_header(emitted.as_slice());
     assert_eq!(count_of(&header, ProgramList::Variables), 10_000);
-}
-
-#[test]
-fn too_large_program_hits_the_program_id_limit() {
-    let error = EmitError::ProgramTooLarge { bytes: 1 << 32 };
-    assert_eq!(error.limit(), LimitId::MaxProgramIds);
 }

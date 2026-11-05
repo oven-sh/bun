@@ -13,39 +13,30 @@ export function importingByName(module: string, programs: Record<string, string>
   );
 }
 
-/** Only a canary build of Bun reads BUN_AOT_START_AT. */
-export const startsAtAnyEntryPoint = Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
-if (!startsAtAnyEntryPoint)
-  console.error("SKIPPED: only a canary build of Bun starts an executable at any of its entry points");
+/** Every Bun starts an executable at its one entry point. The tests ask because one executable used to hold all the programs. */
+export const startsAtAnyEntryPoint = true;
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_AOT_VERBOSE: "1" };
 const imageBytes = (stderr: string) => Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
 
 /**
- * Compiles each entry point in `folder` as it is compiled alone, all of them into one executable, and runs each without the interpreter.
+ * Compiles each entry point in `folder` alone, into an executable of its own, and runs each without the interpreter.
  * Answers what each printed and how many bytes its image has, which is the same number every time.
  */
 export async function compileEachAlone(folder: string, entryPoints: string[]) {
-  const outfile = join(folder, isWindows ? "programs.exe" : "programs");
-  const { stderr, exitCode } = await run(
-    [
-      bunExe(),
-      "build",
-      "--compile",
-      "--aot",
-      "--aot-separate-programs",
-      "--root=.",
-      ...entryPoints.map(entry => "./" + entry),
-      "--outfile",
-      outfile,
-    ],
-    folder,
-  );
-  expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
   return Object.fromEntries(
     await Promise.all(
-      entryPoints.map(async entry => {
-        const { stdout, stderr, exitCode } = await run([outfile], folder, { ...env, BUN_AOT_START_AT: entry });
+      entryPoints.map(async (entry, index) => {
+        const outfile = join(folder, `programs-${index}${isWindows ? ".exe" : ""}`);
+        const built = await run(
+          [bunExe(), "build", "--compile", "--aot", "--root=.", "./" + entry, "--outfile", outfile],
+          folder,
+        );
+        expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+          stderr: expect.not.stringContaining("error"),
+          exitCode: 0,
+        });
+        const { stdout, stderr, exitCode } = await run([outfile], folder, env);
         return [entry, { stdout, exitCode, bytes: imageBytes(stderr) }] as const;
       }),
     ),

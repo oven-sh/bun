@@ -1366,6 +1366,28 @@ impl<'p> Checker<'p, '_> {
         );
     }
 
+    /// True if the property `name` of the union `containing` has been made of a property of each member, none of which
+    /// `MAY_BE_OUT_OF_REACH`. Each `x.m()` behind n assignments of n classes to `x` would look `m` up in all of them again.
+    fn has_union_property_within_reach(&self, containing: TypeId, name: Atom) -> bool {
+        let key = (containing, name);
+        let Some(Some(holder)) = self.p.union_properties.get(&self.task, &key) else {
+            return false;
+        };
+        let TypeData::Synth(shape) = self.data(holder) else {
+            return false;
+        };
+        let Some(PropSource::Intersected(whole, parts)) = shape.props.first().map(|it| &it.source)
+        else {
+            return false;
+        };
+        *whole == containing
+            && parts.len() == self.parts(containing).len()
+            && parts.iter().all(|part| {
+                !matches!(part.source, PropSource::Intersected(..))
+                    && !part.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
+            })
+    }
+
     /// `checkPropertyAccessibilityAtLocation` for the property `name` of `containing`, accessed at `location`, inside
     /// the node that `at` represents (`Parent::Expr(e)` means by `e` itself). `error_node` returns the error position
     /// and is only called if there's an error.
@@ -1380,6 +1402,9 @@ impl<'p> Checker<'p, '_> {
         error_node: Option<&dyn Fn(&Self) -> (FileId, u32, u32)>,
     ) -> bool {
         let PropertyAccess { is_super, writing } = access;
+        if !is_super && self.has_union_property_within_reach(containing, name) {
+            return true;
+        }
         // `forEachProperty`: a property of a union or an intersection is composed of the members' properties.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         // The properties of the members themselves. An intersection inside a union contributes a single property.

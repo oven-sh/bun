@@ -17,7 +17,7 @@ use crate::ir::generated::{
 };
 use crate::ir::{
     ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, OpaqueKind, PropertyKey,
-    PropertyKeyId, StringId, Type, VariableKey,
+    PropertyKeyId, StringId, Type, TypeTable, VariableKey,
 };
 use crate::lower::class::ClassElement;
 use crate::lower::module::LibraryFunctionForm;
@@ -51,6 +51,21 @@ impl FileLowering<'_, '_, '_, '_> {
             return DeclaredType::untyped();
         }
         self.create_written_position(types)
+    }
+
+    fn create_position_of_declared_field(
+        &mut self,
+        home: FileId,
+        types: PositionTypes,
+    ) -> DeclaredType {
+        if home != self.file || types.written.written().is_some() || !self.is_checked() {
+            return self.create_field_position(home, types);
+        }
+        let position = self.create_position(types);
+        match [TypeTable::UNDEFINED, TypeTable::NULL, TypeTable::NULLISH].contains(&position.ty) {
+            true => DeclaredType::untyped(),
+            false => position,
+        }
     }
 
     fn find_declared_this_type(&mut self, function: FunctionRef) -> Option<CheckerTypeId> {
@@ -152,7 +167,10 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             field.flags |= flags;
             if known.is_none() || types.written.written().is_some() {
-                field.declared = self.create_field_position(home, types);
+                field.declared = match is_declared {
+                    true => self.create_position_of_declared_field(home, types),
+                    false => self.create_field_position(home, types),
+                };
                 if declared_member.is_some_and(|member| member.is_optional) {
                     field.declared = self.add_undefined(field.declared);
                 }

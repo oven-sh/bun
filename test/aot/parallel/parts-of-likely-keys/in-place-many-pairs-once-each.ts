@@ -1,4 +1,4 @@
-// One deed a program: `${a.id},${b.id}` that is looked up, where id is written a number and is, at run time, what the deed says. The text of a number may be made late; what runs code or throws does so in its turn. Made by staging/parts-of-likely-keys-1/make-family-of-keys.py.
+// One deed a program: `${a.id},${b.id}` that is looked up, where id is written a number and is, at run time, what the deed says. The text of a number may be made late; what runs code or throws does so in its turn.
 type Item = { id: number; name: string };
 const said: string[] = [];
 const table = new Map<string, number>();

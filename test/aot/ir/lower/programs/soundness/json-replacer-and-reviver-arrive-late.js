@@ -22,19 +22,17 @@ main();
 
 // GENERATED: pick revive toJSON
 // CHECK-LABEL: function {{*}}name="pick"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: anything):
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v5 = CheckInitialized v4 name="seen"
-// CHECK-NEXT: v6 = PropGet v5 key="push"
-// CHECK-NEXT: v7 = TypeOf v1
-// CHECK-NEXT: v8 = Call v6, v5, v7, v2 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="replacer"
-// CHECK-NEXT: v11 = Data data=[[d_3]]
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[f_2]]|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v12 layout=[[L_1]]
-// CHECK-NEXT: Return v3
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=anything variableName="seen"}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
+// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: anything, v4: anything):
+// CHECK-NEXT: v5 = PropGet v1 key="push"
+// CHECK-NEXT: v6 = TypeOf v2
+// CHECK-NEXT: v7 = Call v5, v1, v6, v3 calleeKey="push" calleeName="seen.push"
+// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_1]]
+// CHECK-NEXT: v9 = CheckInitialized v8 name="replacer"
+// CHECK-NEXT: v10 = Data data=[[d_3]]
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[f_2]]|Array<undefined|null|string> flags=[IsExpected]}
+// CHECK-NEXT: PutEnvironmentField v0, v11 layout=[[L_1]]
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="revive"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
@@ -55,13 +53,13 @@ main();
 // CHECK-LABEL: function {{*}}name="toJSON"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]] field=2
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]] field=1
 // CHECK-NEXT: v2 = CheckInitialized v1 name="withToJSON"
 // CHECK-NEXT: v3 = NewClosure function=[[f_6]]
 // CHECK-NEXT: v4 = NewObject -, v3 layout=[[L_7]] fields=[0]
 // CHECK-NEXT: v5 = FinishObject v4
 // CHECK-NEXT: PropSet v2, v5 key="extra"
-// CHECK-NEXT: v7 = GetEnvironmentField v0 layout=[[L_1]] field=2
+// CHECK-NEXT: v7 = GetEnvironmentField v0 layout=[[L_1]] field=1
 // CHECK-NEXT: v8 = CheckInitialized v7 name="withToJSON"
 // CHECK-NEXT: v9 = PropGet v8 key="extra"
 // CHECK-NEXT: v10 = NewObject -, v9 layout=[[L_8]] fields=[0]

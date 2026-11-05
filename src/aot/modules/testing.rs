@@ -3,7 +3,8 @@ use super::{
     bind_modules,
 };
 use crate::compile::testing::{
-    default_settings, with_bind_input, with_runtime_bind_input, with_test_run_bind_input,
+    default_settings, with_bind_input, with_bind_input_of_test_files, with_runtime_bind_input,
+    with_test_run_bind_input,
 };
 use crate::ir::generated::ModuleRequestKind;
 use bstr::BStr;
@@ -43,6 +44,18 @@ pub(crate) fn with_test_run_graph<R>(
     then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
 ) -> R {
     with_test_run_bind_input(files, |input| then(&bind_whole_program(input), input))
+}
+
+/// `with_bind_input_of_test_files`
+pub(crate) fn with_graph_of_test_files<R>(
+    files: &[(&str, &str)],
+    test_files: usize,
+    preloads: usize,
+    then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
+) -> R {
+    with_bind_input_of_test_files(files, test_files, preloads, |input| {
+        then(&bind_whole_program(input), input)
+    })
 }
 
 pub(crate) fn file_named(input: &BindInput<'_, '_>, name: &str) -> FileId {

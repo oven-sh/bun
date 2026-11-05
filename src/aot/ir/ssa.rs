@@ -479,6 +479,10 @@ impl FunctionBuilder {
         )
     }
 
+    pub fn is_new_closure(&self, value: ValueId) -> bool {
+        matches!(self.opcode_of(value), Some(Opcode::NewClosure))
+    }
+
     /// For `x = undefined` and `x = null`, where `x` lives in no environment. Whether or not `x` is read again, no store is left of the assignment.
     pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
         let released = self.read_variable(variable);

@@ -6,6 +6,7 @@ use super::errors::Container;
 use super::expr::TargetKind;
 use super::related::FileSpan;
 use super::shape::UntypedProperty;
+use super::unions::Growth;
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
@@ -242,6 +243,13 @@ pub(super) struct FlowMemo {
     flow_loop_references: Vec<Reference>,
     /// `Checker::work` when it got its latest entry.
     flow_loop_cached_at: u64,
+    /// Not in tsgo. These three are for unions of `Growth::MIN_MEMBERS` or more, so that one that has grown by a member is
+    /// only asked about that member. `getTypeFacts`, by the union and the mask.
+    facts_of_unions: FxHashMap<(TypeId, u32), u32>,
+    /// `getTypeWithFacts`, by the union and the facts.
+    unions_with_facts: FxHashMap<(TypeId, u32), TypeId>,
+    /// The unions in which no member may be `undefined` or `null`, so `getAdjustedTypeWithFacts` leaves them as they are.
+    unions_of_non_nullable_members: FxHashSet<TypeId>,
     /// `switchStatementLinks`
     switch_statement_links: FxHashMap<(FileId, StmtId), SwitchStatementLinks>,
     /// `contextFreeTypes`, for the results that depend on the incomplete type of a loop in
@@ -249,6 +257,8 @@ pub(super) struct FlowMemo {
     context_free_types_in_loops: FxHashMap<(FileId, ExprId), TypeId>,
     /// How many times one of them was read.
     reads_of_types_in_loops: u64,
+    /// How many times `getNarrowableTypeForReference` may have returned another type than it was given.
+    narrowable_types_not_as_given: u64,
     /// The depth of `stack` when each `ExhaustiveState::Computing` was set, the innermost last.
     exhaustive_states_computing: SmallVec<[usize; 2]>,
     /// `last_assignment_pos`
@@ -1416,9 +1426,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Intrinsic::ImplicitNever
                 | Intrinsic::UniqueLiteral,
             ) => 0,
-            TypeData::Union(parts) => parts
-                .iter()
-                .fold(0, |all, &p| all | self.type_facts_worker(p, mask)),
+            TypeData::Union(parts) => self.facts_of_union(ty, parts, mask),
             // `getIntersectionTypeFacts`: next to a primitive, object types are tags.
             TypeData::Intersection(parts) => {
                 let ignore_objects = self.maybe_type_of_kind(ty, tf::PRIMITIVE);
@@ -1458,6 +1466,34 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn facts_of_union(&mut self, union: TypeId, parts: &[TypeId], mask: u32) -> u32 {
+        let mut facts = 0;
+        let mut rest = parts;
+        let before = self.marks_of_facts();
+        if parts.len() >= Growth::MIN_MEMBERS {
+            if let Some(&known) = self.flow_memo.facts_of_unions.get(&(union, mask)) {
+                return known;
+            }
+            if let Some(growth) = self.grown_unions.get(&union)
+                && let Some(&known) = self.flow_memo.facts_of_unions.get(&(growth.from, mask))
+            {
+                (facts, rest) = (known, std::slice::from_ref(&parts[growth.at]));
+            }
+        }
+        for &part in rest {
+            facts |= self.type_facts_worker(part, mask);
+        }
+        if parts.len() >= Growth::MIN_MEMBERS && before == self.marks_of_facts() {
+            self.flow_memo.facts_of_unions.insert((union, mask), facts);
+        }
+        facts
+    }
+
+    /// While they stay the same, the facts that were found are final.
+    fn marks_of_facts(&self) -> ((u64, u64), u64) {
+        (self.non_cacheable_mark(), self.times_cut_short.get())
+    }
+
     /// `isFunctionObjectType`
     fn is_function_object_type(&mut self, ty: TypeId) -> bool {
         let Some(members) = self.members(ty) else {
@@ -1475,9 +1511,30 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeWithFacts`
     fn type_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
-        self.cached_type_with_facts(ty, include, |c| {
-            c.filter(ty, |c, m| c.has_type_facts(m, include))
-        })
+        self.cached_type_with_facts(ty, include, |c| c.members_with_facts(ty, include))
+    }
+
+    fn members_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
+        if self.parts(ty).len() < Growth::MIN_MEMBERS {
+            return self.filter(ty, |c, m| c.has_type_facts(m, include));
+        }
+        let before = self.marks_of_facts();
+        let kept = match self.members_of_grown_union_with_facts(ty, include) {
+            Some(kept) => kept,
+            None => self.filter(ty, |c, m| c.has_type_facts(m, include)),
+        };
+        if before == self.marks_of_facts() {
+            (self.flow_memo.unions_with_facts).insert((ty, include), kept);
+        }
+        kept
+    }
+
+    fn members_of_grown_union_with_facts(&mut self, ty: TypeId, include: u32) -> Option<TypeId> {
+        let growth = self.growth_of(ty)?;
+        let key = (growth.from, include);
+        let so_far = *self.flow_memo.unions_with_facts.get(&key)?;
+        let keeps_added = self.has_type_facts(growth.added, include);
+        self.filter_grown_union(ty, growth, so_far, keeps_added)
     }
 
     /// FOR SPEED: returns the result of `compute` for `ty`, cached in `FlowMemo::types_with_facts`
@@ -1592,15 +1649,36 @@ impl<'p, 's> Checker<'p, 's> {
                 IS_UNDEFINED,
                 TypeId::UNDEFINED,
             ),
-            NE_UNDEFINED_OR_NULL | TRUTHY => self.map_type(reduced, |c, m| {
-                if c.has_type_facts(m, EQ_UNDEFINED_OR_NULL) {
+            NE_UNDEFINED_OR_NULL | TRUTHY => self.with_non_nullable_members(reduced),
+            _ => reduced,
+        }
+    }
+
+    fn with_non_nullable_members(&mut self, ty: TypeId) -> TypeId {
+        let is_long = self.parts(ty).len() >= Growth::MIN_MEMBERS;
+        let before = self.marks_of_facts();
+        let growth = self.grown_unions.get(&ty).copied().filter(|_| is_long);
+        let is_as_it_is = growth.is_some_and(|growth| {
+            let so_far = &self.flow_memo.unions_of_non_nullable_members;
+            so_far.contains(&growth.from)
+                && !self.has_type_facts(growth.added, facts::EQ_UNDEFINED_OR_NULL)
+        });
+        if !is_as_it_is {
+            let mapped = self.map_type(ty, |c, m| {
+                if c.has_type_facts(m, facts::EQ_UNDEFINED_OR_NULL) {
                     c.global_non_nullable_type_instantiation(m)
                 } else {
                     m
                 }
-            }),
-            _ => reduced,
+            });
+            if mapped != ty {
+                return mapped;
+            }
         }
+        if is_long && before == self.marks_of_facts() {
+            (self.flow_memo.unions_of_non_nullable_members).insert(ty);
+        }
+        ty
     }
 
     /// `unknownUnionType`: `unknown` as `{} | null | undefined`.
@@ -5174,7 +5252,10 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Substitution {
                 base,
                 constraint: TypeId::UNKNOWN,
-            } => base,
+            } => {
+                self.flow_memo.narrowable_types_not_as_given += 1;
+                base
+            }
             _ => declared,
         };
         if check_mode.contains(CheckMode::INFERENTIAL)
@@ -5189,6 +5270,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(frame) = self.frames.last_mut() {
             frame.may_substitute_constraints = true;
         }
+        self.flow_memo.narrowable_types_not_as_given += 1;
         if !self.is_constraint_position(file, e, declared) {
             // `hasContextualTypeWithNoGenericTypes`
             let context_flags = if check_mode.contains(CheckMode::REST_BINDING_ELEMENT) {
@@ -7170,10 +7252,15 @@ impl<'p, 's> Checker<'p, 's> {
                     break self.initial_of(walk);
                 }
                 Flow::Assign { before, target } => {
+                    let not_as_given = self.flow_memo.narrowable_types_not_as_given;
                     match self.type_at_assignment(walk, flow, target) {
                         AtAssignment::Type(t) => {
-                            // Any other type went through `getNarrowableTypeForReference`.
-                            walk.is_unshareable |= t != TypeId::UNREACHABLE_NEVER
+                            // Any other type went through `getNarrowableTypeForReference`, which looks at where the
+                            // reference is before it returns another type.
+                            let is_as_given = walk.reference.at.is_some()
+                                && not_as_given == self.flow_memo.narrowable_types_not_as_given;
+                            walk.is_unshareable |= !is_as_given
+                                && t != TypeId::UNREACHABLE_NEVER
                                 && !matches!(self.data(t), TypeData::EvolvingArray(_));
                             break t;
                         }

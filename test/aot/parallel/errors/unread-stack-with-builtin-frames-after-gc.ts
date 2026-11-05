@@ -1,5 +1,5 @@
 // A GC formats the stack of an error early when a function in its frames has died. Each stack here has the frame of a built-in that compiled code called.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): a stack that is read behind a collection is made without Error.prepareStackTrace
+// Todo: only frames (stack-trace-only differences are fine): a stack that is read behind a collection is made without Error.prepareStackTrace
 type Make = () => unknown;
 
 const errors: Error[] = [];

@@ -1,5 +1,5 @@
 // The road of internal:http1_server_fallback: `server.emit("connection", socket)` over a socket of node:net. The client reads slowly, so write() meets backpressure and the response waits for 'drain'.
-// The stand-in for the native handle keeps the drain callback behind `set onwritable(callback)`. Stored plainly into the slot of that field (04:08:58 to 07:42:55 on 11-04) the callback was never found, and the response stood still for good.
+// The stand-in for the native handle keeps the drain callback behind `set onwritable(callback)`. Stored plainly into the slot of that field the callback was never found, and the response stood still for good.
 const http = require("node:http"), net = require("node:net");
 const chunk = Buffer.alloc(256 * 1024, 120);
 const log = [];

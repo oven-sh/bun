@@ -49,10 +49,7 @@ type Pin = Record<Form, number> & {
 type Pins = Record<string, Pin>;
 const readKeys = (file: string) => Object.keys(JSON.parse(readFileSync(join(import.meta.dir, file), "utf8")));
 const writePins = (path: string, pins: Pins) =>
-  writeFileSync(
-    path,
-    JSON.stringify(Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n",
-  );
+  writeFileSync(path, `{\n${Object.keys(pins).sort().map(name => `${JSON.stringify(name)}: ${JSON.stringify(pins[name])}`).join(",\n")}\n}\n`);
 const isFarWorse = (now: number, pin: number) =>
   (now > pin * 1.1 && now > pin + 20) || (now > pin * 1.25 && now > pin + 4);
 const isWorse = (now: number, pin: Pin, form: Form) =>

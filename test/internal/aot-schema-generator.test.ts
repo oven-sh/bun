@@ -152,7 +152,7 @@ test.skipIf(schema === undefined)(
         `${withoutForm} ; openUnder = Generic ; closedUnder = Always, Generic`,
         `${name} lists Generic in openUnder and in closedUnder`,
       ],
-      [`${row} ; openIn = Twin ; closedIn = Twin`, `${name} lists Twin in openIn and in closedIn`],
+      [`${row} ; openIn = RareBlock ; closedIn = RareBlock`, `${name} lists RareBlock in openIn and in closedIn`],
       [`${row} ; closedIn = Anywhere`, `${name} lists Anywhere, which is no place`],
       [`${row} ; openIn = Loop`, `${name} has a form of its own in loops and does not set formDependsOnLoop`],
     ];
@@ -171,7 +171,7 @@ test.skipIf(schema === undefined)(
       });
     }
 
-    writeFileSync(file, text.replace(row, `${row} ; formDependsOnLoop = true ; openIn = Loop ; closedIn = Twin`));
+    writeFileSync(file, text.replace(row, `${row} ; formDependsOnLoop = true ; openIn = Loop ; closedIn = RareBlock`));
     expect((await generate(join(ir, "AOTSchema.def"), "--hash")).exitCode).toBe(0);
   },
 );

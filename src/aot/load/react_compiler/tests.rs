@@ -10,6 +10,7 @@ use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
 use bun_sema::fold::{FoldInputs, FoldOptions};
 use bun_sema::hir::{
     BinOp, CallId, ExprId, ExprKind, File, FnBody, FnId, PatId, PatKind, StmtId, StmtKind, VarDecl,
+    VarKind,
 };
 use bun_sema::hir_from_data::HostValue;
 use bun_sema::import_sites::{AutomaticJsx, JsxMode};
@@ -271,6 +272,7 @@ impl<'s> Tree<'s> {
         Some(hir.numbers[size as usize])
     }
 
+    /// Of `var name`, which stands nowhere but in `(name ??= globalThis.Symbol.for(key))`.
     fn sentinel_key(&self, name: &str) -> Option<String> {
         let hir = self.hir();
         let mut declarations = self
@@ -282,16 +284,36 @@ impl<'s> Tree<'s> {
             });
         let declaration = declarations
             .find(|declaration| self.pattern_name(declaration.pat).as_deref() == Some(name))?;
-        let ExprKind::Call(call) = hir[declaration.init].kind else {
-            return None;
+        assert!(matches!(declaration.kind, VarKind::Var) && declaration.init == ExprId::NONE);
+        let fills = self
+            .reachable_expressions()
+            .filter_map(|it| match hir[it].kind {
+                ExprKind::Assign {
+                    op: Some(BinOp::Nullish),
+                    target,
+                    value,
+                } if self.is_name(target, name) => Some(value),
+                _ => None,
+            });
+        let mut keys: Vec<String> = fills
+            .map(|value| {
+                let ExprKind::Call(call) = hir[value].kind else {
+                    panic!("{name} is not filled by a call");
+                };
+                let path = self.member_path(hir[call].callee);
+                assert_eq!(path, ["globalThis", "Symbol", "for"]);
+                let ExprKind::String(key) = hir[hir.id_at(hir[call].args, 0)].kind else {
+                    panic!("the key of {name} is no text");
+                };
+                self.name_text(key)
+            })
+            .collect();
+        assert_eq!(keys.len(), self.count_names(name));
+        keys.dedup();
+        let [key] = &keys[..] else {
+            panic!("{name} has the keys {keys:?}");
         };
-        if self.member_path(hir[call].callee) != ["globalThis", "Symbol", "for"] {
-            return None;
-        }
-        let ExprKind::String(key) = hir[hir.id_at(hir[call].args, 0)].kind else {
-            return None;
-        };
-        Some(self.name_text(key))
+        Some(key.clone())
     }
 }
 
@@ -381,6 +403,7 @@ impl<'s> Workbench<'s> {
             path: MAIN_PATH,
             hir: &mut self.tree,
             module_format: ModuleFormat::Esm,
+            takes_import_statements: true,
             settings: &self.settings,
             import_meta_main: None,
         };

@@ -64,16 +64,6 @@ impl LinkedFunctions {
         &self.tables
     }
 
-    /// In the order of their program ids. `None`: record and code hold the program's ids already.
-    pub fn functions(&self) -> impl Iterator<Item = (Option<&TableIds>, &Function)> {
-        let tables = &*self.tables;
-        self.lists.iter().flat_map(move |list| {
-            let ids = ids_of(tables, list);
-            let functions = list.functions.iter();
-            functions.map(move |function| (ids, &**function))
-        })
-    }
-
     /// The ids of the tables stay, for whoever reads records and code where they are.
     pub(crate) fn take_lists(&mut self) -> Vec<FunctionsOfUnit> {
         take(&mut self.lists)
@@ -140,22 +130,6 @@ mod tests {
             list_at(1, &[13]),
         ];
         LinkedFunctions::new(tables, lists)
-    }
-
-    #[test]
-    fn functions_follow_the_lists_with_the_ids_of_their_tables() {
-        let linked = link_four_functions();
-        assert_eq!(linked.function_count(), 4);
-        assert_eq!(linked.tables().len(), 2);
-        let listed: Vec<(Option<ModuleId>, u32)> = linked
-            .functions()
-            .map(|(ids, function)| (ids.and_then(|ids| ids.modules[0]), function.position))
-            .collect();
-        let [first, second] = [4, 9].map(|module| Some(ModuleId::new(module)));
-        assert_eq!(
-            listed,
-            [(second, 10), (second, 11), (first, 12), (second, 13)]
-        );
     }
 
     #[test]
@@ -227,12 +201,9 @@ mod tests {
             },
             function_at(4),
         ];
-        let mut linked = LinkedFunctions::of_program_functions(functions.clone());
+        let mut linked = LinkedFunctions::of_program_functions(functions);
         assert!(linked.tables().is_empty());
         assert_eq!(linked.function_count(), 2);
-        assert!(linked.functions().all(|(ids, _)| ids.is_none()));
-        let listed = linked.functions().map(|(_, function)| function);
-        assert!(listed.eq(&functions));
 
         let lists = linked.take_lists();
         assert_eq!(linked.function_count(), 0);

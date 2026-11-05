@@ -2,12 +2,12 @@
 
 use super::summary::{StoredName, SummaryWalk, names_exports_of_inner_module};
 use crate::builtins::id::BuiltinId;
-use crate::builtins::{BuiltinNames, Mutability, Resolved, ResolvedBuiltins, table};
+use crate::builtins::{Mutability, Resolved, ResolvedBuiltins};
 use crate::known_helpers::{Helper, KnownFunction, KnownHelpers, Shape};
 use crate::load::sources::parsed_source;
 use crate::modules::order::FileText;
-use crate::modules::{DescribedPart, InnerModule, WrappedModules, WrittenDescriptor};
-use bun_sema::atom::{Atom, Interner, known};
+use crate::modules::{BindInput, DescribedPart, InnerModule, WrappedModules, WrittenDescriptor};
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, Bound, CommonJsVariable, FnOwner, Parent, SymbolId,
 };
@@ -26,12 +26,11 @@ type Arguments = SmallVec<[ExprId; 4]>;
 struct CallReader<'a, 's> {
     files: &'a Files<'s>,
     file: FileId,
-    atoms: &'a Interner<'s>,
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     analysis: &'a FileAnalysis<'s>,
     builtins: &'a ResolvedBuiltins,
-    builtin_names: &'a BuiltinNames,
+    bind: &'a BindInput<'a, 's>,
     helpers: &'a KnownHelpers,
     wrapped: &'a WrappedModules,
     /// The callback whose parameters name the exports. `None`: the file is the module.
@@ -59,12 +58,11 @@ impl SummaryWalk<'_, '_, '_> {
         let mut reader = CallReader {
             files: bind.files,
             file,
-            atoms: &bind.files.atoms,
             hir: bind.files.hir(file),
             bound: bind.files.bound(file),
             analysis: bind.files.analysis(file),
             builtins: &source.builtins,
-            builtin_names: bind.builtin_names,
+            bind,
             helpers: bind.known_helpers,
             wrapped: &self.input.modules.wrapped,
             inner: self.inner,
@@ -207,17 +205,8 @@ impl<'a> CallReader<'a, '_> {
         self.find_constant(value) == Some(Constant::Boolean(true))
     }
 
-    /// False for a name that a plain object resolves without an own property (a member of `Object.prototype`, `__proto__`) and for an array index, which is not stored as a named property.
     fn can_be_variable(&self, name: Atom) -> bool {
-        let is_index = self
-            .atoms
-            .bytes(name)
-            .first()
-            .is_some_and(u8::is_ascii_digit);
-        let listed = self.builtin_names.get(name);
-        let is_inherited = listed
-            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-        !is_index && !is_inherited && name != known::__proto__
+        self.bind.is_plain_name(name)
     }
 
     fn find_plain_name(&self, key: ExprId) -> Option<Atom> {

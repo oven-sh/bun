@@ -32,6 +32,7 @@ use crate::ir::{InParallel, drop_each, for_each_mut};
 use crate::known_helpers::{self, Helper, KnownHelpers, resolve_callee};
 use crate::link::{Beside, run_steps_beside};
 use crate::load::Sources;
+use crate::load::react_compiler::POSITION;
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
@@ -131,6 +132,8 @@ enum Interest {
     LoadOfIsolatedCode,
     // A text of the region spells the path of the file. A loader that is given a name which the build does not know may be given that text.
     FileSpelled(FileId),
+    // `SpelledModule::is_left_to_loader`: a loader is given a name that the build has followed to the file.
+    FileLeftToLoader(FileId),
     // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
     KnownMember(Sym),
     // A read of a variable of a module of data. The value stands for it.
@@ -231,6 +234,8 @@ struct Unit {
     class_checks: Option<(ClassId, ClassChecks)>,
     // `FileScan::add_class_unit`: what somebody needs who makes an object of the class or calls something on it.
     is_class: bool,
+    // `may_test_instances_itself()` of that class.
+    may_test_instances_itself: bool,
 }
 
 // The regions of a file: the code at its top level, then its units.
@@ -293,6 +298,33 @@ impl FileUnits {
             Some(Part::Bodies | Part::Declarator(_) | Part::Class(_) | Part::Statement(_)) => None,
         }
     }
+}
+
+fn find_class_in_variable(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    variable: SymbolId,
+) -> Option<ClassId> {
+    match bound.binding_initializer(hir, variable) {
+        BindingInitializer::Class(class) => Some(class),
+        BindingInitializer::Expression(initializer) => {
+            match hir[hir.skip_type_assertions(initializer)].kind {
+                ExprKind::Class(class) => Some(class),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+// `x instanceof C` calls `C[Symbol.hasInstance]` with `C` as `this`. Whoever lays one on the class itself has got hold of the class; the class finds one without that among its static members
+// under computed keys, and on what it extends, where anybody may have laid it.
+fn may_test_instances_itself(hir: &hir::File<'_>, class: ClassId) -> bool {
+    let mut members = hir[class].members.iter().map(|member| &hir[member]);
+    !hir[class].extends.is_none()
+        || members.any(|member| {
+            member.flags.contains(Flags::STATIC) && matches!(member.key, PropKey::Computed(_))
+        })
 }
 
 fn module_of_view(view: View) -> ModuleRef {
@@ -426,6 +458,7 @@ impl<'a, 's> FileScan<'a, 's> {
             region_around: self.region,
             class_checks: None,
             is_class: false,
+            may_test_instances_itself: false,
         });
         unit
     }
@@ -752,6 +785,8 @@ impl<'a, 's> FileScan<'a, 's> {
         self.units.unit_of_class.insert(class, unit);
         self.add_unit(Part::Bodies, functions);
         self.units.units[unit as usize].is_class = true;
+        self.units.units[unit as usize].may_test_instances_itself =
+            may_test_instances_itself(hir, class);
         self.pieces.extend(pieces);
     }
 
@@ -827,14 +862,18 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                 }
                 StmtKind::Expr(_) | StmtKind::Enum(_) | StmtKind::ExportDefault(_) => {
-                    let is_enum_known_whole = match hir[statement].kind {
-                        StmtKind::Enum(declaration) => {
-                            let members = self.input.known_objects(&self.known_members);
-                            members.knows_every_member(self.file, declaration)
-                        }
-                        _ => false,
+                    let members = self.input.known_objects(&self.known_members);
+                    let (is_enum_known_whole, may_run_setter) = match hir[statement].kind {
+                        StmtKind::Enum(it) => (
+                            members.knows_every_member(self.file, it),
+                            members.stores_under_name_laid_on_object_prototype(self.file, it),
+                        ),
+                        _ => (false, false),
                     };
-                    if removable.is_some_and(|it| is_enum_known_whole || it.statement(statement)) {
+                    let is_removable = |it: &Removable<'_, '_>| {
+                        !may_run_setter && (is_enum_known_whole || it.statement(statement))
+                    };
+                    if removable.is_some_and(is_removable) {
                         self.add_statement_part(statement);
                     } else if let Some(removable) = removable {
                         self.add_export_store_part(removable, statement);
@@ -926,6 +965,10 @@ impl<'a, 's> FileScan<'a, 's> {
 
     // The region that the position is written in, not counting the pieces of one unit.
     fn region_outside(&self, position: u32, unit: Option<u32>) -> u32 {
+        // What the build adds has no text of its own and runs at the head of the body. The piece of the first statement begins at that position too.
+        if position == POSITION {
+            return TOP_LEVEL;
+        }
         let following = self
             .pieces
             .partition_point(|piece| piece.written_at.start <= position);
@@ -1104,7 +1147,14 @@ impl<'a, 's> FileScan<'a, 's> {
     ) -> Option<Interest> {
         match binding {
             ImportBinding::Variable(defined) => Some(match reference {
-                Some(reference) if self.is_only_compared(reference) => {
+                Some(reference)
+                    if self.is_only_compared(reference, || {
+                        let files = self.input.files;
+                        let (hir, bound) = (files.hir(defined.file), files.bound(defined.file));
+                        find_class_in_variable(hir, bound, defined.id)
+                            .is_some_and(|class| may_test_instances_itself(hir, class))
+                    }) =>
+                {
                     Interest::TestedBinding(defined)
                 }
                 Some(_) | None => Interest::Binding(defined),
@@ -1173,8 +1223,11 @@ impl<'a, 's> FileScan<'a, 's> {
             ImportBinding::Local => {
                 let unit = self.units.find_unit(self.hir, self.bound, symbol)?;
                 // The code around the class defines it, and that code is reached with the reference.
-                let is_only_compared = self.units.units[unit as usize].is_class
-                    && reference.is_some_and(|reference| self.is_only_compared(reference));
+                let unit_named = &self.units.units[unit as usize];
+                let is_only_compared = unit_named.is_class
+                    && reference.is_some_and(|reference| {
+                        self.is_only_compared(reference, || unit_named.may_test_instances_itself)
+                    });
                 (!is_only_compared).then_some(Interest::Unit(unit))
             }
             binding => {
@@ -1813,6 +1866,13 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     let exports = candidates.iter().map(|it| Interest::EveryExport(it.module));
                     self.units.interests[region].extend(exports);
+                    let left_to_loader = candidates.iter().filter_map(|it| match it.module {
+                        ModuleRef::File(file) if it.is_left_to_loader => {
+                            Some(Interest::FileLeftToLoader(file))
+                        }
+                        _ => None,
+                    });
+                    self.units.interests[region].extend(left_to_loader);
                 }
                 // As in a bundle, only an entry point answers to a name that the build does not know.
                 Some(
@@ -2136,6 +2196,8 @@ struct Found {
     loads_by_unknown_names: Vec<(FileId, Option<Atom>)>,
     // `Interest::FileSpelled`: the file with the text, and the file that it spells.
     files_spelled: Vec<(FileId, FileId)>,
+    // `Interest::FileLeftToLoader`
+    files_left_to_loader: Vec<FileId>,
     // `Interest::LoadOfIsolatedCode`
     loads_isolated_code: bool,
     // The files in which reached code asks something that the run time answers only where it keeps track of the objects of the loader that stand for modules.
@@ -2152,6 +2214,8 @@ impl Found {
         self.loads_by_unknown_names
             .append(&mut other.loads_by_unknown_names);
         self.files_spelled.append(&mut other.files_spelled);
+        self.files_left_to_loader
+            .append(&mut other.files_left_to_loader);
         self.loads_isolated_code |= other.loads_isolated_code;
         self.files_naming_ways.append(&mut other.files_naming_ways);
         self.replaced_loader_hooks
@@ -2163,6 +2227,7 @@ impl Found {
             || !self.members_read.is_empty()
             || !self.loads_by_unknown_names.is_empty()
             || !self.files_spelled.is_empty()
+            || !self.files_left_to_loader.is_empty()
     }
 }
 
@@ -2521,6 +2586,13 @@ impl<'a, 's> Walk<'a, 's> {
                 };
                 loads.note_file_spelled(&mut reacher, file, spelled);
             }
+            for file in take(&mut found.files_left_to_loader) {
+                let mut reacher = Reacher {
+                    walk: &*self,
+                    found: &mut *found,
+                };
+                loads.take_file_found(&mut reacher, file);
+            }
         }
     }
 
@@ -2575,7 +2647,7 @@ impl<'a, 's> Walk<'a, 's> {
     // All threads take the steps of the lists. The steps that a task finds stay in a list of their own, which nobody copies.
     fn run_round(
         &self,
-        lists: Vec<Vec<Step>>,
+        lists: &[Vec<Step>],
         found: &mut Found,
         in_parallel: InParallel<'_>,
     ) -> Vec<Vec<Step>> {
@@ -2616,7 +2688,7 @@ impl<'a, 's> Walk<'a, 's> {
                 rounds += 1;
                 steps_of_rounds += count;
                 lists.push(take(&mut found.steps));
-                lists = self.run_round(lists, &mut found, in_parallel);
+                lists = self.run_round(&lists, &mut found, in_parallel);
             } else if !lists.is_empty() {
                 found.steps.extend(lists.drain(..).flatten());
             } else if let Some(step) = found.steps.pop() {
@@ -3068,7 +3140,12 @@ impl Reacher<'_, '_, '_> {
         let can_read_this = self.reach_stored_name(export.module, export.name);
         // The copy is taken of what the getter returns.
         let commonjs = graph.commonjs();
-        match commonjs.member_behind_getter(export.module, export.name) {
+        let returned = commonjs.member_behind_getter(export.module, export.name);
+        // The getter reads it through the files between.
+        if let Some(returned) = returned {
+            self.reach_files_behind(export.module, returned);
+        }
+        match returned {
             Some(Member::Variable(returned)) => self.reach_name(returned),
             Some(Member::Binding(returned)) => self.reach_binding(returned),
             _ => can_read_this,
@@ -3319,6 +3396,7 @@ impl Reacher<'_, '_, '_> {
             }
             Interest::LoadOfIsolatedCode => self.found.loads_isolated_code = true,
             Interest::FileSpelled(spelled) => self.found.files_spelled.push((file, spelled)),
+            Interest::FileLeftToLoader(found) => self.found.files_left_to_loader.push(found),
             Interest::TestedBinding(defined) => {
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 self.reach_tested_binding(defined);
@@ -3760,11 +3838,26 @@ fn find_who_hands_on_what(
                 continue;
             }
             let is_by_star = export.is_from_star_export;
-            let exporters = exporters.entry(handed_on).or_default();
-            // A file may export one thing under several names.
-            match exporters.last_mut().filter(|last| last.file == file) {
-                Some(last) => last.is_by_star &= is_by_star,
-                None => exporters.push(Exporter { file, is_by_star }),
+            // Whoever shows a name that a getter answers for hands on what the getter returns too.
+            let behind = match export.binding {
+                ExportBinding::Synthetic(shown) => {
+                    let shown = input.graph.synthetic_export(shown);
+                    let commonjs = input.graph.commonjs();
+                    commonjs.member_behind_getter(shown.module, shown.name)
+                }
+                _ => None,
+            };
+            let behind = match behind {
+                Some(Member::Variable(returned)) => Some(HandedOn::Name(returned)),
+                _ => None,
+            };
+            for handed_on in [Some(handed_on), behind].into_iter().flatten() {
+                let exporters = exporters.entry(handed_on).or_default();
+                // A file may export one thing under several names.
+                match exporters.last_mut().filter(|last| last.file == file) {
+                    Some(last) => last.is_by_star &= is_by_star,
+                    None => exporters.push(Exporter { file, is_by_star }),
+                }
             }
         }
     }

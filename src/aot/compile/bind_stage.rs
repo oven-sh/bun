@@ -233,7 +233,11 @@ impl Build<'_> {
             ProjectId::Runtime => "library",
         };
         // A call of a helper that a compiler or a bundler wrote says what a module exports, and where a module begins.
-        let mut known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
+        let mut known_helpers = KnownHelpers::compute_below_added_names(
+            view.files(),
+            &contents.names_added_to_builtins,
+            &in_parallel,
+        );
         known_helpers.keep_private_states_in_collections(&contents.replaced_builtins);
         steps.end_with(|| format!("{project_name}: known helpers"));
         let run_of_library = crate::test_runs::RunContents::default();
@@ -246,6 +250,7 @@ impl Build<'_> {
             platform: self.platform,
             external_packages,
             replaced_builtins: &contents.replaced_builtins,
+            names_added_to_builtins: &contents.names_added_to_builtins,
             runs_in_place: self.options.aot.runs_in_place,
             ignores_declared_side_effects: self.options.code.ignores_declared_side_effects,
             mocks_any_module: project == ProjectId::Application && contents.mocks_any_module,
@@ -347,6 +352,15 @@ impl Build<'_> {
                     || find_left_out_code(&input, &in_parallel),
                 );
                 self.started_workers.program_files = program_files;
+                for &module in &reached.looked_at {
+                    if let crate::modules::ModuleRef::File(file) = module {
+                        assert!(
+                            !graph.leaves_out_star_names(file),
+                            "something looks at the object of {}, and nobody was seen to ask for all that `export *` brings it",
+                            bstr::BStr::new(view.sources.module_paths(file).display_path),
+                        );
+                    }
+                }
                 finish_modules(&mut graph, &reached);
                 steps.end_with(|| format!("{project_name}: finish modules"));
                 // A test run is no executable, and has no `--no-aot` to be built with.

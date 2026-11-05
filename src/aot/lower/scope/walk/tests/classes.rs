@@ -141,6 +141,26 @@ fn field_initializers_belong_to_initializers() {
 }
 
 #[test]
+fn values_of_fields_with_legacy_decorators_belong_to_who_evaluates_them() {
+    let source = "declare const d: any; \
+        export class C { @d a = 1; @d static b = 2; c = 3; static e = 4; }";
+    let configuration = r#"{"compilerOptions":{"experimentalDecorators":true}}"#;
+    let files = [("main.ts", source), ("tsconfig.json", configuration)];
+    with_walk(&files, |hir, _, walk| {
+        let [a, b, c, e] = members(hir)[..] else {
+            panic!("the class has four members");
+        };
+        let expected = [
+            (a, implicit_constructor(walk)),
+            (b, MODULE_BODY),
+            (c, instance_initializer(walk)),
+            (e, static_initializer(walk)),
+        ];
+        assert_eq!(walk.function_of_field, expected);
+    });
+}
+
+#[test]
 fn initializers_use_class_slots() {
     let source = "export function g(k) { class C { #p = 1; [k] = 2; static s = 3; } return C; }";
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {

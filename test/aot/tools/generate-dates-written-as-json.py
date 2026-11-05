@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 60; ../parallel/dates-written-as-json/ holds 3 of them.
 # generate-dates-written-as-json.py <folder>: `date.toJSON()` on one kind of date, in a program that lists the keys of Date.prototype at one point or not at all: one program each, held to `bun <file>`.
 # The host's toJSON asks the date for a primitive, and a valid one for toISOString BY NAME: whatever the program has laid under those names runs, and each first read adds a member to Date.prototype.
 import os, sys

@@ -3,7 +3,7 @@
 // so the build knows both names here and the executable holds those two modules of the library and little else.
 // Flags: --aot-allow-code-from-disk
 // STATISTIC: ImageFunctionsEmitted <= 400
-// STATISTIC: FlowEdgesLogged <= 30000
+// STATISTIC: FactEdges <= 30000 Todo: much of Bun's library comes in where code may come from disk
 const names = new Set<string>();
 names.add("os");
 names.add("path");

@@ -1,5 +1,5 @@
 // Stack frames follow the name of the function object.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 const top = (s, n = 2) =>
   String(s)
     .split("\n")

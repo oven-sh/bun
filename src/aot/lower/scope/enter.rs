@@ -186,7 +186,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             {
                 let name = bound.symbol(symbol).name;
                 let nothing = self.builder.undefined();
-                bindings::initialize_binding(self, Binding::Symbol(symbol), name, nothing, None);
+                match is_local {
+                    true => self.initialize_converted_symbol(symbol, name, nothing),
+                    false => bindings::initialize_binding(
+                        self,
+                        Binding::Symbol(symbol),
+                        name,
+                        nothing,
+                        None,
+                    ),
+                }
                 continue;
             }
             let closure = self.emit_closure(id, None);
@@ -196,6 +205,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn create_loop_header(&mut self, statement: StmtId) -> BlockId {
+        let created = self.file.scopes.functions_created_before_loop(statement);
+        let created: SmallVec<[SymbolId; 2]> = created.iter().map(|entry| entry.1).collect();
+        for symbol in created {
+            self.get_binding(Binding::Symbol(symbol), self.file.bound.symbol(symbol).name);
+        }
         let block = self.create_block();
         let mut modified: SmallVec<[LocalVariable; 8]> = SmallVec::new();
         for &binding in self.file.scopes.stored_in_loop(statement) {

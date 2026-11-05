@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-lists-made-with-a-length.py <folder>: `new Array(n)` and `Array(n)`: one way for the length to come and one thing done with the list: one program each, held to `bun <file>`.
+# generate-lists-made-with-a-length.py <folder>: all 600; ../parallel/lists-made-with-a-length/ holds 8 of them: `new Array(n)` and `Array(n)`: one way for the length to come and one thing done with the list: one program each, held to `bun <file>`.
 # A list made so has holes, not elements: they are in no key list, `in` denies them, forEach passes them by, join and JSON.stringify write them in their own ways. What is no length is refused with a RangeError.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

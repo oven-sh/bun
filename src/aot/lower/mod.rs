@@ -72,6 +72,14 @@ pub struct LoweredFile {
     pub fragment: Fragment,
     pub diagnostics: DiagnosticBuffer,
     pub queries: QueryStatistics,
+    pub known_helpers: KnownHelpersLowered,
+}
+
+/// `StatisticId::KnownHelperFunctions`, `StatisticId::KnownHelperCalls`
+#[derive(Copy, Clone, Default)]
+pub struct KnownHelpersLowered {
+    pub functions: u64,
+    pub calls: u64,
 }
 
 const fn assert_send<T: Send>() {}

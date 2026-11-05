@@ -11,7 +11,8 @@ use super::unit::LinkUnit;
 use super::{LinkProject, key_context};
 use crate::builtins::{RuntimeModule, table};
 use crate::ir::generated::{
-    self, ModuleExportKind, ModuleFlags, RuntimeFunctionEntry, WebAssemblyModule,
+    self, ImportPhase, ModuleExportKind, ModuleFlags, ModuleRequestKind, RuntimeFunctionEntry,
+    WebAssemblyModule,
 };
 use crate::ir::parallel::{extend_from_lists, map_each};
 use crate::ir::{
@@ -101,9 +102,15 @@ pub(super) fn exported_variable_key(
             // An ES module holds a copy of a name of a CommonJS file, unless nobody can tell the copy from the variable.
             let is_copy =
                 graph.face(export.module).is_some() && !graph.settled(export.module, export.name);
-            Some(match is_copy {
-                true => VariableKey::Copy(id),
-                false => VariableKey::SyntheticExport(id),
+            let behind = graph
+                .commonjs()
+                .member_behind_getter(export.module, export.name);
+            Some(match (is_copy, behind) {
+                (true, _) => VariableKey::Copy(id),
+                (false, Some(modules::Member::Variable(returned))) => {
+                    VariableKey::SyntheticExport(returned)
+                }
+                (false, _) => VariableKey::SyntheticExport(id),
             })
         }
         ExportBinding::Namespace { .. } | ExportBinding::Indirect { .. } => None,
@@ -360,13 +367,14 @@ pub(super) fn build_module_records(
 ) -> ModuleRecords {
     let synthetic_exports = collect_synthetic_exports(input);
     let is_named_at_run_time = find_modules_named_at_run_time(input);
-    let (modules, ambiguous_exports, units_with_positions) = build_records_of_modules(
+    let (mut modules, ambiguous_exports, units_with_positions) = build_records_of_modules(
         units,
         input,
         &synthetic_exports,
         &is_named_at_run_time,
         strings,
     );
+    end_loads_at_modules_that_throw(&mut modules);
     let mut builder = RecordBuilder {
         input,
         strings: &mut *strings,
@@ -385,6 +393,79 @@ pub(super) fn build_module_records(
         entries: build_entries(input, strings),
         runtime_functions: collect_runtime_functions(units, input),
         web_assembly_modules: collect_web_assembly_modules(input),
+    }
+}
+
+/// A load of `module` follows the import of `way` and no other request. What else the module imports stays as what its code may ask for, which no load follows:
+/// the module still leads to all that its tables and its code name.
+fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
+    let written = core::mem::take(&mut module.requests);
+    let followed = way.map(|target| generated::ModuleRequest {
+        target,
+        phase: ImportPhase::Evaluation,
+        is_dynamic_star_export: false,
+        kind: ModuleRequestKind::Import,
+        completes: true,
+        is_hoisted: false,
+    });
+    module.requests.extend(followed);
+    for request in written {
+        let is_import = request.kind == ModuleRequestKind::Import;
+        let mut listed = module.requests.iter();
+        if (is_import && Some(request.target) == way)
+            || listed.any(|it| it.kind == ModuleRequestKind::Require && it.target == request.target)
+        {
+            continue;
+        }
+        module.requests.push(generated::ModuleRequest {
+            phase: ImportPhase::Evaluation,
+            is_dynamic_star_export: false,
+            kind: ModuleRequestKind::Require,
+            completes: request.completes && !is_import,
+            is_hoisted: false,
+            ..request
+        });
+    }
+    module.required_names.clear();
+}
+
+/// JavaScript finds a mistake in the text of a module while it loads the graph, before any module of the graph runs. Here the body of such a module throws it.
+/// So a load follows none of its requests, and of whoever imports it by statements, through however many modules, only the one to the next module on the way:
+/// the first body that a load of the graph runs is the one that throws. `find_unloadable_modules` does the same for what the parser finds.
+/// A mock in place of a module on the way lets the load pass, so the way ends below such a module.
+fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
+    let throws = |module: &generated::Module| module.flags.contains(ModuleFlags::THROWS_AT_LOAD);
+    let mut on_the_way: Vec<usize> = (0..modules.len())
+        .filter(|&index| throws(&modules[index]))
+        .collect();
+    if on_the_way.is_empty() {
+        return;
+    }
+    let mut importers: Vec<Vec<usize>> = vec![Vec::new(); modules.len()];
+    for (importer, module) in modules.iter().enumerate() {
+        for request in &module.requests {
+            if request.kind == ModuleRequestKind::Import {
+                importers[request.target.index()].push(importer);
+            }
+        }
+    }
+    let mut is_found = vec![false; modules.len()];
+    for &module in &on_the_way {
+        is_found[module] = true;
+        follow_only(&mut modules[module], None);
+    }
+    let mut next = 0;
+    while let Some(&target) = on_the_way.get(next) {
+        next += 1;
+        if modules[target].flags.contains(ModuleFlags::MAY_BE_MOCKED) {
+            continue;
+        }
+        for &importer in &importers[target] {
+            if !core::mem::replace(&mut is_found[importer], true) {
+                follow_only(&mut modules[importer], Some(ModuleId::new(target)));
+                on_the_way.push(importer);
+            }
+        }
     }
 }
 
@@ -489,6 +570,10 @@ fn mock_may_answer_ahead_of_declaration(
             }
             continue;
         };
+        // `import { helper } from "./lib.js"` is no star: it brings the file no name.
+        if !request.is_star_export {
+            continue;
+        }
         // The mock of the file that declares the name answers for the variable wherever it is handed on.
         if target == declaring_file {
             break;
@@ -797,6 +882,9 @@ impl RecordBuilder<'_, '_, '_> {
         }
         if graph.may_be_imported_while_it_runs(module) {
             flags |= ModuleFlags::MAY_BE_IMPORTED_WHILE_IT_RUNS;
+        }
+        if graph.is_es_module_to_imports(module) {
+            flags |= ModuleFlags::IS_MODULE_TO_IMPORTS;
         }
         if graph.is_imported_as_namespace(module) {
             flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;

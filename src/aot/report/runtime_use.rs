@@ -306,6 +306,23 @@ fn write_reachable(
     position
 }
 
+// A name that the program can write says more than the name of a class that only the engine has. The records of a feature are in no order that means anything.
+fn record_with_written_name<'a>(
+    records: &'a [FeatureUseRecord],
+    first: &'a FeatureUseRecord,
+) -> &'a FeatureUseRecord {
+    let is_written = |record: &FeatureUseRecord| {
+        builtin_of(record.builtin).is_some_and(|id| !table::text_of(id).starts_with('%'))
+    };
+    if is_written(first) {
+        return first;
+    }
+    let mut others = records.iter();
+    others
+        .find(|record| record.feature == first.feature && is_written(record))
+        .unwrap_or(first)
+}
+
 fn write_reason(
     line: &mut Vec<u8>,
     reason: RetainReason,
@@ -321,7 +338,8 @@ fn write_reason(
         }
         RetainReason::Used(witness) => {
             line.extend_from_slice(b"used");
-            let record = record_at(input.engine.features_used(), witness)?;
+            let records = input.engine.features_used();
+            let record = record_with_written_name(records, record_at(records, witness)?);
             return write_witness(line, record.builtin, record.witness.location, positions);
         }
         RetainReason::RequiredByOption(index) => {

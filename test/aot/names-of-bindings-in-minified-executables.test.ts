@@ -93,7 +93,8 @@ const shortened = [
   "capturedB22",
   "assignedB23",
 ];
-const neverShown = ["importedFunctionB8", "expressionB12", "FirstB19", "SecondB20"];
+// The name under which a class is imported is shown where the import is read in front of the class: "Cannot access 'FirstB19' before initialization".
+const neverShown = ["importedFunctionB8", "expressionB12"];
 const kept = [
   "keptMethodB2",
   "keptTextB3",

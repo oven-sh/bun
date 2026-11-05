@@ -1,0 +1,72 @@
+// nothing is written of any type: what arrives at the fields is all that anybody knows
+const full30 = { a30: 1, b30: 2, c30: 3, d30: 4, e30: 5, f30: 6 };
+const thin30 = { a30: 1, b30: 2, c30: 3, d30: 4, e30: 5, f30: 6 };
+const full29 = { a29: full30, b29: full30, c29: full30, d29: full30, e29: full30, f29: full30 };
+const thin29 = { a29: null, b29: null, c29: null, d29: null, e29: null, f29: thin30 };
+const full28 = { a28: full29, b28: full29, c28: full29, d28: full29, e28: full29, f28: full29 };
+const thin28 = { a28: null, b28: null, c28: null, d28: null, e28: thin29, f28: null };
+const full27 = { a27: full28, b27: full28, c27: full28, d27: full28, e27: full28, f27: full28 };
+const thin27 = { a27: null, b27: null, c27: null, d27: thin28, e27: null, f27: null };
+const full26 = { a26: full27, b26: full27, c26: full27, d26: full27, e26: full27, f26: full27 };
+const thin26 = { a26: null, b26: null, c26: thin27, d26: null, e26: null, f26: null };
+const full25 = { a25: full26, b25: full26, c25: full26, d25: full26, e25: full26, f25: full26 };
+const thin25 = { a25: null, b25: thin26, c25: null, d25: null, e25: null, f25: null };
+const full24 = { a24: full25, b24: full25, c24: full25, d24: full25, e24: full25, f24: full25 };
+const thin24 = { a24: thin25, b24: null, c24: null, d24: null, e24: null, f24: null };
+const full23 = { a23: full24, b23: full24, c23: full24, d23: full24, e23: full24, f23: full24 };
+const thin23 = { a23: null, b23: null, c23: null, d23: null, e23: null, f23: thin24 };
+const full22 = { a22: full23, b22: full23, c22: full23, d22: full23, e22: full23, f22: full23 };
+const thin22 = { a22: null, b22: null, c22: null, d22: null, e22: thin23, f22: null };
+const full21 = { a21: full22, b21: full22, c21: full22, d21: full22, e21: full22, f21: full22 };
+const thin21 = { a21: null, b21: null, c21: null, d21: thin22, e21: null, f21: null };
+const full20 = { a20: full21, b20: full21, c20: full21, d20: full21, e20: full21, f20: full21 };
+const thin20 = { a20: null, b20: null, c20: thin21, d20: null, e20: null, f20: null };
+const full19 = { a19: full20, b19: full20, c19: full20, d19: full20, e19: full20, f19: full20 };
+const thin19 = { a19: null, b19: thin20, c19: null, d19: null, e19: null, f19: null };
+const full18 = { a18: full19, b18: full19, c18: full19, d18: full19, e18: full19, f18: full19 };
+const thin18 = { a18: thin19, b18: null, c18: null, d18: null, e18: null, f18: null };
+const full17 = { a17: full18, b17: full18, c17: full18, d17: full18, e17: full18, f17: full18 };
+const thin17 = { a17: null, b17: null, c17: null, d17: null, e17: null, f17: thin18 };
+const full16 = { a16: full17, b16: full17, c16: full17, d16: full17, e16: full17, f16: full17 };
+const thin16 = { a16: null, b16: null, c16: null, d16: null, e16: thin17, f16: null };
+const full15 = { a15: full16, b15: full16, c15: full16, d15: full16, e15: full16, f15: full16 };
+const thin15 = { a15: null, b15: null, c15: null, d15: thin16, e15: null, f15: null };
+const full14 = { a14: full15, b14: full15, c14: full15, d14: full15, e14: full15, f14: full15 };
+const thin14 = { a14: null, b14: null, c14: thin15, d14: null, e14: null, f14: null };
+const full13 = { a13: full14, b13: full14, c13: full14, d13: full14, e13: full14, f13: full14 };
+const thin13 = { a13: null, b13: thin14, c13: null, d13: null, e13: null, f13: null };
+const full12 = { a12: full13, b12: full13, c12: full13, d12: full13, e12: full13, f12: full13 };
+const thin12 = { a12: thin13, b12: null, c12: null, d12: null, e12: null, f12: null };
+const full11 = { a11: full12, b11: full12, c11: full12, d11: full12, e11: full12, f11: full12 };
+const thin11 = { a11: null, b11: null, c11: null, d11: null, e11: null, f11: thin12 };
+const full10 = { a10: full11, b10: full11, c10: full11, d10: full11, e10: full11, f10: full11 };
+const thin10 = { a10: null, b10: null, c10: null, d10: null, e10: thin11, f10: null };
+const full9 = { a9: full10, b9: full10, c9: full10, d9: full10, e9: full10, f9: full10 };
+const thin9 = { a9: null, b9: null, c9: null, d9: thin10, e9: null, f9: null };
+const full8 = { a8: full9, b8: full9, c8: full9, d8: full9, e8: full9, f8: full9 };
+const thin8 = { a8: null, b8: null, c8: thin9, d8: null, e8: null, f8: null };
+const full7 = { a7: full8, b7: full8, c7: full8, d7: full8, e7: full8, f7: full8 };
+const thin7 = { a7: null, b7: thin8, c7: null, d7: null, e7: null, f7: null };
+const full6 = { a6: full7, b6: full7, c6: full7, d6: full7, e6: full7, f6: full7 };
+const thin6 = { a6: thin7, b6: null, c6: null, d6: null, e6: null, f6: null };
+const full5 = { a5: full6, b5: full6, c5: full6, d5: full6, e5: full6, f5: full6 };
+const thin5 = { a5: null, b5: null, c5: null, d5: null, e5: null, f5: thin6 };
+const full4 = { a4: full5, b4: full5, c4: full5, d4: full5, e4: full5, f4: full5 };
+const thin4 = { a4: null, b4: null, c4: null, d4: null, e4: thin5, f4: null };
+const full3 = { a3: full4, b3: full4, c3: full4, d3: full4, e3: full4, f3: full4 };
+const thin3 = { a3: null, b3: null, c3: null, d3: thin4, e3: null, f3: null };
+const full2 = { a2: full3, b2: full3, c2: full3, d2: full3, e2: full3, f2: full3 };
+const thin2 = { a2: null, b2: null, c2: thin3, d2: null, e2: null, f2: null };
+const full1 = { a1: full2, b1: full2, c1: full2, d1: full2, e1: full2, f1: full2 };
+const thin1 = { a1: null, b1: thin2, c1: null, d1: null, e1: null, f1: null };
+const full0 = { a0: full1, b0: full1, c0: full1, d0: full1, e0: full1, f0: full1 };
+const thin0 = { a0: thin1, b0: null, c0: null, d0: null, e0: null, f0: null };
+let out = "";
+function sum(text) { let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0; return h; }
+function few(n) { let t = 0; for (let i = 0; i < (n & 3); i++) t += i; return t > 99; }
+function make(n) { return few(n) ? [full0] : (n & 1 ? [thin0] : [thin0, thin0]); }
+function send(status, value) { out += JSON.stringify(value) + " " + status + "\n"; }
+function shape() { for (let i = 0; i < 300; i++) send(i, make(i)); }
+shape(); shape();
+console.log(out.length, sum(out));
+console.log(out.slice(0, 240));

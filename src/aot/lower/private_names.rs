@@ -131,6 +131,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return self.builder.boolean(false);
         };
+        self.file.inputs.fixed_builtins.note(match state.kind {
+            PrivateStateKind::Field => BuiltinId::WeakMapPrototypeHas,
+            PrivateStateKind::Brand => BuiltinId::WeakSetPrototypeHas,
+        });
         let result = self.builder.create_variable(None);
         let done = self.create_block();
         let is_missing = self.builder.boolean(false);
@@ -151,6 +155,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return self.builder.undefined();
         };
+        let fixed = self.file.inputs.fixed_builtins;
+        fixed.note(BuiltinId::WeakMapPrototypeGet);
         let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         self.builder
             .private_get(access.object, token, state.layout, state.field)
@@ -160,6 +166,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return;
         };
+        let fixed = self.file.inputs.fixed_builtins;
+        fixed.note(BuiltinId::WeakMapPrototypeSet);
         let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         self.builder
             .private_set(access.object, token, state.layout, state.field, value);

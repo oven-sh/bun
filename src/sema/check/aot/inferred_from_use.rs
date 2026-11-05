@@ -2,6 +2,7 @@ use super::answers::{CheckedType, GaveUp, MemberLookup, QueryLimit};
 use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
+use super::type_identity::ObjectOrigin;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
 use crate::check::root_declaration;
@@ -1874,6 +1875,7 @@ struct CallWithReceiver {
 }
 
 type TypeParts = SmallVec<[TypeId; 4]>;
+type ContentsOfLiteral = (FileId, SmallVec<[(Atom, PropFlags, TypeId); 4]>);
 type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -2630,6 +2632,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let is_called_once = arguments.len() == 1;
         let mut parts = TypeParts::new();
+        let mut literals_listed = FxHashMap::default();
         // Calls that all hand on what one function returns give one type, which may be a union of as many types as there
         // are calls.
         let (mut all_given, mut given_listed) = (TypeParts::new(), FxHashSet::default());
@@ -2642,7 +2645,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Ok(given) if !self.c.is_any(given) => {
                     if !crate::util::is_listed(&all_given, &mut given_listed, given) {
                         all_given.push(given);
-                        parts.push(self.c.base_of_literal(given));
+                        let given = self.c.base_of_literal(given);
+                        self.add_parts_that_differ(given, &mut parts, &mut literals_listed);
                     }
                 }
                 Ok(_) | Err(_) => return TypeId::ANY,
@@ -2653,6 +2657,67 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             [TypeId::UNDEFINED] if is_called_once => TypeId::ANY,
             _ => self.c.union(&parts),
         }
+    }
+
+    /// Each literal is a type of its own to the checker. Those with the same names that hold the same types are one to whoever reads the parameter, and the one that is written
+    /// first stands for all. Else a parameter that hands on what it is given lists once more every literal that arrives further down.
+    fn add_parts_that_differ(
+        &mut self,
+        given: TypeId,
+        parts: &mut TypeParts,
+        literals_listed: &mut FxHashMap<ContentsOfLiteral, usize>,
+    ) {
+        let alone = [given];
+        let members: &[TypeId] = match self.c.data(given) {
+            TypeData::Union(members) => members,
+            _ => &alone,
+        };
+        for &member in members {
+            let listed = self
+                .find_contents_of_literal(member)
+                .map(|contents| *literals_listed.entry(contents).or_insert(parts.len()));
+            match listed {
+                Some(first) if first < parts.len() => {
+                    if self.compute_object_origin(member) < self.compute_object_origin(parts[first])
+                    {
+                        parts[first] = member;
+                    }
+                }
+                Some(_) | None => parts.push(member),
+            }
+        }
+    }
+
+    /// The file of a literal, its names and what each holds, where nothing else tells it from another literal: a layout lists each of its names, so it has the layout of
+    /// those names wherever it is born.
+    fn find_contents_of_literal(&mut self, ty: TypeId) -> Option<ContentsOfLiteral> {
+        if !self.c.is_closed_object_literal_type(ty) {
+            return None;
+        }
+        let ObjectOrigin::ObjectLiteral { file, .. } = self.compute_object_origin(ty) else {
+            return None;
+        };
+        let members = self.c.members(ty)?;
+        let shape = members.shape();
+        let is_listed_in_layout = |name: Atom| match self.atom_bytes(name) {
+            b"__proto__" | b"Infinity" | b"NaN" | [] => false,
+            [first, ..] => first.is_ascii_alphabetic() || matches!(first, b'_' | b'$'),
+        };
+        if shape.props.is_empty()
+            || members.has_signatures()
+            || !shape.index.is_empty()
+            || !shape
+                .props
+                .iter()
+                .all(|property| is_listed_in_layout(property.name))
+        {
+            return None;
+        }
+        let contents = shape.props.iter().map(|property| {
+            let holds = self.c.type_of_prop(property, members.mapper);
+            (property.name, property.flags, holds)
+        });
+        Some((file, contents.collect()))
     }
 
     fn is_exported(&mut self, symbol: SymbolId) -> bool {
@@ -3777,6 +3842,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return TypeId::ANY;
         }
         let mut parts = TypeParts::from_slice(&usage.arms.list);
+        self.drop_arms_that_others_have_grown_from(&mut parts);
         if usage.facts.contains(Facts::NUMBER) {
             parts.push(self.number_type(usage.facts));
         }
@@ -3793,6 +3859,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             [only] => only,
             _ => self.c.union(&parts),
         }
+    }
+
+    /// `x = new A(); x.m(); .. x = new B(); x.m(); ..`: the n arms are unions that each have one member more than the one before, n * n / 2 members in all, and
+    /// their union is the last of them.
+    fn drop_arms_that_others_have_grown_from(&self, arms: &mut TypeParts) {
+        if arms.len() <= Arms::FEW {
+            return;
+        }
+        let mut grown_from = FxHashSet::default();
+        for &arm in arms.iter() {
+            let mut union = arm;
+            while let Some(growth) = self.c.growth_of(union)
+                && !self.c.has_named_unions(growth.from)
+                && grown_from.insert(growth.from)
+            {
+                union = growth.from;
+            }
+        }
+        arms.retain(|arm| !grown_from.contains(&*arm));
     }
 
     /// A part belongs to the trees of many subjects, and its type is worked out once. What was cut short for lack of stack, or rests on an answer that may be
@@ -3901,6 +3986,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Some(holder) => self.c.property_of_holder(holder, member.name, false),
             None => self.c.get_property_of_type(receiver, member.name),
         };
+        // With the names of the others each literal of a union had the member.
+        let found = found.or_else(|| {
+            self.c
+                .property_that_some_literals_have(receiver, member.name)
+        });
         found.is_some_and(|(property, _)| {
             property.flags.contains(PropFlags::METHOD) == member.is_called()
         })

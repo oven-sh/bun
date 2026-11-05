@@ -1,5 +1,4 @@
-// This must fail to build: `Swapped.prototype` is read in front of the store to it, which TypeScript 7 reports (TS2565). The same program with that one read
-// through `any`, which builds and runs: reflect-construct-of-a-constructor-function-with-another-new-target.ts.
+// `Swapped.prototype` is read in front of the store to it, which TypeScript 7 reports (TS2565: Property 'prototype' is used before being assigned): a build that reports type errors stops there.
 // Reflect.construct() of a constructor function with another new.target: the object inherits from what new.target has as its `prototype` and has what the function stores. Only where the function is its own new.target is the object one of its own.
 const attempt = (label: string, run: () => unknown) => { try { console.log(label, String(run())) } catch (error) { console.log(label, "throws", (error as Error).constructor.name) } }
 
@@ -80,6 +79,3 @@ for (let round = 0; round < 12000; round++) {
   if (Object.getPrototypeOf(made) === Pair.prototype) ownObjects++
 }
 console.log(total, ownObjects, tell(new PairClass(23, "x"), Pair))
-/* Build errors:
-error: TS2565: Property 'prototype' is used before being assigned.
-*/

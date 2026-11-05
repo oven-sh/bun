@@ -11,9 +11,9 @@
 //   frontEnd   front end                         the sum of load, bind, check, lower and link
 //   lowering   lowering's own code               a part of lower. Only a build on one thread prints it
 //   read       read, verify
-//   scan       Facts: scan to summaries          the keys of texts
-//   solve      Facts: flatten and solve          the rule tables, the summary of the host, the index of the finished graph
-//   passes     Facts: passes after the solve     bound functions
+//   scan       Facts: scan to summaries          the keys of texts, the indexes of bodies
+//   solve      Facts: Link                       the declared families, the look at bodies, the two readings, the open names of a test run
+//   passes     Facts: behind Link                the referrers and the tables of functions, fields, layouts, strings, variables and classes
 //   plan       Plan                              the stub catalog, the inputs of Compile, the lists of what Facts found
 //   compile                                      the sum of walk and emit
 //   walk       walk and sweep
@@ -88,35 +88,36 @@ const none: string[] = [];
 const touchesOf = {
   frontEnd: none,
   load: words(`
-    SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceFilesOfBunParsed
+    SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted
     SourceBytes SourceLines SourceBytesOfPackages SourceLinesOfPackages SourceBytesOfDeclarations SourceLinesOfDeclarations
     SourceBytesOfBun SourceLinesOfBun`),
   bind: none,
   check: none,
-  lower: words(`FunctionsLowered ValuesLowered`),
+  lower: words(`FunctionsLowered ValuesLowered KnownHelperFunctions KnownHelperCalls`),
   lowering: none,
-  link: words(`ProgramBytes`),
+  link: words(`ProgramBytes ModulesWithNames ModulesWithValue Faces`),
   read: words(`TypesInterned FunctionsRead ValuesRead`),
   scan: words(`ValuesScanned`),
-  solve: words(`SummaryStatements FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls`),
-  passes: words(`
-    CallGraphEntries MemberCallSites MemberCallSitesWithListedCallee MemberCallSitesWithExpectedCallee AccessSitesByName AccessSitesWithExpectedSlot
-    SourcesOfCopiesFollowed`),
-  plan: none,
+  solve: words(`FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls FlowAppendedFields`),
+  passes: none,
+  plan: words(`ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine`),
   compile: words(`
     UnitsCompiled UnitsWrittenStraight FunctionsWithAllIndirectCallersListed GenericEntriesOpenedByIndirectCalls
     GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries IndirectCallsThatMayEnterAnyClosure`),
   walk: words(`
     ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept
-    DirectCalls IndirectCalls CallsAnsweredByCalleeList TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain IndirectCallsWithoutCallSiteRow
-    MapEntriesCleared BlockStatesMade InputBlocksVisited
+    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents
-    ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsThatNoTestTells`),
+    ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsThatNoTestTells
+    URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
+    AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay`),
   emit: words(`
     OperationsEmitted MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
     OffsetsFoundByComparisons OffsetsFoundInFlatTables OffsetsFoundInHashedTables OffsetsFoundInPagedTables
-    BytesOfFlatOffsetTables BytesOfHashedOffsetTables BytesOfPagedOffsetTables`),
+    BytesOfFlatOffsetTables BytesOfHashedOffsetTables BytesOfPagedOffsetTables
+    NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
+    InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses VectorsOfViewsRead AccessesInsideViews`),
   image: words(`
     ThingsMentioned ThingsNumbered IdentifiersNumbered StringConstantsNumbered NamesWithoutColumn MethodTableSelectors MethodTableBytes
     ClassGuardCounts GuardsOfClassGuardCounts
@@ -127,27 +128,43 @@ const touchesOf = {
     FFICodeBytesEmitted FFIDirectoryBytesEmitted RegExpCodeBytesEmitted RegExp16BitCodeBytes RegExpTableBytesEmitted
     ConstantBytesOfSharedConstants ConstantBytesOfShapeSets ConstantBytesOfBitSetsOverKnownShapes ConstantBytesOfOffsetTables
     ConstantBytesOfCellTemplates ConstantBytesOfNumbers UnlabeledConstantBytes ConstantBytesOfJumpTables PaddingBytesBetweenConstants
-    ParsersCreated TypedResultsSelected`),
+    ParsersCreated TypedResultsSelected
+    InlineFramesEmitted FrameMapBytesEmitted RegExpCandidatesCompiled`),
 } satisfies Record<string, string[]>;
 
 // A single step of a page or a code granule is more than the judge's noise of 1000 and hides how these grow, so no growth is asked of them.
 const roundingCounters = words(`PaddingBytesBetweenFunctions PaddingBytesBetweenCodeParts`);
+// statistics.def: counted by nothing yet.
+const countersThatWaitForTheirPort = words(`
+    EnvironmentsPromotedToVariables UnreadVariableStoresRemoved LiteralArgumentsTakenApart GetsAnsweredByHas SlotStoreRunGroups KeyPartsLookupGroups
+    StoresLeftInLoopsForOthers ElementPresenceTestsPlaced ArrayChainsFused ArrayCapacitiesPlanned AllocationsSunk SwitchesTestedByWindow
+    InitializersDeferred ClosuresDeferredInVariables ClassesDeferredInVariables FlowListsNeverToldApart RestartsInGenericVersion TagLookupsWithOtherKeys
+    ObjectKeysSearchedInLine BirthsFinished`);
 
 export type StageName = keyof typeof touchesOf;
 export const stageNames = Object.keys(touchesOf) as StageName[];
 
-/** The counters among what a build with --explain=statistics has written to stderr. */
-export function countsIn(stderr: string) {
+const listedCounters = new Set([...Object.values(touchesOf).flat(), ...roundingCounters, ...countersThatWaitForTheirPort]);
+
+function printedCountsIn(stderr: string) {
   const counts: Record<string, number> = {};
   for (const [, name, value] of stderr.matchAll(/^([A-Z][A-Za-z0-9]*) (\d+)$/gm))
     if (!name.endsWith("Nanoseconds")) counts[name] = Number(value);
-  const listedByOneSideOnly = new Set(Object.keys(counts)).symmetricDifference(
-    new Set([...Object.values(touchesOf).flat(), ...roundingCounters]),
-  );
-  if (listedByOneSideOnly.size)
-    throw new Error(
-      `what --explain=statistics prints and the touches that ${import.meta.file} lists differ in ${[...listedByOneSideOnly].join(", ")}`,
-    );
+  return counts;
+}
+
+/** What a build prints and no stage lists. counters-have-stages.test.ts holds it empty, so a counter that the compiler gains turns that test red and no other. */
+export function countersWithoutAStage(stderr: string) {
+  return Object.keys(printedCountsIn(stderr)).filter(name => !listedCounters.has(name));
+}
+
+/** The counters among what a build with --explain=statistics has written to stderr. */
+export function countsIn(stderr: string) {
+  const counts = printedCountsIn(stderr);
+  // A test that asks for one of these would read undefined.
+  const notPrinted = [...listedCounters].filter(name => !(name in counts));
+  if (notPrinted.length)
+    throw new Error(`${import.meta.file} lists touches that --explain=statistics does not print: ${notPrinted.join(", ")}`);
   return counts;
 }
 
@@ -241,19 +258,31 @@ const outsideStagesOfFrontEnd = new Set([
   "the engine",
   "behind the engine",
 ]);
-const prefixOfFactsSteps = "facts: ";
+// Facts prints two kinds of line, both inside the border of Plan. By the whole label.
+// These count all threads. They follow one another on the calling thread and overlap nothing, so they are what is counted.
 const stageOfFactsStep: Record<string, StageName> = {
-  keys: "scan",
-  scan: "scan",
-  "body indexes": "scan",
-  "rule tables": "solve",
-  "summary of the host": "solve",
-  flatten: "solve",
-  solve: "solve",
-  "index of the graph": "solve",
-  passes: "passes",
-  "bound functions": "passes",
+  "scan and Link | scan": "scan",
+  "scan and Link | families": "solve",
+  "scan and Link | Link": "solve",
+  "scan and Link | referrers, tables": "passes",
 };
+// These count one thread, and each is a part or a double of one of the four: it is known and passed by.
+const partsOfFactsSteps = new Set([
+  "facts | keys of texts",
+  "facts | mocks, indexes of bodies",
+  "facts | scan, families",
+  "facts | look at bodies",
+  "facts | the two readings",
+  "facts | open names",
+  "facts | tables of functions",
+  "facts | lay referrers over",
+  "facts | rank referrers",
+  "facts | facts of the program",
+  "facts | tables of fields, layouts, strings, variables, classes",
+  "facts | referrers beside tables",
+]);
+// All that Facts does. The steps in front of the scan, the keys of texts and the indexes of bodies, have no line that counts all threads: they are what this line counts beyond the four.
+const allOfFacts = "AnalyzeFlow | compute facts";
 // By the first label, up to its colon where it has one: `image: type tables`.
 // The instructions that such a line names are counted once more between two borders, so only its memory is read.
 const stagesOfEngine: Record<string, StageName[]> = {
@@ -310,6 +339,8 @@ export function stagesOf(build: Build): Record<StageName, Stage> {
     if (instructions) stages[name].instructions = (stages[name].instructions ?? 0) + instructions;
   };
   let instructionsInsidePlanBorder = 0;
+  let instructionsOfFactsSteps = 0;
+  let instructionsOfAllOfFacts: number | undefined;
   const countInsidePlanBorder = (name: StageName, instructions: number | undefined) => {
     count(name, instructions);
     instructionsInsidePlanBorder += instructions ?? 0;
@@ -344,17 +375,28 @@ export function stagesOf(build: Build): Record<StageName, Stage> {
         count(name, phase.instructions);
         recordPeak(name, phase.megabytesSoFar);
       }
-    } else if (first.startsWith(prefixOfFactsSteps)) {
-      const name = known(stageOfFactsStep[first.slice(prefixOfFactsSteps.length)], line);
-      // A line with a second label is a part of the step, and the step's own line counts all its parts.
-      if (second === undefined) countInsidePlanBorder(name, phase.instructions);
+    } else if (first === "scan and Link" || first === "facts") {
+      const step = phase.label.join(" | ");
+      if (partsOfFactsSteps.has(step)) continue;
+      const name = known(stageOfFactsStep[step], line);
+      countInsidePlanBorder(name, phase.instructions);
+      instructionsOfFactsSteps += phase.instructions ?? 0;
       recordPeak(name, phase.megabytesSinceLastLine);
     } else {
       const step = `${first} | ${second}`;
+      if (step === allOfFacts) instructionsOfAllOfFacts = phase.instructions;
       if (verifierSteps.has(step)) countInsidePlanBorder("read", phase.instructions);
       const names = stagesOfEngineStep[step] ?? known(stagesOfEngine[first.split(": ")[0]], line);
       for (const name of names) recordPeak(name, phase.megabytesSinceLastLine);
     }
+  }
+
+  if (instructionsOfAllOfFacts && instructionsOfFactsSteps) {
+    if (instructionsOfAllOfFacts < instructionsOfFactsSteps)
+      throw new Error(
+        `${import.meta.file} counts some line of the build twice: the steps of Facts retire ${instructionsOfFactsSteps - instructionsOfAllOfFacts} instructions more than \`${allOfFacts}\``,
+      );
+    countInsidePlanBorder("scan", instructionsOfAllOfFacts - instructionsOfFactsSteps);
   }
 
   const { plan } = stages;

@@ -229,7 +229,8 @@ console.log("static", Object.keys(BesideStatic).join("+"), describe(BesideStatic
 // CHECK-NEXT: v6 = Integer integer=1
 // CHECK-NEXT: PropSet v5, v6 key="-1"
 // CHECK-NEXT: v8 = Integer integer=2
-// CHECK-NEXT: PropSet v5, v8 key="y"
+// CHECK-NEXT: v9 = Convert v8 declared={type=number}
+// CHECK-NEXT: PropSet v5, v9 key="y"
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"

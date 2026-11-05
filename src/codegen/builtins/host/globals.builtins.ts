@@ -1531,11 +1531,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       jest: {
-        args: { path: b.any.optional, byWhoLoads: b.any.optional },
-        returns: testModule,
+        args: { path: b.any.optional, byWhoLoads: b.any.optional, ownGlobals: b.any.optional },
+        returns: b.union(testModule, b.f64),
         capability: "js",
         throws: true,
-        uses: { path: converted, byWhoLoads: b.inspected },
+        uses: { path: converted, byWhoLoads: b.inspected, ownGlobals: b.inspected },
         implementation: b.hostCall,
       },
       listen: {

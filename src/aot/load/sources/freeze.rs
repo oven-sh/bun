@@ -18,7 +18,8 @@ use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
     FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
     collect_entry_point_paths, compute_name_of_module_held_in_part,
-    compute_name_of_third_party_file, compute_public_path, file_ids, is_linkable,
+    compute_name_of_third_party_file, compute_public_path, file_ids,
+    find_folder_named_as_parent_is_spelled, is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
 use crate::options::{Options, PathOptions};
@@ -104,7 +105,11 @@ pub(crate) fn freeze_sources(
     };
     let linkable_files = || file_ids(file_count).filter(|&file| is_linkable(files, file));
     if !are_all_different(linkable_files().map(|file| sources.public_path(file))) {
-        check_unique_public_paths(linkable_files().map(|file| (file, sources.module_paths(file))))?;
+        let paths = || linkable_files().map(|file| (file, sources.module_paths(file)));
+        match find_folder_named_as_parent_is_spelled(paths()) {
+            Some(diagnostic) => all.diagnostics.push(diagnostic),
+            None => check_unique_public_paths(paths())?,
+        }
     }
     Ok(FrozenSources {
         sources,

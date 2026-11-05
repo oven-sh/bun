@@ -11,7 +11,6 @@ mod tests;
 pub use external_bodies::{ExternalBodies, ExternalFunctionBodies};
 pub use positions::source_positions;
 
-use crate::ir::generated::LimitId;
 use crate::ir::{InParallel, Program};
 use crate::link::LinkedFunctions;
 use crate::statistics::{Stage, StepClock};
@@ -60,14 +59,6 @@ impl ProgramBytes {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EmitError {
     ProgramTooLarge { bytes: u64 },
-}
-
-impl EmitError {
-    pub fn limit(self) -> LimitId {
-        match self {
-            EmitError::ProgramTooLarge { .. } => LimitId::MaxProgramIds,
-        }
-    }
 }
 
 /// The functions of a program as `emit_with_external_bodies` takes them: the records without their code, measured, and the code beside them.

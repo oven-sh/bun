@@ -4,8 +4,8 @@ use bun_core::StackCheck;
 use bun_react_compiler::{AddedImport, CompiledFunction, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{
-    ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, Keyword, ListAt, TypeNodeId,
-    TypeNodeKind,
+    CaseId, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, IdList, Keyword, ListAt,
+    ModuleId, StmtId, StmtKind, TypeNodeId, TypeNodeKind,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::JsxSettings;
@@ -35,6 +35,8 @@ pub(super) struct TreeWriter<'a, 's> {
     source_ranges: SourceRanges,
     /// Names of the module-level items the compiler added, by `Ref::inner_index()`. Functions share them.
     item_names: FxHashMap<u32, Atom>,
+    /// The outlined functions that stand in a list of statements inside a function or a block.
+    outlined_into_lists: FxHashSet<StmtId>,
 }
 
 #[derive(Default)]
@@ -48,6 +50,16 @@ pub(super) struct FunctionContext {
     pub last_position: u32,
     pub is_strict: bool,
     pub is_strict_by_syntax: bool,
+}
+
+/// What holds a list of statements.
+#[derive(Copy, Clone)]
+enum ListHolder {
+    File,
+    Block(StmtId),
+    Case(CaseId),
+    Function(FnId),
+    Namespace(ModuleId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -113,6 +125,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
             written_type_arguments: find_written_type_arguments(&file),
             source_ranges: SourceRanges::new(&file),
             item_names: FxHashMap::default(),
+            outlined_into_lists: FxHashSet::default(),
             file,
             atoms,
             jsx,
@@ -134,7 +147,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
         let body = self.write_statement_list(compiled.body)?;
         let this_param = self.write_this_parameter(original.kind, first_expression, original.start);
         for statement in compiled.outlined {
-            self.write_outlined_function(statement)?;
+            self.write_outlined_function(statement, original.start)?;
         }
         if self.function.has_unknown_symbol {
             return Err(UnsupportedNode("symbol without a name"));
@@ -250,17 +263,18 @@ impl<'a, 's> TreeWriter<'a, 's> {
             import_paths: compiled.import_records.iter().map(path_of).collect(),
             used_ranges: FxHashMap::default(),
             has_unknown_symbol: false,
-            last_position: self.end_of_top_level_statement_at(record.start),
+            last_position: self.last_position_of_top_level_statement_at(record.start),
             fallback_position: record.start,
             is_strict: record.is_strict,
             is_strict_by_syntax: record.is_strict_by_syntax,
         }
     }
 
-    fn end_of_top_level_statement_at(&self, position: u32) -> u32 {
+    // The end of a statement is where the next one begins: what stands there counts as text of the next.
+    fn last_position_of_top_level_statement_at(&self, position: u32) -> u32 {
         let mut statements = self.file.ids(self.file.body).map(|id| self.file[id].loc);
         let around = statements.find(|range| range.pos <= position && position < range.end);
-        around.map_or(position, |range| range.end)
+        around.map_or(position, |range| range.end - 1)
     }
 
     fn resolve_symbol_name(
@@ -288,13 +302,72 @@ impl<'a, 's> TreeWriter<'a, 's> {
         }
     }
 
-    fn write_outlined_function(&mut self, statement: &Stmt) -> Written<()> {
+    /// `outlined_from`: where the function begins that it is taken out of.
+    fn write_outlined_function(&mut self, statement: &Stmt, outlined_from: u32) -> Written<()> {
         let StmtData::SFunction(outlined) = &statement.data else {
             return Err(UnsupportedNode::statement(statement.data.tag()));
         };
         let declaration = self.write_function_declaration(&outlined.func, statement.loc)?;
-        self.items.outlined.push(declaration);
+        // It may name what the scope around that function declares, and each run of that scope makes it anew. As in a bundle, it follows the statement that holds the function, in the
+        // innermost list of statements. At the top level of the file that is the end of the file.
+        match self.find_statement_around(outlined_from) {
+            (ListHolder::File, _) => self.items.outlined.push(declaration),
+            (holder, index) => {
+                let mut statements: Vec<StmtId> = self.file.ids(self.list_of(holder)).collect();
+                // Behind those that were taken out of it earlier.
+                let earlier = statements[index + 1..].iter();
+                let earlier = earlier.take_while(|it| self.outlined_into_lists.contains(it));
+                statements.insert(index + 1 + earlier.count(), declaration);
+                self.outlined_into_lists.insert(declaration);
+                let list = self.file.list(&statements);
+                match holder {
+                    ListHolder::File => unreachable!(),
+                    ListHolder::Block(block) => self.file[block].kind = StmtKind::Block(list),
+                    ListHolder::Case(case) => self.file[case].body = list,
+                    ListHolder::Function(function) => {
+                        self.file[function].body = FnBody::Block(list);
+                    }
+                    ListHolder::Namespace(namespace) => self.file[namespace].body = list,
+                }
+            }
+        }
         Ok(())
+    }
+
+    fn list_of(&self, holder: ListHolder) -> IdList<StmtId> {
+        match holder {
+            ListHolder::File => self.file.body,
+            ListHolder::Block(block) => match self.file[block].kind {
+                StmtKind::Block(list) => list,
+                _ => IdList::EMPTY,
+            },
+            ListHolder::Case(case) => self.file[case].body,
+            ListHolder::Function(function) => match self.file[function].body {
+                FnBody::Block(list) => list,
+                FnBody::None | FnBody::Expr(_) => IdList::EMPTY,
+            },
+            ListHolder::Namespace(namespace) => self.file[namespace].body,
+        }
+    }
+
+    /// The innermost list with a statement that the position is written in, and the place of that statement in it.
+    fn find_statement_around(&self, position: u32) -> (ListHolder, usize) {
+        let file = &self.file;
+        let blocks = (0..file.stmts.len() as u32).map(|id| ListHolder::Block(StmtId(id)));
+        let cases = (0..file.cases.len() as u32).map(|id| ListHolder::Case(CaseId(id)));
+        let functions = (0..file.fns.len() as u32).map(|id| ListHolder::Function(FnId(id)));
+        let namespaces =
+            (0..file.modules.len() as u32).map(|id| ListHolder::Namespace(ModuleId(id)));
+        let mut innermost = (ListHolder::File, 0, 0);
+        for holder in blocks.chain(cases).chain(functions).chain(namespaces) {
+            for (index, statement) in file.ids(self.list_of(holder)).enumerate() {
+                let range = file[statement].loc;
+                if range.pos <= position && position < range.end && range.pos >= innermost.2 {
+                    innermost = (holder, index, range.pos);
+                }
+            }
+        }
+        (innermost.0, innermost.1)
     }
 
     fn add_body_start(&mut self, function: FnId) {

@@ -317,6 +317,7 @@ impl<'a> Build<'a> {
         let code = CodeOptions {
             mocks_any_file: options.load.runs_tests,
             follows_paths_to_functions_of_other_files: options.load.runs_tests,
+            looks_for_type_errors: options.aot.looks_for_type_errors,
             ..options.code.clone()
         };
         let host = LoadHost::new(LoadHostInput {
@@ -414,14 +415,14 @@ impl<'a> Build<'a> {
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
-        self.compile_loaded(shared, project, application, found, then)
+        self.compile_loaded(shared, project, &application, found, then)
     }
 
     fn compile_loaded<'s, R>(
         &mut self,
         shared: &SharedLoadInputs<'_, 's>,
         project: &ApplicationLoad<'_, '_, '_, '_, 's>,
-        application: LoadedProgram<'s>,
+        application: &LoadedProgram<'s>,
         found: FoundByLoad,
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
@@ -470,7 +471,7 @@ impl<'a> Build<'a> {
             ..
         } = inputs;
         let input =
-            self.create_freeze_input(shared, &application, None, &contents.found_entry_points);
+            self.create_freeze_input(shared, application, None, &contents.found_entry_points);
         steps.end("roots of the library");
         let (frozen_application, runtime) = run_beside(
             &self.beside_runner(),
@@ -480,7 +481,7 @@ impl<'a> Build<'a> {
         steps.end("freeze the application beside the load of the library");
         let runtime = self.finish_load(runtime, &runtime_request, shared.messages)?;
         let programs = PerProject {
-            application: &application,
+            application,
             runtime: &runtime,
         };
         let sources = self.freeze_projects(shared, programs, &roots, frozen_application)?;
@@ -494,7 +495,7 @@ impl<'a> Build<'a> {
         steps.end("other names of entry points");
         let projects = PerProject {
             application: LoadedProject {
-                loaded: &application,
+                loaded: application,
                 host,
                 request,
                 sources: sources.application,
@@ -547,7 +548,7 @@ impl<'a> Build<'a> {
                             && (options.aot.only_tests_load_code_from_disk
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
-                    can_replace_builtins: !contents.replaced_builtins.is_empty(),
+                    can_replace_builtins: !contents.builtins_written_as_reads().is_empty(),
                 },
             ),
             code: CodeOptions {
@@ -559,7 +560,7 @@ impl<'a> Build<'a> {
                 runtime_modules: shared.runtime_modules,
                 builtin_names: shared.builtin_names,
                 platform: self.platform,
-                replaced_builtins: &contents.replaced_builtins,
+                replaced_builtins: contents.builtins_written_as_reads(),
                 messages: shared.messages,
                 unreadable: Default::default(),
             },
@@ -675,6 +676,8 @@ impl<'a> Build<'a> {
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
+        // What the freeze has said of two files of the program is not said again as an error of the compiler.
+        self.stop_if_errors(Stage::Load)?;
         self.stop_at_internal_error(check_unique_paths_across_projects(frozen))?;
         Ok(sources)
     }
@@ -709,13 +712,14 @@ mod tests {
     use super::*;
     use crate::compile::testing::{
         BUNDLED_LIBS, TestProject, default_settings, describe_messages, run_build,
-        with_loaded_build,
+        with_loaded_build, with_loaded_test_run,
     };
     use crate::load::source_provider::WithoutServices;
     use crate::statistics::LimitValues;
     use bun_ast::Log;
     use bun_sema::fold::{Constant, Decision};
     use bun_sema::hir::ExprKind;
+    use bun_sema::import_sites::ImportSiteKind;
     use bun_sema_driver::ThreadCaches;
 
     fn can_runtime_sources_load_code(admits_inspector: bool, external_packages: &[&[u8]]) -> bool {
@@ -848,6 +852,69 @@ mod tests {
             );
             if stays_in_compiled_files(&[("a.test.ts", &test_file), (helper, text)]) != stays {
                 wrong.push((head, text));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn calls_on_a_free_name_of_the_test_runner_are_sites() {
+        // A file that imports a test module keeps `jest` and `vi` free. load/test_runner_names.rs writes them `(loadedByWorker ??= ..) ? jest : own`, where `const { jest: own = imported } = globalThis`.
+        // The text, and how many of its calls name a module to the test runner.
+        let rows = [
+            (
+                r#"jest.mock("./dep.js", () => jest.requireActual("./asked.cjs"));"#,
+                2,
+            ),
+            (
+                r#"export const actual = () => jest.requireActual("./asked.cjs");"#,
+                1,
+            ),
+            (
+                r#"export const made = () => jest.createMockFromModule("./asked.cjs");"#,
+                1,
+            ),
+            (
+                r#"export const later = () => vi.importActual("./asked.cjs");"#,
+                1,
+            ),
+            (r#"vi.doMock("./dep.js", () => ({}));"#, 1),
+            (
+                r#"jest.doMock("./dep.js", () => ({})).doMock("./asked.cjs", () => ({}));"#,
+                2,
+            ),
+        ];
+        let heads = [
+            r#"import { test } from "bun:test";"#,
+            r#"import * as runner from "bun:test"; const { test } = runner;"#,
+            r#"import { jest, test, vi } from "bun:test";"#,
+        ];
+        let mut wrong = Vec::new();
+        for head in heads {
+            for (text, sites) in rows {
+                let test_file = format!("{head}\n{text}\ntest(\"t\", () => {{}});\n");
+                let files = [
+                    ("a.test.js", &test_file[..]),
+                    ("dep.js", "export {};"),
+                    ("asked.cjs", "exports.mark = 1;"),
+                ];
+                let found = with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+                    let files = loaded.project(ProjectId::Application).loaded.files();
+                    let file = files.by_path.get(&b"/project/a.test.js"[..]);
+                    let sites = files.analysis(file.expect("it is loaded")).import_sites;
+                    let by_runner = sites.iter().filter(|site| {
+                        matches!(
+                            site.kind,
+                            ImportSiteKind::MockModule(_)
+                                | ImportSiteKind::ImportByTestRunner(_)
+                                | ImportSiteKind::RequireByTestRunner(_)
+                        )
+                    });
+                    by_runner.count()
+                });
+                if found != sites {
+                    wrong.push((head, text, found));
+                }
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");

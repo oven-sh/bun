@@ -90,7 +90,7 @@ export function pinnedIdioms(part = 1, parts = 1) {
     if (!skipped) writeUntypedIdioms(untypedRoot);
     afterAll(() => {
       rmSync(folder, { recursive: true, force: true });
-      if (mode === "update" || mode === "lower") writeFileSync(pinsPath, JSON.stringify(pins, null, 2) + "\n");
+      if (mode === "update" || mode === "lower") writeFileSync(pinsPath, `{\n${Object.keys(pins).map(name => `${JSON.stringify(name)}: ${JSON.stringify(pins[name])}`).join(",\n")}\n}\n`);
     });
 
     async function instructions(cmd: string[], n: number) {

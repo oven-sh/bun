@@ -1,6 +1,0 @@
-function attempt(deed) { try { return deed(); } catch (error) { return error.name; } }
-const early = { [Symbol.toPrimitive]() { return late.rate; } };
-function deed() { return early + 1; }
-const before = attempt(deed);
-const late = { rate: 0.2 };
-console.log(before, attempt(deed));

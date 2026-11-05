@@ -1,5 +1,5 @@
 // Prints the names in the stack frames of function objects that one place makes under many names, behind many calls of them that have returned, from deep and shallow places, across caught errors and collections.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): one side shows no frame in a line, so that line is the same whatever the frames are
+// Todo: only frames (stack-trace-only differences are fine): one side shows no frame in a line, so that line is the same whatever the frames are
 Error.stackTraceLimit = 2000;
 const namesIn = stack =>
   stack

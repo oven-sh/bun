@@ -50,7 +50,7 @@ pub fn decide_roles<'s>(
         request,
         candidates.clone(),
         &FileWork {
-            requested: &|file| requested_diagnostics(loaded.origin(file)),
+            requested: &|file| requested_diagnostics(loaded.origin(file), false),
             after_file: None,
             after_commit: &|_| {},
             beside_file: None,

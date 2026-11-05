@@ -1,5 +1,5 @@
 // Stack traces that list a built-in function above its caller: their text, what Error.prepareStackTrace is given, Error.stackTraceLimit, and Error.captureStackTrace with a function to leave out.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 const show = (label, f) => {
   try {
     console.log(label, "returned", String(f()));

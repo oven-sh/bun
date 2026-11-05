@@ -17,7 +17,7 @@ use super::tables::{SharedTables, TableLengths, TaskState, UnitTables};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout, LayoutFlags,
-    RuntimeFunctionEntry, SourcePositions, Variable,
+    RuntimeFunctionEntry, SourcePositions, SourceRange, Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, FunctionKey, Id, LayoutId, LayoutKey,
@@ -401,6 +401,16 @@ impl FragmentBuilder {
         );
         self.function_keys.mark_defined(id, self.visit);
         self.functions.push((id, function));
+    }
+
+    /// `FileLowering::finish_function_texts`
+    pub(crate) fn map_function_texts(&mut self, map: impl Fn(SourceRange) -> SourceRange) {
+        for (_, function) in &mut self.functions {
+            let mapped = map(function.text);
+            if mapped != function.text {
+                Arc::make_mut(function).text = mapped;
+            }
+        }
     }
 
     pub(crate) fn define_layout(&mut self, id: LayoutId, layout: Layout) {

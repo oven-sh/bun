@@ -1,10 +1,9 @@
 // Options at startup and --trim. With --aot, every option in each of its forms: compile-trim-bun-options.test.ts.
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
 import { sharedBuilds, type Build } from "../aot/harness/shared-builds";
-import { describe, test } from "../aot/listed";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import { canTrim, featureOf, model } from "./compile-trim-features";
 
@@ -53,7 +52,7 @@ const needTheCli = [
   ["--help", "-h"],
   ["--help", "-bh"],
   ["--aot", "--aot"],
-  ["--aot-log-type-mismatches", "--aot-log-type-mismatches"],
+  ["--aot-allow-code-from-disk", "--aot-allow-code-from-disk"],
   ["--help", "--smol --title=-h --help"],
 ];
 const needAFeature = [...needEveryRuntimeFeature, ...needTheCli];

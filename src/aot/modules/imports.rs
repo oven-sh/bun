@@ -16,6 +16,7 @@ use super::plan::Member;
 use super::requests::{FileScan, ScannedSite, Scans, import_call_type_kind, import_phase};
 use super::synthetic_exports::{KnownMembers, SyntheticExports};
 use super::test_replacements::SpiesOnUnknownObjects;
+use super::test_run_names_handed_on::find_what_statement_names;
 use super::unloadable::find_files_that_sites_name;
 use super::{BindInput, DeferredExports, ModuleRef};
 use crate::builtins::id::BuiltinId;
@@ -269,7 +270,7 @@ impl MockedModules {
         self.is_every_module || self.modules.contains(&module)
     }
 
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         !self.is_every_module && self.modules.is_empty()
     }
 
@@ -873,7 +874,48 @@ impl<'a, 's> FileBinder<'a, 's> {
         position: usize,
     ) -> Option<RequiredName> {
         let (exporter, name) = self.find_name_that_an_export_statement_asks_for(position)?;
-        self.find_name_that_a_mock_of_an_es_module_may_leave_out(exporter, name)
+        let left_out = self.find_name_that_a_mock_of_an_es_module_may_leave_out(exporter, name);
+        // `export { v } from "./q"`, and "./q" has `v` by a statement of its own from a module that is mocked. The table names the variable, so the run time goes by the statements.
+        left_out.or_else(|| {
+            let is_handed_on = self.is_handed_on_from_mocked_module(exporter, name);
+            is_handed_on.then(|| RequiredName {
+                is_found_unless_mocked: true,
+                ..RequiredName::new(exporter, name)
+            })
+        })
+    }
+
+    /// Statements that hand the name on, and `export *`, lead from the module to one that is mocked.
+    fn is_handed_on_from_mocked_module(&self, module: ModuleRef, name: Atom) -> bool {
+        let context = self.context;
+        if context.mocked.is_empty() {
+            return false;
+        }
+        let first = context.modules.table_file(module);
+        let mut asked: Vec<(FileId, Atom)> = first.map(|file| (file, name)).into_iter().collect();
+        let mut next = 0;
+        while let Some(&(file, name)) = asked.get(next) {
+            next += 1;
+            for holder in context.tables.files_searched_for(file, name) {
+                if context.mocked.contains(ModuleRef::File(holder)) {
+                    return true;
+                }
+                let mut own_names = context.tables.own_names(holder).iter();
+                let Some(position) = own_names.position(|&(own_name, _)| own_name == name) else {
+                    continue;
+                };
+                let named =
+                    find_what_statement_names(context.scans, context.tables, holder, position);
+                let named = named.and_then(|(named, name)| {
+                    let file = context.modules.table_file(named)?;
+                    Some((file, name))
+                });
+                if let Some(named) = named.filter(|named| !asked.contains(named)) {
+                    asked.push(named);
+                }
+            }
+        }
+        false
     }
 
     fn bind_name(

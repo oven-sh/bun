@@ -37,7 +37,7 @@ fn free_blocks_of_scarcest_node(text: &[u8]) -> usize {
     let mut fewest = usize::MAX;
     let mut node: &[u8] = b"";
     let mut blocks_of_node = 0usize;
-    for line in text.split(|&byte| byte == b'\n') {
+    for line in bun_core::strings::split(text, b"\n") {
         // Node 0, zone   Normal  16068 434773 367939 ..
         let mut words = line
             .split(|byte| byte.is_ascii_whitespace())
@@ -237,6 +237,37 @@ mod tests {
     use crate::Guarded;
     use core::sync::atomic::AtomicUsize;
     use std::time::{Duration, Instant};
+
+    /// Bun's C++ has these two. The tests of this crate link none of it.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_char(
+        text: *const u8,
+        length: usize,
+        wanted: u8,
+    ) -> usize {
+        // SAFETY: the caller's bytes are initialized for that length.
+        let text = unsafe { core::slice::from_raw_parts(text, length) };
+        (0..length).find(|&at| text[at] == wanted).unwrap_or(length)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memmem(
+        text: *const u8,
+        length: usize,
+        wanted: *const u8,
+        wanted_length: usize,
+    ) -> *const u8 {
+        // SAFETY: as above.
+        let (text, wanted) = unsafe {
+            (
+                core::slice::from_raw_parts(text, length),
+                core::slice::from_raw_parts(wanted, wanted_length),
+            )
+        };
+        (0..length)
+            .find(|&at| text[at..].starts_with(wanted))
+            .map_or(core::ptr::null(), |at| text[at..].as_ptr())
+    }
 
     #[test]
     fn the_node_with_the_fewest_free_blocks_counts() {

@@ -1,4 +1,4 @@
-// STATISTIC: FrameMapBytesEmitted <= 64
+// STATISTIC: FrameMapBytesEmitted <= 64 Todo: the count takes in the functions of Bun's library that come into this executable
 // Functions that wait with the same things in the same places of their frames have the same frame maps, and the executable holds those once.
 const answers = async value => value;
 async function waits0(first) {

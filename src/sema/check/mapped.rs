@@ -1074,6 +1074,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// What an object literal of an untyped file, or a union of them, holds under a name that it doesn't have: anything. See
+    /// `type_of_name_that_some_literals_have`.
+    fn type_under_name_in_literals(
+        &mut self,
+        literals: TypeId,
+        name: Option<Atom>,
+        access_flags: AccessFlags,
+    ) -> TypeId {
+        let name = name.filter(|_| !access_flags.contains(AccessFlags::WRITING));
+        let held = name.and_then(|name| self.type_of_name_that_some_literals_have(literals, name));
+        held.unwrap_or(TypeId::ANY)
+    }
+
     /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type, and `holder` is what
     /// `apparent_type_or_type_variable` returns for it. The index pair is `indexType`, which isn't a union, and
     /// `fullIndexType`.
@@ -1261,7 +1274,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(TypeId::NEVER);
             }
             if self.is_js_literal_type(object) {
-                return Some(TypeId::ANY);
+                return Some(self.type_under_name_in_literals(object, name, access_flags));
             }
             if let Some((file, e)) = access_expression
                 && !self.is_const_enum_object(object)
@@ -1313,7 +1326,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(TypeId::UNDEFINED);
         }
         if self.is_js_literal_type(object) {
-            return Some(TypeId::ANY);
+            return Some(self.type_under_name_in_literals(object, name, access_flags));
         }
         if let Some(index_node) = self.span_of_index_node(access_node) {
             let is_bigint_literal = match access_node {

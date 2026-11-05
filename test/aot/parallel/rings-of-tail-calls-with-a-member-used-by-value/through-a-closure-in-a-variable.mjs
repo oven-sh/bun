@@ -1,7 +1,0 @@
-let work = 0;
-let next;
-function even(n) { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 1; return next(n - 1); }
-next = function (n) { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; if (n === 0) return 0; return even(n - 1); };
-console.log([3].map(next).join());
-let answer; try { answer = even(4000000); } catch (error) { answer = error.constructor.name; }
-console.log(answer);

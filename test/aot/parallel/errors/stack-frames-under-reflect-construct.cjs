@@ -1,5 +1,5 @@
 // Prints the frames between a constructor that throws and the function that called Reflect.construct.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 Error.prepareStackTrace = (error, sites) =>
   sites.map(
     site =>

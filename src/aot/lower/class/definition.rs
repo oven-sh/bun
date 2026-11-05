@@ -219,6 +219,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 value
             }
             ClassTransform::Legacy => {
+                for &element in &plan.elements_behind_class {
+                    self.emit_class_element(evaluation.class, element, evaluation.class_object);
+                }
                 let decorated = self.apply_legacy_decorators(plan, evaluation);
                 if let (Some(decorated), Some((binding, name))) = (decorated, outer) {
                     scope::set_binding(self, binding, name, decorated);

@@ -15,6 +15,6 @@ const texts = ["", "plain", 'q"q', "b\\b", "\n\t\r\b\f\u0000\u001f", "  ", "
 for (let i = 0; i < texts.length; i++) show(write(make(texts[i])));
 let rope = "";
 for (let i = 0; i < 40; i++) rope += i + '"';
-show(write(make(rope)));
-console.log(write(make("z".repeat(70000))).length);
-console.log(write(make("Ā".repeat(70000))).length);
+// In a loop: a call that runs once gets no writer of its own.
+const long = [rope, "z".repeat(70000), "Ā".repeat(70000), "\n" + "z".repeat(70000), "z".repeat(70000) + '"', "\n" + "Ā".repeat(70000), "\u0001".repeat(70000)];
+for (let i = 0; i < long.length; i++) show(write(make(long[i])));

@@ -305,7 +305,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             // `fold_string_addition` joins what is ASCII, and drops an empty text in front of a text.
             BinOp::Add => match operands {
                 (Number(_), Number(_)) => true,
-                (String(text), String(_)) if text.is_empty() => true,
+                (String([]), String(_)) => true,
                 (String(_), _) | (_, String(_)) => self.is_ascii(left) && self.is_ascii(right),
                 _ => false,
             },

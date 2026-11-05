@@ -38,51 +38,51 @@ impl TypeTable {
     }
 
     pub fn union_all(&mut self, members: impl IntoIterator<Item = TypeId>) -> TypeId {
-        match self.add_up(members) {
-            Ok(known) => known,
-            Err(union) => self.intern(union),
+        let mut union = Type::never();
+        match self.add_up(members, &mut union) {
+            Some(known) => known,
+            None => self.intern(union),
         }
     }
 
     /// What `union_all` answers, where the table has that type and it shows without a change to the table.
     /// So many threads can ask at one time, and whoever writes the table is left with the types that it lacks.
     pub fn find_union(&self, members: impl IntoIterator<Item = TypeId>) -> Option<TypeId> {
-        match self.add_up(members) {
-            Ok(known) => Some(known),
-            Err(mut union) => {
-                let is_normalized = normalize_without_table(&mut union);
-                let hash = is_normalized.then(|| hash_of(&union))?;
-                self.find_hashed(hash, &union)
-            }
+        let mut union = Type::never();
+        if let Some(known) = self.add_up(members, &mut union) {
+            return Some(known);
         }
+        let is_normalized = normalize_without_table(&mut union);
+        let hash = is_normalized.then(|| hash_of(&union))?;
+        self.find_hashed(hash, &union)
     }
 
-    /// `Ok`: the union is this type. `Err`: the parts of the members laid together, not normalized.
-    fn add_up(&self, members: impl IntoIterator<Item = TypeId>) -> Result<TypeId, Type> {
+    /// `Some`: the union is this type. `None`: `union`, which comes in as never, holds the parts of the members laid together, not normalized.
+    fn add_up(
+        &self,
+        members: impl IntoIterator<Item = TypeId>,
+        union: &mut Type,
+    ) -> Option<TypeId> {
         let mut members = members
             .into_iter()
             .filter(|&member| member != TypeTable::NEVER);
         let Some(first) = members.next() else {
-            return Ok(TypeTable::NEVER);
+            return Some(TypeTable::NEVER);
         };
         let Some(second) = members.find(|&member| member != first) else {
-            return Ok(first);
+            return Some(first);
         };
-        let mut union = Type::never();
         let mut has_internal_member = false;
         for member in [first, second].into_iter().chain(members) {
             let member = self.get(member);
             has_internal_member |= member.is_internal();
-            add_parts(&mut union, member);
+            add_parts(union, member);
         }
         debug_assert!(
             !has_internal_member,
             "an opaque or environment type is never part of a union"
         );
-        match has_internal_member {
-            true => Ok(TypeTable::ANYTHING),
-            false => Err(union),
-        }
+        has_internal_member.then_some(TypeTable::ANYTHING)
     }
 
     pub fn without_primitives(&mut self, ty: TypeId, removed: Primitives) -> TypeId {

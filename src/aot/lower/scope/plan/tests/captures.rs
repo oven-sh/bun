@@ -121,9 +121,9 @@ fn earlier_closure_takes_the_environment() {
 }
 
 #[test]
-fn hoisted_function_takes_the_environment() {
-    let source = "export function f() { \
-        const a = {}; function g() { return a; } const h = () => a; return [g, h]; }";
+fn hoisted_function_read_before_the_initialization_takes_the_environment() {
+    let source = "export function f(keep) { \
+        keep(g); const a = {}; const h = () => a; return h; function g() { return a; } }";
     analyze_source("main.mjs", source, |probe| {
         let top = probe.top_of("f");
         assert_eq!(probe.captures_of("g"), [Capture::Environment(top)]);
@@ -135,12 +135,61 @@ fn hoisted_function_takes_the_environment() {
 }
 
 #[test]
-fn closure_in_hoisted_function_takes_the_environment() {
-    let source = "export function f() { const a = {}; function g() { return () => a; } return g; }";
+fn hoisted_function_read_after_the_initialization_copies() {
+    let sources = [
+        "export function f() { const a = {}; function g() { return a; } const h = () => a; return [g, h]; }",
+        "export function f(run) { if (run) return 0; const a = {}; return run(g, g); function g() { return a; } }",
+        "export function f(run) { const a = {}; for (const x of run) x(g); function g() { return a; } }",
+        "export function f(run) { const a = {}; g(); return run(g); function g() { return a; } }",
+    ];
+    for source in sources {
+        analyze_source("main.mjs", source, |probe| {
+            assert_eq!(probe.captures_of("g"), [probe.copy_of("a")], "{source}");
+            assert!(!probe.has_environment(probe.top_of("f")), "{source}");
+            assert_eq!(probe.placement_of("g").storage, Storage::Local, "{source}");
+        });
+    }
+}
+
+#[test]
+fn hoisted_function_that_can_start_before_the_initialization_takes_the_environment() {
+    let sources = [
+        "export function f(run) { g(); const a = {}; return run(g); function g() { return a; } }",
+        "export function f(run) { run(s); const a = {}; return run(g); \
+            function s() { return g(); } function g() { return a; } }",
+        "export function f(run) { const early = () => g(); const a = {}; return run(g, early); \
+            function g() { return a; } }",
+        "export function f(run) { run(() => s); const a = {}; return run(g); \
+            function s() { return g(); } function g() { return a; } }",
+        "export function f(run) { for (const x of run) { if (x) x(g); } const a = {}; return a; \
+            function g() { return a; } }",
+    ];
+    for source in sources {
+        analyze_source("main.mjs", source, |probe| {
+            let environment = [Capture::Environment(probe.top_of("f"))];
+            assert_eq!(probe.captures_of("g"), environment, "{source}");
+        });
+    }
+}
+
+#[test]
+fn hoisted_function_that_a_nested_function_reads_is_created_at_scope_entry() {
+    let source = "export function f(run) { const a = {}; run(() => g); return run(g); function g() { return a; } }";
     analyze_source("main.mjs", source, |probe| {
-        let environment = [Capture::Environment(probe.top_of("f"))];
-        assert_eq!(probe.captures(probe.arrow()), environment);
-        assert_eq!(probe.captures_of("g"), environment);
+        assert_eq!(probe.function_made_at_first_read(probe.symbol("g")), None);
+        assert_eq!(
+            probe.captures_of("g"),
+            [Capture::Environment(probe.top_of("f"))]
+        );
+    });
+}
+
+#[test]
+fn closure_in_hoisted_function_copies_what_the_function_copies() {
+    let source = "export function f() { function g() { return () => a; } const a = {}; return g; }";
+    analyze_source("main.mjs", source, |probe| {
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("a")]);
+        assert_eq!(probe.captures_of("g"), [probe.copy_of("a")]);
     });
 }
 
@@ -201,10 +250,18 @@ fn hoisted_function_symbol_is_copied_by_later_closure() {
     });
     let sibling = "export function f() { function g() { return h; } function h() {} return g; }";
     analyze_source("main.mjs", sibling, |probe| {
+        assert_eq!(probe.captures_of("g"), [probe.copy_of("h")]);
+        assert!(!probe.has_environment(probe.top_of("f")));
+    });
+    let beside_scope = "export function f() { let n = 0; return g; \
+        function g() { n++; return h; } function h() { return n; } }";
+    analyze_source("main.mjs", beside_scope, |probe| {
         let top = probe.top_of("f");
         assert_eq!(probe.captures_of("g"), [Capture::Environment(top)]);
-        assert_eq!(probe.environment_fields(top), [probe.binding("h")]);
-        assert!(probe.placement_of("h").has_local);
+        assert_eq!(
+            probe.environment_fields(top),
+            [probe.binding("h"), probe.binding("n")]
+        );
     });
 }
 
@@ -367,19 +424,24 @@ fn earlier_closures_need_a_field() {
 }
 
 #[test]
-fn hoisted_functions_need_a_field() {
-    let sources = [
+fn hoisted_functions_copy_what_is_initialized_before_their_first_read() {
+    let copied = [
         "export function f(it) { const [probe] = it; function g() { return probe; } return g; }",
         "export function f(it) { const [probe] = it; \
             function g() { return () => probe; } return g; }",
         "export function f(it) { const [probe] = it; \
             { function g() { return probe; } return g; } }",
-        "export function f(x, it) { switch (x) { case 0: const [probe] = it; \
-            case 1: function g() { return probe; } return g; } }",
     ];
-    for source in sources {
-        assert!(is_field(probe_storage("main.mjs", source)), "{source}");
+    for source in copied {
+        assert_eq!(
+            probe_storage("main.mjs", source),
+            Storage::Local,
+            "{source}"
+        );
     }
+    let skipped = "export function f(x, it) { switch (x) { case 0: const [probe] = it; \
+        case 1: function g() { return probe; } return g; } }";
+    assert!(is_field(probe_storage("main.mjs", skipped)));
 }
 
 #[test]
@@ -406,7 +468,7 @@ fn jsx_factory_use_counts_as_capture() {
     analyze_files(&files, |probe| {
         assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("probe")]);
     });
-    let hoisted = "export function f(it) { const [probe] = it; \
+    let hoisted = "export function f(it) { it(g); const [probe] = it; \
         function g() { return <a />; } return g; }";
     assert!(is_field(probe_storage("main.jsx", hoisted)));
 }

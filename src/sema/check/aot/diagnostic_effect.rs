@@ -31,12 +31,6 @@ impl FileOrigin {
         FileOrigin::Runtime,
         FileOrigin::EvaluatedText,
     ];
-
-    pub fn can_lose_trust(self) -> bool {
-        DiagnosticClass::ALL
-            .into_iter()
-            .any(|class| effect_of_error(self, class) == Effect::WithdrawsTrust)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -184,20 +178,6 @@ mod tests {
                     "{cell}"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn typed_code_of_tests_and_of_others_and_evaluated_text_can_lose_trust() {
-        for origin in FileOrigin::ALL {
-            let is_expected = matches!(
-                origin,
-                FileOrigin::TestedSource
-                    | FileOrigin::DependencySource
-                    | FileOrigin::Runtime
-                    | FileOrigin::EvaluatedText
-            );
-            assert_eq!(origin.can_lose_trust(), is_expected, "{origin:?}");
         }
     }
 

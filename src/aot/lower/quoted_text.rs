@@ -18,7 +18,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedText;
-use crate::load::test_runner_names::written_name_of_local;
+use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local};
 
 #[derive(Default)]
 pub(in crate::lower) struct QuotedTexts {
@@ -90,6 +90,8 @@ impl Level {
 #[derive(Copy, Clone, Default)]
 struct Around {
     forbids_call: bool,
+    /// Where the first `new` stands in front of the callee that this is a link of: the parser of the engine begins each link there.
+    start_of_new: Option<usize>,
     forbids_in: bool,
     has_parent_outside_chain: bool,
 }
@@ -407,6 +409,7 @@ impl Printer<'_, '_, '_, '_, '_> {
         let wraps = chain != Chain::No && around.has_parent_outside_chain;
         if wraps {
             self.text.push(b'(');
+            around.start_of_new = None;
         }
         around.has_parent_outside_chain = chain == Chain::No;
         around.forbids_in = false;
@@ -422,10 +425,11 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.word(key);
                 return true;
             }
+            // A key is no template.
             NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx => {
-                append_printed_text(key, &mut self.text)
+                append_quoted_text(key, false, &mut self.text)
             }
-            NameKind::NumericLiteral => self.word(key),
+            NameKind::NumericLiteral => self.numeric_key(key),
             NameKind::ComputedString => {
                 self.text.push(b'[');
                 append_printed_text(key, &mut self.text);
@@ -433,11 +437,22 @@ impl Printer<'_, '_, '_, '_, '_> {
             }
             NameKind::ComputedNumber => {
                 self.text.push(b'[');
-                self.text.extend_from_slice(key);
+                self.numeric_key(key);
                 self.text.push(b']');
             }
         }
         false
+    }
+
+    // `{ 10000: a }` is printed `{ 1e4: a }`, like any number.
+    fn numeric_key(&mut self, key: &[u8]) {
+        match core::str::from_utf8(key)
+            .ok()
+            .and_then(|key| key.parse().ok())
+        {
+            Some(number) => self.number(number, Level::Lowest),
+            None => self.word(key),
+        }
     }
 
     fn property(&mut self, property: PropId) {
@@ -449,10 +464,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.expression(property.value, Level::Comma, Around::default());
             }
             (PropKind::Init | PropKind::Shorthand, PropKey::Name(key)) => {
-                let value = self.file.skip_type_syntax(property.value);
-                let is_named_like_key = matches!(hir[value].kind, ExprKind::Ident(name) if name == key)
-                    && self.constant_of(value).is_none();
+                let value = self.file.skip_to_written_expression(property.value);
                 let text = self.file.queries.atom_bytes(key);
+                let is_named_like_key = matches!(hir[value].kind, ExprKind::Ident(name) if written_name_of_local(self.file.queries.atom_bytes(name)) == text)
+                    && self.constant_of(value).is_none();
                 let is_name = self.key(text, property.name_kind);
                 let sets_prototype = key == known::__proto__ && property.kind == PropKind::Init;
                 if is_name && is_named_like_key && !sets_prototype {
@@ -577,8 +592,9 @@ impl Printer<'_, '_, '_, '_, '_> {
                     left_level = Level::Call;
                 }
             }
+            // `js_printer` forbids `in` inside the brackets that it has just opened.
             let beside = Around {
-                forbids_in: around.forbids_in && !wraps,
+                forbids_in: around.forbids_in || wraps,
                 ..Around::default()
             };
             open.push(OpenOperator {
@@ -656,7 +672,7 @@ impl Printer<'_, '_, '_, '_, '_> {
 
     fn expression(&mut self, expression: ExprId, level: Level, mut around: Around) {
         let hir = self.file.hir;
-        let expression = self.file.skip_type_syntax(expression);
+        let expression = self.file.skip_to_written_expression(expression);
         if let Some(constant) = self.constant_of(expression) {
             return self.constant(constant, level);
         }
@@ -664,6 +680,13 @@ impl Printer<'_, '_, '_, '_, '_> {
         let whole = |printer: &Printer<'_, '_, '_, '_, '_>| (printer.text.len(), false);
         let (start, wraps) = match hir[expression].kind {
             ExprKind::Missing => whole(self),
+            // No text of the program stands for a name that the build has made: `%glob:7` in the expansion of `import.meta.glob`.
+            ExprKind::Ident(name)
+                if written_name_of_local(self.file.queries.atom_bytes(name)).starts_with(b"%") =>
+            {
+                self.gaps += 1;
+                whole(self)
+            }
             ExprKind::Ident(name) => {
                 self.space_before_name();
                 let start = whole(self);
@@ -707,7 +730,7 @@ impl Printer<'_, '_, '_, '_, '_> {
                 obj, name, chain, ..
             } => {
                 let wraps = self.begin_link(chain, &mut around);
-                let start = self.text.len();
+                let start = around.start_of_new.unwrap_or(self.text.len());
                 self.expression(obj, Level::Postfix, around);
                 let name = written_name(self.file.queries.atom_bytes(name));
                 self.member_name(
@@ -719,7 +742,7 @@ impl Printer<'_, '_, '_, '_, '_> {
             }
             ExprKind::Index { obj, index, chain } => {
                 let wraps = self.begin_link(chain, &mut around);
-                let start = self.text.len();
+                let start = around.start_of_new.unwrap_or(self.text.len());
                 self.expression(obj, Level::Postfix, around);
                 self.text
                     .extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
@@ -735,10 +758,14 @@ impl Printer<'_, '_, '_, '_, '_> {
                     self.text.push(b'(');
                 }
                 self.space_before_name();
-                let start = self.text.len();
+                let start = around
+                    .start_of_new
+                    .filter(|_| !wraps)
+                    .unwrap_or(self.text.len());
                 self.text.extend_from_slice(b"new ");
                 let callee = Around {
                     forbids_call: true,
+                    start_of_new: Some(start),
                     ..Around::default()
                 };
                 self.expression(site.callee, Level::New, callee);
@@ -757,13 +784,18 @@ impl Printer<'_, '_, '_, '_, '_> {
                     self.text.push(b'(');
                 }
                 let start = self.text.len();
-                self.expression(target, Level::Assign, Around::default());
+                // An operator like the others.
+                let beside = Around {
+                    forbids_in: around.forbids_in || wraps,
+                    ..Around::default()
+                };
+                self.expression(target, Level::Assign, beside);
                 self.text.push(b' ');
                 if let Some(op) = op {
                     self.text.extend_from_slice(level_and_text_of(op).1);
                 }
                 self.text.extend_from_slice(b"= ");
-                self.expression(value, Level::Assign.below(), Around::default());
+                self.expression(value, Level::Assign.below(), beside);
                 (start, wraps)
             }
             ExprKind::Cond { test, branches }
@@ -787,11 +819,21 @@ impl Printer<'_, '_, '_, '_, '_> {
                     self.text.push(b'(');
                 }
                 let start = self.text.len();
-                self.expression(test, Level::Conditional, Around::default());
+                // `js_printer` hands what stands round the whole to the test and to the last operand: `new ((f()) ? a : o)`, `((o?.p) ? a : (k in o)).b`.
+                let beside = Around {
+                    start_of_new: None,
+                    forbids_in: around.forbids_in && !wraps,
+                    ..around
+                };
+                self.expression(test, Level::Conditional, beside);
                 self.text.extend_from_slice(b" ? ");
                 self.expression(branches.yes, Level::Yield, Around::default());
                 self.text.extend_from_slice(b" : ");
-                self.expression(branches.no, Level::Yield, Around::default());
+                let last = Around {
+                    forbids_in: true,
+                    ..beside
+                };
+                self.expression(branches.no, Level::Yield, last);
                 (start, wraps)
             }
             ExprKind::Await(operand) => {
@@ -832,8 +874,12 @@ impl Printer<'_, '_, '_, '_, '_> {
                     .iter()
                     .all(|part| self.file.queries.atom_bytes(part.raw).is_ascii()) =>
             {
-                let start = self.text.len();
-                self.expression(hir[site].callee, Level::Postfix, Around::default());
+                let start = around.start_of_new.unwrap_or(self.text.len());
+                let tag = Around {
+                    start_of_new: around.start_of_new,
+                    ..Around::default()
+                };
+                self.expression(hir[site].callee, Level::Postfix, tag);
                 self.text.push(b'`');
                 let mut substitutions = hir.ids(hir[site].args);
                 for (index, part) in hir.template_parts(hir.template_of(site)).iter().enumerate() {
@@ -955,6 +1001,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         text.is_some_and(|text| !contains_char(text, b'\n'))
     }
 
+    fn skip_to_written_expression(&self, expression: ExprId) -> ExprId {
+        skip_to_written_use(self.hir, |name| self.queries.atom_bytes(name), expression)
+    }
+
     /// Of the node itself. What it holds may still leave a gap.
     fn is_printed(&self, expression: ExprId) -> bool {
         let written = self.hir[expression];
@@ -1030,7 +1080,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         if self.inputs.options.obfuscates || !self.inputs.options.embeds_function_text {
             return;
         }
-        let expression = self.skip_type_syntax(expression);
+        let expression = self.skip_to_written_expression(expression);
         if !self.quoted_texts.places.contains_key(&expression) {
             let outermost = self.outermost_printed_expression_around(expression);
             if !self.quoted_texts.printed.insert(outermost) {
@@ -1053,7 +1103,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
-    /// `a.b = c`, `delete a.b` and `new a.b` are quoted whole.
+    /// `a.b = c` and `delete a.b` are quoted whole.
     fn find_expression_quoted_for_member(&self, access: ExprId) -> ExprId {
         let mut operand = access;
         while let Parent::Expr(around) = self.bound.parent_of_expr(operand) {
@@ -1065,7 +1115,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 ExprKind::Unary {
                     op: UnOp::Delete, ..
                 } => return around,
-                ExprKind::New(site) if self.hir[site].callee == operand => return around,
                 _ => break,
             }
         }
@@ -1214,6 +1263,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
 // As `js_printer` writes a text: between the quotes that leave least to escape, and nothing but ASCII.
 pub(in crate::lower) fn append_printed_text(text: &[u8], printed: &mut Vec<u8>) {
+    append_quoted_text(text, true, printed);
+}
+
+fn append_quoted_text(text: &[u8], may_be_template: bool, printed: &mut Vec<u8>) {
     let (mut single_cost, mut double_cost, mut backtick_cost) = (0, 0, 0);
     let mut bytes = text.iter().take(1024).enumerate();
     while let Some((index, &byte)) = bytes.next() {
@@ -1232,7 +1285,7 @@ pub(in crate::lower) fn append_printed_text(text: &[u8], printed: &mut Vec<u8>) 
             _ => {}
         }
     }
-    let quote = if backtick_cost < single_cost.min(double_cost) {
+    let quote = if may_be_template && backtick_cost < single_cost.min(double_cost) {
         b'`'
     } else if single_cost < double_cost {
         b'\''

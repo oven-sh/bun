@@ -1,5 +1,5 @@
 // What the call sites of Error.prepareStackTrace answer for the closures of one function, with and without a displayName of their own, in sloppy code.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 function sitesOf(run) {
   const before = Error.prepareStackTrace;
   Error.prepareStackTrace = (error, sites) => sites;

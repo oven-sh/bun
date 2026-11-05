@@ -162,10 +162,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (parent != ClassParent::Declared(ClassDeclaration::Class(class))).then_some(parent)
     }
 
-    pub fn constructed_declaration(&mut self, file: FileId, callee: ExprId) -> Option<ClassParent> {
-        self.end_finder(file).find_parent(callee)
-    }
-
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
         let parts: SmallVec<[TypeId; 2]> = match self.c.data(ty) {
             TypeData::Intersection(parts) => parts.iter().copied().collect(),

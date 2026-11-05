@@ -1,7 +1,7 @@
 # answer	plain	minified	difference	configuration	extension	source
 # answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
 # plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
-# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member that its holder lists from its first read on, and `bun run` reads it), missed (all else).
+# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member that its holder lists from its first read on, or a global name that is not locked, and `bun run` reads it), missed (all else).
 # literals and functions
 +	+	+	-	-	ts	const MARK = 1;
 +	+	+	-	-	ts	const MARK = "a";
@@ -107,31 +107,40 @@
 -	-	-	-	-	ts	const MARK = unknownGlobal;
 +	+	+	-	-	ts	const MARK = Object;
 +	+	+	-	-	ts	const MARK = Array;
-+	+	+	-	-	ts	const MARK = Promise;
-+	+	+	-	-	ts	const MARK = console;
-+	+	+	-	-	ts	const MARK = Error;
-+	+	+	-	-	ts	const MARK = URL;
-+	+	+	-	-	ts	const MARK = fetch;
-+	+	+	-	-	ts	const MARK = setTimeout;
-+	+	+	-	-	ts	const MARK = globalThis;
+-	+	+	read	-	ts	const MARK = Promise;
+-	+	+	read	-	ts	const MARK = console;
+-	+	+	read	-	ts	const MARK = Error;
+-	+	+	read	-	ts	const MARK = URL;
+-	+	+	read	-	ts	const MARK = fetch;
+-	+	+	read	-	ts	const MARK = setTimeout;
+-	+	+	read	-	ts	const MARK = globalThis;
 +	+	+	-	-	ts	const MARK = Map;
 +	+	+	-	-	ts	const MARK = Symbol;
-+	+	+	-	-	ts	const MARK = Event;
-+	+	+	-	-	ts	const MARK = crypto;
-+	+	+	-	-	ts	const MARK = navigator;
-+	+	+	-	-	ts	const MARK = AbortController;
-+	+	+	-	-	ts	const MARK = Function;
-+	+	+	-	-	ts	const MARK = Date;
-+	+	+	-	-	ts	const MARK = self;
-+	-	-	table	-	ts	const MARK = Buffer;
+-	+	+	read	-	ts	const MARK = Event;
+-	+	+	read	-	ts	const MARK = crypto;
+-	+	+	read	-	ts	const MARK = navigator;
+-	+	+	read	-	ts	const MARK = AbortController;
+-	+	+	read	-	ts	const MARK = Function;
+-	+	+	read	-	ts	const MARK = Date;
+-	+	+	read	-	ts	const MARK = self;
+-	-	-	-	-	ts	const MARK = Buffer;
 +	-	-	table	-	ts	const MARK = process;
-+	-	-	table	-	ts	const MARK = Bun;
-+	-	-	table	-	ts	const MARK = WeakRef;
-+	-	-	table	-	ts	const MARK = structuredClone;
-+	-	-	table	-	ts	const MARK = setImmediate;
-+	-	-	table	-	ts	const MARK = SharedArrayBuffer;
-+	-	-	table	-	ts	const MARK = TransformStream;
-+	-	-	table	-	ts	const MARK = global;
+-	-	-	-	-	ts	const MARK = Bun;
+-	-	-	-	-	ts	const MARK = WeakRef;
+-	-	-	-	-	ts	const MARK = structuredClone;
+-	-	-	-	-	ts	const MARK = setImmediate;
+-	-	-	-	-	ts	const MARK = SharedArrayBuffer;
+-	-	-	-	-	ts	const MARK = TransformStream;
+-	-	-	-	-	ts	const MARK = global;
++	.	.	-	-	ts	Date, "MARK";
++	.	.	-	-	ts	Promise, URL, "MARK";
++	.	.	-	-	ts	process, "MARK";
+-	.	.	-	-	ts	structuredClone, "MARK";
+-	.	.	-	-	ts	Buffer, "MARK";
+-	+	+	read	-	ts	const MARK = { when: Date };
+-	+	+	read	-	ts	const MARK = [URL];
+-	+	+	read	-	ts	export default [URL, "MARK"];
++	+	+	-	-	ts	const MARK = { table: Map };
 -	-	-	-	-	ts	const MARK = window;
 -	-	-	-	-	ts	const MARK = gc;
 -	-	-	-	-	ts	const MARK = $vm;
@@ -256,9 +265,11 @@
 +	-	+	minified	-	ts	const MARK = new Map();
 +	-	+	minified	-	ts	const MARK = new Set();
 +	-	+	minified	-	ts	const MARK = new Set([1]);
-+	-	+	minified	-	ts	const MARK = new WeakMap();
+-	-	+	-	-	ts	const MARK = new WeakMap();
++	.	.	-	-	ts	new WeakMap(), "MARK";
 -	-	-	-	-	ts	const MARK = new Error("x");
-+	-	+	minified	-	ts	const MARK = new Date();
+-	-	+	-	-	ts	const MARK = new Date();
++	.	.	-	-	ts	new Date(), "MARK";
 -	-	-	-	-	ts	const MARK = new Array(1);
 -	-	+	-	-	ts	const MARK = new Object();
 -	-	+	-	-	ts	const MARK = Symbol.for("x");

@@ -389,6 +389,10 @@ impl MimallocArena {
         let mut filling = self.filling.get();
         if filling.chunk.is_null() || size > Self::BYTES_OF_CHUNK - filling.used {
             let chunk = self.aligned_alloc(Self::BYTES_OF_CHUNK, align_of::<ChunkOfBlocks>());
+            #[expect(
+                clippy::cast_ptr_alignment,
+                reason = "asked for with the alignment of a ChunkOfBlocks on the line above"
+            )]
             let chunk = NonNull::new(chunk.cast::<ChunkOfBlocks>())?;
             // SAFETY: the block is long enough and aligned.
             unsafe {

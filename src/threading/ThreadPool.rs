@@ -2375,8 +2375,8 @@ mod tests {
 
     fn sleep_as_worker_of(pool: &ThreadPool) {
         let worker = Thread {
-            next: ptr::null_mut(),
-            target: ptr::null_mut(),
+            next: Cell::new(ptr::null_mut()),
+            target: Cell::new(ptr::null_mut()),
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             idle_queue: node::Queue::default(),

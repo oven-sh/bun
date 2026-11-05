@@ -1086,6 +1086,7 @@ pub(crate) fn write_program_alone(
 }
 
 /// The first word of the command line, with the path of the file. Behind it may stand `--aot-program-argv0=` with what was typed to start the file.
+#[cfg(not(bun_locked_environment))]
 pub(crate) const PROGRAM_FILE_FLAG: &[u8] = b"--aot-program-file=";
 
 /// The caller has seen `PROGRAM_FILE_FLAG`.

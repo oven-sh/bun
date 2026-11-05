@@ -33,6 +33,8 @@ pub(super) struct ModuleSet {
     /// The callbacks of `__commonJS(cb)` and `__esm(fn)` that are modules of their own.
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
+    /// By file: `find_inner_modules` is told that the body may run a second time.
+    runs_again: Vec<bool>,
     interops: Vec<Option<Interop>>,
     /// By file: `a.txt?text` is a form of `a.txt`.
     forms: Vec<(FileId, FileId)>,
@@ -118,12 +120,12 @@ impl ModuleSet {
         input: &BindInput<'_, '_>,
         run_again: &[ModuleRef],
     ) {
-        let mut keeps_holders = vec![false; input.files.modules.len()];
         for &module in run_again {
             if let ModuleRef::File(file) = module {
-                keeps_holders[file.idx()] = true;
+                self.runs_again[file.idx()] = true;
             }
         }
+        let mut keeps_holders = self.runs_again.clone();
         // No site evaluates a module of a file that is no code of the program: `find_program_code`.
         let sources = input.sources;
         for entry_point in sources.entry_points() {
@@ -143,6 +145,11 @@ impl ModuleSet {
             self.compiled_files.iter().flat_map(callbacks_of).collect();
         inner_modules.shared_sort_unstable();
         self.inner_modules = inner_modules;
+    }
+
+    /// Whatever a run of the body makes belongs to that run.
+    pub(super) fn runs_again(&self, file: FileId) -> bool {
+        self.runs_again[file.idx()]
     }
 
     /// By file and callback, in ascending order.
@@ -318,6 +325,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         left_to_loader,
         wrapped: WrappedModules::default(),
         inner_modules: Vec::new(),
+        runs_again: vec![false; interops.len()],
         interops,
     }
 }

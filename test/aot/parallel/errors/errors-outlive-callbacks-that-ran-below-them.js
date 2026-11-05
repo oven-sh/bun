@@ -1,5 +1,5 @@
 // An error outlives the callbacks that ran when it was made: they got a displayName through a value that nobody follows and were let go, and a collection came before anybody read the stack.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): plain Bun makes a stack that is read late without Error.prepareStackTrace
+// Todo: only frames (stack-trace-only differences are fine): plain Bun makes a stack that is read late without Error.prepareStackTrace
 const never = process.argv.length > 1000 ? "x" : "";
 const handedBack = new Function("f", "return f;" + never);
 const names = stack =>

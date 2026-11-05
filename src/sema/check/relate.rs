@@ -361,6 +361,79 @@ pub(super) struct Inherited<'p> {
     requested: usize,
 }
 
+/// A member of a union that is the type of an object literal, as `create_reduced_union` asks about it.
+struct LiteralMember<'p> {
+    members: Members<'p>,
+    /// The names of the properties that it requires and that `Object` lacks. Whatever has no property of its own under one of
+    /// them lacks the property (`getUnmatchedProperty`), and then `properties_related_to_ex` ends every relation but identity
+    /// at its first question.
+    required: SmallVec<[Atom; 4]>,
+    /// False if every literal of the union has all of them.
+    may_be_lacked: bool,
+}
+
+/// The members of a union that are types of object literals, and which members each of them has to be held against.
+#[derive(Default)]
+pub(super) struct LiteralsOfUnion<'p> {
+    /// By the place of the member in the union. Empty where the literals are few: each is held against every member then,
+    /// which affects speed alone.
+    literals: Vec<Option<LiteralMember<'p>>>,
+    /// The places of the members that every literal is held against, ascending: those that are no literals, and the literals
+    /// that require nothing.
+    held_against_by_all: Vec<usize>,
+    /// By name, the places of the literals that are found under it, ascending. A literal is found under one of the names that
+    /// it requires: the one that the fewest of the literals have.
+    by_required_name: FxHashMap<Atom, Vec<usize>>,
+}
+
+impl LiteralsOfUnion<'_> {
+    const FEW: usize = 8;
+
+    /// True if both members are literals and the first lacks a property that the second requires.
+    pub(super) fn lacks_required_property(&self, source: usize, target: usize) -> bool {
+        let (Some(Some(source)), Some(Some(target))) =
+            (self.literals.get(source), self.literals.get(target))
+        else {
+            return false;
+        };
+        let has = |name: Atom| source.members.resolved.prop(name).is_some();
+        target.may_be_lacked && !target.required.iter().all(|&name| has(name))
+    }
+
+    /// The places of the members that the one at `place` has to be held against: it lacks a property that each other member
+    /// requires. `None`: all of them.
+    pub(super) fn held_against(&self, place: usize) -> Option<PlacesInOrder<'_>> {
+        let literal = self.literals.get(place)?.as_ref()?;
+        let mut lists: SmallVec<[&[usize]; 8]> = SmallVec::new();
+        lists.push(&self.held_against_by_all[..]);
+        let names = literal.members.shape().props.iter().map(|prop| prop.name);
+        lists.extend(names.filter_map(|name| Some(&self.by_required_name.get(&name)?[..])));
+        // Going through all the members costs less than stops at most of them. That affects speed alone.
+        let held: usize = lists.iter().map(|list| list.len()).sum();
+        if 2 * held > self.literals.len() {
+            return None;
+        }
+        Some(PlacesInOrder { lists })
+    }
+}
+
+/// Goes through ascending lists that share no place, in ascending order. Whoever stops early pays for what was taken.
+pub(super) struct PlacesInOrder<'a> {
+    lists: SmallVec<[&'a [usize]; 8]>,
+}
+
+impl Iterator for PlacesInOrder<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        let heads = self.lists.iter_mut().filter(|list| !list.is_empty());
+        let first = heads.min_by_key(|list| list[0])?;
+        let (&place, rest) = first.split_first()?;
+        *first = rest;
+        Some(place)
+    }
+}
+
 /// Identity shared by all instantiations of one declaration.
 pub(super) type RecursionId = (u8, u32, u32);
 
@@ -806,7 +879,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isEmptyObjectType`
     pub(super) fn is_empty_object_type(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
-            TypeData::Union(parts) => parts.iter().any(|&p| self.is_empty_object_type(p)),
+            TypeData::Union(parts) => {
+                !self.has_only_unrelated_classes(ty)
+                    && parts.iter().any(|&p| self.is_empty_object_type(p))
+            }
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_empty_object_type(p)),
             _ if ty == TypeId::OBJECT => true,
             data => {
@@ -952,6 +1028,64 @@ impl<'p, 's> Checker<'p, 's> {
             (Some(union), ..) => self.get_property_of_type(union, name),
             (None, ty, members) => self.property_among(ty, &members, inherited, name),
         }
+    }
+
+    /// `None` if `ty` isn't the type of an object literal.
+    fn literal_member(&mut self, ty: TypeId) -> Option<LiteralMember<'p>> {
+        if !is_object_literal_kind(self.data(ty)) {
+            return None;
+        }
+        let members = self.members(ty)?;
+        // `anyFunctionType` has the properties of `Function` too.
+        let mut inherited = self.inherited_of(members.shape());
+        if inherited.count != 1 {
+            return None;
+        }
+        let mut required = SmallVec::new();
+        for tp in &members.shape().props {
+            if !tp.flags.contains(PropFlags::OPTIONAL)
+                && !self.is_static_private_name(tp)
+                && self.inherited_property(&mut inherited, tp.name).is_none()
+            {
+                required.push(tp.name);
+            }
+        }
+        Some(LiteralMember {
+            members,
+            required,
+            may_be_lacked: true,
+        })
+    }
+
+    pub(super) fn literals_of_union(&mut self, members: &[TypeId]) -> LiteralsOfUnion<'p> {
+        let mut found = LiteralsOfUnion::default();
+        let is_literal = |&&m: &&TypeId| is_object_literal_kind(self.data(m));
+        if members.len() <= LiteralsOfUnion::FEW
+            || members.iter().filter(is_literal).count() <= LiteralsOfUnion::FEW
+        {
+            return found;
+        }
+        found.literals = members.iter().map(|&m| self.literal_member(m)).collect();
+        let mut owners: FxHashMap<Atom, u32> = FxHashMap::default();
+        for literal in found.literals.iter().flatten() {
+            for prop in &literal.members.shape().props {
+                *owners.entry(prop.name).or_default() += 1;
+            }
+        }
+        let many = found.literals.iter().flatten().count() as u32;
+        for literal in found.literals.iter_mut().flatten() {
+            literal.may_be_lacked = literal.required.iter().any(|name| owners[name] < many);
+        }
+        for (place, literal) in found.literals.iter().enumerate() {
+            let required = literal
+                .iter()
+                .flat_map(|literal| literal.required.iter().copied());
+            match required.min_by_key(|name| owners[name]) {
+                Some(name) => found.by_required_name.entry(name).or_default().push(place),
+                None => found.held_against_by_all.push(place),
+            }
+        }
+        found
     }
 
     pub(super) fn inherited_of(&self, shape: &Listed) -> Inherited<'p> {

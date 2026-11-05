@@ -189,13 +189,13 @@ pub(super) fn is_url_with_code(text: &[u8]) -> bool {
     let Some(written) = text.strip_prefix(b"data:") else {
         return false;
     };
-    let Some(comma) = written.iter().position(|&byte| byte == b',') else {
+    let Some(comma) = strings::index_of_char_usize(written, b',') else {
         return false;
     };
     if comma + 1 == written.len() {
         return false;
     }
-    let parameters = written[..comma].iter().position(|&byte| byte == b';');
+    let parameters = strings::index_of_char_usize(&written[..comma], b';');
     let media_type = written[..parameters.unwrap_or(comma)].to_ascii_lowercase();
     strings::contains(&media_type, b"script")
         || media_type.ends_with(b"jsx")
@@ -748,9 +748,9 @@ impl ContentsScan<'_, '_> {
             analysis,
             ..
         } = self.request;
-        let import = match bound.symbol(symbol).decls {
-            &[Decl::ImportNamespace(import) | Decl::ImportDefault(import)] => Some(import),
-            &[Decl::ImportSpec(specifier)] if hir[specifier].imported == known::default => {
+        let import = match *bound.symbol(symbol).decls {
+            [Decl::ImportNamespace(import) | Decl::ImportDefault(import)] => Some(import),
+            [Decl::ImportSpec(specifier)] if hir[specifier].imported == known::default => {
                 Some(hir[specifier].import)
             }
             _ => None,

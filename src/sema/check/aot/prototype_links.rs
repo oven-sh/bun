@@ -329,46 +329,50 @@ impl EndFinder<'_, '_, '_> {
         }
     }
 
-    fn find_parent_of_created_object(&self, value: ExprId) -> Option<LinkEnd> {
-        let value = self.hir.skip_type_assertions(value);
-        match self.hir[value].kind {
-            ExprKind::Ident(_) => {
-                let initializer = self.find_initializer_of_variable(value)?;
-                let is_name = matches!(
-                    self.hir[self.hir.skip_type_assertions(initializer)].kind,
-                    ExprKind::Ident(_)
-                );
-                return match is_name {
-                    true => None,
-                    false => self.find_parent_of_created_object(initializer),
-                };
-            }
-            ExprKind::New(site) => return self.find_end(self.hir[site].callee),
-            ExprKind::Object(properties) => return self.find_parent_in_literal(properties),
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                right,
-                ..
-            } => return self.find_parent_of_created_object(right),
-            ExprKind::Cond { test, branches } => {
-                let arm = self.find_arm_for_declaration(test, self.hir.branches(branches))?;
-                return self.find_parent_of_created_object(arm);
-            }
-            _ => {}
-        }
-        match self.find_callee(value)? {
-            NamedValue::PrototypeOperation(
-                PrototypeOperation::CreateObject { parent }
-                | PrototypeOperation::SetPrototype { parent, .. },
-            ) => self.find_owner_of_prototype_object_at(value, parent),
-            NamedValue::PrototypeOperation(PrototypeOperation::CopyProperties { target }) => {
-                self.find_parent_of_created_object(self.find_argument(value, target)?)
-            }
-            NamedValue::PrototypeOperation(
-                PrototypeOperation::LinkClasses { .. } | PrototypeOperation::CallFunction { .. },
-            )
-            | NamedValue::Class(_)
-            | NamedValue::Function(_) => None,
+    fn find_parent_of_created_object(&self, created: ExprId) -> Option<LinkEnd> {
+        let mut value = created;
+        // `var proto = Object.assign(proto, { .. })`: a variable is followed into its initializer once.
+        let mut followed = FxHashSet::default();
+        loop {
+            value = self.hir.skip_type_assertions(value);
+            value = match self.hir[value].kind {
+                ExprKind::Ident(_) => {
+                    let initializer = self.find_initializer_of_variable(value)?;
+                    let is_name = matches!(
+                        self.hir[self.hir.skip_type_assertions(initializer)].kind,
+                        ExprKind::Ident(_)
+                    );
+                    if is_name || !followed.insert(initializer) {
+                        return None;
+                    }
+                    initializer
+                }
+                ExprKind::New(site) => return self.find_end(self.hir[site].callee),
+                ExprKind::Object(properties) => return self.find_parent_in_literal(properties),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Cond { test, branches } => {
+                    self.find_arm_for_declaration(test, self.hir.branches(branches))?
+                }
+                _ => match self.find_callee(value)? {
+                    NamedValue::PrototypeOperation(
+                        PrototypeOperation::CreateObject { parent }
+                        | PrototypeOperation::SetPrototype { parent, .. },
+                    ) => return self.find_owner_of_prototype_object_at(value, parent),
+                    NamedValue::PrototypeOperation(PrototypeOperation::CopyProperties {
+                        target,
+                    }) => self.find_argument(value, target)?,
+                    NamedValue::PrototypeOperation(
+                        PrototypeOperation::LinkClasses { .. }
+                        | PrototypeOperation::CallFunction { .. },
+                    )
+                    | NamedValue::Class(_)
+                    | NamedValue::Function(_) => return None,
+                },
+            };
         }
     }
 

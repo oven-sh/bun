@@ -29,6 +29,7 @@ pub(crate) mod runtime_types;
 pub mod source_provider;
 pub mod sources;
 pub(crate) mod test_runner_names;
+mod text_for_json_parse;
 
 #[cfg(not(test))]
 pub use bun_aot_interface::load::source_provider;

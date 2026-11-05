@@ -137,6 +137,7 @@ export default b.declarations(
   operation("putOwnInt32Index", "PutOwnInt32Index"),
   operation("truncateNewArray", "TruncateNewArray"),
   operation("tryCopyFilledElements", "TryCopyFilledElements"),
+  operation("tryFillNewArray", "TryFillNewArray"),
   operation("tryPutByValDirect", "TryPutByValDirect"),
   operation("tryPutElements", "TryPutElements"),
   operation("tryPutIndex", "TryPutIndex"),

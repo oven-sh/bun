@@ -110,8 +110,8 @@ pub(crate) fn names_plugin(files: &dyn CodeView<'_>) -> bool {
     })
 }
 
-/// `const name = "./a.js"; import(name)`: this build knows the file, and `bun build` leaves the call to the run time, where a plugin may answer it.
-/// The file belongs to the program. In a program that names `Bun.plugin` the call asks the loader, which asks the plugins and then finds the file.
+/// `const name = "./a.js"; import(name)`, `import("./" + kind + ".js")`: this build knows the files, and `bun build` leaves the call to the run time, where a plugin may answer it.
+/// The files belong to the program. In a program that names `Bun.plugin` the call asks the loader, which asks the plugins and then finds the file.
 pub(crate) fn is_followed_further_than_bundler(
     files: &dyn CodeView<'_>,
     file: FileId,
@@ -123,8 +123,7 @@ pub(crate) fn is_followed_further_than_bundler(
             | ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
     );
-    // A name that is known in part finds its file by what the build has made of the part: a path of the disk among them, which the loader does not know.
-    if !loads || !matches!(site.specifier, ImportSpecifier::Constant(_)) {
+    if !loads {
         return false;
     }
     let (hir, bound) = (files.hir(file), files.bound(file));

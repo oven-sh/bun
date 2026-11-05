@@ -36,6 +36,14 @@ impl Binder<'_, '_> {
         is_pushed
     }
 
+    /// With `experimentalDecorators`, Bun's transpiler writes what decorates the members of a class declaration behind the class, and the values of its decorated static fields.
+    pub(super) fn push_scope_of_code_behind_class(&mut self, class: ClassId) -> bool {
+        self.f.has_typescript_semantics()
+            && self.f.legacy_decorators
+            && matches!(self.b.class_owner[class.idx()], ClassOwner::Stmt(_))
+            && self.push_runtime_scope(ScopeKind::ClassDecorators(class))
+    }
+
     pub(super) fn push_implicit_block_scope(&mut self, statement: StmtId, function: FnId) -> bool {
         self.options.runtime.is_some()
             && runtime::has_implicit_block(self.f, &self.b, statement, function)

@@ -10,6 +10,7 @@ use super::{ScopeAnalysis, ScopeInput, analyze_scopes};
 use crate::builtins::{ImportTargets, ResolveInput, SourceDialect, resolve_file};
 use crate::compile::testing::{
     with_lowering_inputs, with_lowering_inputs_of_entry_that_runs_again,
+    with_lowering_inputs_of_test_run,
 };
 use crate::ir::FunctionKey;
 use crate::lower::LoweringInputs;
@@ -35,6 +36,17 @@ pub(in crate::lower) fn with_scope_analysis_of_entry_that_runs_again<R>(
     })
 }
 
+pub(in crate::lower) fn with_scope_analysis_of_test_run<R>(
+    files: &[(&str, &str)],
+    test: impl FnOnce(&hir::File<'_>, &Bound<'_>, &ScopeAnalysis) -> R,
+) -> R {
+    with_lowering_inputs_of_test_run(files, |loaded, inputs, file| {
+        test_scope_input(loaded, inputs, file, |input| {
+            test(input.hir, input.bound, &analyze_scopes(input))
+        })
+    })
+}
+
 fn test_scope_input<R>(
     loaded: &Files<'_>,
     inputs: &LoweringInputs<'_>,
@@ -54,6 +66,7 @@ fn test_scope_input<R>(
             fields_under_signed_members: &[],
             holds_registry: &|_| false,
             max_captures: max_captures(),
+            names_lie_on_object_prototype: inputs.names_lie_on_object_prototype(),
         })
     }
 }
@@ -88,6 +101,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             fields_under_signed_members: &[],
             holds_registry: &|_| false,
             max_captures: max_captures(),
+            names_lie_on_object_prototype: false,
         })
     })
 }

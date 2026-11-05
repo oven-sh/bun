@@ -1,12 +1,11 @@
 // --compile --aot --trim: what an executable that only runs code that was compiled into it keeps, removes and says.
 // What it says without --trim: ../aot/cli/admitted-code.test.ts.
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, isWindows } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
 import { sharedBuilds, sizeOf, type Build } from "../aot/harness/shared-builds";
-import { describe, test } from "../aot/listed";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import {
   canTrim,

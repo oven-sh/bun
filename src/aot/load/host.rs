@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bstr::BStr;
 use bun_ast::{Loader, Loc};
-use bun_core::strings::contains_char;
+use bun_core::strings::{contains_char, is_all_whitespace};
 use bun_paths::fs::PathName;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
@@ -13,6 +13,8 @@ use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, ExprId, NodeData};
 use bun_sema::hir_from_data::{DataValue, HostValue};
+use bun_sema::module_format::DeclaredModuleType;
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
     CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
@@ -37,7 +39,7 @@ use crate::load::bundled_commonjs::{blank_commonjs_wrapper, is_bundled_commonjs}
 use crate::load::compiler_declarations;
 use crate::load::contents::worker_entries::find_file_named_as_in_executable;
 use crate::load::contents::{ScanInput, scan_file};
-use crate::load::data_modules::parse_data_module;
+use crate::load::data_modules::{create_module_without_text, parse_data_module};
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
@@ -52,7 +54,9 @@ use crate::load::loaders::{
 use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
 use crate::load::module_paths::compute_program_path;
-use crate::load::modules_with_queries::{ModulesWithQueries, asks_for_text_or_path};
+use crate::load::modules_with_queries::{
+    ModulesWithQueries, find_worker_constructor, has_vite_suffix,
+};
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
@@ -62,6 +66,7 @@ use crate::load::sources::{
     FileWithQuery, ParsedSource, PluginModuleName, SourceKind, parsed_source_mut,
 };
 use crate::load::test_runner_names;
+use crate::load::text_for_json_parse::is_taken_by_json_parse;
 use crate::module_keys::{is_url_with_text, loader_name, name_of_text};
 use crate::options::{EntryText, Options};
 use crate::statistics::{Stage, StepClock};
@@ -69,6 +74,7 @@ use crate::statistics::{Stage, StepClock};
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
 const EMPTY_MODULE: &[u8] = b"export {};";
 const JSON_PARSE_ERROR_FOR_BLANK_TEXT: &[u8] = b"JSON Parse error: Unexpected EOF";
+const JSON_PARSE_ERROR: &[u8] = b"JSON Parse error: Unable to parse JSON string";
 const PAGE_NOT_NAMED_AS_ONE: &[u8] =
     b"bun test --aot imports an HTML page only from a file that is named as one, like page.html";
 const EXTENSIONS_OF_ENTRY_POINT_SOURCES: [&[u8]; 7] =
@@ -93,10 +99,13 @@ fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
 fn ask_by_syntax<'r, 's>(
     request: &'r mut TransformRequest<'_, 's>,
 ) -> EarlyTransformRequest<'r, 's> {
+    let analysis = request.analysis;
     EarlyTransformRequest {
         path: request.path,
         hir: &mut *request.hir,
-        module_format: request.analysis.module_format,
+        module_format: analysis.module_format,
+        takes_import_statements: analysis.module_format == ModuleFormat::Esm
+            || !analysis.module_formats.is_decided_by_text(),
         settings: request.settings,
         import_meta_main: request.import_meta_main,
     }
@@ -499,6 +508,13 @@ impl<'a> LoadHost<'a> {
     }
 
     fn plugin_loader(&self, path: &[u8]) -> Option<Loader> {
+        if self
+            .modules_with_queries
+            .text_in_place_of_file(path)
+            .is_some()
+        {
+            return None;
+        }
         let module = (self.plugins).loaded(self.modules_with_queries.file_behind(path))?;
         module.is_from_plugin.then_some(module.loader)
     }
@@ -659,6 +675,9 @@ impl Host for LoadHost<'_> {
     }
 
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        if let Some(text) = self.modules_with_queries.text_in_place_of_file(path) {
+            return Some(Cow::Owned(text.to_vec()));
+        }
         let path = self.modules_with_queries.file_behind(path);
         match self.served_by(path) {
             ServedBy::PluginModule => match self.plugins.read(path, self.default_loader(path)) {
@@ -673,6 +692,9 @@ impl Host for LoadHost<'_> {
 
     // The files that run have been read by now, each through the plugins.
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        if let Some(text) = self.modules_with_queries.text_in_place_of_file(path) {
+            return Cow::Owned(text.to_vec());
+        }
         let path = self.modules_with_queries.file_behind(path);
         let is_on_disk = matches!(self.served_by(path), ServedBy::Disk);
         if is_on_disk && !self.plugins.was_read(path) && !self.is_background_read(path) {
@@ -688,6 +710,13 @@ impl Host for LoadHost<'_> {
     }
 
     fn file_stamp(&self, path: &[u8]) -> Option<FileStamp> {
+        if self
+            .modules_with_queries
+            .text_in_place_of_file(path)
+            .is_some()
+        {
+            return Some(FileStamp::IMMUTABLE);
+        }
         let path = self.modules_with_queries.file_behind(path);
         match self.served_by(path) {
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Some(FileStamp::IMMUTABLE),
@@ -820,6 +849,15 @@ impl CodeHost for LoadHost<'_> {
         };
         if is_import && request.specifier == BUNDLE_MODULE {
             return HostResolution::Erased;
+        }
+        if is_import
+            && self.holds_modules_with_queries()
+            && let Some(text) = import_meta_glob::write_module_of_eager_entry(request.specifier)
+        {
+            let file = self.modules_with_queries.file_behind(request.importer);
+            let query = [b"?", request.specifier].concat();
+            let path = self.modules_with_queries.add_text(file, &query, text);
+            return HostResolution::Path(path);
         }
         let mut entry_texts = self.input.options.load.entry_texts.iter();
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
@@ -975,7 +1013,8 @@ impl CodeHost for LoadHost<'_> {
         let is_file_of_program = matches!(self.served_by(path), ServedBy::Disk)
             && !is_bundled(path)
             && !is_declaration_file_name(path);
-        (is_program && is_file_of_program && !asks_for_text_or_path(query))
+        let is_module = find_worker_constructor(query).is_some() || !has_vite_suffix(query);
+        (is_program && is_file_of_program && is_module)
             .then(|| self.modules_with_queries.add(path, query))
     }
 
@@ -1061,6 +1100,9 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn read_code(&self, path: &[u8]) -> CodeRead {
+        if let Some(text) = self.modules_with_queries.text_in_place_of_file(path) {
+            return CodeRead::Text(Cow::Owned(text.to_vec()));
+        }
         let path = self.modules_with_queries.file_behind(path);
         let served_by = self.served_by(path);
         match served_by {
@@ -1083,6 +1125,13 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn is_read_by_plugin(&self, path: &[u8]) -> bool {
+        if self
+            .modules_with_queries
+            .text_in_place_of_file(path)
+            .is_some()
+        {
+            return false;
+        }
         let path = self.modules_with_queries.file_behind(path);
         self.should_ask_plugins(self.served_by(path), path) && self.plugins.has_load_plugin(path)
     }
@@ -1127,6 +1176,10 @@ impl CodeHost for LoadHost<'_> {
         self.plugin_loader(path).is_some()
     }
 
+    fn object_prototype_takes_names(&self) -> bool {
+        self.input.options.load.runs_tests
+    }
+
     fn may_any_file_become_main_module(&self) -> bool {
         self.may_store_path_of_main_module.load(Ordering::Relaxed)
     }
@@ -1169,7 +1222,28 @@ impl CodeHost for LoadHost<'_> {
                 loader,
             };
             let (provider, messages) = (self.input.provider, self.input.messages);
-            let parsed = parse_data_module(provider, messages, &source, arena, atoms);
+            // An executable holds of a file what the bundler has made of it. A test run and a program that runs in place read the file as `bun run` does.
+            let is_given_to_no_parser = !load.runs_tests
+                && !self.input.options.aot.runs_in_place
+                && !is_from_plugin
+                && matches!(
+                    loader,
+                    Loader::Json
+                        | Loader::Jsonc
+                        | Loader::Json5
+                        | Loader::Toml
+                        | Loader::Yaml
+                        | Loader::Md
+                )
+                && is_all_whitespace(text);
+            let parsed = match is_given_to_no_parser {
+                true => create_module_without_text(
+                    request.package_module_type == DeclaredModuleType::Esm,
+                    arena,
+                    atoms,
+                ),
+                false => parse_data_module(provider, messages, &source, arena, atoms),
+            };
             ParsedCode {
                 hir: parsed.hir,
                 host_values: parsed.host_values,
@@ -1188,11 +1262,11 @@ impl CodeHost for LoadHost<'_> {
                 let what = b"an import of an HTML page in a program that runs in place";
                 self.refuse_file(what, path);
             }
-            // `bun test` hands the text of a JSON file to `JSON.parse`, which takes no empty text. The bundler's parser reads `{}` there, as it does for an executable.
-            let is_blank_json = load.runs_tests
-                && loader == Loader::Json
-                && text.iter().all(u8::is_ascii_whitespace);
-            if !is_blank_json {
+            // `bun test` hands the text of a JSON file to `JSON.parse`. The bundler's parser, which reads the file for an executable, takes more: `{}` for an empty text, 0x10, single quotes,
+            // whatever follows the first value. What `JSON.parse` says of the text is what the run asks the loader of `bun test` for.
+            let is_refused_by_json_parse =
+                load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
+            if !is_refused_by_json_parse {
                 let mut parsed = parse_data(loader, plugin_module);
                 // The run time keeps the error of a file with code alone: the next load of a file of data whose body has thrown finds it evaluated. So an empty program stands in its place.
                 let source = parsed_source_mut(&mut parsed.payload);
@@ -1226,6 +1300,10 @@ impl CodeHost for LoadHost<'_> {
                 }
                 return parsed;
             }
+            let failure = match text.iter().all(u8::is_ascii_whitespace) {
+                true => JSON_PARSE_ERROR_FOR_BLANK_TEXT,
+                false => JSON_PARSE_ERROR,
+            };
             let empty_module_options = CompileParseOptions {
                 path,
                 script_kind: Some(ScriptKind::Js),
@@ -1239,7 +1317,7 @@ impl CodeHost for LoadHost<'_> {
                 host_values: &[],
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
-                    parse_failure: Some(JSON_PARSE_ERROR_FOR_BLANK_TEXT.to_vec()),
+                    parse_failure: Some(failure.to_vec()),
                     byte_count: text.len(),
                     ..ParsedSource::new(SourceKind::Program, Loader::Js)
                 })),
@@ -1368,9 +1446,14 @@ impl CodeHost for LoadHost<'_> {
         {
             return TreeChange::ChangedAndUnfinished;
         }
+        let runs_tests = self.input.options.load.runs_tests;
+        // All that follows does what the parser of `bun test` does to a file, and that parser leaves a file under the mark as it is written.
+        if runs_tests && hir::find_transpiled_mark(&request.hir.text).is_some() {
+            return TreeChange::Unchanged;
+        }
         // To a test run the imports that stand for eager entries are imports like any other: a hoisted mock goes above them too. That asks for their bindings.
         // Asked again, it finds no call that the parser expands.
-        if self.input.options.load.runs_tests
+        if runs_tests
             && self.expand_globs(arena, atoms, &mut ask_by_syntax(request), source)
                 == TreeChange::Changed
         {
@@ -1406,7 +1489,6 @@ impl CodeHost for LoadHost<'_> {
             |text: &[u8], base: Option<&[u8]>| self.input.provider.write_url(text, base);
         let scan = ScanInput {
             runtime_modules: self.input.runtime_modules,
-            loaders: &load.loaders,
             runs_tests: load.runs_tests,
             loads_code_from_disk: self.input.options.aot.loads_code_from_disk,
             is_file: &is_file,

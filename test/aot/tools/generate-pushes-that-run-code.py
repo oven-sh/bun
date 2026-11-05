@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 40; ../parallel/pushes-that-run-code/ holds 3 of them.
 """Writes test/aot/parallel/pushes-that-run-code/: `list.push(x)` on a parameter whose callers are all in sight, where the push runs code of the program.
 
 Whoever takes the list for one that is as its class makes it takes the push for an operation that runs no code, and keeps what it has read in front of it. In each program somebody has laid something

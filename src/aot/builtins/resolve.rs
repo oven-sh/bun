@@ -172,6 +172,8 @@ impl ImportTargets {
 /// The variables that load/test_runner_names.rs makes for the answer to who has loaded a file: `(loadedByWorker ??= ..) ? jest : local`. No program can write such a name.
 pub const LOADED_BELOW_VITEST: &[u8] = b"%loaded-below-vitest";
 pub const LOADED_BY_WORKER: &[u8] = b"%loaded-by-worker";
+/// And for the names of the runner that a script had put on `globalThis` itself by then: `(globalsLeftAlone ??= ..) & bit ? jest : local`.
+pub const GLOBALS_LEFT_ALONE: &[u8] = b"%globals-left-alone";
 
 pub struct ResolveInput<'a, 's> {
     pub hir: &'a hir::File<'s>,
@@ -252,7 +254,6 @@ pub struct ResolvedBuiltins {
     hands_module_cache_on: bool,
     names_plugin: bool,
     reaches_module_cache: bool,
-    reads_entries_of_module_cache: bool,
 }
 
 impl ResolvedBuiltins {
@@ -482,12 +483,6 @@ impl ResolvedBuiltins {
     /// who gets it names the table himself; and a `require` that goes out of sight is a loader that is given names which the build does not know, which has rules of its own.
     pub fn reaches_module_cache(&self) -> bool {
         self.reaches_module_cache
-    }
-
-    /// The file may read what an entry of the table exports. Whoever takes an entry out, or stores one, reads none.
-    /// Neither does whoever lets go of something that leads to the table, a `module` or a `process`: that is said of nearly every program, and who gets it names the table himself.
-    pub fn reads_entries_of_module_cache(&self) -> bool {
-        self.reads_entries_of_module_cache
     }
 
     /// The table goes where this file does not follow it: whoever gets it may take any entry out.

@@ -1,7 +1,6 @@
-import { expect } from "bun:test";
-import { isASAN, rss, testThatMeasuresOwnMemory } from "../../../harness";
+import { expect, test } from "bun:test";
+import { isASAN, rss } from "../../../harness";
 
-const test = testThatMeasuresOwnMemory(import.meta.path);
 const perBatch = 2000;
 const repeat = 50;
 test("Printing errors does not leak", () => {

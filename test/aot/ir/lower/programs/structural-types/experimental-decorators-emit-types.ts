@@ -133,18 +133,92 @@ console.log("keys " + Object.keys(new Everything<number>(1, new Dog())).join("")
 // CHECK-NEXT: v4 = GetConstructPrototype v0 layout=[[L_3]]
 // CHECK-NEXT: v5 = NewObject v4 layout=[[L_3]]
 // CHECK-NEXT: v6 = Convert v5 declared={type=[[L_3]]}
-// CHECK-NEXT: v7 = CallDirect v6 function=[[f_4]]
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: v9 = TypeTest v8 testedType=object
-// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2(v6)
-// CHECK-NEXT: b1(v10):
-// CHECK-NEXT: Jump -> next b2(v10)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: Return v11
+// CHECK-NEXT: v7 = Integer integer=1
+// CHECK-NEXT: v8 = Convert v7 declared={type=number}
+// CHECK-NEXT: PropSet v6, v8 key="a"
+// CHECK-NEXT: v10 = String string="s"
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v11 key="b"
+// CHECK-NEXT: v13 = Boolean boolean=true
+// CHECK-NEXT: v14 = Convert v13 declared={type=boolean}
+// CHECK-NEXT: PropSet v6, v14 key="c"
+// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v17 = CheckInitialized v16 name="Dog"
+// CHECK-NEXT: v18 = Construct v17 calleeName="Dog"
+// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|boolean|number|string|symbol|bigint|[[L_2]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+// CHECK-NEXT: PropSet v6, v19 key="d"
+// CHECK-NEXT: v21 = Data data=[[d_5]]
+// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v22 key="e"
+// CHECK-NEXT: v24 = Integer integer=1
+// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v25 key="f"
+// CHECK-NEXT: v27 = Data data=[[d_7]]
+// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v28 key="g"
+// CHECK-NEXT: v30 = NewClosure function=[[f_8]]
+// CHECK-NEXT: v31 = Convert v30 declared={type=undefined|null|[[f_9]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v31 key="h"
+// CHECK-NEXT: v33 = Integer
+// CHECK-NEXT: v34 = Convert v33 declared={type=0}
+// CHECK-NEXT: PropSet v6, v34 key="i"
+// CHECK-NEXT: v36 = String string="yes"
+// CHECK-NEXT: v37 = Convert v36 declared={type=undefined|null|"yes" flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v37 key="j"
+// CHECK-NEXT: v39 = Integer integer=1
+// CHECK-NEXT: PropSet v6, v39 key="k"
+// CHECK-NEXT: v41 = BigInt digits="1"
+// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v42 key="l"
+// CHECK-NEXT: v44 = Builtin builtin=Symbol
+// CHECK-NEXT: v45 = Call v44 calleeName="Symbol" callNumber=8
+// CHECK-NEXT: v46 = Convert v45 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: PropSet v6, v46 key="m"
+// CHECK-NEXT: v48 = Data data=[[d_10]]
+// CHECK-NEXT: v49 = Convert v48 declared={type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v49 key="n"
+// CHECK-NEXT: v51 = String string="on"
+// CHECK-NEXT: v52 = Convert v51 declared={type=undefined|null|"off"|"on" flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v52 key="o"
+// CHECK-NEXT: v54 = Undefined
+// CHECK-NEXT: PropSet v6, v54 key="q"
+// CHECK-NEXT: v56 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v57 = PropGet v56 key="Promise" [isFreeName]
+// CHECK-NEXT: v58 = Convert v57 declared={type=builtin(Promise) flags=[IsExpected]}
+// CHECK-NEXT: v59 = PropGet v58 key="resolve"
+// CHECK-NEXT: v60 = Convert v59 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
+// CHECK-NEXT: v61 = Integer integer=1
+// CHECK-NEXT: v62 = Call v60, v58, v61 calleeKey="resolve" calleeName="Promise.resolve"
+// CHECK-NEXT: v63 = Convert v62 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v63 key="r"
+// CHECK-NEXT: v65 = Null
+// CHECK-NEXT: v66 = Convert v65 declared={type=null}
+// CHECK-NEXT: PropSet v6, v66 key="s"
+// CHECK-NEXT: v68 = Undefined
+// CHECK-NEXT: v69 = Convert v68 declared={type=undefined|number}
+// CHECK-NEXT: PropSet v6, v69 key="t"
+// CHECK-NEXT: v71 = Builtin builtin=Map
+// CHECK-NEXT: v72 = Construct v71 calleeName="Map"
+// CHECK-NEXT: v73 = Convert v72 declared={type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v74 = Convert v73 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v74 key="u"
+// CHECK-NEXT: v76 = Data data=[[d_11]]
+// CHECK-NEXT: v77 = Convert v76 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v6, v77 key="v"
+// CHECK-NEXT: v79 = Integer integer=5
+// CHECK-NEXT: v80 = Convert v79 declared={type=5}
+// CHECK-NEXT: PropSet v6, v80 key="w"
+// CHECK-NEXT: v82 = Undefined
+// CHECK-NEXT: v83 = TypeTest v82 testedType=object
+// CHECK-NEXT: Branch v83 -> taken b1(| 0), notTaken b2(v6)
+// CHECK-NEXT: b1(v84):
+// CHECK-NEXT: Jump -> next b2(v84)
+// CHECK-NEXT: b2(v85):
+// CHECK-NEXT: Return v85
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_5]] flags=[OmitsNull, OmitsUndefined]}, {type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[L_5]], v2: Array<number>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}, {type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[L_6]], v2: Array<number>):
 // CHECK-NEXT: v3 = Boolean boolean=true
 // CHECK-NEXT: v4 = Convert v3 declared={type=boolean}
 // CHECK-NEXT: Return v4

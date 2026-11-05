@@ -116,11 +116,8 @@ impl Resolver<'_, '_> {
                     None => unreachable!("find_member_of answers with an access"),
                 };
                 self.output.keys_taken_out_of_module_cache.push(key);
-                self.output.gets_at_entries_of_module_cache = true;
-            } else {
-                self.output.gets_at_entries_of_module_cache = true;
-                self.output.reads_entries_of_module_cache = true;
             }
+            self.output.gets_at_entries_of_module_cache = true;
             return;
         }
         if let Some(key) = self.find_key_that_call_deletes(table) {
@@ -136,7 +133,6 @@ impl Resolver<'_, '_> {
         let mention_use = self.classify_use(table);
         let gets_at_entries = !matches!(mention_use, MentionUse::Aliased);
         self.output.gets_at_entries_of_module_cache |= gets_at_entries;
-        self.output.reads_entries_of_module_cache |= gets_at_entries;
         let is_handed_on = match mention_use {
             MentionUse::Inspected
             | MentionUse::Holder

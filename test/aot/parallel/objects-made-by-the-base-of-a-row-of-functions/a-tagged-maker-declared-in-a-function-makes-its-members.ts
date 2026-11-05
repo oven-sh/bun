@@ -1,5 +1,5 @@
 function bodyOfTheProgram() {
-// One deed a program: the maker gives x, y, z and w the constant undefined, which makes them own properties in the order of the text, whether anything is ever stored there or not. Made by staging/fields-born-undefined-1/make-family.py.
+// One deed a program: the maker gives x, y, z and w the constant undefined, which makes them own properties in the order of the text, whether anything is ever stored there or not.
 interface Base { kind: number; flags: number; name: string; x?: object; y: number | undefined; z?: string; w?: Base }
 interface One extends Base { kind: 1; value: number }
 interface Two extends Base { kind: 2; text: string }

@@ -61,7 +61,6 @@ pub struct ModuleGraph {
     pub(super) files_that_sites_name: Vec<bool>,
     /// Ascending behind `finish`, each once.
     pub(super) mocked_library_modules: Vec<RuntimeModule>,
-    pub(super) mocks_any_module: bool,
     pub(super) wrapped: WrappedModules,
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
@@ -71,6 +70,16 @@ pub struct ModuleGraph {
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     /// `ModuleSet::forms_require_checks_first`
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    pub(super) star_names_left_out: StarNamesLeftOut,
+    /// Those of `BindInput::names_added_to_builtins` that a test run lays on `Object.prototype`. Ascending. As bytes: whoever asks may hold an atom of another table.
+    pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
+}
+
+/// The names that `export *` brings files and that nobody was seen to ask for (`ExportTables::names_left_out`), and the files that list none of them among their exports. Ascending.
+#[derive(Default)]
+pub(super) struct StarNamesLeftOut {
+    pub names: FxHashSet<Atom>,
+    pub files: Vec<FileId>,
 }
 
 const fn assert_send_and_sync<T: Send + Sync + 'static>() {}
@@ -469,6 +478,7 @@ impl ModuleGraph {
                     _ if is_written_here => {
                         match passed_on.iter_mut().find(|earlier| is_same(earlier)) {
                             Some(earlier) => {
+                                earlier.is_star_export |= request.is_star_export;
                                 earlier.is_dynamic_star_export |= request.is_dynamic_star_export
                             }
                             None => passed_on.push(request),
@@ -477,6 +487,7 @@ impl ModuleGraph {
                     _ => {
                         if !passed_on.iter().any(is_same) {
                             passed_on.push(ModuleRequest {
+                                is_star_export: false,
                                 is_dynamic_star_export: false,
                                 ..request
                             });
@@ -547,6 +558,9 @@ impl ModuleGraph {
         let name_bytes = atoms.bytes(name);
         let position = exports
             .binary_search_by(|export| compare_code_units(atoms.bytes(export.name), name_bytes));
+        if position.is_err() {
+            self.assert_lists_export_if_it_has_it(row.file, name);
+        }
         match position.map(|position| exports[position]) {
             Ok(export) if export.can_be_ambiguous => ExportLookup::Unknown,
             Ok(export) => ExportLookup::Found(export.binding),
@@ -565,7 +579,25 @@ impl ModuleGraph {
         let name_bytes = atoms.bytes(name);
         let compare =
             |export: &ModuleExport| compare_code_units(atoms.bytes(export.name), name_bytes);
-        row.interop.has_export_table() && row.exports.binary_search_by(compare).is_ok()
+        let is_listed =
+            row.interop.has_export_table() && row.exports.binary_search_by(compare).is_ok();
+        if !is_listed {
+            self.assert_lists_export_if_it_has_it(file, name);
+        }
+        is_listed
+    }
+
+    /// Of the names that `export *` brings the file its exports list those alone that somebody was seen to ask for. Nobody may look at the object that shows them all.
+    pub fn leaves_out_star_names(&self, file: FileId) -> bool {
+        self.star_names_left_out.files.binary_search(&file).is_ok()
+    }
+
+    /// Whoever does not find a name among the exports of a file takes the file to lack it.
+    fn assert_lists_export_if_it_has_it(&self, file: FileId, name: Atom) {
+        assert!(
+            !self.star_names_left_out.names.contains(&name) || !self.leaves_out_star_names(file),
+            "{file:?} is asked for {name:?}, which `export *` may bring it, and nobody was seen to ask for that name"
+        );
     }
 
     pub(crate) fn test_run(&self) -> &crate::test_runs::TestRunPlan {
@@ -616,9 +648,10 @@ impl ModuleGraph {
         &self.mocked_library_modules
     }
 
-    /// `mock.module` is called with a specifier that the build does not know.
-    pub fn mocks_any_module(&self) -> bool {
-        self.mocks_any_module
+    /// An assignment under the name to an ordinary object may run a setter, and give the object nothing. Never in an executable.
+    pub fn is_laid_on_object_prototype(&self, name: &[u8]) -> bool {
+        let laid = &self.names_laid_on_object_prototype;
+        laid.binary_search_by(|laid| (**laid).cmp(name)).is_ok()
     }
 
     /// The second of each pair: what an import may have made of the path of the file. `require` answers with the namespace object of the first of them that the loader holds,

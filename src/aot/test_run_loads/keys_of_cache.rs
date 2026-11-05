@@ -72,12 +72,17 @@ pub(crate) enum TextOfRun {
     Separator,
 }
 
-fn find_text_of_run(request: &FinishedFile<'_, '_>, text: ExprId) -> Option<TextOfRun> {
+/// `led_here`: the names whose values hold `text`. `var a = b + "x", b = a + "y"` leads round.
+fn find_text_of_run(
+    request: &FinishedFile<'_, '_>,
+    text: ExprId,
+    led_here: &[SymbolId],
+) -> Option<TextOfRun> {
     let &FinishedFile {
         hir, bound, atoms, ..
     } = request;
     let mut text = hir.skip_type_assertions(text);
-    let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+    let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::from_slice(led_here);
     loop {
         match find_file_of_key(request, KeyOfModuleCache::Computed(text)) {
             Some(FileOfKey::Path(known)) => return Some(TextOfRun::Text(known)),
@@ -94,8 +99,8 @@ fn find_text_of_run(request: &FinishedFile<'_, '_>, text: ExprId) -> Option<Text
                 right,
             } => {
                 let parts = [
-                    find_text_of_run(request, left)?,
-                    find_text_of_run(request, right)?,
+                    find_text_of_run(request, left, &followed)?,
+                    find_text_of_run(request, right, &followed)?,
                 ];
                 return Some(TextOfRun::Concatenation(Box::new(parts)));
             }
@@ -103,7 +108,7 @@ fn find_text_of_run(request: &FinishedFile<'_, '_>, text: ExprId) -> Option<Text
                 if hir[call].args.len() == 1
                     && export_of_path(hir[call].callee) == Some(b"dirname") =>
             {
-                let of = find_text_of_run(request, hir.id_at(hir[call].args, 0))?;
+                let of = find_text_of_run(request, hir.id_at(hir[call].args, 0), &followed)?;
                 return Some(TextOfRun::Dirname(Box::new(of)));
             }
             _ if export_of_path(text) == Some(b"sep") => return Some(TextOfRun::Separator),
@@ -155,7 +160,8 @@ fn find_start_of_key(request: &FinishedFile<'_, '_>, key: ExprId) -> Option<Text
                     };
                     if atoms.bytes(method) == b"startsWith"
                         && bound.binding(hir.skip_type_assertions(asked)) == Binding::Symbol(name)
-                        && let Some(start) = find_text_of_run(request, hir.id_at(hir[call].args, 0))
+                        && let Some(start) =
+                            find_text_of_run(request, hir.id_at(hir[call].args, 0), &[])
                     {
                         return Some(start);
                     }

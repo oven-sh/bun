@@ -85,17 +85,6 @@ impl ProgramModule {
         })
     }
 
-    /// `VariableKey::MockOf`
-    pub fn mock_variable_key(self) -> Option<ProgramVariableKey> {
-        match self {
-            ProgramModule::File(file) => Some(ProgramVariableKey::Declared(InProject {
-                project: file.project,
-                key: VariableKey::MockOf(file.file),
-            })),
-            _ => None,
-        }
-    }
-
     /// What holds `module.exports` where the exports of the module are one value.
     pub fn exports_variable_key(self) -> Option<ProgramVariableKey> {
         let (file, key) = match self {

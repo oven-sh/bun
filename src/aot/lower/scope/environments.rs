@@ -242,7 +242,9 @@ fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> Dec
             let class = bound.member_class(member);
             let class = class.expect("a field initializer belongs to a member of a class");
             let is_static = file.hir[member].flags.contains(Flags::STATIC);
-            if !is_static && class::is_called_by_evaluated_text(file, class) {
+            if (!is_static && class::is_called_by_evaluated_text(file, class))
+                || bound.is_field_assigned_behind_class(member)
+            {
                 return DeclaredType::untyped();
             }
             let class = ClassRef {

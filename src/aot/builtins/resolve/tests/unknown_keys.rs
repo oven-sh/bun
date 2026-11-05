@@ -18,7 +18,11 @@ fn a_name_off_a_value_that_no_binding_stands_for_asks_nothing() {
     for setup in [PROGRAM, RUNTIME] {
         for source in SPELL_WHAT_NO_BINDING_STANDS_FOR {
             with_case(setup, source, |case| {
-                assert!(case.resolved.uses().is_empty(), "{source}")
+                let uses = case.resolved.uses();
+                assert!(
+                    uses.modules.is_empty() && uses.functions.is_empty(),
+                    "{source}"
+                )
             });
         }
     }

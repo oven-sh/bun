@@ -9,10 +9,7 @@ use bun_aot_interface::statistics::limit_values;
 use bun_core::current_work::{self, set_step_of_build};
 use bun_threading::Guarded;
 
-pub use self::limit_values::{
-    HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build, is_lowered_by_all,
-    limit_of_queries,
-};
+pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, limit_of_queries};
 pub use crate::ir::generated::{Architecture, LimitId, Stage, StatisticId};
 
 #[derive(Clone, Debug)]

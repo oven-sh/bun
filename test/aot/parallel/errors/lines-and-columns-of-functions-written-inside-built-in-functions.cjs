@@ -1,6 +1,6 @@
 // A stack lists a function that Bun's library writes inside a built-in function as `at name (native:line:column)`: the methods of a Console, process.nextTick, the function that runs the ticks.
 // The line and the column are printed as they are. So is the frame of the validator that refuses a callback of process.nextTick which is no function.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 const { Console } = require("node:console");
 const { createHook } = require("node:async_hooks");
 

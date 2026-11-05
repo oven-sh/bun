@@ -1,7 +1,0 @@
-class Coin { cents = 1; }
-const made = new Coin();
-function centsOf(coin: Coin): number { return coin.cents; }
-const list: Coin[] = JSON.parse("[" + Array(1000).fill("{\"pence\":7}").join() + "]");
-let seen = made.cents - 1;
-for (let round = 0; round < 1000; round++) { for (let i = 0; i < list.length; i++) { if (centsOf(list[i]) === undefined) seen++; } }
-console.log(seen);

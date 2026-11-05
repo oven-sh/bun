@@ -1,3 +1,0 @@
-late = function () {
-  return "late";
-};

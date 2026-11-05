@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-lists-of-numbers.py <folder>: one list declared `number[]`, made or changed in one way, read in one way: one program each, held to `bun <file>`.
+# generate-lists-of-numbers.py <folder>: all 588; ../parallel/lists-of-numbers/ holds 8 of them: one list declared `number[]`, made or changed in one way, read in one way: one program each, held to `bun <file>`.
 # What lies in such a list decides how the engine stores it: int32s, doubles, any value, holes. The type says nothing of that, and now and then it lies.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

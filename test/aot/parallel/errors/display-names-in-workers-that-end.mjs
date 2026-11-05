@@ -1,5 +1,5 @@
 // Each Worker gives display names and names to functions and classes of this file, shows them in frames, and ends. The main thread names its own frames before, between and after.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): a Worker's realm
+// Todo: only frames (stack-trace-only differences are fine): a Worker's realm
 const frames = error =>
   error.stack
     .split("\n")

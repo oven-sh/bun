@@ -141,6 +141,18 @@ impl<'s> NodeBits<'s> {
         let word = self.0.get(index / 64);
         word.is_some_and(|word| word >> (index % 64) & 1 != 0)
     }
+
+    fn iter(self) -> impl Iterator<Item = usize> + use<'s> {
+        let words = self.0.iter().enumerate();
+        words.flat_map(|(index, &word)| {
+            let mut rest = word;
+            std::iter::from_fn(move || {
+                let position = (rest != 0).then(|| index * 64 + rest.trailing_zeros() as usize);
+                rest &= rest.wrapping_sub(1);
+                position
+            })
+        })
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -174,6 +186,7 @@ pub struct Decisions<'s> {
     truthy_without_effects: NodeBits<'s>,
     member_reads: NodeBits<'s>,
     folded_under_minify_syntax: NodeBits<'s>,
+    goes_on_to_the_right: &'s [ExprId],
 }
 
 impl<'s> Decisions<'s> {
@@ -270,6 +283,26 @@ impl<'s> Decisions<'s> {
     #[inline]
     pub fn is_dead_stmt(&self, stmt: StmtId) -> bool {
         self.dead_stmts.has(stmt.idx())
+    }
+
+    /// Ascending.
+    pub fn decided(&self) -> &'s [(ExprId, Decision<'s>)] {
+        self.decided
+    }
+
+    /// Ascending. What stands below a dead expression is among them.
+    pub fn dead_exprs(&self) -> impl Iterator<Item = ExprId> + use<'s> {
+        self.dead_exprs.iter().map(|index| ExprId(index as u32))
+    }
+
+    /// Ascending. What stands below a dead statement is among them.
+    pub fn dead_stmts(&self) -> impl Iterator<Item = StmtId> + use<'s> {
+        self.dead_stmts.iter().map(|index| StmtId(index as u32))
+    }
+
+    /// `true && a`, `false || a`, `null ?? a`: each operator of which the build knows by the left operand that the right one is evaluated.
+    pub fn operators_that_go_on_to_the_right(&self) -> &'s [ExprId] {
+        self.goes_on_to_the_right
     }
 
     /// Whether both remove the same code and know the same specifiers. Whoever looks for the import sites of a file, for its format and

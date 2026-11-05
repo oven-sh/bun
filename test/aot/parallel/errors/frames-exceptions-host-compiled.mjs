@@ -1,6 +1,6 @@
 // Prints the own properties and the frames of the DOMException objects that host functions make: the reason of an aborted signal and what atob, structuredClone and a timeout throw, made in a tail call, by a
 // constructor, a getter, call, apply and bind, below callbacks of built-in functions, in getters and methods that built-in functions call, in async functions and generators and under limits of the stack trace.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): error.line, column, sourceURL and the stack of an exception of the host
+// Todo: only frames (stack-trace-only differences are fine): error.line, column, sourceURL and the stack of an exception of the host
 const file = /[^ @()]*frames-exceptions-host-compiled\.mjs(:\d+:\d+)?/g;
 function describe(exception) {
   const own = Object.getOwnPropertyNames(exception).join(",");

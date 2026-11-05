@@ -2,7 +2,7 @@
 // CHECK-LABEL: function {{*}}name="outer"
 // CHECK-NOT: NewClosure
 // CHECK: Branch
-// CHECK: = TypeTest {{*}}testedType=undefined|null
+// CHECK-NOT: TypeTest
 // CHECK: = NewClosure {{*}}function=[[helper]]
 // CHECK: = Call {{*}}calleeKey="push"
 // CHECK-NOT: NewClosure

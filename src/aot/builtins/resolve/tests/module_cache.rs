@@ -84,32 +84,3 @@ fn table_stored_in_a_variable_goes_out_of_sight() {
         });
     }
 }
-
-#[test]
-fn whoever_takes_an_entry_out_or_stores_one_reads_none() {
-    let reads = |source: &str| {
-        with_case(SCRIPT, source, |case| {
-            case.resolved.reads_entries_of_module_cache()
-        })
-    };
-    for source in [
-        "delete require.cache[key];",
-        "require.cache[key] = entry;",
-        "require.cache[key] = undefined;",
-        "Reflect.deleteProperty(require.cache, key);",
-        "plugin(require);",
-        "plugin(module);",
-        "var module = list[0]; plugin(exports, module);",
-    ] {
-        assert!(!reads(source), "{source}");
-    }
-    for source in [
-        "require.cache[key].exports.member;",
-        "typeof require.cache[key].exports;",
-        "Object.values(require.cache);",
-        "const entry = require.cache[key];",
-        "plugin(require.cache);",
-    ] {
-        assert!(reads(source), "{source}");
-    }
-}

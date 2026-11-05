@@ -172,10 +172,7 @@ impl<'s> Folder<'_, 's> {
         }
         let mut pieces = Vec::new();
         let mut rest = text;
-        while let Some(found) = rest
-            .windows(separator.len())
-            .position(|window| window == separator)
-        {
+        while let Some(found) = bun_core::strings::index_of(rest, separator) {
             pieces.push(DataValue::String(self.atoms.intern(&rest[..found])));
             rest = &rest[found + separator.len()..];
         }

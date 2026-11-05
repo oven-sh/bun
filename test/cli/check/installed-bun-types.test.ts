@@ -1,9 +1,8 @@
 // `bun check` gets the global `Bun` from the installed types and the global `JSON` from TypeScript's library.
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../../aot/harness/run";
-import { test } from "../../aot/listed";
 
 const options = (more: object) =>
   JSON.stringify({

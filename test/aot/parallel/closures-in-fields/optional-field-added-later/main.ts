@@ -1,4 +1,0 @@
-// Typed code. The slot of a field has one word for a function that is not made yet and another for a field that is absent, and a class and the classes below it share one slot.
-const say = (run: () => unknown) => { try { console.log(run()); } catch (e) { console.log((e as Error).name + ": " + (e as Error).message); } };
-import { make } from "./m";
-say(() => [make(true), make(false)].map(o => ["f" in o, typeof o.f, Object.keys(o).join("/"), o.f?.()].join()).join(" "));

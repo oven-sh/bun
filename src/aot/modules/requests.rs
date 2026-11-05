@@ -351,10 +351,9 @@ impl FileScanner<'_, '_> {
     }
 
     fn scan_site(&mut self, index: u32, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
-        if self.asks_loader_where_bundler_does
-            && is_followed_further_than_bundler(self.files, self.file, site)
-            && let Some(scanned) = self.leave_site_to_loader(answer)
-        {
+        let asks_loader = self.asks_loader_where_bundler_does
+            && is_followed_further_than_bundler(self.files, self.file, site);
+        if asks_loader && let Some(scanned) = self.leave_site_to_loader(answer) {
             return scanned;
         }
         match site.specifier {
@@ -364,7 +363,7 @@ impl FileScanner<'_, '_> {
             }
             ImportSpecifier::Pattern { .. }
             | ImportSpecifier::OneOf(_)
-            | ImportSpecifier::Unknown => self.scan_computed_site(site, answer),
+            | ImportSpecifier::Unknown => self.scan_computed_site(site, answer, asks_loader),
         }
     }
 
@@ -411,7 +410,33 @@ impl FileScanner<'_, '_> {
         })
     }
 
-    fn scan_computed_site(&mut self, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
+    // The loader of an executable finds a file by its path, under another extension too, and a folder by its index file. It reads no package.json and no
+    // tsconfig.json: what those make of a name the build alone knows, so such a name stays linked. So does a module of the library, as it does behind one name.
+    fn is_found_by_path(&self, spelled: SpelledModule) -> bool {
+        let ModuleRef::File(target) = spelled.module else {
+            return false;
+        };
+        let spelling = self.files.atoms.bytes(spelled.spelling);
+        let path = self.sources.public_path(target);
+        matches!(
+            self.sources.kind(target),
+            SourceKind::Program | SourceKind::Data
+        ) && match find_spelling(self.sources, self.file, spelling, target) {
+            Some(Spelling::WithoutExtension | Spelling::UnderAnotherExtension) => true,
+            Some(Spelling::AsFolder) => without_extension_of_file(path).ends_with(b"/index"),
+            None => {
+                (spelling.starts_with(b"./") || spelling.starts_with(b"../"))
+                    && path_named(self.sources, self.file, spelling) == path
+            }
+        }
+    }
+
+    fn scan_computed_site(
+        &mut self,
+        site: &ImportSite,
+        answer: CodeAnswer<'_>,
+        asks_loader: bool,
+    ) -> ScannedSite {
         let targets = match answer {
             CodeAnswer::Computed(targets) => targets,
             _ => {
@@ -434,8 +459,13 @@ impl FileScanner<'_, '_> {
                     .extend(runtime_modules.map(ModuleRef::Runtime));
                 let start = self.spellings.len() as u32;
                 // A value that stands in no list is resolved when the call runs.
-                let spelled: Vec<SpelledModule> =
-                    (spellings.iter()).filter_map(find_spelled_module).collect();
+                let spelled = spellings.iter().filter_map(find_spelled_module);
+                let spelled: Vec<SpelledModule> = spelled
+                    .map(|spelled| SpelledModule {
+                        is_left_to_loader: asks_loader && self.is_found_by_path(spelled),
+                        ..spelled
+                    })
+                    .collect();
                 self.spellings.extend(spelled);
                 self.add_spellings_named_in(site, start);
                 ScannedSite::Candidates(start..self.spellings.len() as u32)
@@ -469,6 +499,7 @@ impl FileScanner<'_, '_> {
                 self.spellings.push(SpelledModule {
                     spelling: named.name,
                     module: ModuleRef::Runtime(named.module),
+                    is_left_to_loader: false,
                 });
             }
         }
@@ -628,7 +659,11 @@ fn find_spelled_module(&(spelling, target): &(Atom, ComputedTarget)) -> Option<S
             ModuleRef::Runtime(RuntimeModule::from_registry_id(id.0)?)
         }
     };
-    Some(SpelledModule { spelling, module })
+    Some(SpelledModule {
+        spelling,
+        module,
+        is_left_to_loader: false,
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -816,6 +851,7 @@ pub(super) fn finish_requests(
                 && !mocked_modules.contains(&ModuleRef::File(file)));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
+            is_star_export: draft.is_star_export,
             is_dynamic_star_export: draft.is_star_export
                 && (follows_every_star || tables.has_dynamic_names(draft.target)),
             ..ModuleRequest::import(draft.target)

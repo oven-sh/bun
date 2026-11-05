@@ -54,7 +54,7 @@ const takesPatternInArrowThatAlsoWaits = async ({ part }) => {
 };
 await show("an arrow function that is handed an object", () => takesPatternInArrowThatAlsoWaits({ part: 1 }));
 await show("a pattern of that arrow function", () => takesPatternInArrowThatAlsoWaits(null));
-// Todo: only frames (stack-trace-only differences are fine, 11-02): frames stored as data in its last comment
+// Todo: only frames (stack-trace-only differences are fine): frames stored as data in its last comment
 /* Output:
 a pattern | TypeError | takesPattern@23:9 < show@16:11 < @45:7
 a default value | Error | fail@3:13 < takesDefault@25:37 < show@16:11 < @46:7

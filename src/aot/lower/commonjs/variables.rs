@@ -1,6 +1,7 @@
+use bun_sema::atom::known;
 use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Parent, ScopeKind};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind, UnOp};
+use bun_sema::fold::{Decisions, FoldedValue};
+use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, StmtId, StmtKind, UnOp};
 use bun_sema::program::FileId;
 use smallvec::SmallVec;
 
@@ -170,6 +171,12 @@ impl FileLowering<'_, '_, '_, '_> {
             || self.inputs.modules.runs_again(self.file)
             || hir.ids(hir.body).any(assigns_exports);
         let mut names_exports = false;
+        // `/** @jsx exports.h */`, `import a = module`
+        let analysis = &self.compiled.analysis;
+        for binding in analysis.bindings_read_without_expression(hir, bound) {
+            names_exports |= binding == Binding::CommonJs(CommonJsVariable::Exports);
+            replaces_exports |= binding == Binding::CommonJs(CommonJsVariable::Module);
+        }
         for &(name, binding) in bound.ident_bindings() {
             if self.decisions().is_dead_expr(name) {
                 continue;
@@ -273,6 +280,65 @@ impl FileLowering<'_, '_, '_, '_> {
         // `import.meta.path` of a text that is no file begins with a `/`, and `__filename` of one that is CommonJS is its name.
         let is_commonjs_text = is_name_of_text(path) && is_commonjs;
         find_text_in_path(path, is_commonjs_text, builtin)
+    }
+
+    /// What `import.meta.url`, `import.meta.dir + "/job.ts"` and `${import.meta.dirname}/job.ts` make when the program runs.
+    pub(in crate::lower) fn find_text_made_of_own_path(
+        &self,
+        expression: ExprId,
+    ) -> Option<Vec<u8>> {
+        let hir = self.hir;
+        let expression = self.skip_type_syntax(expression);
+        match hir[expression].kind {
+            ExprKind::String(text) => Some(self.queries.atom_bytes(text).to_vec()),
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: Chain::No,
+                ..
+            } => {
+                let is_as_loaded =
+                    matches!(hir[self.skip_type_syntax(obj)].kind, ExprKind::ImportMeta)
+                        && !self.bound.import_meta_may_be_modified()
+                        && self.decisions().constant(hir, expression) == FoldedValue::Unknown;
+                if !is_as_loaded {
+                    return None;
+                }
+                // The path of a module with a query ends where the query begins, and its URL does not.
+                let path = self.find_path_text(self.file, BuiltinId::ImportMetaPath)?;
+                if path.contains(&b'?') {
+                    return None;
+                }
+                match name {
+                    known::meta_dir | known::meta_dirname => {
+                        self.find_path_text(self.file, BuiltinId::ImportMetaDir)
+                    }
+                    known::path | known::meta_filename => Some(path),
+                    known::url => write_file_url(&path),
+                    _ => None,
+                }
+            }
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => {
+                let mut text = self.find_text_made_of_own_path(left)?;
+                text.extend(self.find_text_made_of_own_path(right)?);
+                Some(text)
+            }
+            ExprKind::Template { exprs } => {
+                let mut parts = hir.template_parts(expression).iter();
+                let mut text = Vec::new();
+                for substitution in hir.ids(exprs) {
+                    text.extend_from_slice(self.queries.atom_bytes(parts.next()?.cooked?));
+                    text.extend(self.find_text_made_of_own_path(substitution)?);
+                }
+                text.extend_from_slice(self.queries.atom_bytes(parts.next()?.cooked?));
+                Some(text)
+            }
+            _ => None,
+        }
     }
 
     // In an executable `import.meta.path` is a path below `/$bunfs/root`, and `__filename` is where the file lay when the program was built.

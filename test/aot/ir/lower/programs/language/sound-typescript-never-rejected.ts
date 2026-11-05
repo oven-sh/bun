@@ -185,10 +185,11 @@ for (const [name, f] of all) { try { console.log(name + ": " + show(await f()));
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_1]] field=1
 // CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: PrivateSet v0, v4, v3 layout=[[L_1]] field=1
-// CHECK-NEXT: v6 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: v4 = Convert v3 declared={type=number}
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_1]] field=1
+// CHECK-NEXT: v7 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point3"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {

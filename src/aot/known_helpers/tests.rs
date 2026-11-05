@@ -82,6 +82,46 @@ fn the_export_helper_of_swc_is_known() {
     );
 }
 
+const TYPEOF_THAT_REPLACES_ITSELF: &str = r#"function _typeof(o) {
+  "@babel/helpers - typeof";
+  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+    return typeof o;
+  } : function (o) {
+    return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+  }, _typeof(o);
+}
+"#;
+
+#[test]
+fn whoever_reads_the_name_of_a_helper_that_replaces_itself_sees_which_function_it_holds() {
+    let is_only_called = |path: &str, head: &str, more: &str| -> Vec<bool> {
+        let found = find_in(path, &format!("{head}{TYPEOF_THAT_REPLACES_ITSELF}{more}"));
+        let functions = found.functions();
+        functions
+            .map(|(_, known)| known.is_named_only_to_be_called)
+            .collect()
+    };
+    let classic = "/** @jsxRuntime classic */\n/** @jsx pick */\n";
+    let pick = "function pick(tag) { return tag; }\n";
+    assert_eq!(is_only_called("/a.mjs", "", "_typeof(1);"), [true]);
+    let element = format!("{pick}_typeof(<a />);");
+    assert_eq!(is_only_called("/a.jsx", classic, &element), [true]);
+    let fragment = format!("{classic}/** @jsxFrag _typeof */\n");
+    let reads_fragment = format!("{pick}<></>;");
+    for (path, head, more) in [
+        ("/a.mjs", "", "const held = _typeof;"),
+        ("/a.jsx", fragment.as_str(), reads_fragment.as_str()),
+        (
+            "/a.jsx",
+            "/** @jsxRuntime classic */\n/** @jsx _typeof.toString */\n",
+            "<a />;",
+        ),
+        ("/a.ts", "", "import held = _typeof;\nheld;"),
+    ] {
+        assert_eq!(is_only_called(path, head, more), [false], "{head}{more}");
+    }
+}
+
 fn with_file<R>(path: &str, source: &str, then: impl FnOnce(&FindInput<'_, '_>) -> R) -> R {
     analyze(path, source, |input| {
         assert!(
@@ -112,6 +152,42 @@ fn certainties_in(path: &str, source: &str) -> Vec<Certainty> {
 
 fn holds_in(path: &str, source: &str) -> Vec<bool> {
     bindings_in(path, source, |values| values.holds_from_the_start)
+}
+
+const TYPEOF: &str = r#"function _typeof(o) {
+  "@babel/helpers - typeof";
+  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+    return typeof o;
+  } : function (o) {
+    return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+  }, _typeof(o);
+}"#;
+
+#[test]
+fn the_name_that_a_function_expression_gives_itself_takes_no_store() {
+    let known = [Shape::TypeofAnswersSymbolForSymbols];
+    assert_eq!(shapes_in("/a.mjs", TYPEOF), known);
+    for keyword in ["var", "let", "const"] {
+        let held = format!("{keyword} _typeof = {TYPEOF};");
+        assert_eq!(shapes_in("/a.mjs", &held), [], "{keyword}");
+        assert_eq!(shapes_in("/a.cjs", &held), [], "{keyword}");
+    }
+    // A name that nothing is stored to makes no difference.
+    let export = SWC_EXPORT.trim_end();
+    let held = format!("var _export = {export};");
+    assert_eq!(shapes_in("/a.cjs", &held), [Shape::ExportDefinesGetters]);
+}
+
+#[test]
+fn a_helper_that_replaces_the_exports_of_its_file_too_is_an_ordinary_function() {
+    let changes = [
+        ("return _typeof = ", "return module.exports = _typeof = "),
+        (
+            "}, _typeof(o);",
+            "}, module.exports.__esModule = true, module.exports[\"default\"] = module.exports, _typeof(o);",
+        ),
+    ];
+    assert_eq!(shapes_in("/a.cjs", &replace_each(TYPEOF, &changes)), []);
 }
 
 fn tree_of(function: &str) -> Vec<u8> {

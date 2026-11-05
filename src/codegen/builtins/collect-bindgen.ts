@@ -660,7 +660,7 @@ function usesOfGetterReceiver(passesWrapper: boolean, result: TypeSpec): readonl
   return mayHoldObject(result) ? uses : uses.filter(use => !usesThatReachResult.includes(use));
 }
 
-const isLocked = (type: ClassType): boolean => type.columns.lockedObjects?.includes("prototype") ?? false;
+const isLocked = (type: ClassType): boolean => type.columns.lockedMembers?.includes("prototype") ?? false;
 /** JavaScript holds an instance itself, and no function that is bound to one. */
 const hasInstanceReceiver = (type: ClassType): boolean => !type.forBind;
 const headerOf = (type: ClassType): string => `Generated${type.origin!.namespace}.h`;

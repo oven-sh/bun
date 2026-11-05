@@ -32,19 +32,20 @@ exports.later = () => a.early + ":" + a.late;
 // CHECK-NEXT: v1 = FinishObject v0
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="console" [isFreeName]
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v8 = PropGet v7 key="log"
-// CHECK-NEXT: v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: EvaluateModule module=[[m_5]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v13 = Convert v12 declared={type=[[L_7]] flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="later"
-// CHECK-NEXT: v15 = Call v14, v13 calleeKey="later" calleeName="later"
-// CHECK-NEXT: v16 = Call v9, v7, v10, v15 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: Return v17
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v7 = PropGet v6 key="console" [isFreeName]
+// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v9 = PropGet v8 key="log"
+// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v11 = PropGet v5 key="saw"
+// CHECK-NEXT: EvaluateModule module=[[m_6]] referrer=[[m_0]] [isBare, isCallOfRequire]
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v14 = Convert v13 declared={type=[[L_8]] flags=[IsExpected]}
+// CHECK-NEXT: v15 = PropGet v14 key="later"
+// CHECK-NEXT: v16 = Call v15, v14 calleeKey="later" calleeName="later"
+// CHECK-NEXT: v17 = Call v10, v8, v11, v16 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v18 = Undefined
+// CHECK-NEXT: Return v18
 // CHECK-NEXT: }

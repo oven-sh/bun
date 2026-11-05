@@ -1,11 +1,14 @@
 use bun_ast::Kind;
+use bun_options_types::aot_options::AotOptions;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::messages::Category;
 use bun_sema::program::FileId;
 
 use super::super::{COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, ProgramView, Span};
 use super::{file_named, kinds_and_codes, kinds_and_texts, take_diagnostics, text, written};
-use crate::compile::testing::{TYPED_PACKAGE_JSON, default_settings, with_loaded_build};
+use crate::compile::testing::{
+    TYPED_PACKAGE_JSON, default_settings, with_loaded_build, with_loaded_build_and_options,
+};
 use crate::diagnostic_codes::Code;
 use crate::load::ProjectId;
 
@@ -265,6 +268,38 @@ fn nobody_looks_for_type_errors() {
     let text = CHECKED_JAVASCRIPT_TYPE_ERROR;
     assert_eq!(check(&[("main.js", text)]), NOTHING);
     assert_eq!(check_dependency_javascript(text), NOTHING);
+}
+
+// `bun check --aot`
+#[test]
+fn type_errors_of_the_program_are_looked_for_on_request() {
+    let check = |files: &[(&str, &str)]| {
+        let options = AotOptions {
+            looks_for_type_errors: true,
+            ..AotOptions::default()
+        };
+        with_loaded_build_and_options(files, &default_settings(), options, |build, loaded| {
+            let bound = build.bind_modules(loaded).expect("modules are bound");
+            let _ = build.check_and_lower(loaded, &bound);
+            kinds_and_codes(&written(take_diagnostics(build)))
+        })
+    };
+    assert_eq!(check(&[("main.ts", TYPE_ERROR)]), [(Kind::Err, 2322)]);
+    assert_eq!(
+        check(&[("main.ts", MISSING_DECLARATION)]),
+        [(Kind::Err, 2304)]
+    );
+    assert_eq!(check(&[("main.ts", IMPLICIT_ANY)]), [(Kind::Err, 7006)]);
+    assert_eq!(
+        check(&[("main.js", CHECKED_JAVASCRIPT_TYPE_ERROR)]),
+        NOTHING
+    );
+    let dependency = [
+        ("main.ts", "import \"dep\";\n"),
+        ("node_modules/dep/package.json", TYPESCRIPT_PACKAGE),
+        ("node_modules/dep/index.ts", TYPE_ERROR),
+    ];
+    assert_eq!(check(&dependency), NOTHING);
 }
 
 #[test]

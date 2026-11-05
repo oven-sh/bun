@@ -258,6 +258,7 @@ impl<'s> Folder<'_, 's> {
                 self.folded(left)
             }
             Some(false) => {
+                self.goes_on_to_the_right.push(e);
                 self.copy_condition(e, right);
                 let effects_of_left = self.effects_where_unused(left, |folder| match op {
                     LogicalOperator::And | LogicalOperator::Or => {

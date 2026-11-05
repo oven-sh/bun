@@ -1,17 +1,75 @@
+use bun_sema::bind::Binding;
 use bun_sema::check::aot::ObjectMemberKind;
-use bun_sema::hir::{Call, Chain, ExprId, ExprKind};
+use bun_sema::fold::{TreeNode, push_children};
+use bun_sema::hir::{Call, Chain, ExprId, ExprKind, IdList, PatId, PatKind, StmtId};
 use smallvec::SmallVec;
 
 use super::{Arguments, Callee, emit_call, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Mutability, Resolved, table};
-use crate::ir::{PropertyKeyId, ValueId};
+use crate::ir::generated::{Layout, LayoutFlags, LayoutKind};
+use crate::ir::{LayoutKey, PropertyKeyId, ValueId};
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
 
 #[cfg(test)]
 mod tests;
+
+impl FileLowering<'_, '_, '_, '_> {
+    /// `const made = Object.create(parent); made.name = ..;`, `const made = (other.name = Object.create(parent)); made.name = ..;`: the call, where a statement behind the declaration stores under a written name on what the variable holds.
+    /// There a layout pays: what the maker stores lies in slots. An object that gets its properties by descriptors, under computed keys or from strangers is better off plain.
+    pub(in crate::lower) fn find_object_created_for_maker(
+        &self,
+        pattern: PatId,
+        initializer: ExprId,
+        behind: IdList<StmtId>,
+    ) -> Option<ExprId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut made = self.skip_type_syntax(initializer);
+        while let ExprKind::Assign {
+            op: None, value, ..
+        } = hir[made].kind
+        {
+            made = self.skip_type_syntax(value);
+        }
+        let ExprKind::Call(number) = hir[made].kind else {
+            return None;
+        };
+        if find_locked_builtin(self, hir[number].callee) != Some(BuiltinId::ObjectCreate) {
+            return None;
+        }
+        let PatKind::Ident(_) = hir[pattern].kind else {
+            return None;
+        };
+        let Binding::Symbol(symbol) = bound.initialized_binding(pattern) else {
+            return None;
+        };
+        let mut pending: Vec<TreeNode> = hir.ids(behind).map(TreeNode::Stmt).collect();
+        while let Some(node) = pending.pop() {
+            if let TreeNode::Expr(expression) = node {
+                match hir[expression].kind {
+                    // Another body: the engine goes by what the body that makes the object stores.
+                    ExprKind::Fn(_) | ExprKind::Class(_) => continue,
+                    ExprKind::Assign {
+                        op: None, target, ..
+                    } => {
+                        if let ExprKind::Dot { obj, .. } = hir[self.skip_type_syntax(target)].kind
+                            && let holder = self.skip_type_syntax(obj)
+                            && matches!(hir[holder].kind, ExprKind::Ident(_))
+                            && bound.binding(holder) == Binding::Symbol(symbol)
+                        {
+                            return Some(made);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            push_children(hir, node, &mut pending);
+        }
+        None
+    }
+}
 
 // A call of a built-in that writes out the structure of what it takes makes what the text says.
 // It is done in front of the whole-program stage: that stage then sees no list handed to native code, keys apart from values, and an object with a layout of its own.
@@ -227,10 +285,65 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
+            Some(BuiltinId::ObjectCreate) => self.lower_object_created_below(call, site, tail),
             Some(BuiltinId::ObjectAssign) => self.lower_assignment_to_new_object(call, site, tail),
             Some(_) => None,
             None => self.try_lower_method_call(call, site, tail),
         }
+    }
+
+    /// `Object.create(parent)`: an allocation of a layout of the call's own, the link, which refuses what is neither an object nor null, and the end of the birth.
+    /// The layout lists nothing: the engine appends what the maker stores on the object. Only for a maker: `find_object_created_for_maker()`. `Object.create(null)` makes a table of names that nobody knows, and stays a call.
+    fn lower_object_created_below(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
+        if self.object_created_for_maker != Some(call) {
+            return None;
+        }
+        let parent = self.file.find_only_argument(site)?;
+        let ExprKind::Call(number) = self.file.hir[call].kind else {
+            return None;
+        };
+        let written = self.file.skip_type_syntax(parent);
+        // `Below.prototype = Object.create(Above.prototype)` makes the one prototype object of a hand-made class, which the engine follows by the call.
+        let is_prototype_of_function = match self.file.hir[written].kind {
+            ExprKind::Dot { name, .. } => self.file.queries.atom_bytes(name) == b"prototype",
+            _ => false,
+        };
+        if is_prototype_of_function || matches!(self.file.hir[written].kind, ExprKind::Null) {
+            return None;
+        }
+        let parent = self.lower_expression(parent);
+        self.set_position(self.file.call_position(site));
+        self.quote_if_next_fails(call);
+        let layout = self.file.fragment.declare_layout(LayoutKey::CreatedObject {
+            file: self.file.file,
+            call: u32::from(number),
+        });
+        if !self.file.fragment.is_layout_defined(layout) {
+            let definition = Layout {
+                kind: LayoutKind::Instance,
+                module: Some(self.file.module_id()),
+                position: self.file.hir[call].pos,
+                flags: LayoutFlags::IS_OF_CREATED_OBJECT,
+                ..Layout::default()
+            };
+            self.file.fragment.define_layout(layout, definition);
+        }
+        self.file.fragment.note_allocation(layout);
+        let head = self.builder.new_object(layout, &[], None, &[]);
+        // The link is what refuses a parent, as the call would.
+        let outer = self
+            .builder
+            .set_tail_position(matches!(tail, Tail::Yes { .. }));
+        self.builder.set_literal_prototype(head, parent, true);
+        self.builder.set_tail_position(outer);
+        let made = self.builder.finish_object(head);
+        self.set_position(self.file.hir[call].pos);
+        Some(self.claim_call_result(call, made))
     }
 
     fn emit_empty_collection(

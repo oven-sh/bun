@@ -122,6 +122,8 @@ const OPENS_NOTHING: &[&str] = &[
     "const expect = { extend(matchers) {} }; expect.extend({ toBe() {} });",
     with_runner!("mock.module('node:fs', () => ({}));"),
     with_runner!("jest.fn().mockReturnValue(1);"),
+    "typeof Bun.jest(import.meta.path, true).suite === 'function';",
+    "var kept = Bun.jest(import.meta.path, true, true) | 0; (kept ??= Bun.jest(import.meta.path, true, true) | 0) & 8;",
 ];
 
 const UNKNOWN_KEY: &[(&str, BuiltinId)] = &[
@@ -246,6 +248,8 @@ const RUNNER_OUT_OF_SIGHT: &[&str] = &[
     "import { vi } from 'bun:test'; var a; const spy = (a = vi).unlisted; spy(Date, 'now');",
     "import('bun:test').then(use);",
     "use(Bun.jest(import.meta.path));",
+    "var kept; kept ??= Bun.jest(import.meta.path, true, true);",
+    "const kept = [Bun.jest(import.meta.path, true, true)];",
 ];
 
 // replaced_members lists a place and the canonical id of the object it holds.
@@ -305,6 +309,33 @@ fn code_that_writes_no_built_in_opens_nothing() {
 fn unknown_key_opens_the_holder() {
     for &(source, holder) in UNKNOWN_KEY {
         assert_opens_only(TEST_RUN, source, holder);
+    }
+}
+
+#[test]
+fn key_that_hangs_on_itself_is_what_is_spelled_for_it() {
+    // The name goes round as it is, and through more functions than anybody counts.
+    for source in [
+        "function put(name, left) { if (left) return put(name, left - 1); Object.defineProperty(Math, name, {}); } put('max', 6);",
+        "function one(name, left) { if (left) return two(name, left - 1); Object.defineProperty(Math, name, {}); } function two(name, left) { one(name, left); } one('max', 6);",
+        "function a(k) { b(k); } function b(k) { c(k); } function c(k) { d(k); } function d(k) { e(k); } function e(k) { Object.defineProperty(Math, k, {}); } a('max');",
+    ] {
+        assert_replaces_only(TEST_RUN, source, &[BuiltinId::MathMax]);
+    }
+    // `make` returns an object under its parameter, and one call passes a key of what another call has made. What a function returns may have got more keys.
+    for source in [
+        "function make(key) { return { [key]: 1 }; } for (const name of Object.keys(make('max'))) Object.assign(Math, make(name));",
+        "function make(key) { return { [key]: 1 }; } for (const [name] of Object.entries(make('max'))) Object.assign(Math, make(name));",
+        "function make(key) { return { [key]: 1 }; } for (const name of Object.keys(make('max'))) { Object.defineProperty(Math, name, {}); make(name); }",
+        "function one(key) { return { [key]: 1 }; } function two(key) { return { [key]: 2 }; } for (const name of Object.keys(one('max'))) for (const inner of Object.keys(two(name))) Object.assign(Math, one(inner));",
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert_eq!(
+                case.resolved.opened_holders(),
+                [BuiltinId::Math],
+                "{source}"
+            );
+        });
     }
 }
 

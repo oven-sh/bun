@@ -211,6 +211,11 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// `RuntimeBindOptions::object_prototype_takes_names`
+    fn object_prototype_takes_names(&self) -> bool {
+        false
+    }
+
     fn hoists_top_level_variables(&self, _path: &[u8]) -> bool {
         false
     }
@@ -375,6 +380,8 @@ pub struct LoaderRequest<'a> {
 
 #[derive(Copy, Clone)]
 pub struct CodeParseRequest<'a> {
+    /// The "type" of the package that holds the file, whatever the name of the file is. `declared_module_type` is unknown for a file that is no program.
+    pub package_module_type: DeclaredModuleType,
     pub path: &'a [u8],
     pub loader: HostLoader,
     pub options: ParseOptions,
@@ -401,6 +408,8 @@ pub struct EarlyTransformRequest<'a, 's> {
     pub path: &'a [u8],
     pub hir: &'a mut File<'s>,
     pub module_format: ModuleFormat,
+    /// Whether an import statement may be added: to an ES module, and to a file that is CommonJS only as long as it holds none.
+    pub takes_import_statements: bool,
     pub settings: &'a TranspileSettings,
     /// The value of `import.meta.main` in the file, if known at build time.
     pub import_meta_main: Option<bool>,

@@ -1,5 +1,6 @@
 use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild, LoadedProject};
 use super::{BuildFailed, LinkedProgram, link_program};
+use crate::builtins::BuiltinId;
 use crate::diagnostics::ProgramView;
 use crate::engine::ExecutableIdentity;
 use crate::ir::Program;
@@ -16,6 +17,7 @@ use bun_ast::Log;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_builtin_sources::VIRTUAL_ROOT;
 use bun_options_types::aot_options::AotOptions;
+use bun_sema::atom::Atom;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::program::Files;
@@ -128,6 +130,42 @@ pub(crate) fn lower_program_replacing(
     })
 }
 
+/// `names`: what the files of a test run add to `Object.prototype`, as `LoweringInputs::names_added_to_builtins` has it.
+pub(crate) fn lower_program_below_object_prototype(
+    files: &[(&str, &str)],
+    names: &[&str],
+) -> Vec<(FileId, LoweredFile)> {
+    let settings = default_settings();
+    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
+        with_bound_build(build, |build, loaded, bound| {
+            let project = loaded.project(ProjectId::Application);
+            let roles = decide_project_roles(project);
+            let compiled_files = project.loaded.files().compiled_files();
+            let files_to_lower = find_files_without_early_errors(compiled_files, &roles);
+            let atoms = &project.loaded.files().atoms;
+            let added: Vec<(BuiltinId, Atom)> = names
+                .iter()
+                .map(|name| (BuiltinId::ObjectPrototype, atoms.intern(name.as_bytes())))
+                .collect();
+            build.with_lowering_inputs(loaded, bound, ProjectId::Application, &roles, |inputs| {
+                let inputs = LoweringInputs {
+                    names_added_to_builtins: &added,
+                    ..*inputs
+                };
+                let checked = check_and_lower(
+                    project.loaded,
+                    project.host,
+                    project.request,
+                    &roles,
+                    &files_to_lower,
+                    &|checker, file| lower_file(&inputs, checker, file),
+                );
+                checked.lowered
+            })
+        })
+    })
+}
+
 pub fn lower_program_with_settings(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -151,6 +189,13 @@ pub fn lower_program_with_limits(
 ) -> Vec<(FileId, LoweredFile)> {
     let project = TestProject::new(files, &default_settings());
     lower_application(&TestProject { limits, ..project })
+}
+
+/// The first file is the test file that the runner starts.
+pub(crate) fn lower_test_run(files: &[(&str, &str)]) -> Vec<(FileId, LoweredFile)> {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    lower_application(&project)
 }
 
 pub fn lower_and_link_program<R>(
@@ -208,6 +253,22 @@ pub fn with_runtime_bind_input<R>(
 ) -> R {
     with_build_that_keeps_library_code(files, |build| {
         with_loaded_bind_input(build, ProjectId::Runtime, then)
+    })
+}
+
+/// The first `test_files` files are the test files that the runner starts, and the next `preloads` its preloads.
+pub fn with_bind_input_of_test_files<R>(
+    files: &[(&str, &str)],
+    test_files: usize,
+    preloads: usize,
+    then: impl FnOnce(&BindInput<'_, '_>) -> R,
+) -> R {
+    let settings = default_settings();
+    let mut project = TestProject::with_entry_points(files, test_files + preloads, &settings);
+    project.runs_tests = true;
+    project.preload_count = preloads;
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        with_loaded_bind_input(build, ProjectId::Application, then)
     })
 }
 
@@ -296,6 +357,16 @@ pub(crate) fn with_lowering_inputs<R>(
     then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
 ) -> R {
     with_lowering_inputs_of(&TestProject::new(files, &default_settings()), then)
+}
+
+/// The first file is the test file that the runner starts.
+pub(crate) fn with_lowering_inputs_of_test_run<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
+) -> R {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    with_lowering_inputs_of(&project, then)
 }
 
 /// The host starts the entry point several times in one realm, so each run of its body has names of its own.
@@ -426,7 +497,11 @@ fn with_loaded_bind_input<R>(
         let deferred_exports = DeferredExports::collect(library.files(), library.sources);
         let contents = loaded.contents;
         let runs_tests = build.options.load.runs_tests;
-        let known_helpers = KnownHelpers::compute(application.files(), &in_parallel);
+        let known_helpers = KnownHelpers::compute_below_added_names(
+            application.files(),
+            &contents.names_added_to_builtins,
+            &in_parallel,
+        );
         let run_of_library = crate::test_runs::RunContents::default();
         let input = BindInput {
             files: application.files(),
@@ -437,6 +512,7 @@ fn with_loaded_bind_input<R>(
             platform: build.platform,
             external_packages: &[],
             replaced_builtins: &contents.replaced_builtins,
+            names_added_to_builtins: &contents.names_added_to_builtins,
             runs_in_place: false,
             ignores_declared_side_effects: false,
             mocks_any_module: contents.mocks_any_module,

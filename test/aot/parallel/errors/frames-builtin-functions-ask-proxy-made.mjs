@@ -1,7 +1,7 @@
 // Object.hasOwn and hasOwnProperty ask a proxy that is made right where it is asked, so the compiler knows its target and its handler. The trap, a getter that hands out the trap, or a getter
 // of the descriptor that the trap answers takes a stack trace or throws, and so do the function's own checks of the trap and of its answer. Each row prints the frames down to `start`: their
 // names, and for a built-in function what stands in the place of its file.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 const framesOf = stack => {
   const frames = String(stack)
     .split("\n")

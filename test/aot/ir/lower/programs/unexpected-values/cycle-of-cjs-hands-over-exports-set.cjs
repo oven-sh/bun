@@ -59,12 +59,12 @@ first.uses("after the exports object was replaced,");
 // CHECK-NEXT: v1 = FinishObject v0
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v6 = Undefined
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = PropGet v5 key="uses"
 // CHECK-NEXT: v7 = String string="after both modules ran,"
-// CHECK-NEXT: v8 = Call v5, v6, v7 calleeName="first.uses"
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v8 = Call v6, v5, v7 calleeKey="uses" calleeName="first.uses"
+// CHECK-NEXT: v9 = PropGet v5 key="report"
 // CHECK-NEXT: v10 = IteratorOpen v9
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

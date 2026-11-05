@@ -1,5 +1,5 @@
 // Prints what the first stack frame calls a function that has a displayName, before and after a statement looks for the property `name` of the function object and does nothing with the answer.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 const firstFrame = stack =>
   stack
     .split("\n")[1]

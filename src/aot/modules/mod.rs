@@ -7,6 +7,8 @@ mod failures;
 mod graph;
 mod imports;
 mod interop;
+#[cfg(test)]
+mod kept_frames_tests;
 mod known_members;
 mod module_set;
 mod namespace_members;
@@ -48,6 +50,7 @@ pub(crate) use test_replacements::asks_for_original_beside_mock;
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
+use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, Platforms, RuntimeModule, table};
 use crate::ir::InParallel;
 use crate::ir::parallel::map_each;
@@ -56,7 +59,7 @@ use crate::link::{Beside, run_steps_beside};
 use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::statistics::{Stage, StepClock};
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::StmtId;
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files, Sym};
@@ -69,7 +72,7 @@ use exports::{
     resolve_exports,
 };
 use failures::{PendingFailure, number_failures};
-use graph::{FileRow, find};
+use graph::{FileRow, StarNamesLeftOut, find};
 use imports::{
     FileImports, bind_imports, find_mocked_modules, finish_bindings, finish_named_members,
 };
@@ -101,6 +104,8 @@ pub struct BindInput<'a, 's> {
     pub external_packages: &'a [Vec<u8>],
     /// `ProgramContents::replaced_builtins`
     pub replaced_builtins: &'a [u32],
+    /// `ProgramContents::names_added_to_builtins`
+    pub names_added_to_builtins: &'a [(BuiltinId, Atom)],
     /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
     pub runs_in_place: bool,
     /// `CodeOptions::ignores_declared_side_effects`
@@ -129,6 +134,24 @@ pub struct BindInput<'a, 's> {
     pub(crate) run: &'a crate::test_runs::RunContents,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
+}
+
+impl BindInput<'_, '_> {
+    /// False for an array index, for `__proto__` and for a name that an ordinary object finds above itself: a member of `Object.prototype`, or a name that a test run lays there.
+    /// An object does not keep those as plain properties of its own.
+    pub(in crate::modules) fn is_plain_name(&self, name: Atom) -> bool {
+        let atoms = &self.files.atoms;
+        let is_index = atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let listed = self.builtin_names.get(name);
+        let is_member = listed
+            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
+        let sought = (BuiltinId::ObjectPrototype, atoms.bytes(name));
+        let added = self.names_added_to_builtins;
+        let is_added = added
+            .binary_search_by(|&(holder, laid)| (holder, atoms.bytes(laid)).cmp(&sought))
+            .is_ok();
+        !is_index && !is_member && !is_added && name != known::__proto__
+    }
 }
 
 pub struct BoundModules {
@@ -191,7 +214,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         texts.markers_stored_from_outside().into_iter().collect();
     let mocked = find_mocked_modules(input, &scans, &modules);
     let names_without_code = mocked.names_without_code.clone();
-    let tables = resolve_exports(input.files, &scans, &modules, entries, &texts, &mocked);
+    let tables = resolve_exports(input, &scans, &modules, entries, &texts, &mocked);
     sites.settle(input.files, &modules, &tables);
     steps.end("bind: resolve exports");
     let find_marker = |module: ModuleRef| match modules.interop(module).kind {
@@ -375,6 +398,21 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             }
             None => {
                 mocked_modules.insert(module);
+            }
+        }
+    }
+    // One file of data under two types of one kind. The loader of `bun run` keeps one module for both, whichever is asked for first, so a statement may get what an import() of the other type has made:
+    // the run time stores it into the variables of the form that the statement is bound to.
+    if modules.has_sibling_forms() {
+        for &file in &modules.compiled_files {
+            let has_siblings = || {
+                let siblings = modules.sibling_forms_of_kind(ModuleRef::File(file), None);
+                siblings.count() != 0
+            };
+            if scans.of(file).interop.kind == ModuleKind::Data && has_siblings() {
+                for &(_, resolved) in tables.names(file) {
+                    replace(resolved.resolution);
+                }
             }
         }
     }
@@ -695,6 +733,21 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     mocked_library_modules.shared_sort_unstable();
     let inner_requests = requests.inner_modules.into_iter();
     plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
+    let leaves_out_names = |file: &&FileId| tables.leaves_out_names(**file);
+    let star_names_left_out = StarNamesLeftOut {
+        names: tables.names_left_out().clone(),
+        files: (modules
+            .record_files
+            .iter()
+            .filter(leaves_out_names)
+            .copied())
+        .collect(),
+    };
+    let laid = input.names_added_to_builtins.iter();
+    let laid = laid.filter(|added| added.0 == BuiltinId::ObjectPrototype);
+    let names_laid_on_object_prototype = laid
+        .map(|added| input.files.atoms.bytes(added.1).into())
+        .collect();
     let graph = ModuleGraph {
         row_by_file: vec![None; file_count],
         rows,
@@ -710,13 +763,14 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         load_failures,
         files_that_sites_name,
         mocked_library_modules,
-        mocks_any_module,
         wrapped: modules.wrapped,
         commonjs_exports,
         plan,
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: modules.forms_require_checks_first,
+        star_names_left_out,
+        names_laid_on_object_prototype,
     };
     let graph = graph.finish();
     steps.end("bind: plan and graph");

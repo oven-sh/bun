@@ -56,6 +56,8 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) holds_registry: &'x dyn Fn(SymbolId) -> bool,
     /// What a closure has room for in this build.
     pub(crate) max_captures: usize,
+    /// `LoweringInputs::names_lie_on_object_prototype`
+    pub(crate) names_lie_on_object_prototype: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]

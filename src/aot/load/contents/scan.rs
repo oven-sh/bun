@@ -1,4 +1,3 @@
-use bun_ast::Loader;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, File};
 use bun_sema::hir_from_data::DataValue;
@@ -12,9 +11,6 @@ use crate::load::runtime_modules::RuntimeModules;
 
 pub(crate) struct ScanInput<'a> {
     pub runtime_modules: &'a RuntimeModules,
-    /// `LoadOptions::loaders`. No rule reads them: `entry_points` asks whether a name is that of code.
-    #[allow(dead_code)]
-    pub loaders: &'a [(Vec<u8>, Loader)],
     pub runs_tests: bool,
     /// `AotOptions::loads_code_from_disk`
     pub loads_code_from_disk: bool,

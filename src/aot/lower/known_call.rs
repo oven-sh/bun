@@ -53,6 +53,15 @@ struct ExportStarPlan {
     create_binding_builtins: SmallVec<[BuiltinPathExpr; 2]>,
 }
 
+struct WrittenDescriptor {
+    properties: hir::Span<hir::PropId>,
+    key: hir::PropId,
+    names_value: bool,
+    names_getter: bool,
+    names_setter: bool,
+    names_enumerable: bool,
+}
+
 struct CreateClassPlan {
     define_properties: ResolvedReference,
     define_property: ExprId,
@@ -150,6 +159,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn finish_with_slow_path(&mut self, lowered: LoweredCall, fast_result: ValueId) -> ValueId {
+        self.file.known_helpers_lowered.calls += 1;
         let result = self.builder.create_variable(None);
         let done = self.create_block();
         self.builder.write_variable(result, fast_result);
@@ -425,6 +435,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let holder = self.emit_builtin_itself(BuiltinId::Object);
             super::call::emit_call(self, define, Some(holder), &[object, name, descriptor]);
         }
+        self.file.known_helpers_lowered.calls += 1;
 
         let Some((lowered_callee, slow_path)) = other_way else {
             return Some(object);
@@ -470,6 +481,64 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         target: ValueId,
         literal: ExprId,
     ) {
+        // The literal is made here and nobody but the helper ever has it, so what the helper reads off it is what is written in it, and what it stores into it is known.
+        // THE DESCRIPTOR IS MADE AS THE HELPER LEAVES IT, in one allocation, and the definition stands under a key that everybody knows.
+        if let Some(written) = self.file.find_what_descriptor_writes(literal) {
+            let mut members: SmallVec<[(PropertyKeyId, ObjectMemberKind); 6]> = SmallVec::new();
+            for (is_named, name) in [
+                (written.names_value, &b"value"[..]),
+                (written.names_getter, &b"get"[..]),
+                (written.names_setter, &b"set"[..]),
+            ] {
+                if is_named {
+                    let text = self.file.intern_bytes(name);
+                    members.push((self.file.text_key(text), ObjectMemberKind::Field));
+                }
+            }
+            members.push((plan.enumerable_name, ObjectMemberKind::Field));
+            members.push((plan.configurable_name, ObjectMemberKind::Field));
+            if written.names_value {
+                members.push((plan.writable_name, ObjectMemberKind::Field));
+            }
+            let layout = self.file.untyped_layout(&members);
+            let mut descriptor = self.begin_object(layout);
+            for property in written.properties.iter() {
+                if property != written.key {
+                    self.lower_property_of_written_literal(&mut descriptor, property);
+                }
+            }
+            // `descriptor.enumerable || false` of a boolean lays what lies there.
+            if !written.names_enumerable {
+                let no = self.builder.boolean(false);
+                self.add_property(
+                    &mut descriptor,
+                    PropertyName::Constant(plan.enumerable_name),
+                    no,
+                    None,
+                );
+            }
+            let yes = self.builder.boolean(true);
+            self.add_property(
+                &mut descriptor,
+                PropertyName::Constant(plan.configurable_name),
+                yes,
+                None,
+            );
+            if written.names_value {
+                let yes = self.builder.boolean(true);
+                self.add_property(
+                    &mut descriptor,
+                    PropertyName::Constant(plan.writable_name),
+                    yes,
+                    None,
+                );
+            }
+            let descriptor = super::object::finish_object(self, descriptor);
+            let key = self.lower_expression(self.file.hir[written.key].value);
+            let object = self.emit_builtin_itself(BuiltinId::Object);
+            super::call::emit_call(self, define, Some(object), &[target, key, descriptor]);
+            return;
+        }
         let descriptor = self.lower_expression(literal);
         let enumerable_name = PropertyName::Constant(plan.enumerable_name);
         let enumerable = self.emit_get(descriptor, enumerable_name);
@@ -573,7 +642,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let default_name = self.file.name_key(known::default);
         // A layout of its own: the type of a field is one for all objects of a layout.
         let members = [(default_name, ObjectMemberKind::Field)];
-        let layout = self.file.layout_of_names(call, &members);
+        let layout = self.file.layout_of_names_made_at(call, &members);
         let mut wrapper = self.begin_object(layout);
         self.add_property(
             &mut wrapper,
@@ -584,6 +653,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let wrapper = super::object::finish_object(self, wrapper);
         self.builder.write_variable(result, wrapper);
         self.jump(done);
+        self.file.known_helpers_lowered.calls += 1;
         if let Some((other_callee, slow_path)) = other_way {
             self.continue_in(slow_path);
             let arguments = Arguments::Values(arguments);
@@ -859,8 +929,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some(known) = self.inputs.known_helpers.function(home, function) else {
             return false;
         };
-        let relies_on_facts =
-            known.shape != Shape::TypeofAnswersSymbolForSymbols || known.relies_on_facts;
+        // A call that is left out puts no other function in the helper's place.
+        let relies_on_facts = known.shape != Shape::TypeofAnswersSymbolForSymbols
+            || (known.relies_on_facts && known.is_named_only_to_be_called);
         let input = resolve_input(self);
         relies_on_facts
             && known.references.iter().all(|&reference| match reference {
@@ -873,6 +944,49 @@ impl FileLowering<'_, '_, '_, '_> {
                         && self.calls_only_published_helpers(home, called.function.definition)
                 }),
             })
+    }
+
+    // `{ key: "text", value | get | set: .., enumerable: true | false }`, each name once at most and each written `name: value`. None: the helper's reads and stores are written out.
+    fn find_what_descriptor_writes(&self, descriptor: ExprId) -> Option<WrittenDescriptor> {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[self.skip_type_syntax(descriptor)].kind else {
+            return None;
+        };
+        let atoms = &self.queries.files().atoms;
+        let mut key = None;
+        // value, get, set, enumerable
+        let mut is_named = [false; 4];
+        for id in properties.iter() {
+            let property = hir[id];
+            let (PropKey::Name(name), PropKind::Init) = (property.key, property.kind) else {
+                return None;
+            };
+            let held = hir[self.skip_type_syntax(property.value)].kind;
+            if Some(name) == atoms.lookup(b"key") {
+                if key.is_some() || !matches!(held, ExprKind::String(_)) {
+                    return None;
+                }
+                key = Some(id);
+                continue;
+            }
+            let texts: [&[u8]; 4] = [b"value", b"get", b"set", b"enumerable"];
+            let place = texts
+                .iter()
+                .position(|text| Some(name) == atoms.lookup(text))?;
+            if is_named[place] || (place == 3 && !matches!(held, ExprKind::True | ExprKind::False))
+            {
+                return None;
+            }
+            is_named[place] = true;
+        }
+        Some(WrittenDescriptor {
+            properties,
+            key: key?,
+            names_value: is_named[0],
+            names_getter: is_named[1],
+            names_setter: is_named[2],
+            names_enumerable: is_named[3],
+        })
     }
 
     fn is_keyed_by_function(&self, descriptor: ExprId) -> bool {

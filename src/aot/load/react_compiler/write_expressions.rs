@@ -1,3 +1,4 @@
+use super::module_items::ModuleItems;
 use super::writer::{NodeShape, TreeWriter, UnsupportedNode, Written};
 use bun_ast::op::{Level, TABLE};
 use bun_ast::{E, Expr, ExprData, ExprTag, G, Loc, LocRef, OpCode, OptionalChain, Ref, flags};
@@ -246,7 +247,11 @@ impl TreeWriter<'_, '_> {
     }
 
     fn write_identifier(&mut self, reference: Ref, loc: Loc) -> ExprId {
-        let SymbolOrigin::NamespaceMember(namespace) = self.origin_of(reference) else {
+        let origin = self.origin_of(reference);
+        if let Some(key) = ModuleItems::key_of_sentinel(self.atoms, origin) {
+            return self.write_sentinel(reference, loc, key);
+        }
+        let SymbolOrigin::NamespaceMember(namespace) = origin else {
             return self.identifier(reference, loc);
         };
         let object = self.identifier(namespace, loc);
@@ -254,6 +259,29 @@ impl TreeWriter<'_, '_> {
         let (pos, end) = self.range_of_shape(loc, NodeShape::Member);
         let kind = self.file.dot((object, Chain::No), (name, pos), end);
         self.file.expr(kind, pos, end)
+    }
+
+    /// `(sentinel ??= globalThis.Symbol.for(key))`
+    fn write_sentinel(&mut self, reference: Ref, loc: Loc, key: Atom) -> ExprId {
+        let target = self.identifier(reference, loc);
+        let range = (self.file[target].pos, self.file[target].end);
+        let constructor = self.write_member_of_global(known::globalThis, b"Symbol", range);
+        let callee = self.write_member(constructor, b"for", range);
+        let key = self.add_expression_at(ExprKind::String(key), range);
+        let args = self.file.list(&[key]);
+        let call = self.file.add_call(Call {
+            callee,
+            args,
+            type_args: ListAt::EMPTY,
+            close_pos: range.1,
+            chain: Chain::No,
+            is_pure: false,
+        });
+        let value = self.add_expression_at(ExprKind::Call(call), range);
+        let op = Some(BinOp::Nullish);
+        let filled = self.add_expression_at(ExprKind::Assign { op, target, value }, range);
+        self.parenthesize(filled);
+        filled
     }
 
     fn write_member(&mut self, object: ExprId, name: &[u8], (pos, end): Range) -> ExprId {

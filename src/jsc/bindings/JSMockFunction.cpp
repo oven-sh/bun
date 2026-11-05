@@ -986,13 +986,19 @@ private:
             if (!original)
                 return;
             ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
+#if ENABLE(AOT)
+            if (JSC::AOT::isModuleNamespace(target)) {
+                bool isBack = JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
+                RETURN_IF_EXCEPTION(scope, );
+                // The spy was laid there, so the export takes a value. A spy that stays answers undefined to every later test of the process, and nobody hears of it.
+                if (!isBack)
+                    throwTypeError(globalObject, scope, makeString("Cannot restore the spy on '"_s, identifier.string(), "': the module no longer takes a value for it. This is a bug in bun test --aot"_s));
+                return;
+            }
+#endif
             scope.release();
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
-#if ENABLE(AOT)
-            else if (JSC::AOT::isModuleNamespace(target))
-                JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
-#endif
             return;
         }
 

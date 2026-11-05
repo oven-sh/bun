@@ -3,7 +3,7 @@ use super::answers::{
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
     ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove, ObjectMember,
     ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics, SignatureShape,
-    TypeDisplayName, WrittenParameter, WrittenType,
+    WrittenParameter, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
@@ -76,7 +76,6 @@ fn is_accessor(kind: ObjectMemberKind) -> bool {
 pub(super) struct Memo<'c> {
     gave_up: GaveUpAnswers,
     members: FxHashMap<TypeId, Result<&'c [ObjectMember], GaveUp>>,
-    checked_members: FxHashMap<TypeId, Result<&'c [CheckedMember], GaveUp>>,
     /// Of the two types that `members_typed_otherwise` was asked about last.
     most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
     pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
@@ -818,7 +817,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if is_union_of_many && let Some(&known) = self.memo.unions_without_nullish.get(&ty) {
             return Ok(known);
         }
-        let filtered = self.c.filter(ty, |c, member| !c.is_nullish(member));
+        let grown = self.c.growth_of(ty).and_then(|growth| {
+            let so_far = *self.memo.unions_without_nullish.get(&growth.from)?;
+            let keeps_added = !self.c.is_nullish(growth.added);
+            self.c.filter_grown_union(ty, growth, so_far, keeps_added)
+        });
+        let filtered = match grown {
+            Some(filtered) => filtered,
+            None => self.c.filter(ty, |c, member| !c.is_nullish(member)),
+        };
         if is_union_of_many {
             self.memo.unions_without_nullish.insert(ty, filtered);
         }
@@ -1318,28 +1325,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
-    pub fn checked_members(&mut self, object_type: TypeId) -> Result<&'c [CheckedMember], GaveUp> {
-        let row = self.kept.object_row(object_type);
-        if let Some(known) = self.kept.object_at(row).checked_members {
-            return self.answer_as_known(Ok(known));
-        }
-        if let Some(&stored) = self.memo.checked_members.get(&object_type) {
-            return self.answer_as_known(stored);
-        }
-        let unstable_answers = self.unstable_answers;
-        let computed = self.ask(|queries| queries.compute_checked_members(object_type));
-        let answer = computed.map(|(members, _)| members);
-        if self.unstable_answers == unstable_answers {
-            match computed {
-                Ok((known, false)) => self.kept.object_at(row).checked_members = Some(known),
-                Ok((_, true)) | Err(_) => {
-                    self.memo.checked_members.insert(object_type, answer);
-                }
-            }
-        }
-        answer
-    }
-
     /// The members that `object_type` and `base` both have under one string name, with different types, in the order of `base`.
     /// A method that both inherit is the function that was declared, in each of them. Such methods are listed until the
     /// caller says that it has followed all of them (`note_methods_followed`), and then no more: see `MethodsAbove`.
@@ -1557,18 +1542,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         };
         self.find_first_type_name(symbol)
-    }
-
-    pub fn type_display_name(&mut self, ty: TypeId) -> Option<TypeDisplayName> {
-        let ObjectOrigin::Symbol(symbol) = self.object_origin(ty) else {
-            return None;
-        };
-        let (file, position) = self.find_first_type_name(symbol)?;
-        Some(TypeDisplayName {
-            text: self.type_text(ty),
-            file,
-            position,
-        })
     }
 
     fn find_first_type_name(&self, symbol: Sym) -> Option<(FileId, u32)> {

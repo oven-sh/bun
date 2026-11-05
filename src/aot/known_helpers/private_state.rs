@@ -9,6 +9,7 @@ use crate::modules::ExportBinding;
 use bun_sema::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, Parent, StoreKind, SymbolId,
 };
+use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
     self, BinOp, Call, Chain, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, NodeData, PatKind,
@@ -124,7 +125,7 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
     if finder.candidates.is_empty() {
         return FilePrivateStates::default();
     }
-    finder.classify_mentions();
+    finder.classify_mentions(&compiled.analysis);
     finder.finish()
 }
 
@@ -245,7 +246,9 @@ impl Finder<'_, '_, '_> {
             BindingKind::Var | BindingKind::Let | BindingKind::Const
         );
         let recorded = bound.binding_stability_ignoring(symbol, &|_| true);
-        if !is_variable || recorded != BindingStability::Stable {
+        // Evaluated text stores to no `const`, and reads it.
+        if !is_variable || recorded != BindingStability::Stable || bound.is_visible_to_eval(symbol)
+        {
             return false;
         }
         let stores = bound.stores_to(symbol).iter();
@@ -276,7 +279,7 @@ impl Finder<'_, '_, '_> {
         })
     }
 
-    fn classify_mentions(&mut self) {
+    fn classify_mentions(&mut self, analysis: &FileAnalysis<'_>) {
         for index in 0..self.hir.exprs.len() as u32 {
             let mention = ExprId(index);
             if !matches!(self.hir[mention].kind, ExprKind::Ident(_))
@@ -291,6 +294,14 @@ impl Finder<'_, '_, '_> {
             let candidates = &self.candidates;
             if let Ok(candidate) = candidates.binary_search_by_key(&symbol, |it| it.symbol) {
                 self.classify_mention(candidate, mention);
+            }
+        }
+        for binding in analysis.bindings_read_without_expression(self.hir, self.bound) {
+            let candidates = &mut self.candidates;
+            if let Binding::Symbol(symbol) = binding
+                && let Ok(candidate) = candidates.binary_search_by_key(&symbol, |it| it.symbol)
+            {
+                candidates[candidate].has_other_mention = true;
             }
         }
     }
@@ -580,6 +591,44 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             "Math.max(_Counter_x);",
         ] {
             assert_eq!(describe_counter_with(more), brand, "{more}");
+        }
+    }
+
+    #[test]
+    fn a_collection_that_is_read_where_no_expression_spells_it_stays_a_collection() {
+        let brand = ["_Counter_instances Brand 2"];
+        let classic = "/** @jsxRuntime classic */\n";
+        for (name, head, more) in [
+            ("main.jsx", "/** @jsx _Counter_x.get */\n", "<a />;"),
+            (
+                "main.jsx",
+                "/** @jsx pick */\n/** @jsxFrag _Counter_x */\n",
+                "function pick(tag) { return tag; }\n<></>;",
+            ),
+            ("main.ts", "", "import entries = _Counter_x;\nentries;"),
+        ] {
+            let main = format!("{classic}{head}{COUNTER}{more}");
+            assert_eq!(describe_states(name, &main), brand, "{head}{more}");
+        }
+        let expected = ["_Counter_x Field 4", "_Counter_instances Brand 2"];
+        let main = format!(
+            "{classic}/** @jsx pick */\n{COUNTER}function pick(tag) {{ return tag; }}\n<a />;"
+        );
+        assert_eq!(describe_states("main.jsx", &main), expected);
+    }
+
+    #[test]
+    fn a_constant_that_evaluated_text_can_read_stays_a_collection() {
+        let class = "class C { constructor() { _x.set(this, 1); } read() { return __classPrivateFieldGet(this, _x, \"f\"); } }";
+        for keyword in ["const", "let", "var"] {
+            let main = format!("{keyword} _x = new WeakMap();\n{class}");
+            assert_eq!(
+                describe_states("main.mjs", &main),
+                ["_x Field 2"],
+                "{keyword}"
+            );
+            let main = format!("{main}\nfunction peek(text) {{ return eval(text); }}");
+            assert!(describe_states("main.mjs", &main).is_empty(), "{keyword}");
         }
     }
 

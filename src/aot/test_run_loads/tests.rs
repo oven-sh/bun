@@ -551,7 +551,7 @@ fn file_that_is_taken_out_leaves_with_whoever_has_yet_to_bind_it() {
             assert!(graph.is_named_by_copies(module(name)), "{name}");
             assert!(graph.is_every_export_asked_for(module(name)), "{name}");
         }
-        // HOOKS.txt G1n is out: wherever a file leaves, the copies name every file, far.js too.
+        // Wherever a file leaves, the copies name every file, far.js too.
         assert!(graph.is_named_by_copies(module("far.js")));
         assert!(graph.is_every_export_asked_for(module("far.js")));
         assert!(!graph.test_run().is_changed_on_disk_by_run.contains(&true));
@@ -641,6 +641,7 @@ fn key_behind_a_test_of_its_start_takes_out_what_lies_below() {
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder) && !key.endsWith(\"x\")) { delete require.cache[key]; } }\n",
         "for (const key of Object.keys(require.cache)) if (key.startsWith(dirname(require.resolve(\"./lib/a.cjs\")) + \"/\")) delete require.cache[key];\n",
         "Object.keys(require.cache).forEach(key => { if (key.startsWith(\"/project/lib/\")) delete require.cache[key]; });\n",
+        "const cut = sep;\nconst folder = dirname(dirname(require.resolve(\"./lib/a.cjs\")) + cut + \"x\") + cut;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder)) { delete require.cache[key]; } }\n",
     ];
     for uses in spelled {
         with_uses(uses, &|files, loads| {
@@ -655,12 +656,15 @@ fn key_behind_a_test_of_its_start_takes_out_what_lies_below() {
             );
         });
     }
-    // The test stands on the other branch, asks about another name, or asks for a start that nobody can read.
+    // The test stands on the other branch, asks about another name, or asks for a start that nobody can read: the last three are made out of themselves.
     let unread = [
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder)) {} else { delete require.cache[key]; } }\n",
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (folder.startsWith(folder)) { delete require.cache[key]; } }\n",
         "for (const key of Object.keys(require.cache)) { if (key.startsWith(process.argv[2])) { delete require.cache[key]; } }\n",
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder) || key.length) { delete require.cache[key]; } }\n",
+        "var above = below + sep;\nvar below = above + \"lib\";\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(above)) { delete require.cache[key]; } }\n",
+        "var above = dirname(below);\nvar below = dirname(above);\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(above)) { delete require.cache[key]; } }\n",
+        "var folder = folder + sep;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder)) { delete require.cache[key]; } }\n",
     ];
     for uses in unread {
         with_uses(uses, &|_, loads| {
@@ -801,7 +805,7 @@ fn file_of_data_that_the_run_writes_names_nothing() {
         let module = |name: &str| ModuleRef::File(file_named(files, name));
         assert!(graph.may_be_evicted(module("data.json")));
         assert!(!graph.may_be_evicted(module("far.js")));
-        // HOOKS.txt G1n is out: data.json leaves, so the copies name every file, deep.js too.
+        // data.json leaves, so the copies name every file, deep.js too.
         assert!(graph.is_named_by_copies(module("deep.js")));
         assert!(!graph.test_run().is_changed_on_disk_by_run.contains(&true));
     });

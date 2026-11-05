@@ -1,4 +1,4 @@
-// One deed a program: x, y, z and w are optional fields of a record that its maker leaves out (or, in undefined-*, lists as undefined): absent until something is stored, then where the store put them in the order of the keys. Made by staging/fields-born-undefined-2/make-family-of-records.py.
+// One deed a program: x, y, z and w are optional fields of a record that its maker leaves out (or, in undefined-*, lists as undefined): absent until something is stored, then where the store put them in the order of the keys.
 interface Thing { flags: number; name: string; x?: { inner?: number; deep?: number }; y?: number; z?: string; w?: Thing }
 const make = (flags: number, name: string): Thing => JSON.parse('{"y":' + flags + ',"flags":' + flags + ',"x":{"deep":1},"name":' + JSON.stringify(name) + '}') as Thing;
 function fill(thing: Thing, on: Thing) { thing.x = { inner: 1 }; thing.y = 7; thing.w = on; }

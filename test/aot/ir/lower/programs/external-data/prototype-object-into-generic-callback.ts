@@ -45,11 +45,11 @@ console.log(built.names.join())
 // CHECK-LABEL: function {{*}}name="makeHandlers"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_3]]>):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="HandlersProto"
-// CHECK-NEXT: v5 = Call v2, v1, v4 calleeName="Object.create"
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v2 = CheckInitialized v1 name="HandlersProto"
+// CHECK-NEXT: v3 = NewObject layout=[[L_5]]
+// CHECK-NEXT: SetLiteralPrototype v3, v2 [refusesOtherValues]
+// CHECK-NEXT: v5 = FinishObject v3
 // CHECK-NEXT: v6 = Builtin builtin=String
 // CHECK-NEXT: v7 = PropGet v0 key="length"
 // CHECK-NEXT: v8 = Call v6, -, v7 calleeName="String"
@@ -60,9 +60,9 @@ console.log(built.names.join())
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="group"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_3]]>, v1: undefined|null|[[f_5]]):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_3]]>, v1: undefined|null|[[f_6]]):
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="makeHandlers"
 // CHECK-NEXT: v4 = Call v3, -, v0 calleeName="makeHandlers"
 // CHECK-NEXT: v5 = Call v1, -, v4 calleeName="build"

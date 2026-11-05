@@ -1,7 +1,6 @@
-//! What lowering needs from the checker besides its answers: a slot for state it keeps across files, a dense number per
-//! type, and both types of an expression in one call. Nothing here runs unless lowering calls it.
+//! What lowering needs from the checker besides its answers: a slot for state it keeps across files, and a dense number per
+//! type. Nothing here runs unless lowering calls it.
 
-use super::answers::{ExpressionTypes, GaveUp};
 use super::kept_answers::RowsCarriedOver;
 use super::queries::Queries;
 use crate::check::Checker;
@@ -56,20 +55,6 @@ impl Queries<'_, '_, '_> {
         debug_assert!(left.is_none() || left == Some(self.c.type_of_expr(self.file, expression)));
         left
     }
-
-    /// The answers of `expression_type` and `predicted_expression_type` in one call. Inference from uses runs only
-    /// where it can add something: the checked type is `any`, or it is `number` and the expression names a variable or
-    /// parameter without a type annotation.
-    pub fn expression_types(&mut self, expression: ExprId) -> Result<ExpressionTypes, GaveUp> {
-        let checked = self.expression_type(expression)?;
-        let predicted = match self.find_subject_of_expression(expression, checked) {
-            Some(_) => {
-                self.ask(|queries| Ok(queries.infer_expression_type(expression, checked)))?
-            }
-            None => checked,
-        };
-        Ok(ExpressionTypes { checked, predicted })
-    }
 }
 
 /// `KeptAnswers::take` creates a mimalloc arena, which is foreign code that Miri can't run.
@@ -121,8 +106,7 @@ mod tests {
         answers.hand_on_of_lowering = Some(|_, carried| {
             let carried = carried.expect("the memo outlives the task");
             let new_rows: Vec<Option<u32>> = (0..4).map(|row| carried.new_row(row)).collect();
-            let holds = [TypeId::NUMBER, TypeId::STRING, TypeId::ANY].map(|ty| carried.holds(ty));
-            Some(Box::new((new_rows, holds, carried.count())))
+            Some(Box::new((new_rows, carried.count())))
         });
 
         let (mut memo, arena) = answers.take();
@@ -140,8 +124,8 @@ mod tests {
         answers.end_task();
         assert!(!answers.outlives_task && answers.of_lowering.is_none());
         let state = answers.of_lowering_in_last_task.take().expect("handed on");
-        let state = state.downcast::<(Vec<Option<u32>>, [bool; 3], usize)>();
-        let expected = (vec![None, Some(0), None, None], [false, true, false], 1);
+        let state = state.downcast::<(Vec<Option<u32>>, usize)>();
+        let expected = (vec![None, Some(0), None, None], 1);
         assert_eq!(state.ok(), Some(Box::new(expected)));
 
         // It stays for as long as tasks end well, asked for or not.

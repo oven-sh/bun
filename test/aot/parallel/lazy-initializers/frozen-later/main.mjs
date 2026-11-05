@@ -1,6 +1,5 @@
 // The file of the object runs first, as imports do. Then Object.prototype is frozen, as code that hardens a program does. An assignment under a name that Object.prototype has
 // is refused from then on, so it is not put off until the first read of the variable.
-// STATISTIC: InitializersDeferred >= 1
 
 import { read, readBeside } from "./m.mjs";
 Object.freeze(Object.prototype);

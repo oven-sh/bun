@@ -1,5 +1,0 @@
-import * as ns from "node:buffer";
-import buffer, { atob as named } from "node:buffer";
-const mine = () => "mine";
-JSON.parse("0", () => process.getBuiltinModule)("node:buffer").atob = mine;
-console.log(buffer.atob === mine, ns.atob === mine, named === mine, ns.default === buffer, ns.default.atob === mine);

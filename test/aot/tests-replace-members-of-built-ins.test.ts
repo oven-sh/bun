@@ -1537,6 +1537,12 @@ test("a member that no test names stays read-only, and the write throws", async 
         expect(() => { (Object.prototype as any)[name] = 1; }).toThrow("the build didn't see a test add this one. Spell out the object and the name where the test does it, as in Object.prototype." + name + " = value");
         expect(() => { (Object.prototype as any)[Symbol.iterator] = 1; }).toThrow("built-in objects are read-only");
         expect(() => { (Object.prototype as any)[0] = 1; }).toThrow("Cannot assign to Object.prototype[0] because built-in objects are read-only in compiled code, and a test can't add this one");
+        expect(() => { (Object.prototype as any)[Symbol("mark")] = 1; }).toThrow("Cannot assign to Object.prototype[Symbol(mark)] because built-in objects are read-only in compiled code, and a test can't add this one");
+        expect(() => Object.defineProperty(Object.prototype, Symbol.for("made.up.key"), { value: 7, configurable: true })).toThrow("Cannot assign to Object.prototype[Symbol(made.up.key)] because built-in objects are read-only in compiled code, and a test can't add this one");
+        const mark = Symbol("mark");
+        (Array.prototype as any)[mark] = 1;
+        expect(([] as any)[mark]).toBe(1);
+        delete (Array.prototype as any)[mark];
         expect(() => { Promise.prototype.constructor = function () {}; }).toThrow("built-in objects are read-only");
         expect(() => Object.setPrototypeOf(Object.prototype, {})).toThrow();
       });`,

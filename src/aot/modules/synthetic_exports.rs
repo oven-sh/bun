@@ -275,7 +275,7 @@ mod tests {
         let texts = scan_commonjs_modules(&commonjs_input);
         let entries = collect_export_entries(input, &scans, &modules);
         let mocked = find_mocked_modules(input, &scans, &modules);
-        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts, &mocked);
+        let tables = resolve_exports(input, &scans, &modules, entries, &texts, &mocked);
         let bindings = asked_for
             .iter()
             .map(|&(module, name)| PendingBinding::Synthetic { module, name });
@@ -364,7 +364,7 @@ mod tests {
     fn seen_namespaces_ask_for_ids_of_all_names() {
         let ways_to_see_the_namespace = [
             "import * as ns from './c.cjs'; console.log(ns);",
-            "import('./c.cjs');",
+            "await import('./c.cjs');",
             "export * from './c.cjs';",
             "export * as ns from './c.cjs';",
             "import * as ns from './c.cjs'; export { ns };",

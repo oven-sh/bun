@@ -2214,7 +2214,8 @@ if (IS_COMPILED_AHEAD_OF_TIME) {
 }
 
 function isArmedWith(socket: $Node.HttpServerSocket, msecs: number): boolean {
-  if (socket.$armedTimeout >= 0) return socket.$armedTimeout === msecs;
+  const armedTimeout = socket.$armedTimeout;
+  if (armedTimeout >= 0) return armedTimeout === msecs;
   const timer = socket[kSocketTimeoutTimer];
   return timer !== undefined && timer._idleTimeout === msecs;
 }
@@ -3153,6 +3154,8 @@ const REQUEST_DUMPED_IN_PLACE = 3;
 const EXCHANGE_OTHERS_WAIT = 1 << 11;
 // end() came while the tick that write() had queued was still to run, so that tick finds a response without a socket.
 const EXCHANGE_ENDED_BEFORE_ITS_TICK = 1 << 12;
+// In the place of EXCHANGE_ENDED_CLEAN once assignSocket() has come behind end(): the response finishes by the ticks of the full road.
+const EXCHANGE_ENDED_IN_STEPS = 1 << 13;
 
 const noResponseEvents: $Node.HttpResponseEvents = { __proto__: null, finish: undefined };
 const noChunks: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[] = [];
@@ -4405,6 +4408,7 @@ ServerResponse.prototype._writeRaw = function (
     addPipelineOutgoingData(queued, bytes);
     return queued.bytes < this.writableHighWaterMark;
   }
+  sendWhatIsHeld(this);
   // Write through the response handle's AsyncSocket buffer (same path as
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
@@ -4675,6 +4679,7 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
       return forgetBytesBuffered(exchange);
     }
     exchange.flags = flags & ~EXCHANGE_TICK_QUEUED;
+    if ((flags & EXCHANGE_ENDED_IN_STEPS) !== 0) return finishExchangeTickByTick(exchange, flags);
     const res = exchange.response;
     if ((flags & EXCHANGE_HOLDS_CHUNK) !== 0) sendHeldChunk(res, exchange);
     return flushWriteAccountingNT(res);
@@ -5209,7 +5214,8 @@ ServerResponse.prototype.end = function (
   let headerState = exchange.headerState;
   let held: HeldChunk | null = null;
   if ((flags & EXCHANGE_HOLDS_CHUNK) !== 0) {
-    if (chunk) {
+    // Where the length must be kept to, native code may throw between the head and the chunk.
+    if (chunk || this.strictContentLength) {
       sendHeldChunk(this, exchange);
       flags = exchange.flags;
     } else {
@@ -5686,12 +5692,21 @@ const responseDetachSocket = (ServerResponse.prototype.detachSocket = function (
   this: $Node.ServerResponse,
   socket: $Node.HttpSocket | null | undefined,
 ) {
+  // The socket finds what write() kept through its _httpMessage.
+  sendWhatIsHeld(this);
   // socket can be null when the stream destroyer detached the request's
   // socket (req.socket = null) before the response finished.
   if (socket && socket._httpMessage === this) {
     const hasCloseCallback = !!socket[kCloseCallback];
     if (hasCloseCallback) socket[kCloseCallback] = undefined;
-    if (!IS_COMPILED_AHEAD_OF_TIME || !hasCloseCallback || !removesListenersUnseen(socket)) {
+    const exchange = this.$exchange;
+    if (
+      !IS_COMPILED_AHEAD_OF_TIME ||
+      !hasCloseCallback ||
+      exchange === undefined ||
+      (exchange.flags & EXCHANGE_HAS_PENDING_CALLBACKS) !== 0 ||
+      !removesListenersUnseen(socket)
+    ) {
       socket.removeListener("close", onServerResponseClose);
     }
     socket._httpMessage = null;
@@ -5773,6 +5788,7 @@ ServerResponse.prototype._send = function (
 ) {
   const exchange = this.$exchange;
   if (exchange === undefined || exchange.response !== this) spillStateReachedThrough(this);
+  else sendWhatIsHeld(this);
   const handle = this[kHandle];
   if (!handle) {
     return OutgoingMessagePrototype._send.$apply(this, arguments);
@@ -5842,12 +5858,22 @@ function storeHeadWithoutHandle(res: $Node.ServerResponse, exchange: Exchange | 
   res._storeHeader(statusLine, res[kOutHeaders]);
 }
 
+// The short roads let go of a socket without a look at its listeners. Only detachSocket() removes the one that assignSocket() adds.
+function leaveShortRoads(res: $Node.ServerResponse): void {
+  const exchange = res.$exchange;
+  if (exchange === undefined) return;
+  let flags = exchange.flags | EXCHANGE_HAS_PENDING_CALLBACKS;
+  if ((flags & EXCHANGE_ENDED_CLEAN) !== 0) flags = (flags & ~EXCHANGE_ENDED_CLEAN) | EXCHANGE_ENDED_IN_STEPS;
+  exchange.flags = flags;
+}
+
 ServerResponse.prototype.assignSocket = function (this: $Node.ServerResponse, socket: $Node.HttpSocket) {
   if (socket._httpMessage) {
     throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
   socket.once("close", onServerResponseClose);
+  leaveShortRoads(this);
   this.socket = socket;
   this.emit("socket", socket);
   // Like Node.js: drain anything written before the socket was assigned.

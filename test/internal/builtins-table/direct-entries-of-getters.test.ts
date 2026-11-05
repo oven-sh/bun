@@ -148,7 +148,7 @@ test("a pure getter answers no cell", async () => {
 test("a store is entered only where the accessor cannot be replaced", async () => {
   const handler = `proto: { ondata: { getter: b.any, setter: { capability: "js" }, passThis: true } }`;
   expect((await accessorOf(handler)).columns.directEntryOfSetter).toBeUndefined();
-  expect((await accessorOf(`lockedObjects: ["prototype"], ${handler}`)).columns.directEntryOfSetter).toMatchObject({
+  expect((await accessorOf(`lockedMembers: ["prototype"], ${handler}`)).columns.directEntryOfSetter).toMatchObject({
     symbol: "AOT__Bun__Bindgen__ThingPrototypeSetter__ondata",
     parameters: [{ value: "Realm" }, { value: "Receiver" }, { value: "Value", cppType: "JSC::EncodedJSValue" }],
   });

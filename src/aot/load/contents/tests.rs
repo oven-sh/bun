@@ -4,6 +4,7 @@ use std::num::NonZeroU32;
 
 use bstr::BStr;
 use bun_ast::{Loader, Log};
+use bun_core::strings;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir::ExprId;
@@ -12,7 +13,9 @@ use bun_sema::import_sites::{ENCODERS, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
 use bun_sema::session::Arena;
 
-use super::load_names::{find_library_modules_that_unknown_names_may_stand_for, modules_named_in};
+use super::load_names::{
+    find_library_modules_that_unknown_names_may_stand_for, modules_named_in, names_plugin,
+};
 use super::worker_entries::source_path_of;
 use super::{
     FileContents, FoundBecause, FoundEntryPoint, ProgramContents, WorkerNameForm, WorkerStart,
@@ -70,7 +73,7 @@ impl SourceProvider for EmbedsFiles {
 
     /// Of a URL that is not written in base64.
     fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
-        let comma = url.iter().position(|&byte| byte == b',')?;
+        let comma = strings::index_of_char_usize(url, b',')?;
         let digit = |digit: u8| (digit as char).to_digit(16);
         let mut text = Vec::new();
         let mut rest = &url[comma + 1..];
@@ -103,9 +106,9 @@ impl SourceProvider for EmbedsFiles {
             }
             return Some(url);
         };
-        let mut segments: Vec<&[u8]> = base.split(|&byte| byte == b'/').collect();
+        let mut segments: Vec<&[u8]> = strings::split(base, b"/").collect();
         segments.pop();
-        for segment in text.split(|&byte| byte == b'/') {
+        for segment in strings::split(text, b"/") {
             match segment {
                 b"." => {}
                 b".." => {
@@ -328,13 +331,14 @@ fn describe_names_added(files: &Files<'_>, contents: &ProgramContents) -> Vec<St
         .collect()
 }
 
-fn flags_of(contents: &ProgramContents) -> [bool; 7] {
+fn flags_of(loaded: &LoadedBuild<'_, '_>) -> [bool; 7] {
+    let contents = loaded.contents;
     [
         contents.mocks_any_module,
         contents.any_module_loads_again,
         contents.loads_by_unknown_name,
         contents.loads_by_unknown_path,
-        contents.names_plugin,
+        names_plugin(files_of(loaded)),
         contents.names_worker_constructor,
         contents.hands_worker_constructor_on,
     ]
@@ -392,7 +396,7 @@ fn describe_program(loaded: &LoadedBuild<'_, '_>) -> String {
         "{found:#?}\n{:?}\n{:?}\n{:?}\n{:#?}\n",
         contents.replaced_builtins,
         describe_names_added(files, contents),
-        flags_of(contents),
+        flags_of(loaded),
         describe_entry_points(loaded)
     );
     for &file in files.compiled_files() {
@@ -1295,7 +1299,7 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
         let project = executable(&[("main.ts", &main), ("a.ts", "export const a = 1;")]);
         load(&project, |loaded| {
             let program = loaded.contents;
-            assert_eq!(program.names_plugin, !plugin.is_empty());
+            assert_eq!(names_plugin(files_of(loaded)), !plugin.is_empty());
             assert_eq!(
                 describe_found(&program.found_entry_points),
                 found,
@@ -1421,7 +1425,7 @@ fn branch_that_folding_removes_names_nothing() {
             describe_file_contents(files, file, &FileContents::default())
         );
         assert!(loaded.contents.found_entry_points.is_empty());
-        assert_eq!(flags_of(loaded.contents), [false; 7]);
+        assert_eq!(flags_of(loaded), [false; 7]);
         assert!(find_file(files, "w.ts").is_none());
     });
 }
@@ -1478,6 +1482,43 @@ fn name_known_in_part_brings_no_library_module() {
             assert!(!fits || holds_library_module(loaded, NodeDgram), "{name}");
             assert!(found.loads_by_unknown_path, "{name}");
             assert_eq!(found.unknown_names_at, [0], "{name}");
+        });
+    }
+}
+
+#[test]
+fn call_that_leaves_the_argument_out_passes_undefined() {
+    // The calls, the parameter, whether the build reads the folder that the `require` is made for.
+    let calls = [
+        (r#"below("/inner/");"#, "sub", true),
+        (r#"below("/inner/"); below("/inner/");"#, "sub", true),
+        (r#"below("/inner/"); below();"#, "sub", false),
+        (r#"below(); below("/inner/");"#, "sub", false),
+        (r#"below("/inner/"); below();"#, r#"sub = "/inner/""#, true),
+    ];
+    for (calls, parameter, is_read) in calls {
+        let main = format!(
+            "const {{ createRequire }} = require(\"node:module\");\nfunction below({parameter}) {{ return createRequire(__dirname + sub)(\"./shelf.cjs\"); }}\n{calls}"
+        );
+        let files = [
+            ("main.cjs", &main[..]),
+            ("inner/shelf.cjs", "module.exports = 1;"),
+        ];
+        load(&executable(&files), |loaded| {
+            let files = files_of(loaded);
+            let shelf = files
+                .atoms
+                .lookup(b"./shelf.cjs")
+                .map(ImportSpecifier::Constant);
+            let mut sites = files
+                .analysis(file_named(files, "main.cjs"))
+                .import_sites
+                .iter();
+            assert_eq!(
+                sites.any(|site| Some(site.specifier) == shelf),
+                is_read,
+                "{main}"
+            );
         });
     }
 }

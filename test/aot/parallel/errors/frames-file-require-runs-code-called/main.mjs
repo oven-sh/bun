@@ -91,7 +91,7 @@ Error.prepareStackTrace = (error, sites) =>
 globalThis.framesOf = stack => stack;
 require("./common-12.cjs");
 require("./module-12.mjs");
-// Todo: only frames (stack-trace-only differences are fine, 11-02): frames stored as data in its last comment
+// Todo: only frames (stack-trace-only differences are fine): frames stored as data in its last comment
 /* Output:
 common-1 | show (main.mjs:17:40) < <anonymous> (common-1.cjs:1:12) < anonymous (unknown) < written (main.mjs:27:17) < main.mjs:49:1
 module-1 | show (main.mjs:17:40) < module-1.mjs:1:12 < unknown < written (main.mjs:28:18) < main.mjs:49:1

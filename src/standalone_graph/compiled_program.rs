@@ -864,12 +864,6 @@ fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) ->
     (offset == 0).then(|| load_graph_file(descriptor, size))?
 }
 
-#[cfg(not(windows))]
-fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
-    let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE);
-    bun_sys::mmap(core::ptr::null_mut(), size, access, flags, descriptor, 0).ok()
-}
-
 #[cfg(windows)]
 fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
     const ALLOCATION_ALIGNMENT: usize = 64 * 1024;
@@ -892,13 +886,6 @@ pub enum SourcePathKind {
 }
 
 impl StandaloneModuleGraph {
-    pub fn room_of_program(size: usize) -> usize {
-        #[cfg(unix)]
-        return size.next_multiple_of(ALIGNMENT_OF_PROGRAMS);
-        #[cfg(not(unix))]
-        size
-    }
-
     pub fn address_of_program(below: usize) -> Option<u64> {
         #[cfg(target_os = "linux")]
         return Some((ADDRESS_OF_PROGRAMS + below) as u64);
@@ -938,91 +925,6 @@ impl StandaloneModuleGraph {
         // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
         let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
         Self::from_payload(payload, length as usize, Some(file))
-    }
-
-    /// `bun test --aot`: programs that were built one after the other for the same realms. The first is the graph of the process. Of the
-    /// others the process takes the image alone: their modules have the paths of their files. The engine wants all images in one range.
-    #[cfg(unix)]
-    pub fn from_descriptors(
-        descriptors: &[Fd],
-    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
-        const ALIGNMENT: usize = ALIGNMENT_OF_PROGRAMS;
-        let mut sizes = Vec::with_capacity(descriptors.len());
-        for &descriptor in descriptors {
-            let size = bun_sys::get_file_size(descriptor).map_err(|_| CORRUPTED)?;
-            let size = usize::try_from(size).map_err(|_| CORRUPTED)?;
-            if size < PAYLOAD_HEADER_SIZE {
-                return Err(CORRUPTED);
-            }
-            sizes.push(size);
-        }
-        let total: usize = sizes
-            .iter()
-            .map(|size| size.next_multiple_of(ALIGNMENT))
-            .sum();
-        let mut address = reserve_range_of_programs(total).ok_or(CORRUPTED)?;
-        // SAFETY: the region is never unmapped.
-        let all = unsafe { core::slice::from_raw_parts(address as *const u8, total) };
-        let _ = bun_resolver::compiled_program::RANGE_OF_ALL_IMAGES.set(all);
-        let mut first = None;
-        let mut above = Vec::new();
-        for (&descriptor, &size) in descriptors.iter().zip(&sizes) {
-            let (access, flags) = (
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_FIXED,
-            );
-            let base = bun_sys::mmap(address as *mut u8, size, access, flags, descriptor, 0)
-                .map_err(|_| CORRUPTED)?;
-            address += size.next_multiple_of(ALIGNMENT);
-            // SAFETY: `size >= PAYLOAD_HEADER_SIZE` bytes are readable at `base`.
-            let length =
-                u64::from_le_bytes(unsafe { base.cast::<[u8; PAYLOAD_HEADER_SIZE]>().read() });
-            if length > (size - PAYLOAD_HEADER_SIZE) as u64 {
-                return Err(CORRUPTED);
-            }
-            let file = ImageFile {
-                descriptor: descriptor.native() as isize,
-                offset: PAYLOAD_HEADER_SIZE as i64,
-            };
-            // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
-            let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
-            if first.is_none() {
-                first = Some(Self::from_payload(payload, length as usize, Some(file))?);
-                continue;
-            }
-            let graph = Self::read_payload(payload, length as usize, Some(file))?;
-            let graph: &'static StandaloneModuleGraph =
-                Box::leak(Box::new(graph.ok_or(CORRUPTED)?));
-            above.push(graph.compiled_program.as_ref().ok_or(CORRUPTED)?);
-        }
-        let _ = bun_resolver::compiled_program::PROGRAMS_ABOVE.set(above.into_boxed_slice());
-        Ok(first.flatten())
-    }
-
-    #[cfg(unix)]
-    pub fn read_image_and_its_offset(
-        descriptor: Fd,
-    ) -> Option<(&'static [u8], &'static StandaloneModuleGraph, u64)> {
-        let size = usize::try_from(bun_sys::get_file_size(descriptor).ok()?).ok()?;
-        if size < PAYLOAD_HEADER_SIZE {
-            return None;
-        }
-        let base = load_graph_file(descriptor, size)?;
-        // SAFETY: `size >= PAYLOAD_HEADER_SIZE` bytes are readable at `base`.
-        let length = u64::from_le_bytes(unsafe { base.cast::<[u8; PAYLOAD_HEADER_SIZE]>().read() });
-        if length > (size - PAYLOAD_HEADER_SIZE) as u64 {
-            return None;
-        }
-        // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
-        let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
-        let graph = Self::read_payload(payload, length as usize, None).ok()??;
-        let graph: &'static StandaloneModuleGraph = Box::leak(Box::new(graph));
-        let image = graph.compiled_program.as_ref()?.first_image();
-        Some((
-            image,
-            graph,
-            (image.as_ptr() as usize - base as usize) as u64,
-        ))
     }
 
     /// What the file of `from_descriptor` holds after the graph.

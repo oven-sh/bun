@@ -142,14 +142,6 @@ impl PositionTypes {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct ExpressionTypes {
-    pub checked: TypeId,
-    /// A guess from how the value is used, made only where `checked` is `any` or `number`.
-    /// Equal to `checked` where the uses say nothing.
-    pub predicted: TypeId,
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct ClassRef {
     pub file: FileId,
@@ -186,13 +178,6 @@ impl EnumConstant {
         let is_known = !self.reads_other_file_or_variable && !self.rests_on_inexact_power;
         is_known.then_some(self.value)
     }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct TypeDisplayName {
-    pub text: Vec<u8>,
-    pub file: FileId,
-    pub position: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

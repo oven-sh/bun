@@ -21,6 +21,10 @@
 # A call that meets no compiled module: no compiled module (the loader holds it | nothing holds it) x <call>, <factory>.
 # The marks: `ok` . `?none`: a side is no state . `?end-leaves`: the end of a mock leaves the module mocked . `?new`: appended by BUN_AOT_REWRITE_MOCK_STATES=1, not yet looked at.
 # A landing that cures a doubted line takes it out; one that adds a step adds its line, with `ok` if a test against `bun test` stands behind it.
+ok ES none (body linked) x jest.mock, a factory
+ok ES runs (body evaluated) > didEndMock > ES none (body failed)
+ok ES runs (body failed) > setMock > ES in place (body evaluated)
+ok ES in place (body evaluated) > didEndMock > ES none (body evaluated)
 ok CommonJS none (body linked) > deferMock > CommonJS waits (body linked)
 ok CommonJS none (body evaluated) > deferMock, asks again > CommonJS waits (body evaluated)
 ok CommonJS runs (body evaluated) > runBodyOfRequiredFileAheadOfMock > CommonJS none (body evaluated)

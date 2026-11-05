@@ -1,11 +1,10 @@
-import { expect } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import {
   type EngineFunctions,
-  functionFiles,
   functionIds,
   helperModules,
   locate,
@@ -27,7 +26,6 @@ import {
   Words,
 } from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
-import { afterAll, beforeAll, describe, test } from "../aot/listed";
 
 const root = join(import.meta.dir, "..", "..");
 const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time"), {
@@ -146,7 +144,7 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 6 and its eleven record kinds", () => {
+  test("the manifest has format 6 and its eight record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
@@ -156,40 +154,9 @@ describe("builtins-manifest.ts", () => {
       "function",
       "declarations",
       "declares-for-every-file",
-      "name",
       "part",
-      "evaluated-functions",
-      "place",
     ]);
-    expect(records.filter(([kind]) => ["part", "evaluated-functions", "place"].includes(kind))).toEqual([
-      ["part", "node/os.ts", "node/fs.ts"],
-      ["evaluated-functions", "builtins/Fifo.ts", "30 40 0 10"],
-      ["place", "node/os.ts", "5", "39", "11", "19"],
-    ]);
-  });
-
-  test("the names are those of the bundled texts, at the words of a second text that stand for their identifiers", () => {
-    expect(records.filter(([kind]) => kind === "name")).toEqual([
-      ["name", "node/fs.ts", "12", "read2", "own"],
-      ["name", moduleOfTwoTexts, String(offsetOfWordOfBothTexts("ahead-of-time")), "set2", "variable"],
-    ]);
-    expect(offsetOfWordOfBothTexts("ahead-of-time")).not.toBe(offsetOfWordOfBothTexts());
-  });
-
-  test("the positions of all files are one file of the archive, each part behind the id of its file and its length", () => {
-    // 7 bits a byte, the lowest first.
-    const idOf = (file: string) => {
-      const id = moduleList.indexOf(file);
-      expect(id).toBeWithin(0, 128 * 128);
-      return id < 128 ? [id] : [(id & 127) | 128, id >> 7];
-    };
-    expect([...readArchive(fixture.archive).frames.get("positions")!.text()]).toEqual([
-      ...[...idOf("node/fs.ts"), 3, 1, 2, 3],
-      ...[...idOf(moduleOfTwoTexts), 1, 4],
-      ...[...idOf("node/os.ts"), 2, 5, 6],
-      // The files of functions follow on the modules, from 1 << 20.
-      ...[functionFiles.indexOf("builtins/Fifo.ts") | 128, 128, 64, 1, 7],
-    ]);
+    expect(records.filter(([kind]) => kind === "part")).toEqual([["part", "node/os.ts", "node/fs.ts"]]);
   });
 
   test("a module is compressed as what follows on the text that is evaluated for it", () => {

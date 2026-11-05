@@ -1360,14 +1360,28 @@ function isStrictlyValidValue(message: $Node.OutgoingMessage, name: string, valu
   return false;
 }
 
-function storeInDictionary(message: $Node.OutgoingMessage, name: string, value: $Node.HttpHeaderValue): void {
-  const field = validatedLowercaseHeaderName(name);
-  validateHeaderValueLenient(name, value, message._isLenientHeaderValidation());
-
+function putInDictionary(
+  message: $Node.OutgoingMessage,
+  field: string,
+  name: string,
+  value: $Node.HttpHeaderValue,
+): void {
   let headers = message[kOutHeaders];
   if (headers === null) message[kOutHeaders] = headers = { __proto__: null } as $Node.OutgoingHttpHeaders;
 
   headers[field] = [name, value];
+}
+
+function storeInDictionary(message: $Node.OutgoingMessage, name: string, value: $Node.HttpHeaderValue): void {
+  const field = validatedLowercaseHeaderName(name);
+  validateHeaderValueLenient(name, value, message._isLenientHeaderValidation());
+  putInDictionary(message, field, name, value);
+}
+
+// The name and the value have been looked at. A second look would run a toString() of the program once more.
+function putSpilledHeader(exchange: Exchange, key: string, name: string, value: $Node.HttpHeaderValue): void {
+  spillHeaders(exchange);
+  putInDictionary(exchange.response, key, name, value);
 }
 
 function storeSpilledHeader(exchange: Exchange, name: string, value: $Node.HttpHeaderValue): void {
@@ -1391,13 +1405,18 @@ function storeUnexpectedHeader(
     isStrictlyValid = isStrictlyValidValue(exchange.response, name, value);
   } else {
     validateHeaderValueLenient(name, value, exchange.response._isLenientHeaderValidation());
+    // The look has run code of the program, which may have set or removed a header.
+    if (exchange.shape !== shape) {
+      putSpilledHeader(exchange, key, name, value);
+      return;
+    }
   }
   const index = indexInShape(shape, key);
   if (index >= 0) {
     if (shapeAt(shape, index).name !== name) {
       const respelled = shapeRespelled(shape, index, name, key);
       if (respelled === null) {
-        storeSpilledHeader(exchange, name, value);
+        putSpilledHeader(exchange, key, name, value);
         return;
       }
       exchange.shape = respelled;
@@ -1422,7 +1441,7 @@ function storeUnexpectedHeader(
   }
   const next = shape.count === kMaxShapedHeaders ? null : childOf(shape, name, key);
   if (next === null) {
-    storeSpilledHeader(exchange, name, value);
+    putSpilledHeader(exchange, key, name, value);
     return;
   }
   shape.nextName = name;
@@ -1466,6 +1485,10 @@ function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHe
       exchange.holdsNumber = true;
     } else {
       validateHeaderValueLenient(name, value, exchange.response._isLenientHeaderValidation());
+      if (exchange.shape !== shape) {
+        putSpilledHeader(exchange, next.key, name, value);
+        return;
+      }
       putOddValue(exchange, shape.count, value);
     }
     exchange.shape = next;
@@ -2274,8 +2297,10 @@ ObjectDefineProperty(OutgoingMessage.prototype, "headers", {
   },
   set(this: $Node.OutgoingMessage, val: Record<string, $Node.HttpHeaderValue> | null | undefined) {
     if (val == null) {
+      spillHeadersOf(this);
       this[kOutHeaders] = null;
     } else if (typeof val === "object") {
+      spillHeadersOf(this);
       this[kOutHeaders] = { __proto__: null } as $Node.OutgoingHttpHeaders;
       const keys = ObjectKeys(val);
       // Retain for(;;) loop for performance reasons

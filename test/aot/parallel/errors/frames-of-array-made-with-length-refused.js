@@ -1,5 +1,5 @@
 // Prints the frames and call sites of the RangeError for a length that is refused, for each way to spell the call of Array: written Array(n) and new Array(n) the array is made in the caller.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 "use strict";
 const framesOf = error => error.stack.split("\n").slice(1).map(line => /at (?:new )?(\S+)/.exec(line)?.[1]).filter(name => name && !name.includes("/") && !name.includes(":")).join(" < ");
 const sitesOf = run => {

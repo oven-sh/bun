@@ -1,6 +1,6 @@
 // The name that a stack trace and a call site show for a function: as it is written, behind Object.defineProperty(f, "name", ..), behind `delete f.name`,
 // and behind a second definition.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 import named from "./named.mjs";
 
 const frame = () =>

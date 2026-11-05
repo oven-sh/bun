@@ -569,7 +569,6 @@ test.concurrent(
       cmd: [bunExe(), "--smol", "-e", script],
       env: {
         ...bunEnv,
-        WebKitMallocForceEnabled: "1",
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",

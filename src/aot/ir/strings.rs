@@ -168,6 +168,7 @@ impl StringTable {
         self.ids.retain(|id| id.index() < length);
     }
 
+    #[cfg(test)]
     pub fn find(&self, bytes: &[u8]) -> Option<StringId> {
         self.find_hashed(StringTable::hash_of(bytes), bytes)
     }
@@ -203,10 +204,12 @@ impl StringTable {
         self.len() == 0
     }
 
+    #[cfg(test)]
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
     }
 
+    #[cfg(test)]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }

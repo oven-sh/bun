@@ -215,10 +215,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let function = self.lower_expression(site.callee);
         let callee = Callee::without_key(function, None, self.file.find_callee_name(site.callee));
-        let arguments = self.lower_arguments(site.args);
+        let arguments = self.lower_arguments_of_construction(site);
         let value = self.emit_new_expression(expression, callee, arguments);
         self.record_state_creation(expression, function, value);
         value
+    }
+
+    // The engine reads the file that a Worker starts from off a text or a URL object.
+    fn lower_arguments_of_construction(&mut self, site: Call) -> Arguments {
+        let file = &*self.file;
+        let arguments: SmallVec<[ExprId; 4]> = file.hir.ids(site.args).collect();
+        let is_worker = || {
+            let constructor = table::find_name(b"Worker").and_then(table::global);
+            match file.builtins.of_expr(file.skip_type_syntax(site.callee)) {
+                Some(Resolved::Builtin(callee)) => {
+                    Some(table::canonical_id(callee.id)) == constructor.map(table::canonical_id)
+                }
+                _ => false,
+            }
+        };
+        let text = match arguments.first() {
+            Some(&name) if matches!(file.hir[name].kind, ExprKind::String(_)) => None,
+            Some(&name) if !intrinsic::has_spread(file.hir, &arguments) => file
+                .find_text_made_of_own_path(name)
+                .filter(|_| is_worker()),
+            _ => None,
+        };
+        let Some(text) = text else {
+            return self.lower_argument_slice(&arguments);
+        };
+        let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        values.push(self.emit_text(&text));
+        for &argument in &arguments[1..] {
+            values.push(self.lower_expression(argument));
+        }
+        Arguments::Values(values)
     }
 
     pub(in crate::lower) fn lower_argument_slice(&mut self, arguments: &[ExprId]) -> Arguments {

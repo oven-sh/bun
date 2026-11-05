@@ -110,7 +110,7 @@ for (const access of [hasWanted, object => storeWanted(object, 2)]) {
   try { access(new Proxy(Object.freeze({ wanted: 1 }), { has() { return false; }, set() { return true; } })); } catch (error) { console.log(error.constructor.name, "at", place(error)); }
 }
 // Env: JSC_aotCountsPath=/dev/null
-// Todo: only frames (stack-trace-only differences are fine, 11-02): frames stored as data in its last comment
+// Todo: only frames (stack-trace-only differences are fine): frames stored as data in its last comment
 /* Output:
 methods of a literal: 7000 8360 999 -999 | true
 methods of a class: 7000 4200 4160 999 -999 | true

@@ -112,7 +112,7 @@ impl LinkedFiles {
 // By file: the imports lead from it to one of `targets`, or it is one. An import is the imported file and then its importer.
 fn find_files_that_lead_to(
     targets: Vec<FileId>,
-    imports: Vec<(FileId, FileId)>,
+    imports: &[(FileId, FileId)],
     file_count: usize,
 ) -> Vec<bool> {
     let mut leads_there = vec![false; file_count];
@@ -121,7 +121,7 @@ fn find_files_that_lead_to(
     }
     // By imported file: where its importers end in `importers`, and once they are filled in, where they begin.
     let mut bounds = vec![0u32; file_count + 1];
-    for &(imported, _) in &imports {
+    for &(imported, _) in imports {
         bounds[imported.idx()] += 1;
     }
     let mut end = 0;
@@ -130,7 +130,7 @@ fn find_files_that_lead_to(
         *bound = end;
     }
     let mut importers = vec![FileId(0); imports.len()];
-    for &(imported, importer) in &imports {
+    for &(imported, importer) in imports {
         bounds[imported.idx()] -= 1;
         importers[bounds[imported.idx()] as usize] = importer;
     }
@@ -683,12 +683,7 @@ impl ModuleGraph {
             || self.is_placeholder(file)
     }
 
-    /// A late site names the module, or a module that a late site may run asks for it.
-    pub fn exposed(&self, module: ModuleRef) -> bool {
-        self.plan.has(&self.plan.order.is_exposed, module)
-    }
-
-    /// Somebody may look at the module while its body runs: it lies on a cycle of requests, or it is exposed.
+    /// Somebody may look at the module while its body runs: it lies on a cycle of requests, a late site names it, or a module that a late site may run asks for it.
     pub fn half(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.order.is_half, module)
     }
@@ -722,6 +717,14 @@ impl ModuleGraph {
             && self
                 .plan
                 .has(&self.plan.order.may_be_imported_while_it_runs, module)
+    }
+
+    /// `Files::is_es_module_to_imports`: CommonJS to a `require`, and to the loader behind `import` an ES module, which has its turn among the modules.
+    pub fn is_es_module_to_imports(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::File(_))
+            && self
+                .plan
+                .has(&self.plan.order.is_es_module_to_imports, module)
     }
 
     /// A file has `import * as` of the module.
@@ -1221,7 +1224,7 @@ impl ModuleGraph {
                 imports.push((target, file));
             }
         }
-        let leads_to_target = find_files_that_lead_to(targets, imports, successors.len());
+        let leads_to_target = find_files_that_lead_to(targets, &imports, successors.len());
         for imported in &mut successors {
             imported.retain(|&file| leads_to_target[file.idx()]);
         }
@@ -1257,6 +1260,7 @@ impl ModuleGraph {
     }
 
     /// The ES modules at which a graph of imports is linked: entry points, and what `import()` or a `require` names.
+    #[cfg(test)]
     pub fn prefix_roots(&self) -> &[FileId] {
         &self.plan.order.prefix_roots
     }

@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use bun_core::StackCheck;
 use bun_js_parser::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
-    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES, is_pure_global_identifier,
 };
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl, Parent};
@@ -107,6 +107,11 @@ pub(crate) fn is_read_left_out_by_bun_run(member: BuiltinId) -> bool {
         reads
     });
     reads.binary_search(&member).is_ok()
+}
+
+// Nor a free name that its parser lists.
+pub(crate) fn is_name_left_out_by_bun_run(name: &[u8]) -> bool {
+    is_pure_global_identifier(name)
 }
 
 fn is_arithmetic(op: BinOp) -> bool {
@@ -349,7 +354,10 @@ impl<'a, 's> Removable<'a, 's> {
         }
         if self.has_decorator(node.modifiers)
             || !node.other_extends.is_empty()
-            || !self.stored_value(node.extends)
+            // The check of the heritage evaluates it, so nothing else takes its value.
+            || !self.with_value_taken(self.has_valid_heritage(class), || {
+                self.expression(node.extends)
+            })
         {
             return None;
         }
@@ -454,6 +462,14 @@ impl<'a, 's> Removable<'a, 's> {
         let Some(constructor) = self.builtins.builtin_of_expression(callee) else {
             return false;
         };
+        // `bun run` leaves the construction out only where nothing takes the object. Elsewhere a lock alone proves that the name still holds the constructor.
+        let may_be_replaced = matches!(
+            self.builtins.of_expr(callee),
+            Some(Resolved::Builtin(path)) if path.mutability != Mutability::AlwaysLocked
+        );
+        if may_be_replaced && self.is_value_taken.get() {
+            return false;
+        }
         let mut arguments = hir.ids(call.args);
         let (Some(argument), None) = (arguments.next(), arguments.next()) else {
             return call.args.is_empty()
@@ -839,7 +855,13 @@ impl<'a, 's> Removable<'a, 's> {
         // A holder lists such a member from its first read on. `bun run` leaves a path out with every read on the way to it.
         let is_unused = !self.is_value_taken.get();
         let mut is_left_out = false;
-        (members.is_empty() || is_locked)
+        // A name of the global object that is not locked may be a getter by now, or gone. `bun run` reads it, but for a name that its parser lists where nothing takes the value.
+        let is_name_left_out = || {
+            let name = self.find_free_name(expression);
+            is_unused
+                && name.is_some_and(|name| is_name_left_out_by_bun_run(self.atoms.bytes(name)))
+        };
+        (is_locked || (members.is_empty() && is_name_left_out()))
             && members.iter().all(|member| {
                 is_left_out |= is_unused && is_read_left_out_by_bun_run(member.id);
                 is_read_without_code(member.id, false)

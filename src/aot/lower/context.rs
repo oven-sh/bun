@@ -4,7 +4,7 @@ mod shown_names;
 #[cfg(test)]
 mod tests;
 
-use core::cell::OnceCell;
+use core::cell::{OnceCell, RefCell};
 use core::mem::take;
 use std::borrow::Cow;
 
@@ -13,7 +13,7 @@ use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
-use bun_sema::erasure::{TypeRanges, find_type_ranges};
+use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
 use bun_sema::hir_from_data::DataValue;
@@ -23,7 +23,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
-use super::LoweredFile;
 use super::class::{ClassState, find_fields_under_signed_members};
 use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
@@ -34,9 +33,10 @@ use super::said_types::SaidTypes;
 use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::tables::TaskState;
 use super::types::TypeState;
+use super::{KnownHelpersLowered, LoweredFile};
 use crate::builtins::id::RuntimeModule;
 use crate::builtins::{
-    BuiltinClass, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+    BuiltinClass, BuiltinId, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
 };
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
@@ -45,6 +45,7 @@ use crate::engine::describe_regexp_syntax_error;
 use crate::ir::generated::FunctionRole;
 use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
+use crate::load::contents::FixedBuiltins;
 use crate::load::test_runner_names::written_name_of_local;
 use crate::load::{self, Sources};
 use crate::modules::{CommonJsExports, KnownMemberValues, KnownObjects, ModuleGraph, ModuleRef};
@@ -147,12 +148,23 @@ pub struct LoweringInputs<'a> {
     pub reads_source_paths: bool,
     /// `ProgramContents::replaced_builtins`
     pub replaced_builtins: &'a [u32],
+    /// `ProgramContents::fixed_builtins`
+    pub fixed_builtins: &'a FixedBuiltins,
+    /// `ProgramContents::names_added_to_builtins`
+    pub names_added_to_builtins: &'a [(BuiltinId, Atom)],
     pub limits: &'a LimitValues,
     pub options: LoweringOptions,
     pub said_types: &'a SaidTypes,
 }
 
 impl<'a> LoweringInputs<'a> {
+    /// A test run lays a name on `Object.prototype`: an accessor may lie above every ordinary object. Never in an executable.
+    pub(crate) fn names_lie_on_object_prototype(&self) -> bool {
+        let added = self.names_added_to_builtins;
+        let first = added.partition_point(|&(holder, _)| holder < BuiltinId::ObjectPrototype);
+        (added.get(first)).is_some_and(|&(holder, _)| holder == BuiltinId::ObjectPrototype)
+    }
+
     // The file is in the build for the types that it declares alone: the program has no module of it.
     pub(crate) fn is_left_out(&self, file: FileId) -> bool {
         self.modules.is_left_out(ModuleRef::File(file))
@@ -179,8 +191,10 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(crate) hir: &'p hir::File<'s>,
     pub(crate) bound: &'p Bound<'s>,
     pub(crate) compiled: &'p CompiledModule<'s>,
-    /// What the text of a function of this file is given without.
-    pub(crate) type_ranges: TypeRanges,
+    /// The expressions in whose place `bun build` has a value: `finish_function_texts`.
+    pub(in crate::lower) values_written_in_place: RefCell<Vec<(ExprId, Constant)>>,
+    /// The parts of enums that are declared in functions, as code: `note_enum_as_code`.
+    pub(in crate::lower) enums_written_as_code: Vec<ReplacedText>,
     pub(crate) builtins: &'a ResolvedBuiltins,
     /// `Removable::find_simplified_expressions`
     simplified_expressions: Vec<ExprId>,
@@ -206,6 +220,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_texts: QuotedTexts,
+    pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
     scratch: BuilderScratch,
 }
 
@@ -228,6 +243,7 @@ fn analyze_scopes_of_file(
         fields_under_signed_members,
         holds_registry,
         max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
+        names_lie_on_object_prototype: inputs.names_lie_on_object_prototype(),
     })
 }
 
@@ -264,10 +280,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             &fields_under_signed_members,
             &holds_registry,
         );
-        let type_ranges = match inputs.options.embeds_function_text {
-            true => find_type_ranges(hir),
-            false => TypeRanges::default(),
-        };
         let removable = Removable::of_file(
             queries.files(),
             file,
@@ -289,7 +301,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             hir,
             bound,
             compiled,
-            type_ranges,
+            values_written_in_place: RefCell::default(),
+            enums_written_as_code: Vec::new(),
             builtins: file_inputs.builtins,
             simplified_expressions: removable.find_simplified_expressions(),
             invalid_regexp_literals_left_out: Vec::new(),
@@ -309,6 +322,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             enum_member_reads: FxHashMap::default(),
             counted_places,
             quoted_texts: QuotedTexts::default(),
+            known_helpers_lowered: KnownHelpersLowered::default(),
             scratch: BuilderScratch::default(),
         }
     }
@@ -378,6 +392,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             diagnostics,
             layouts,
             functions,
+            known_helpers_lowered,
             ..
         } = self;
         task.layout_places = layouts.into_places();
@@ -386,6 +401,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             fragment: fragment.finish(module, task),
             diagnostics,
             queries,
+            known_helpers: known_helpers_lowered,
         }
     }
 
@@ -453,13 +469,16 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
         match self.short_binding_name(binding) {
             Some(name) => name,
-            None => {
-                let name = self.queries.atom_bytes(written);
-                match written_name_of_local(name) {
-                    same if same.len() == name.len() => self.intern_atom(written),
-                    of_test_runner => self.intern_bytes(of_test_runner),
-                }
-            }
+            None => self.intern_written_name(written),
+        }
+    }
+
+    /// The name that the program or the React Compiler has written, for one that the build has put in its place.
+    pub(crate) fn intern_written_name(&mut self, name: Atom) -> StringId {
+        let bytes = self.queries.atom_bytes(name);
+        match written_name_of_local(bytes) {
+            same if same.len() == bytes.len() => self.intern_atom(name),
+            written => self.intern_bytes(written),
         }
     }
 

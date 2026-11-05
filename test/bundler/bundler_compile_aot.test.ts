@@ -1,8 +1,7 @@
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { run as runCommand } from "../aot/harness/run";
-import { describe, test } from "../aot/listed";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const usesImage = (stdout: string) =>

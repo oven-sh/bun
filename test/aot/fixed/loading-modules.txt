@@ -262,7 +262,7 @@ there index.js
 there, as a URL index.js
 absent ResolveMessage MODULE_NOT_FOUND
 #### broken-files-behind-computed-name/main.js
-// Plain Bun and the old compiler say what is wrong with a broken file in the words of the loader that reads it at run time ("BuildMessage: Unexpected ;", "JSON Parse error: Unrecognized token '/'"): the old compiler embedded the raw text for that. An executable has no such loader now: a program that does not parse throws what the build's parser said, and a file of data that does not parse is not there.
+// Plain Bun says what is wrong with a broken file in the words of the loader that reads it at run time ("BuildMessage: Unexpected ;", "JSON Parse error: Unrecognized token '/'"): an earlier compiler embedded the raw text to say the same. An executable has no such loader now: a program that does not parse throws what the build's parser said, and a file of data that does not parse is not there.
 const tried = async (label, load) => {
   try {
     console.log(label, JSON.stringify((await load()).default));

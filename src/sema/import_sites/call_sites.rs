@@ -74,9 +74,12 @@ fn has_fixed_callee(
     match kind {
         ImportSiteKind::Require(_) => match follow_to_own_require(text, callee, left) {
             Some(OwnRequire::OfFile) => holds_require(),
-            Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::OfOtherFile(_)) => {
-                true
-            }
+            Some(
+                OwnRequire::Made
+                | OwnRequire::MadeForPath(_)
+                | OwnRequire::OfOtherFile(_)
+                | OwnRequire::MadeInOtherFile(_),
+            ) => true,
             Some(OwnRequire::MadeForChoice(_)) => false,
             None => match hir.member_key(callee) {
                 Some((_, MemberKey::Name(name))) if name == known::require => holds_require(),
@@ -337,6 +340,31 @@ fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom)
     may_be_export_of_test_runner(hir, bound, object, holders)
 }
 
+// The transpiler of `bun test` knows `jest` and `vi` by the name that an import statement binds, and by none that holds its value: `reads_frame_of_caller` in
+// src/js_parser/lower/hoist_test_mocks.rs.
+fn is_name_that_transpiler_knows(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    object: ExprId,
+    holders: &[Atom],
+) -> bool {
+    match expr_kind(hir, object) {
+        Some(ExprKind::Ident(_)) => {
+            let imported = settled_symbol(hir, bound, object)
+                .and_then(|symbol| find_imported_export(hir, bound, symbol));
+            matches!(imported, Some((specifier, Some(export)))
+                if [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
+                    && holders.contains(&export))
+        }
+        // `inWorker ? vi : imported`: so the load stage writes a free `vi` in a file that a Worker may load too. No other free `vi` is left in such a file.
+        Some(ExprKind::Cond { branches, .. }) => {
+            is_free_name(hir, bound, hir.branches(branches).yes, holders)
+                && may_be_export_of_test_runner(hir, bound, object, holders)
+        }
+        _ => false,
+    }
+}
+
 // `vi.importActual("./a")`, `expect(a).toMatchInlineSnapshot()`: native code finds the file or the position of the call in the frame of its caller.
 fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
     let callee = hir.skip_type_assertions(hir[call].callee);
@@ -371,11 +399,7 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
         _ => return false,
     };
     let object = hir.skip_type_assertions(object);
-    // `inWorker ? vi : imported`: so the load stage writes a free `vi` in a file that a Worker may load too.
-    matches!(
-        expr_kind(hir, object),
-        Some(ExprKind::Ident(_) | ExprKind::Cond { .. })
-    ) && may_be_export_of_test_runner(hir, bound, object, holders)
+    is_name_that_transpiler_knows(hir, bound, object, holders)
 }
 
 /// In a test run Bun's transpiler prints `return vi.importActual("./a")` as `const value = vi.importActual("./a"); return value`, and leaves such an
@@ -404,17 +428,12 @@ pub fn ends_in_call_that_reads_frame_of_caller(
 fn is_export_of_test_runner(
     hir: &File<'_>,
     bound: &Bound<'_>,
-    mut object: ExprId,
+    object: ExprId,
     holders: &[Atom],
 ) -> bool {
-    // `jest.mock(a).mock(b)`: the methods of `jest` answer `jest`.
-    while let Some(ExprKind::Call(call)) = expr_kind(hir, object) {
-        let callee = hir.skip_type_assertions(hir[call].callee);
-        let Some((receiver, MemberKey::Name(_))) = hir.member_key(callee) else {
-            return false;
-        };
-        object = hir.skip_type_assertions(receiver);
-    }
+    let Some(mut object) = find_receiver_of_first_method(hir, object) else {
+        return false;
+    };
     let imported = settled_symbol(hir, bound, object).and_then(|symbol| {
         find_imported_export(hir, bound, symbol)
             .or_else(|| find_required_export(hir, bound, symbol))
@@ -460,6 +479,18 @@ fn is_export_of_test_runner(
         members.extend(below);
         is_holder(&members)
     })
+}
+
+// `jest.mock(a).mock(b)`: the methods of `jest` answer `jest`.
+fn find_receiver_of_first_method(hir: &File<'_>, mut object: ExprId) -> Option<ExprId> {
+    while let Some(ExprKind::Call(call)) = expr_kind(hir, object) {
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let Some((receiver, MemberKey::Name(_))) = hir.member_key(callee) else {
+            return None;
+        };
+        object = hir.skip_type_assertions(receiver);
+    }
+    Some(object)
 }
 
 fn find_required_export(
@@ -514,10 +545,13 @@ fn may_be_export_of_test_runner(
     if is_export_of_test_runner(hir, bound, object, holders) {
         return true;
     }
+    let Some(object) = find_receiver_of_first_method(hir, object) else {
+        return false;
+    };
     if let Some(ExprKind::Cond { branches, .. }) = expr_kind(hir, object) {
         let branches = hir.branches(branches);
         return [branches.yes, branches.no].into_iter().any(|branch| {
-            is_export_of_test_runner(hir, bound, hir.skip_type_assertions(branch), holders)
+            may_be_export_of_test_runner(hir, bound, hir.skip_type_assertions(branch), holders)
         });
     }
     let Some(symbol) = settled_symbol(hir, bound, object) else {
@@ -720,7 +754,9 @@ fn find_path_to_resolve_from(
     let written = [Some(callee), object.map(|it| hir.skip_type_assertions(it))];
     for require in written.into_iter().flatten() {
         match find_own_require(hir, bound, Some(decisions), require) {
-            Some(OwnRequire::OfOtherFile(path)) if !starts_at_own_directory => {
+            Some(OwnRequire::OfOtherFile(path) | OwnRequire::MadeInOtherFile(path))
+                if !starts_at_own_directory =>
+            {
                 return Ok(Some(ResolvedFrom::File(path)));
             }
             Some(OwnRequire::MadeForPath(path)) if !starts_at_own_directory => {

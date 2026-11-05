@@ -1,8 +1,7 @@
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { unsupported } from "../aot/harness/compiler";
 import { sharedBuilds, sizeOf } from "../aot/harness/shared-builds";
-import { describe, test } from "../aot/listed";
 import { canTrim, featureNamed, saysFeatureWasRemoved, withoutFeatures } from "./compile-trim-features";
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {

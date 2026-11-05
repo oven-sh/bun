@@ -79,7 +79,9 @@ for (const [label, constructor] of kept) console.log(label + ": " + new construc
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
 // CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
+// CHECK-NEXT: v4 = Integer integer=1
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: PropSet v3, v5 key="marked"
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="marked"

@@ -1,5 +1,0 @@
-// Typed code. A field or a member of an enum is read as its constant only where no store gives it another value.
-const say = (run: () => unknown) => { try { console.log(run()); } catch (e) { console.log((e as Error).name + ": " + (e as Error).message); } };
-import { read, N } from "./m";
-N.bump();
-say(() => [read(), N.b].join());

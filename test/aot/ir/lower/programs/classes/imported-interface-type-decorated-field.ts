@@ -85,7 +85,9 @@ export interface Shape {
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
 // CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_7]]
+// CHECK-NEXT: v4 = Data data=[[d_7]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_8]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v3, v5 key="held"
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK: function {{*}}
@@ -101,14 +103,4 @@ export interface Shape {
 // CHECK-NEXT: v11 = Call v8, v6, v3, v0, v10 calleeKey="log" calleeName="console.log"
 // CHECK-NEXT: v12 = Undefined
 // CHECK-NEXT: Return v12
-// CHECK-NEXT: }
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=[[L_4]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
-// CHECK-NEXT: v2 = Data data=[[d_8]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_9]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PropSet v1, v3 key="held"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
 // CHECK-NEXT: }

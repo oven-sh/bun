@@ -3,6 +3,8 @@
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_ast::{Loc, Source};
+use bun_core::fmt::format_json_string_utf8;
+use bun_core::strings::index_of_char_usize;
 use bun_js_parser::{ExpandedImportMetaGlob, ImportMetaGlobFiles, InvalidImportMetaGlob};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
@@ -11,7 +13,6 @@ use bun_sema::hir::{
     PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange,
     TypeNodeId, TypeNodeKind, rare,
 };
-use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{EarlyTransformRequest, TreeChange};
 use bun_sema::session::Arena;
 use bun_sema_driver::host::to_native;
@@ -29,6 +30,7 @@ mod tests;
 
 // No program can write such a name.
 const LOCAL_NAME_PREFIX: &[u8] = b"%glob:";
+const EXPORT_OF_EAGER_ENTRY: &str = "entry";
 const EAGER_IN_COMMON_JS: &[u8] = b"The \"import.meta.glob\" option \"eager\" needs import statements, so it can't be used in a CommonJS module";
 const NOT_CALLED_DIRECTLY: &[u8] =
     b"\"import.meta.glob\" is expanded at transpile time, so call it directly and pass literals";
@@ -230,17 +232,19 @@ impl Writer<'_, '_> {
         self.arrow(Span::EMPTY, FnBody::Expr(value))
     }
 
-    /// `const local = require(path)`: a CommonJS file cannot hold an import statement. A bundle loads the module at the same place, the head of the file's body.
+    /// `const local = require("%glob:type:path").entry`: a CommonJS file cannot hold an import statement, and `require(path)` answers otherwise than a statement brings for a CommonJS file, for data
+    /// and for a text. Which of them the entry is shows once it is loaded, so an ES module holds the statement: `write_module_of_eager_entry`.
+    /// A bundle loads the entry at the same place, the head of the file's body.
     fn write_require(&mut self, files: &ImportMetaGlobFiles, path: &[u8], local: Atom) {
         let written = (self.pos, self.end);
         (self.pos, self.end) = (POSITION, POSITION);
         let require = self.expression(ExprKind::Ident(known::require));
-        let path = self.specifier(path, SpecifierKind::RequireCall);
-        let call = self.call(require, &[path]);
-        let mut value = self.expression(ExprKind::Call(call));
-        if !files.import.is_empty() {
-            value = self.member(value, &files.import);
-        }
+        let import_type = files.import_type.unwrap_or_default();
+        let specifier = [LOCAL_NAME_PREFIX, import_type, b":", path].concat();
+        let specifier = self.specifier(&specifier, SpecifierKind::RequireCall);
+        let call = self.call(require, &[specifier]);
+        let module = self.expression(ExprKind::Call(call));
+        let value = self.member(module, EXPORT_OF_EAGER_ENTRY.as_bytes());
         let pat = (self.file).pat(PatKind::Ident(local), POSITION, POSITION);
         let statement = write_declaration(&mut self.file, pat, value);
         self.head.push(statement);
@@ -301,7 +305,12 @@ impl Writer<'_, '_> {
             true => self.write_require(files, path, local),
             false => self.write_import(files, path, local),
         }
-        self.expression(ExprKind::Ident(local))
+        let entry = self.expression(ExprKind::Ident(local));
+        // A bundle reads the name off the namespace too: a CommonJS entry that lacks it answers undefined, where a statement that names it would not link.
+        match self.is_common_js && !files.import.is_empty() {
+            true => self.member(entry, &files.import),
+            false => entry,
+        }
     }
 
     fn write_files(&mut self, expression: ExprId, files: &ImportMetaGlobFiles) {
@@ -357,6 +366,19 @@ impl Writer<'_, '_> {
         let assignment = self.expression(ExprKind::Assign { op, target, value });
         self.file.stmt(StmtKind::Expr(assignment), POSITION)
     }
+}
+
+/// `export * as entry from "path" with { type: "text" };`, for the specifier that `write_require` has written. `None`: it is no such specifier.
+pub(crate) fn write_module_of_eager_entry(specifier: &[u8]) -> Option<Vec<u8>> {
+    let rest = specifier.strip_prefix(LOCAL_NAME_PREFIX)?;
+    let (import_type, path) = rest.split_at(index_of_char_usize(rest, b':')?);
+    let quote = |text: &[u8]| format_json_string_utf8(text, Default::default()).to_string();
+    let attributes = match import_type {
+        [] => String::new(),
+        _ => format!(" with {{ type: {} }}", quote(import_type)),
+    };
+    let path = quote(&path[1..]);
+    Some(format!("export * as {EXPORT_OF_EAGER_ENTRY} from {path}{attributes};\n").into_bytes())
 }
 
 fn warn(messages: &LoadMessages, path: &[u8], text: &[u8], invalid: &InvalidImportMetaGlob) {
@@ -423,7 +445,8 @@ pub(crate) fn expand_calls<'s>(
     if !calls.iter().any(|call| find_expanded(call).is_some()) {
         return TreeChange::Unchanged;
     }
-    let is_common_js = request.module_format == ModuleFormat::CommonJs;
+    // Bun's parser decides the format behind the expansion, so the import statements of eager entries count like written ones.
+    let is_common_js = !request.takes_import_statements;
     let mut writer = Writer {
         file: FileBuilder::from_file(request.hir),
         atoms,
@@ -440,10 +463,10 @@ pub(crate) fn expand_calls<'s>(
         let written = writer.file[call.expression];
         (writer.pos, writer.end) = (written.pos, written.end);
         match &found.result {
-            // `bun test` transpiles a file by itself, and a CommonJS file takes no import statement. A bundle has `require`, which takes no attribute.
+            // `bun test` transpiles a file by itself, and a CommonJS file takes no import statement. What a plugin names is no file, and has no further module.
             Ok(files)
                 if is_common_js
-                    && (runs_tests || files.import_type.is_some())
+                    && (runs_tests || source.plugin_module.is_some())
                     && files.eager
                     && !files.only_keys
                     && !files.entries.is_empty() =>

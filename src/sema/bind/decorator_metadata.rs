@@ -181,6 +181,14 @@ pub fn is_legacy_decorated_member(hir: &File<'_>, member: MemberId) -> bool {
         && (has_decorators(hir, hir[member].modifiers) || has_parameter_decorator(hir, member))
 }
 
+/// With `experimentalDecorators`, Bun's transpiler takes the value of such a field out of the body of a class declaration and assigns it.
+pub fn is_field_moved_by_legacy_decorators(hir: &File<'_>, member: MemberId) -> bool {
+    let node = hir[member];
+    node.kind == MemberKind::Property
+        && !node.flags.contains(Flags::ACCESSOR)
+        && is_legacy_decorated_member(hir, member)
+}
+
 pub(super) fn has_decorators(hir: &File<'_>, modifiers: Span<ModifierId>) -> bool {
     modifiers.iter().any(|modifier| match hir[modifier].kind {
         ModifierKind::Decorator(_) => true,

@@ -203,11 +203,10 @@ fn find_enum_member_at_end(
         return None;
     }
     files.decls_of(member).iter().find_map(|&(file, decl)| {
-        if let Decl::EnumMember(member) = decl {
-            Some((file, member))
-        } else {
-            None
-        }
+        let Decl::EnumMember(member) = decl else {
+            return None;
+        };
+        Some((file, files.bound(file).last_made_enum_member(member)?))
     })
 }
 

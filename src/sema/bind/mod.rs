@@ -768,6 +768,7 @@ pub enum ScopeKind {
     /// `With`, `FieldInitializer`, `ClassDecorators` and `ImplicitBlock` declare nothing and exist only with `BindOptions::runtime`.
     With(StmtId),
     FieldInitializer(MemberId),
+    /// Encloses code that is written in the class and runs outside it: `Bound::runtime_parent_scope`.
     ClassDecorators(ClassId),
     ImplicitBlock(FnId),
 }

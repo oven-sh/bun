@@ -491,74 +491,69 @@ main();
 // CHECK-LABEL: function {{*}}name="awaitProtoThen"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewObject layout=[[L_1]]
-// CHECK-NEXT: v2 = NewClosure v1 function=[[f_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[f_2]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[f_3]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v6 = Data data=[[d_4]]
-// CHECK-NEXT: PutEnvironmentField v1, v6 layout=[[L_1]]
-// CHECK-NEXT: v8 = Builtin builtin=Object
-// CHECK-NEXT: v9 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v10 = Call v9, v8, v6 calleeName="Object.create"
-// CHECK-NEXT: PutEnvironmentField v1, v10 layout=[[L_1]] field=1
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: PropSet v10, v12 key="v"
-// CHECK-NEXT: v14 = String string="first"
-// CHECK-NEXT: v15 = Call v5, -, v14 calleeName="use"
-// CHECK-NEXT: v16 = Await v15
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v18 = Call v17, -, v3 calleeName="h0"
-// CHECK-NEXT: v19 = String string="second"
-// CHECK-NEXT: v20 = Call v5, -, v19 calleeName="use"
-// CHECK-NEXT: v21 = Await v20
-// CHECK-NEXT: v22 = Undefined
-// CHECK-NEXT: Return v22
+// CHECK-NEXT: v1 = Undefined
+// CHECK-NEXT: v2 = Undefined
+// CHECK-NEXT: v3 = Data data=[[d_1]]
+// CHECK-NEXT: v4 = NewObject layout=[[L_2]]
+// CHECK-NEXT: SetLiteralPrototype v4, v3 [refusesOtherValues]
+// CHECK-NEXT: v6 = FinishObject v4
+// CHECK-NEXT: v7 = Integer integer=1
+// CHECK-NEXT: PropSet v6, v7 key="v"
+// CHECK-NEXT: v9 = NewClosure v6 function=[[f_3]]
+// CHECK-NEXT: v10 = String string="first"
+// CHECK-NEXT: v11 = Call v9, -, v10 calleeName="use"
+// CHECK-NEXT: v12 = Await v11
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v14 = NewClosure v3 function=[[f_5]]
+// CHECK-NEXT: v15 = Call v13, -, v14 calleeName="h0"
+// CHECK-NEXT: v16 = String string="second"
+// CHECK-NEXT: v17 = Call v9, -, v16 calleeName="use"
+// CHECK-NEXT: v18 = Await v17
+// CHECK-NEXT: v19 = Undefined
+// CHECK-NEXT: Return v19
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaitFromMap"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewObject layout=[[L_6]]
-// CHECK-NEXT: v2 = NewClosure v1 function=[[f_7]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[f_7]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[f_8]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v6 = Builtin builtin=Map
-// CHECK-NEXT: v7 = Construct v6 calleeName="Map"
-// CHECK-NEXT: v8 = String string="a"
-// CHECK-NEXT: v9 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v10 = PropGet v9 key="Promise" [isFreeName]
-// CHECK-NEXT: v11 = Convert v10 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v12 = PropGet v11 key="resolve"
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
-// CHECK-NEXT: v14 = Integer integer=1
-// CHECK-NEXT: v15 = Call v13, v11, v14 calleeKey="resolve" calleeName="Promise.resolve"
-// CHECK-NEXT: v16 = Builtin builtin=MapPrototypeSet [isNotReadFromHolder]
-// CHECK-NEXT: v17 = Call v16, v7, v8, v15
-// CHECK-NEXT: PutEnvironmentField v1, v7 layout=[[L_6]]
-// CHECK-NEXT: v19 = String string="first"
-// CHECK-NEXT: v20 = Call v5, -, v19 calleeName="use"
-// CHECK-NEXT: v21 = Await v20
-// CHECK-NEXT: v22 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v23 = Call v22, -, v3 calleeName="h0"
-// CHECK-NEXT: v24 = String string="second"
-// CHECK-NEXT: v25 = Call v5, -, v24 calleeName="use"
-// CHECK-NEXT: v26 = Await v25
-// CHECK-NEXT: v27 = Undefined
-// CHECK-NEXT: Return v27
+// CHECK-NEXT: v1 = Undefined
+// CHECK-NEXT: v2 = Undefined
+// CHECK-NEXT: v3 = Builtin builtin=Map
+// CHECK-NEXT: v4 = Construct v3 calleeName="Map"
+// CHECK-NEXT: v5 = String string="a"
+// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v7 = PropGet v6 key="Promise" [isFreeName]
+// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Promise) flags=[IsExpected]}
+// CHECK-NEXT: v9 = PropGet v8 key="resolve"
+// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
+// CHECK-NEXT: v11 = Integer integer=1
+// CHECK-NEXT: v12 = Call v10, v8, v11 calleeKey="resolve" calleeName="Promise.resolve"
+// CHECK-NEXT: v13 = Builtin builtin=MapPrototypeSet [isNotReadFromHolder]
+// CHECK-NEXT: v14 = Call v13, v4, v5, v12
+// CHECK-NEXT: v15 = NewClosure v4 function=[[f_6]]
+// CHECK-NEXT: v16 = String string="first"
+// CHECK-NEXT: v17 = Call v15, -, v16 calleeName="use"
+// CHECK-NEXT: v18 = Await v17
+// CHECK-NEXT: v19 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v20 = NewClosure v4 function=[[f_7]]
+// CHECK-NEXT: v21 = Call v19, -, v20 calleeName="h0"
+// CHECK-NEXT: v22 = String string="second"
+// CHECK-NEXT: v23 = Call v15, -, v22 calleeName="use"
+// CHECK-NEXT: v24 = Await v23
+// CHECK-NEXT: v25 = Undefined
+// CHECK-NEXT: Return v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="MyPromise"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]]}
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_10]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_10]] field=1
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_9]]):
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_9]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="K"
 // CHECK-NEXT: v3 = Construct v2 calleeName="K"
 // CHECK-NEXT: Return v3

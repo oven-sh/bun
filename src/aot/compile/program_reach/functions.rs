@@ -205,7 +205,12 @@ impl FileScan<'_, '_> {
     }
 
     // `x instanceof C`, `typeof C`
-    pub(super) fn is_only_compared(&self, reference: ExprId) -> bool {
+    // `may_test_instances_itself`: `may_test_instances_itself()` of `C`.
+    pub(super) fn is_only_compared(
+        &self,
+        reference: ExprId,
+        may_test_instances_itself: impl FnOnce() -> bool,
+    ) -> bool {
         let (outermost, Parent::Expr(parent)) = self.find_parent(reference) else {
             return false;
         };
@@ -214,7 +219,7 @@ impl FileScan<'_, '_> {
                 op: BinOp::Instanceof,
                 right,
                 ..
-            } => right == outermost,
+            } => right == outermost && !may_test_instances_itself(),
             ExprKind::Unary {
                 op: UnOp::Typeof, ..
             } => true,
@@ -261,6 +266,7 @@ impl FileScan<'_, '_> {
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode
             | Interest::FileSpelled(_)
+            | Interest::FileLeftToLoader(_)
             | Interest::KnownMember(_)
             | Interest::KnownVariable(_)
             | Interest::Lookup(_)
@@ -323,6 +329,7 @@ impl FileScan<'_, '_> {
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode
             | Interest::FileSpelled(_)
+            | Interest::FileLeftToLoader(_)
             | Interest::StoreOfLoaderFunction(_) => false,
         }
     }

@@ -47,7 +47,6 @@ async function resultsUnderCap(env: Record<string, string | undefined>, script: 
 
 const envWithAsanCap = (mib: number) => ({
   ...bunEnv,
-  WebKitMallocForceEnabled: "1",
   // `detect_leaks=0` (last wins): natives owned only by a JSC cell are
   // invisible to LeakSanitizer's reachability scan and get reported at exit.
   ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", `max_allocation_size_mb=${mib}`, "detect_leaks=0"]

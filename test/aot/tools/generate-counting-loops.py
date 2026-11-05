@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-counting-loops.py test/aot/parallel/counting-loops: loops that count, one shape a program, each held to `bun <file>`.
+# generate-counting-loops.py test/aot/parallel/counting-loops: all 452; ../parallel/counting-loops/ holds 8 of them: loops that count, one shape a program, each held to `bun <file>`.
 # A compiler keeps a counter, a bound and a tally in integers where it can. Each program hands its one loop the values at which that stops being right: 2 ** 31, 2 ** 32, 2 ** 53, a fraction, NaN, -0,
 # Infinity, a text, an object that converts by code; a bound, a counter or a list that is changed in the loop.
 # Each shape comes in up to three forms, because what a build knows of the operands decides what it builds:

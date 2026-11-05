@@ -1,3 +1,0 @@
-function probe(value, rounds) { let total = 0; for (let round = 0; round < rounds; round++) { if (Array.isArray(value)) total += value.length; else if (typeof value === "string") for (const unit of value) total += unit.length; else if (typeof value === "function") total += value(round); else if (value == null) total -= 1; else total += 100; } return total; }
-globalThis.probe = probe;
-for (const value of [[1, 2, 3], "abc", n => n * 2, null, undefined, 5, { length: 1 }, new Proxy([1], {}), new Proxy({}, {}), Array.prototype, (0, eval)("new (class Below extends Array {})(2)")]) console.log(probe(value, 50));

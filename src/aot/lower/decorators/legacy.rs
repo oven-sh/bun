@@ -1,5 +1,7 @@
-use bun_sema::bind::decorator_metadata::is_legacy_decorated_member;
-use bun_sema::hir::{self, ClassId, Flags, FnId, MemberId, MemberKind, ModifierId, PropKey, Span};
+use bun_sema::bind::decorator_metadata::{
+    is_field_moved_by_legacy_decorators, is_legacy_decorated_member,
+};
+use bun_sema::hir::{self, ClassId, Flags, FnId, MemberId, MemberKind, ModifierId, Span};
 use smallvec::SmallVec;
 
 use crate::builtins::id::BuiltinId;
@@ -7,44 +9,38 @@ use crate::ir::{TypeTable, ValueId};
 use crate::lower::FunctionLowering;
 use crate::lower::class::{
     ClassElement, ClassEvaluation, ClassPlan, FieldValue, decorators_of, find_member_value,
-    has_decorators, is_auto_accessor,
+    has_decorators,
 };
 
 type DecoratorList = SmallVec<[ValueId; 8]>;
 
-fn is_moved_field(hir: &hir::File<'_>, member: MemberId) -> bool {
-    let field = hir[member];
-    let has_private_key = match hir.runtime_member_key(member) {
-        PropKey::Private(_) => true,
-        PropKey::None | PropKey::Name(_) | PropKey::Computed(_) => false,
-    };
-    field.kind == MemberKind::Property
-        && !is_auto_accessor(hir, member)
-        && !has_private_key
-        && has_decorators(hir, field.modifiers)
+fn take_decorated_fields(
+    hir: &hir::File<'_>,
+    elements: &mut Vec<ClassElement>,
+) -> Vec<ClassElement> {
+    let mut assigned = Vec::new();
+    elements.retain(|element| {
+        let ClassElement::Field { member, value } = *element else {
+            return true;
+        };
+        if !is_field_moved_by_legacy_decorators(hir, member) {
+            return true;
+        }
+        match value {
+            FieldValue::Initializer => assigned.push(ClassElement::AssignedField { member }),
+            FieldValue::Undefined => {}
+            FieldValue::Decorated { .. } => {
+                unreachable!("only standard decorators plan a decorated field")
+            }
+        }
+        false
+    });
+    assigned
 }
 
 pub(in crate::lower) fn move_decorated_fields(hir: &hir::File<'_>, plan: &mut ClassPlan) {
-    for elements in [&mut plan.instance_elements, &mut plan.static_elements] {
-        let mut assigned = SmallVec::<[ClassElement; 4]>::new();
-        elements.retain(|element| {
-            let ClassElement::Field { member, value } = *element else {
-                return true;
-            };
-            if !is_moved_field(hir, member) {
-                return true;
-            }
-            match value {
-                FieldValue::Initializer => assigned.push(ClassElement::AssignedField { member }),
-                FieldValue::Undefined => {}
-                FieldValue::Decorated { .. } => {
-                    unreachable!("only standard decorators plan a decorated field")
-                }
-            }
-            false
-        });
-        elements.extend(assigned);
-    }
+    plan.injected_elements = take_decorated_fields(hir, &mut plan.instance_elements);
+    plan.elements_behind_class = take_decorated_fields(hir, &mut plan.static_elements);
 }
 
 pub(in crate::lower) fn has_legacy_decorators(hir: &hir::File<'_>, class: ClassId) -> bool {

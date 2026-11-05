@@ -30,8 +30,6 @@ enum Text {
 pub struct ModuleSource {
     // `Sources::diagnostic_path`
     pub path: Box<[u8]>,
-    // `ModulePaths::display_path`
-    shown_path: Option<Box<[u8]>>,
     text: Text,
     // `ModuleFragment::types_in_function_text`
     types_in_function_text: Option<PackedTypeRanges>,
@@ -42,7 +40,6 @@ impl ModuleSource {
     pub fn new(path: &[u8], text: &[u8]) -> ModuleSource {
         ModuleSource {
             path: path.into(),
-            shown_path: None,
             text: Text::Kept(text.into()),
             types_in_function_text: None,
             origin: ModuleOrigin::Program,
@@ -70,14 +67,6 @@ impl ModuleSource {
 
     pub fn with_origin(self, origin: ModuleOrigin) -> Self {
         ModuleSource { origin, ..self }
-    }
-
-    /// Without it a report shows `path`.
-    pub fn with_shown_path(self, shown_path: &[u8]) -> Self {
-        ModuleSource {
-            shown_path: Some(shown_path.into()),
-            ..self
-        }
     }
 
     pub fn origin(&self) -> ModuleOrigin {
@@ -161,14 +150,6 @@ impl SourceTexts {
     pub fn path(&self, module: ModuleId) -> &[u8] {
         match self.get(module) {
             Some(source) => &source.path,
-            None => &[],
-        }
-    }
-
-    /// What a report prints for the module. A diagnostic names `path`.
-    pub fn shown_path(&self, module: ModuleId) -> &[u8] {
-        match self.get(module) {
-            Some(source) => source.shown_path.as_deref().unwrap_or(&source.path),
             None => &[],
         }
     }
@@ -340,21 +321,7 @@ mod tests {
         for module in [1, 9].map(ModuleId::new) {
             assert_eq!(texts.origin(module), ModuleOrigin::Runtime);
             assert!(texts.path(module).is_empty());
-            assert!(texts.shown_path(module).is_empty());
         }
-    }
-
-    #[test]
-    fn shown_path_is_the_path_unless_another_is_given() {
-        let plain = ModuleSource::new(b"/p/a.ts", b"a();");
-        let relative = ModuleSource::new(b"/p/src/b.ts", b"b();")
-            .with_shown_path(b"src/b.ts")
-            .with_origin(ModuleOrigin::Dependency);
-        let texts = SourceTexts::new(vec![Some(plain), Some(relative)]);
-        let (first, second) = (ModuleId::new(0), ModuleId::new(1));
-        assert_eq!(BString::from(texts.shown_path(first)), "/p/a.ts");
-        assert_eq!(BString::from(texts.shown_path(second)), "src/b.ts");
-        assert_eq!(BString::from(texts.path(second)), "/p/src/b.ts");
     }
 
     #[test]

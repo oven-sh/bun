@@ -62,6 +62,14 @@ impl Diagnostics {
         );
     }
 
+    /// A record of no place says that a constructor of Workers is within reach of code that the build can't follow.
+    /// Nobody has seen a Worker start, so nobody is warned.
+    pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {
+        if witness.function_id().is_some() {
+            self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);
+        }
+    }
+
     pub(super) fn add_internal_error_record(
         &mut self,
         record: &InternalErrorRecord,

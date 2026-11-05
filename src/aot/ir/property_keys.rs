@@ -150,6 +150,7 @@ impl PropertyKeyTable {
         self.ids.retain(|id| id.index() < length);
     }
 
+    #[cfg(test)]
     pub fn find(&self, key: &PropertyKey) -> Option<PropertyKeyId> {
         let is_equal = |&id: &PropertyKeyId| self.list[id.index()] == *key;
         self.ids.find(hash_of(key), is_equal).copied()

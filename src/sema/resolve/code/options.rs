@@ -39,6 +39,8 @@ pub struct CodeOptions {
     pub entry_points_required_from_above: Vec<Vec<u8>>,
     /// `--ignore-dce-annotations`: a file that is loaded and imported runs, whatever `"sideEffects"` in its package.json says.
     pub ignores_declared_side_effects: bool,
+    /// `bun check --aot`: the program's own TypeScript is checked file by file, as `bun check` checks it. A build computes a type only where lowering asks for one.
+    pub looks_for_type_errors: bool,
 }
 
 /// The condition of `exports` and `imports` that names what `--aot` compiles.
@@ -85,6 +87,7 @@ impl CodeOptions {
             entry_points_only_imported_from_above: Vec::new(),
             entry_points_required_from_above: Vec::new(),
             ignores_declared_side_effects: false,
+            looks_for_type_errors: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options

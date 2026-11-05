@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use bun_ast::Loader;
 use bun_paths::fs::FileSystem;
 use bun_sema::bind::Parent;
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::session::Session;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
@@ -60,6 +61,7 @@ fn with_expanded<R>(
         path: &path,
         hir: &mut tree,
         module_format,
+        takes_import_statements: module_format == ModuleFormat::Esm,
         settings: &settings,
         import_meta_main: None,
     };
@@ -134,6 +136,11 @@ fn commonjs() {
             assert!(tree.imports.is_empty());
             let is_require = |kind| matches!(kind, ExprKind::Ident(name) if name == known::require);
             assert_eq!(count_expressions(tree, is_require), 2);
+            for specifier in ["%glob::./pages/a.ts", "%glob::./pages/b.ts"] {
+                let specifier = atoms.intern(specifier.as_bytes());
+                let is_named = |kind| matches!(kind, ExprKind::String(text) if text == specifier);
+                assert_eq!(count_expressions(tree, is_named), 1);
+            }
             let head: Vec<StmtKind> = tree.ids(tree.body).map(|it| tree[it].kind).collect();
             assert!(matches!(head[..2], [StmtKind::Var(_), StmtKind::Var(_)]));
         },
@@ -202,4 +209,106 @@ fn loads_files() {
 #[test]
 fn loads_files_before_binding() {
     assert_pages_are_loaded("glob_loads_files_before_binding", "export {};");
+}
+
+/// What the load makes of a `main.js` that begins with `require`: its format, and how many import statements it holds.
+fn load_beside_require(test: &str, rest: &str) -> (ModuleFormat, usize) {
+    let text = format!(
+        "const {{ basename }} = require(\"node:path\");\nconsole.log(basename(\"/x\"), {rest});"
+    );
+    let directory = write_project(test, ("main.js", text.as_str()));
+    let project = TestProject::on_disk(directory.path(), &["main.js"]);
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        build.with_loaded_projects(|_, loaded| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let mut compiled = files.compiled_files().iter().copied();
+            let main = compiled.find(|&file| files.module(file).file_name().ends_with(b"/main.js"));
+            let main = main.expect("the entry point is compiled");
+            let format = files.analysis(main).module_format;
+            Ok((format, files.hir(main).imports.len()))
+        })
+    })
+}
+
+#[test]
+fn eager_entries_make_an_es_module_of_a_file_that_only_requires() {
+    let eager = "import.meta.glob(\"./pages/*.ts\", { eager: true })";
+    let loaded = load_beside_require("glob_eager_beside_require", eager);
+    assert_eq!(loaded, (ModuleFormat::Esm, 2));
+}
+
+#[test]
+fn what_writes_no_import_statement_leaves_a_commonjs_file() {
+    let cases = [
+        (
+            "glob_lazy_beside_require",
+            "import.meta.glob(\"./pages/*.ts\")",
+        ),
+        (
+            "glob_without_entries_beside_require",
+            "import.meta.glob(\"./pages/*.none\", { eager: true })",
+        ),
+        (
+            "glob_keys_beside_require",
+            "Object.keys(import.meta.glob(\"./pages/*.ts\", { eager: true }))",
+        ),
+    ];
+    for (test, call) in cases {
+        assert_eq!(
+            load_beside_require(test, call),
+            (ModuleFormat::CommonJs, 0),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn text_that_stores_its_exports_stays_a_commonjs_file() {
+    let rest = "(module.exports = import.meta.glob(\"./pages/*.ts\", { eager: true }))";
+    let loaded = load_beside_require("glob_eager_beside_exports", rest);
+    assert_eq!(loaded, (ModuleFormat::CommonJs, 0));
+}
+
+#[test]
+fn module_of_eager_entry() {
+    let write = |specifier: &str| write_module_of_eager_entry(specifier.as_bytes());
+    let text = |text: &str| Some(text.as_bytes().to_vec());
+    let whole = "export * as entry from \"./pages/a.cjs\";\n";
+    assert_eq!(write("%glob::./pages/a.cjs"), text(whole));
+    let raw = "export * as entry from \"./a:b \\\"c\\\".txt\" with { type: \"text\" };\n";
+    assert_eq!(write("%glob:text:./a:b \"c\".txt"), text(raw));
+    for other in [
+        "./pages/a.cjs",
+        "glob::./a.cjs",
+        "%glob",
+        "%glob:",
+        "%glob:84",
+    ] {
+        assert_eq!(write(other), None, "{other}");
+    }
+}
+
+#[test]
+fn eager_entries_of_a_commonjs_file_stand_in_es_modules_beside_it() {
+    let text = "module.exports = import.meta.glob(\"./pages/*.ts\", { eager: true });";
+    let directory = write_project("glob_modules_of_eager_entries", ("main.js", text));
+    let project = TestProject::on_disk(directory.path(), &["main.js"]);
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        build.with_loaded_projects(|_, loaded| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let find = |name: &str| {
+                let mut compiled = files.compiled_files().iter().copied();
+                let is_named =
+                    |&file: &_| files.module(file).file_name().ends_with(name.as_bytes());
+                compiled.find(is_named)
+            };
+            assert!(find("/pages/a.ts").is_some() && find("/pages/b.ts").is_some());
+            for page in ["a", "b"] {
+                let name = format!("/main%3f%25glob%3a%3a%2e%2fpages%2f{page}%2ets.js.mjs");
+                let entry = find(&name).expect("it is compiled");
+                assert_eq!(files.analysis(entry).module_format, ModuleFormat::Esm);
+            }
+            Ok(())
+        })
+    });
 }

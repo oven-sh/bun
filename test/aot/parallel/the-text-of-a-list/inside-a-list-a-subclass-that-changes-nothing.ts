@@ -1,4 +1,4 @@
-// One list a program, one road a program: the text of a list is asked for by list.toString(), String(list), a template, a sum, and as an element of another list. Made by staging/the-text-of-a-list-1/make-family-of-lists.py.
+// One list a program, one road a program: the text of a list is asked for by list.toString(), String(list), a template, a sum, and as an element of another list.
 const said: string[] = [];
 const brief = (text: unknown) => typeof text !== "string" ? typeof text + " " + String(text) : text.length > 120 ? text.length + ":" + text.slice(0, 40) + ".." + text.slice(-40) : JSON.stringify(text);
 function textOf(list: any) { return [list, list].toString(); }

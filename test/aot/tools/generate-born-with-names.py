@@ -1,4 +1,4 @@
-# generate-born-with-names.py <outdir>: all 3,606; ../parallel/born-with-names/ holds 36 of them: a list that native code makes with names of its own (a match: index, input, groups, indices; a template object: raw) is no list as Array makes it.
+# generate-born-with-names.py <outdir>: all 3,606; ../parallel/born-with-names/ holds 3 of them: a list that native code makes with names of its own (a match: index, input, groups, indices; a template object: raw) is no list as Array makes it.
 # What lies under those names is taken out by every road that reads own values or own keys, and used as what it is. ONE DEED A PROGRAM. Every program prints what plain Bun prints.
 import sys, os
 out = sys.argv[1]

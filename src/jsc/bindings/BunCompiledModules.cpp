@@ -42,6 +42,7 @@ namespace Zig {
 bool runCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID);
 bool layMocksOfBodiesAgain(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy, JSC::JSValue& state);
+bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject*, JSC::AOT::ModuleID);
 }
 #endif
 
@@ -643,6 +644,7 @@ void willResetModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool k
         throwException(globalObject, scope, createError(globalObject, makeString("Cannot load '"_s, file, "' again after "_s, call, ": the build found nothing that calls it, so the code that imports the file was compiled for a module that loads once. Call it in a file that the tests import."_s)));
         return;
     }
+    AOT::dropErrorsOfLoadsEndedByMocks(globalObject);
     // What a preload resets, or a hook of a preload, is gone for good.
     auto takeOut = JSMock__isInPreload(globalObject) ? AOT::didDeleteRequireCacheEntry : AOT::didResetModule;
     for (auto& file : files) {
@@ -1101,15 +1103,21 @@ bool isAskingWhyFileFailsToLoad()
 // The file is read and parsed as `require` reads it, and nothing of it runs.
 static JSValue createLoadError(JSGlobalObject* realm, const String& path)
 {
-    BunString specifier = Bun::toString(path);
+    // The build writes the type that alone asks for a file of data behind its path: "/project/odd.txt?json". The file is read as an import with that type reads it.
+    size_t mark = path.reverseFind('?');
+    String type = mark == notFound ? String() : path.substring(mark + 1);
+    bool isAskedForUnderType = type == "json"_s || type == "jsonc"_s || type == "json5"_s || type == "toml"_s || type == "yaml"_s;
+    String file = isAskedForUnderType ? path.left(mark) : path;
+    BunString specifier = Bun::toString(file);
+    BunString typeAttribute = Bun::toString(type);
     // The name of a built-in module is not a path. Reading one that the executable does not hold fails as under `bun run`.
     // An executable holds a file that the build could not take as it is: what is wrong with it is for its loader to say.
-    if (!Bun__compiledProgramRunsInPlace() && isAbsolutePath(path) && !Bun__compiledProgramHoldsFileAsItIs(&specifier))
+    if (!Bun__compiledProgramRunsInPlace() && isAbsolutePath(file) && !Bun__compiledProgramHoldsFileAsItIs(&specifier))
         return {};
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
     ErrorableResolvedSource source;
     SetForScope isAsking(isAskingWhyFileFails, true);
-    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone);
+    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, isAskedForUnderType ? &typeAttribute : nullptr, &source, false, true, BunLoaderTypeNone);
     if (!source.success)
         return JSValue::decode(source.result.err);
     // The text of a JSON file goes through the parser of the engine next, as where the loader reads it. What that throws stays thrown.
@@ -1223,6 +1231,13 @@ static void callInLaterTurn(JSGlobalObject* globalObject)
     deliverTextInLaterTurn(context, false);
 }
 
+static bool isCalledFromFactoryThatWaits(JSGlobalObject* globalObject, AOT::ModuleID module)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return Zig::isCalledFromFactoryOfCompiledMockThatWaits(defaultGlobalObject(globalObject), module);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static const AOT::MockOperations* mockOperations()
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, const AOT::MockOperations*)
@@ -1268,9 +1283,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &callInLaterTurn,
     &didStartImport,
     &holdsTextsOfProgram,
+    &isCalledFromFactoryThatWaits,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 32 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 33 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

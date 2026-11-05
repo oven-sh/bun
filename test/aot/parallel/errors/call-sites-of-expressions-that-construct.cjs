@@ -1,5 +1,5 @@
 // Prints, for each way to write a construction, the line and column of its frame in the stack's text and in the call sites that Error.prepareStackTrace gets.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 function Thrower() {
   throw new Error("thrown");
 }

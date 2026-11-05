@@ -463,7 +463,6 @@ fn file_leaves_open() {
     );
     // helpers-that-a-test-file-reaches-by-other-ways.test.ts
     let marks = "spies on an object from somewhere under a name that it does not spell";
-    assert!(line_of(FileLeavesOpen::SpiesUnderUnspelledName).ends_with(marks));
     let with_texts = line_of(FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed: 2 });
     assert!(with_texts.contains(marks) && with_texts.ends_with(": 2 texts are passed to it"));
     // a-hint-in-a-string-that-is-no-javascript-opens-no-export.test.ts

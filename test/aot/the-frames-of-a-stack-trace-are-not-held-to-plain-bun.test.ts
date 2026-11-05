@@ -70,8 +70,8 @@ const programs = {
   "a-row-of-a-table.js": [`console.log("1 | " + (compiled ? 2 : 3));`, differs],
   "a-value-beside-a-place.js": [`console.log(compiled ? "main.js:3:14 gave 5" : "main.js:4:15 gave 6");`, differs],
   "marked.js": [
-    `// Todo: only frames (stack-trace-only differences are fine, 11-02): for the test\nconsole.log("a value: " + (compiled ? 1 : 2));`,
-    "skip: todo: only frames (stack-trace-only differences are fine, 11-02): for the test",
+    `// Todo: only frames (stack-trace-only differences are fine): for the test\nconsole.log("a value: " + (compiled ? 1 : 2));`,
+    "skip: todo: only frames (stack-trace-only differences are fine): for the test",
   ],
   "stored-number-behind-a-name.js": [
     `console.log("sum:42");\n/* Output:\nsum:41\n*/`,

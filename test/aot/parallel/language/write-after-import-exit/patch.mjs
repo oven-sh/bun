@@ -1,1 +1,0 @@
-Array.prototype.push = function () {};

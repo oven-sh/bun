@@ -6,7 +6,8 @@
 // CHECK: [[object]] = Convert [[this]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // CHECK-NOT: = NewObject
 // CHECK: [[closure]] = NewClosure [[this]] function=
-// CHECK-NEXT: PropDefine [[object]], [[closure]] key="onClick"
+// CHECK-NEXT: [[typed]] = Convert [[closure]] declared={type=undefined|null|f{{*}} flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropDefine [[object]], [[typed]] key="onClick"
 // CHECK-LABEL: function {{*}}name="onClick"
 // CHECK: captures=[{type=[[instance]] variableName="this"}] thisType
 

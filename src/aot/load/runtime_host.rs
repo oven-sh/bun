@@ -31,7 +31,7 @@ pub(crate) struct RuntimeHost<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
-    /// `ProgramContents::replaced_builtins`.
+    /// `ProgramContents::builtins_written_as_reads()`.
     pub replaced_builtins: &'a [u32],
     pub messages: &'a LoadMessages,
     pub unreadable: Guarded<Vec<Vec<u8>>>,

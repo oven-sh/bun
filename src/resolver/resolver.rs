@@ -1214,7 +1214,7 @@ impl<'a> Resolver<'a> {
         let root_on_disk = graph.root_on_disk();
         let base = root_on_disk
             .as_deref()
-            .unwrap_or(Fs::FileSystem::get().top_level_dir());
+            .unwrap_or_else(|| Fs::FileSystem::get().top_level_dir());
         // The deepest comes first. The root directory has no folder below the root.
         let folders = graph.directories_of_importer(folder, base);
         folders.into_iter().next().unwrap_or_else(|| base.to_vec())

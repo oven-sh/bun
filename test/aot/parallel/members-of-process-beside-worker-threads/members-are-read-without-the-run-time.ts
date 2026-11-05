@@ -1,5 +1,5 @@
 // A program that imports node:worker_threads reads the members of `process` that the host computes once as any other program does: out of the word that the first read has filled.
-// Until 11-03 the library's own overrides for workers, under names out of a list, counted as a write to every member of `process`: each of these reads went by name.
+// The library's own overrides for workers, under names out of a list, once counted as a write to every member of `process`: each of these reads went by name.
 // COUNT: operation:operationAOTFillBuiltinValue >= 3
 import { isMainThread } from "node:worker_threads";
 let sum = 0;

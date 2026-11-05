@@ -290,16 +290,15 @@ impl FileLowering<'_, '_, '_, '_> {
         widened
     }
 
-    fn holds_every_number(&mut self, ty: CheckerTypeId) -> bool {
-        let Ok(shape) = self.queries.type_shape(ty) else {
-            return false;
-        };
-        if let ShapeKind::Union(members) = shape.kind {
-            return members
-                .iter()
-                .any(|&member| self.holds_every_number(member));
-        }
-        matches!(shape.kind, ShapeKind::Number)
+    // What the position of the type holds, and not how the type is spelled: a literal, a member of an enum, an enum, an alias of any of them.
+    fn holds_no_number_outside_int32(&mut self, ty: CheckerTypeId) -> bool {
+        let mapped = self.map_type_at(ty).ty;
+        let mapped = self.fragment.types.get(mapped);
+        let int32 = i64::from(i32::MIN)..=i64::from(i32::MAX);
+        !mapped.primitives.contains(Primitives::NUMBER)
+            && mapped.integer_range().is_none_or(|(minimum, maximum)| {
+                int32.contains(&minimum) && int32.contains(&maximum)
+            })
     }
 }
 
@@ -327,12 +326,10 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
     };
     match shape.kind {
         ShapeKind::Int32 { .. } => true,
-        // `int32 | number` holds every number: there is nothing to prove.
+        // `int32 | number` holds every number and `int32 | 0.5` one that is no int32: there is nothing to prove.
         ShapeKind::Union(members) => {
             members.iter().any(|&member| lists_int32(file, member))
-                && !members
-                    .iter()
-                    .any(|&member| file.holds_every_number(member))
+                && file.holds_no_number_outside_int32(ty)
         }
         _ => false,
     }

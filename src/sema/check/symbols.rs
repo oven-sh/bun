@@ -2107,11 +2107,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let union_context = context.unwrap_or_else(|| {
                     self.new_widening_context(None, Atom::NONE, Some(Rc::from(&types[..])))
                 });
+                let each_by_itself =
+                    context.is_none() && self.are_widened_each_by_itself(types, union_context);
                 let widened_types: SmallVec<[TypeId; 8]> = types
                     .iter()
                     .map(|&t| {
                         if self.is_nullish(t) {
                             t
+                        } else if each_by_itself {
+                            self.get_widened_type(t)
                         } else {
                             self.get_widened_type_with_context(t, Some(union_context))
                         }
@@ -2122,7 +2126,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 if widened_types[..] == types[..] {
                     ty
-                } else if widened_types.iter().any(|&t| self.is_empty_object_type(t)) {
+                } else if !each_by_itself
+                    && widened_types.iter().any(|&t| self.is_empty_object_type(t))
+                {
                     self.union_reduced(&widened_types)
                 } else {
                     self.union(&widened_types)
@@ -2169,6 +2175,41 @@ impl<'p, 's> Checker<'p, 's> {
             self.widened_types.insert(ty, result);
         }
         result
+    }
+
+    /// `getWidenedType` gives each object literal of a union the names of all the others, as properties that are `undefined`:
+    /// n literals with a name of their own get n * n properties. In a compile build the types of an untyped file are only
+    /// expected, and an object type stands for the objects that have its names. Where no literal of the union has every name,
+    /// no object has them all, and each literal is widened by itself. `context` is that of the union `types`.
+    /// A symbol, a number and `__proto__` may be no field of an object, so the literals are held by their other names.
+    fn are_widened_each_by_itself(&mut self, types: &[TypeId], context: usize) -> bool {
+        if !self.p.files.is_compile_build() {
+            return false;
+        }
+        let atoms = self.atoms();
+        let is_surely_field = |name: Atom| {
+            !atoms.is_symbol_name(name) && !atoms.is_numeric_name(name) && name != known::__proto__
+        };
+        let (mut literals, mut most_names) = (0, 0);
+        for &t in types {
+            if !self.is_object_literal_type(t) {
+                continue;
+            }
+            if !self.has_js_literal_flag(t) {
+                return false;
+            }
+            let Some(members) = self.members(t) else {
+                return false;
+            };
+            let names = (members.shape().props.iter()).filter(|prop| is_surely_field(prop.name));
+            most_names = most_names.max(names.count());
+            literals += 1;
+        }
+        if literals < 2 {
+            return false;
+        }
+        let all = self.get_properties_of_context(context);
+        most_names < all.iter().filter(|prop| is_surely_field(prop.name)).count()
     }
 
     /// `core.SameMap(types, c.getWidenedType)`. `None` if nothing changed.

@@ -1,5 +1,5 @@
 // The stack of an error made after an await names the async functions that wait for the one that made it, up to Error.stackTraceLimit.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): plain Bun makes a stack that is read late without Error.prepareStackTrace
+// Todo: only frames (stack-trace-only differences are fine): plain Bun makes a stack that is read late without Error.prepareStackTrace
 const collect: (sync: boolean) => void = (globalThis as any).gc ?? (globalThis as any).Bun?.gc ?? (() => undefined);
 const tick = Promise.resolve();
 Error.stackTraceLimit = 10;

@@ -51,6 +51,11 @@ pub enum LayoutKey {
         file: FileId,
         members: TypeIdentity,
     },
+    /// What one `Object.create(parent)` makes.
+    CreatedObject {
+        file: FileId,
+        call: u32,
+    },
     Container(Sym),
     Environment {
         file: FileId,
@@ -158,9 +163,9 @@ impl LayoutKey {
                 | ObjectOrigin::ObjectLiteral { file, .. } => Some(file),
                 ObjectOrigin::Computed => None,
             },
-            LayoutKey::UntypedLiteral { file, .. } | LayoutKey::Environment { file, .. } => {
-                Some(file)
-            }
+            LayoutKey::UntypedLiteral { file, .. }
+            | LayoutKey::CreatedObject { file, .. }
+            | LayoutKey::Environment { file, .. } => Some(file),
             LayoutKey::Container(symbol) => Some(symbol.file),
         }
     }

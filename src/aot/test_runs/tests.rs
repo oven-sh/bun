@@ -247,6 +247,19 @@ fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
 }
 
 #[test]
+fn a_text_that_a_deeper_file_holds_takes_it_to_no_side() {
+    let mut files = PROJECT.to_vec();
+    files.retain(|file| !matches!(file.0, "src/lib.ts"));
+    files.extend([
+        ("src/lib.ts", "export { lib } from './deep';\n"),
+        ("src/deep.ts", "export const MOD = `globalThis.ArrayBuffer = function () {}; Date.now = () => 1;`;\nexport const lib = () => MOD;\n"),
+    ]);
+    with_run(&files, (2, 1), |files, run| {
+        assert_eq!(whose(files, run, "src/deep.ts"), WhoseFile::OfProduct);
+    });
+}
+
+#[test]
 fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_nothing_unless_the_function_loads()
  {
     let deep =
@@ -770,7 +783,9 @@ fn every_member_that_a_test_may_replace_is_written_as_a_read() {
         assert!(has(BuiltinId::Map) && has(BuiltinId::Math));
         // The table leaves `Date.now` writable in every build: it is a read already.
         assert!(!has(BuiltinId::DateNow));
-        assert!(!has(BuiltinId::ObjectPrototype));
+        // Nothing replaces `prototype` on the Map of the table. A test that replaces `Map` replaces what `Map.prototype` reads.
+        assert!(has(BuiltinId::MapPrototype) && has(BuiltinId::ObjectPrototype));
+        assert!(has(BuiltinId::SymbolIterator) && has(BuiltinId::MathPI));
     });
 }
 
@@ -902,6 +917,58 @@ fn a_callback_takes_its_names_from_what_the_call_in_front_was_handed() {
 }
 
 #[test]
+fn a_name_that_is_made_out_of_itself_may_be_any_name() {
+    let names_of = |statements: &str| {
+        let test_file = format!(
+            "import {{ spyOn, test }} from \"bun:test\";\nimport {{ holders }} from \"./src/holders\";\n{statements}\n"
+        );
+        let files = [
+            ("one.test.ts", &test_file[..]),
+            (
+                "src/holders.ts",
+                "import * as math from \"./math\";\nexport const holders: Record<string, any> = { math };\n",
+            ),
+            (
+                "src/math.ts",
+                "export function add() { return 1; }\nexport function half() { return 2; }\n",
+            ),
+            MANIFEST,
+        ];
+        with_run(&files, (1, 0), |files, run| {
+            (run.spies_under_any_name, texts_of(files, &run.names_spied))
+        })
+    };
+    for statements in [
+        "function watch(name: string, left: number) { spyOn(holders.math, name); if (left > 0) watch(name + \"f\", left - 1); }\nwatch(\"hal\", 1);",
+        "function watch(name: string, left: number) { spyOn(holders.math, name); if (left > 0) watch(`${name}f`, left - 1); }\nwatch(\"hal\", 1);",
+        "function watch(name: string, left: number) { spyOn(holders.math, \"h\" + name); if (left > 0) watch(name + \"f\", left - 1); }\nwatch(\"al\", 1);",
+        "function one(name: string, left: number) { spyOn(holders.math, name); if (left > 0) two(name + \"l\", left - 1); }\nfunction two(name: string, left: number) { spyOn(holders.math, name); if (left > 0) one(name + \"f\", left - 1); }\none(\"ha\", 2);",
+        "function one(name: string, left: number) { spyOn(holders.math, name); if (left > 0) two(name + \"a\", left - 1); }\nfunction two(name: string, left: number) { three(`${name}l`, left); }\nfunction three(name: string, left: number) { one(name + \"f\", left); }\none(\"h\", 1);",
+        "function watch(left: number, name = \"hal\") { spyOn(holders.math, name); if (left > 0) watch(left - 1, name + \"f\"); }\nwatch(1);",
+        "var ROWS = [\"half\", other + \"f\"];\nvar [other] = ROWS;\nfor (const name of ROWS) spyOn(holders.math, name);",
+    ] {
+        assert!(names_of(statements).0, "{statements}");
+    }
+    // A name that goes round as it is, and a text with holes that is reached twice and not from inside itself.
+    for (statements, names) in [
+        (
+            "function watch(name: string, left: number) { if (left === 0) spyOn(holders.math, name); else watch(name, left - 1); }\nwatch(\"half\", 2);",
+            ["half"],
+        ),
+        (
+            "function lay(name: string) { spyOn(holders.math, name + name); }\nfunction both(end: string) { lay(\"a\" + end); }\nboth(\"d\");",
+            ["adad"],
+        ),
+    ] {
+        assert_eq!(
+            names_of(statements),
+            (false, names.map(str::to_string).to_vec()),
+            "{statements}"
+        );
+    }
+}
+
+#[test]
 fn a_name_stored_on_an_object_from_somewhere_may_come_to_lie_on_a_closed_object_that_was_let_go() {
     let added = |statements: &str| {
         let test_file = format!(
@@ -915,6 +982,30 @@ fn a_name_stored_on_an_object_from_somewhere_may_come_to_lie_on_a_closed_object_
     };
     assert_eq!(added("put(Object.prototype);"), ["__mark"]);
     assert!(added("put({}); console.log(Object.prototype.hasOwnProperty);").is_empty());
+}
+
+#[test]
+fn a_stored_name_goes_with_the_file_that_lets_the_object_go_and_with_what_that_file_imports() {
+    let added = |lets_go: &str, other: &str| {
+        let files = [
+            ("a.test.ts", lets_go),
+            ("b.test.ts", other),
+            (
+                "put.ts",
+                "export const put = (object: any) => { object.__imported = 1; };\n",
+            ),
+        ];
+        with_run(&files, (2, 0), |files, run| {
+            let added = run.names_added.iter();
+            let added = added.filter(|it| it.0 == BuiltinId::ObjectPrototype);
+            texts_of(files, &added.map(|it| it.1).collect::<Vec<_>>())
+        })
+    };
+    let far = "import { test } from 'bun:test';\n(globalThis as any).far = (object: any) => { object.__far = 1; };\ntest('b', () => {});\n";
+    let imports = "import { test } from 'bun:test';\nimport { put } from './put';\ntest('a', () => { put(Object.prototype); });\n";
+    assert_eq!(added(imports, far), ["__imported"]);
+    let alone = "import { test } from 'bun:test';\ntest('a', () => { (globalThis as any).far(Object.prototype); });\n";
+    assert!(added(alone, far).is_empty());
 }
 
 #[test]

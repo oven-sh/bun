@@ -628,16 +628,19 @@ mod tests {
                 // Held for so long that every spin is wasted.
                 case(16, 20, ms(1), ms(1)),
             ];
-            println!("{processors} processors");
-            println!(
-                "threads | held | between | never spins: wall, waited by all | spins: wall, waited by all"
+            let print = |line: &str| {
+                let _ = bun_sys::File::stdout().write_all(line.as_bytes());
+            };
+            print(&format!("{processors} processors\n"));
+            print(
+                "threads | held | between | never spins: wall, waited by all | spins: wall, waited by all\n",
             );
             for case in &cases {
                 for _ in 0..2 {
                     let (old_wall, old_waited) = contend(lock_without_spinning, case);
                     let (new_wall, new_waited) = contend(FutexImpl::lock, case);
-                    println!(
-                        "{} | {:?} | {:?} | {:?}, {:?} | {:?}, {:?}",
+                    print(&format!(
+                        "{} | {:?} | {:?} | {:?}, {:?} | {:?}, {:?}\n",
                         case.threads,
                         case.held,
                         case.between,
@@ -645,7 +648,7 @@ mod tests {
                         old_waited,
                         new_wall,
                         new_waited,
-                    );
+                    ));
                 }
             }
         }

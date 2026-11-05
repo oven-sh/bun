@@ -32,6 +32,7 @@ pub(in crate::modules) enum ExportEntry {
     },
 }
 
+#[derive(Clone)]
 pub(in crate::modules) struct ExportEntries {
     pub file: FileId,
     pub own: Vec<(Atom, ExportEntry)>,
@@ -53,6 +54,7 @@ pub(in crate::modules) struct WrittenImport {
     pub is_dropped_if_absent: bool,
 }
 
+#[derive(Clone)]
 pub(in crate::modules) struct CollectedEntries {
     /// Of the modules that have an export table, in the order of the files.
     pub tables: Vec<ExportEntries>,

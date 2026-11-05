@@ -1,5 +1,5 @@
 // Reference: bun build --compile
-// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run` (11-02).
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 enum Color { Red, Green }
 enum Word { Yes = "yes" }
 interface Shape { a: number }

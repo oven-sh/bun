@@ -207,6 +207,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 | LayoutKey::ConstructorFunction(_)
                 | LayoutKey::Library(_)
                 | LayoutKey::UntypedLiteral { .. }
+                | LayoutKey::CreatedObject { .. }
                 | LayoutKey::Container(_)
                 | LayoutKey::Environment { .. } => {}
             }

@@ -24,6 +24,7 @@ const {
   queueTick2,
   queueTick3,
   ring,
+  asyncContext,
   ticksAreUnseen,
   ticksAreUnhooked,
 } = require("internal/process/next_tick_queue");
@@ -1216,7 +1217,8 @@ function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, 
     aborted !== NodeHTTPResponseAbortEvent.none ||
     !isLast ||
     bytes === undefined ||
-    (word !== kBodyReading && (word !== kBodyAwaited || bytes.length >= state.highWaterMark)) ||
+    (word !== kBodyReading &&
+      (word !== kBodyAwaited || bytes.length * ((flags & kDecoder) !== 0 ? 2 : 1) >= state.highWaterMark)) ||
     state.length !== 0 ||
     stream._dumped ||
     stream.upgrade ||
@@ -1464,7 +1466,8 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     tick !== ring.write &&
     tick.next === ring.write &&
     tick.callback === clearServerParserIncoming &&
-    tick.second === req
+    tick.second === req &&
+    tick.frame === $getInternalField(asyncContext, 0)
   ) {
     tick.callback = releaseParserThenClose;
   } else {

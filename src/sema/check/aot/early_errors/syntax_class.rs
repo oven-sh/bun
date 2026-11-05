@@ -82,7 +82,9 @@ impl Checker<'_, '_> {
     /// `x` where a namespace exports the variable `x` or an enum has the member: `N.x` in what runs, which strict mode lets `delete` take.
     pub(in crate::check) fn names_member_of_container(&self, file: FileId, name: ExprId) -> bool {
         let bound = self.bound(file);
-        matches!(bound.binding(name), Binding::Symbol(symbol)
-            if bound.binding_stability(symbol) == BindingStability::ContainerMember)
+        // `bun check` binds a file without the tables of what runs.
+        bound.runtime.is_computed()
+            && matches!(bound.binding(name), Binding::Symbol(symbol)
+                if bound.binding_stability(symbol) == BindingStability::ContainerMember)
     }
 }

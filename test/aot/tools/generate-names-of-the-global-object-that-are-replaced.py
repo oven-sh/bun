@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-names-of-the-global-object-that-are-replaced.py <folder>: a function or a holder that a free name finds on the global object, in a program that replaces it in one way at one time, or only might: one program each, held to `bun <file>`.
+# generate-names-of-the-global-object-that-are-replaced.py <folder>: all 730; ../parallel/names-of-the-global-object-that-are-replaced/ holds 8 of them: a function or a holder that a free name finds on the global object, in a program that replaces it in one way at one time, or only might: one program each, held to `bun <file>`.
 # The compiler expects the built-in under such a name and proves nothing: whatever lies there when the name is read is what is called, with the operands evaluated behind the read.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

@@ -18,6 +18,7 @@ use crate::lower::captures::Capture;
 use crate::lower::scope::testing::{
     file_scope, first_statement, function_named, functions_of_kind, only_function, symbol_named,
     top_scope, with_scope_analysis, with_scope_analysis_of_entry_that_runs_again,
+    with_scope_analysis_of_test_run,
 };
 use crate::lower::scope::{
     ArgumentsObject, BindingForm, BindingRef, Placement, ScopeAnalysis, ScopeSlot, Storage,
@@ -41,6 +42,17 @@ fn analyze_files<R>(files: &[(&str, &str)], test: impl FnOnce(&Probe<'_, '_, '_>
 
 fn analyze_source<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '_, '_>) -> R) -> R {
     analyze_files(&[(file, source)], test)
+}
+
+// The file is the one test file of a test run.
+fn analyze_test_file<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '_, '_>) -> R) -> R {
+    with_scope_analysis_of_test_run(&[(file, source)], |hir, bound, analysis| {
+        test(&Probe {
+            hir,
+            bound,
+            analysis,
+        })
+    })
 }
 
 // The body of the first file may run again. What a CommonJS file declares at its top is then planned like the names of a function.

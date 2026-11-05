@@ -1,1 +1,0 @@
-{ "name": "lists-one-file", "type": "module", "sideEffects": ["./fills.ts"] }

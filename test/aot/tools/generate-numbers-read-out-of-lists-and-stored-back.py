@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 468; ../parallel/numbers-read-out-of-lists-and-stored-back/ holds 8 of them.
 """Writes test/aot/parallel/numbers-read-out-of-lists-and-stored-back/: one list, one position, one way in which what is read there is used up at once: a program each.
 
 A list declared `number[]` may hold anything, and has the storage that its maker and the values so far have given it. Behind a test of the kind of storage and of the element compiled code reads the number raw.

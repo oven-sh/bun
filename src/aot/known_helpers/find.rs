@@ -14,6 +14,7 @@ use bun_sema::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
     FnOwner, Parent, StoreKind, SymbolId,
 };
+use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, StmtId, StmtKind,
@@ -140,9 +141,12 @@ pub(super) struct FindInput<'a, 's> {
     pub(super) atoms: &'a Interner<'s>,
     pub(super) hir: &'a hir::File<'s>,
     pub(super) bound: &'a Bound<'s>,
+    pub(super) analysis: &'a FileAnalysis<'s>,
     pub(super) decisions: &'a Decisions<'s>,
     pub(super) builtins: &'a ResolvedBuiltins,
     pub(super) module_format: ModuleFormat,
+    /// `ProgramContents::names_added_to_builtins`
+    pub(super) names_added_to_builtins: &'a [(BuiltinId, Atom)],
     /// Code of another file can call what the file exports before the file has run to its end.
     pub(super) is_held_early: &'a dyn Fn() -> bool,
 }
@@ -168,6 +172,7 @@ pub(super) fn find_global(path: &[&str]) -> Option<BuiltinId> {
 pub(super) fn find_in_file(
     files: &Files<'_>,
     file: FileId,
+    names_added_to_builtins: &[(BuiltinId, Atom)],
     is_held_early: &dyn Fn() -> bool,
 ) -> FileHelpers {
     let (Some(compiled), Some(source)) = (files.compiled(file), parsed_source(files, file)) else {
@@ -177,9 +182,11 @@ pub(super) fn find_in_file(
         atoms: &files.atoms,
         hir: files.hir(file),
         bound: files.bound(file),
+        analysis: &compiled.analysis,
         decisions: &compiled.analysis.decisions,
         builtins: &source.builtins,
         module_format: compiled.analysis.module_format,
+        names_added_to_builtins,
         is_held_early,
     })
 }
@@ -250,7 +257,9 @@ impl<'a, 's> Finder<'a, 's> {
             let Some(entry) = table.entries.get(canonical.bytes.as_slice()) else {
                 continue;
             };
-            if entry.references.len() != canonical.outer_names.len() {
+            if entry.references.len() != canonical.outer_names.len()
+                || self.stores_to_name_of_expression(function)
+            {
                 continue;
             }
             functions.push(function);
@@ -266,6 +275,14 @@ impl<'a, 's> Finder<'a, 's> {
             );
         }
         functions
+    }
+
+    // A declaration puts another function in its own place. The name that a function expression gives itself takes no store.
+    fn stores_to_name_of_expression(&self, function: FnId) -> bool {
+        let bound = self.file.bound;
+        let own_name = bound.declared_symbol(Decl::Fn(function));
+        bound.binding_kind(own_name) == BindingKind::FunctionName
+            && !bound.stores_to(own_name).is_empty()
     }
 
     fn verify(&mut self, function: FnId) -> bool {
@@ -591,7 +608,11 @@ impl<'a, 's> Finder<'a, 's> {
         };
         quiet.is_this_of_file(this)
             && quiet.is_this_of_file(object)
-            && is_absent_from_object_prototype(self.file.atoms, name)
+            && is_absent_from_object_prototype(
+                self.file.atoms,
+                self.file.names_added_to_builtins,
+                name,
+            )
             && self.is_in_silent_head(member)
     }
 
@@ -819,7 +840,12 @@ impl<'a, 's> Finder<'a, 's> {
         let Some(owner) = self.find_owner(function) else {
             return false;
         };
-        if bound.is_visible_to_eval(owner) || self.exports_function_declaration() {
+        let analysis = self.file.analysis;
+        let mut read_without_expression = analysis.bindings_read_without_expression(hir, bound);
+        if bound.is_visible_to_eval(owner)
+            || self.exports_function_declaration()
+            || read_without_expression.any(|binding| binding == Binding::Symbol(owner))
+        {
             return false;
         }
         (0..hir.exprs.len() as u32).map(ExprId).all(|name| {

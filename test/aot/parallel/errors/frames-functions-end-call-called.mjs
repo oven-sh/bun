@@ -1,5 +1,5 @@
 // A function that ends in `return callee(..)` leaves the stack where it is called and stays in the stack trace where it is constructed. Each row prints the names and the places of the frames.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): its own Error.prepareStackTrace sees the real call sites
+// Todo: only frames (stack-trace-only differences are fine): its own Error.prepareStackTrace sees the real call sites
 const frames = error =>
   String(error.stack)
     .split("\n")

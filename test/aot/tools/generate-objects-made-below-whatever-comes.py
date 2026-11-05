@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-objects-made-below-whatever-comes.py <folder>: `Object.create(above)` where the compiler knows nothing of `above`: one kind of operand, one road by which it comes and one thing done with what is made: one program each, held to `bun <file>`.
+# generate-objects-made-below-whatever-comes.py <folder>: all 819; ../parallel/objects-made-below-whatever-comes/ holds 8 of them: `Object.create(above)` where the compiler knows nothing of `above`: one kind of operand, one road by which it comes and one thing done with what is made: one program each, held to `bun <file>`.
 # The operand comes out of a pool with an object, null and a number, so that nothing is proven of it. Below an object and below null an object is made; everything else is refused with a TypeError. A second operand that is not undefined describes properties.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

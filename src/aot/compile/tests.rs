@@ -1293,6 +1293,94 @@ fn function_text_of_a_module_is_its_text_without_the_types() {
 }
 
 #[test]
+fn function_text_holds_the_values_that_bun_build_writes_in_place_of_enum_members() {
+    let colors = "export enum Tone { Low = \"low\" }";
+    let text = "import { Tone } from \"./colors\";\n\
+        enum Color { Red = -1, Green = 5 }\n\
+        export function pick(Shadow: { Green: number }): unknown {\n  \
+        return [Color.Green.toFixed(), 1-(Color as any).Red, Color.Red ** 2, { [-Color.Green]: Tone.Low }, Shadow.Green, Color[5]];\n}\n\
+        console.log(pick, pick({ Green: 1 }));";
+    let linked = link_successfully(&[("a.ts", text), ("colors.ts", colors), GLOBALS]);
+    let (program, texts) = (&linked.program, &linked.summary.texts);
+    let module = program.entries[0].module;
+    let source = texts.get(module).expect("a compiled file has its text");
+    let function_text = source.function_text();
+    let of_module = (program.functions.iter()).filter(|function| function.module == module);
+    let shown: Vec<&BStr> = of_module
+        .map(|function| (function.text.start as usize, function.text.end as usize))
+        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .collect();
+    let expected = BStr::new(
+        "function pick(Shadow) {\n  return [5 .toFixed(), 1-(-1), (-1) ** 2, { [(-5)]: \"low\" }, Shadow.Green, Color[5]];\n}",
+    );
+    assert!(shown.contains(&expected), "{shown:?}");
+}
+
+#[test]
+fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
+    let text = "declare function f(): number;\n\
+        namespace Box {\n  export let side = 4;\n  \
+        export function area(): unknown {\n    \
+        enum Inner { A = 7, B, \"c-d\" = \"s\", C = f() as number, D = A + f(), }\n    \
+        enum Inner { E = -1 }\n    \
+        side++;\n    return [{ side }, side * (side as number), Inner];\n  }\n}\n\
+        console.log(Box.area, Box.area());";
+    let linked = link_successfully(&[("a.ts", text), GLOBALS]);
+    let (program, texts) = (&linked.program, &linked.summary.texts);
+    let module = program.entries[0].module;
+    let source = texts.get(module).expect("a compiled file has its text");
+    let function_text = source.function_text();
+    let of_module = (program.functions.iter()).filter(|function| function.module == module);
+    let shown: Vec<&BStr> = of_module
+        .map(|function| (function.text.start as usize, function.text.end as usize))
+        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .collect();
+    let expected = BStr::new(
+        "function area() {\n    \
+        let Inner; ((Inner) => [Inner[Inner[\"A\"] = 7] = \"A\", Inner[Inner[\"B\"] = 8] = \"B\", Inner[\"c-d\"] = \"s\", \
+        Inner[Inner[\"C\"] = f()] = \"C\", Inner[Inner[\"D\"] = Inner.A + f()] = \"D\", ])(Inner ||= {});\n    \
+        ;((Inner) => [Inner[Inner[\"E\"] = (-1)] = \"E\" ])(Inner ||= {});\n    \
+        Box.side++;\n    return [{ side: Box.side }, Box.side * (Box.side), Inner];\n  }",
+    );
+    assert!(shown.contains(&expected), "{shown:?}");
+}
+
+#[test]
+fn function_text_lacks_what_a_bundle_lacks() {
+    let text = "declare const unbound: unknown;\n\
+        export function shown(o: any): unknown {\n  \
+        if (false) o.dead();\n  \
+        if (false) { o.dead(); } else o.a;\n  \
+        if (true) o.b; else o.dead();\n  \
+        const kept = [true ? o.c : o.dead(), false && o.dead(), true && o.d, null ?? o.e, !true || o.f];\n  \
+        (true ? o.m : 0)();\n  \
+        (true ? o : 0)();\n  \
+        typeof (true ? unbound : 0);\n  \
+        true ? { g: 1 }.g : 0;\n  \
+        for (let i: unknown = true ? \"h\" in o : 0; i; i = false) o.i;\n  \
+        for (let i = [true ? \"h\" in o : 0]; i.pop(); ) o.i;\n  \
+        return () => true ? { kept } : 0;\n}\n\
+        console.log(shown);";
+    let linked = link_successfully(&[("a.ts", text), GLOBALS]);
+    let (program, texts) = (&linked.program, &linked.summary.texts);
+    let module = program.entries[0].module;
+    let source = texts.get(module).expect("a compiled file has its text");
+    let function_text = source.function_text();
+    let of_module = (program.functions.iter()).filter(|function| function.module == module);
+    let shown: Vec<&BStr> = of_module
+        .map(|function| (function.text.start as usize, function.text.end as usize))
+        .map(|(start, end)| BStr::new(&function_text[start..end]))
+        .collect();
+    let expected = BStr::new(
+        "function shown(o) {\n  if (false) ;\n  if (false) {} else o.a;\n  if (true) o.b;\n  \
+        const kept = [o.c, false, o.d, o.e, o.f];\n  (0, o.m)();\n  (o)();\n  typeof (0, unbound);\n  \
+        ({ g: 1 }).g;\n  for (let i = (\"h\" in o); i; i = false) o.i;\n  \
+        for (let i = [\"h\" in o]; i.pop(); ) o.i;\n  return () => ({ kept });\n}",
+    );
+    assert!(shown.contains(&expected), "{shown:?}");
+}
+
+#[test]
 fn library_module_that_is_evaluated_without_code_is_named() {
     let files = [
         ("a.ts", "import \"bun:jsc\";\nconsole.log(1);"),

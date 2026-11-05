@@ -1,1 +1,0 @@
-globalThis.set = 1;

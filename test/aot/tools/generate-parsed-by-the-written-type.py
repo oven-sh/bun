@@ -1,3 +1,4 @@
+# all 15,200; ../parallel/parsed-by-the-written-type/ holds 3 of them.
 # generate-parsed-by-the-written-type.py <outdir>: a written type is a GUESS about a text. Whatever the text holds, what JSON.parse gives must be, observably, what plain Bun makes.
 # type x how the type is written x text x what looks at the result. ONE SHAPE A FILE: one type, one way, one text. Every program prints what plain Bun prints.
 import sys, os, json

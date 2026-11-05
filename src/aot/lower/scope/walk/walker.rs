@@ -11,10 +11,13 @@ use super::prepass::{
     collect_class_decorators, collect_eval_variable_scopes, collect_implicit_uses,
     collect_inner_module_parameters,
 };
-use super::{Context, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId, Walker};
+use super::{
+    Context, DeclarationRead, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId,
+    WalkedLoop, Walker,
+};
 use crate::ir::FunctionKey;
 use crate::lower::commonjs;
-use crate::lower::scope::analysis::{shared_sort_unique, sort_unique};
+use crate::lower::scope::analysis::{find_by_key, shared_sort_unique, sort_unique};
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
 use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
 use crate::modules::ModuleKind;
@@ -33,23 +36,47 @@ pub(in crate::lower::scope) fn walk_file(
     let always_read = std::mem::take(&mut walk.declarations_read_by_every_run);
     sort_unique(&mut walk.makers_of_closures_in_every_run);
     let makers = std::mem::take(&mut walk.makers_of_closures_in_every_run);
-    for (symbol, reader, function, around, owner) in
-        std::mem::take(&mut walk.readers_of_declarations)
-    {
-        if always_read.binary_search(&symbol).is_ok() || makers.binary_search(&owner).is_ok() {
+    let reads = std::mem::take(&mut walk.declaration_reads);
+    let nested_reads = reads.iter().filter(|read| read.reader != read.owner);
+    let mut read_by_nested_functions: Vec<SymbolId> =
+        nested_reads.map(|read| read.symbol).collect();
+    sort_unique(&mut read_by_nested_functions);
+    for read in reads {
+        // The closure is kept in a local of the owner unless a nested function reads the name too.
+        let needs_shared_place = read_by_nested_functions.binary_search(&read.symbol).is_ok();
+        let is_made_at_entry = always_read.binary_search(&read.symbol).is_ok()
+            || makers.binary_search(&read.owner).is_ok();
+        if needs_shared_place && is_made_at_entry {
             continue;
         }
-        walk.made_at_first_read.push((symbol, function));
-        walk.function_references.push((reader, function));
+        walk.made_at_first_read.push((read.symbol, read.function));
+        walk.function_references.push((read.reader, read.function));
+        let loop_behind_creation = match needs_shared_place {
+            true => None,
+            false => find_outermost_loop_sharing_binding(input, &walk.loops, read),
+        };
+        if let Some(index) = loop_behind_creation {
+            let walked = &walk.loops[index];
+            walk.sites_that_start
+                .push((read.function, read.reader, walked.entered_at));
+            walk.functions_created_before_loops
+                .push((walked.statement, read.symbol));
+            continue;
+        }
+        walk.sites_that_start
+            .push((read.function, read.reader, read.time));
         // The read may store the function object: Walker::record_store().
-        if let Some(index) = around {
+        if let Some(index) = read.enclosing_loop {
             let innermost = &mut walk.loops[index as usize];
-            innermost.stored.push(BindingRef::Symbol(symbol));
+            innermost.stored.push(BindingRef::Symbol(read.symbol));
             let outermost = innermost.outermost as usize;
-            walk.loops[outermost].symbols_stored_within.push(symbol);
+            walk.loops[outermost]
+                .symbols_stored_within
+                .push(read.symbol);
         }
     }
     sort_unique(&mut walk.made_at_first_read);
+    sort_unique(&mut walk.functions_created_before_loops);
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.names_called);
     shared_sort_unique(&mut walk.eval_uses);
@@ -65,6 +92,30 @@ pub(in crate::lower::scope) fn walk_file(
     merge_redeclared_functions(&mut walk.hoisted_functions);
     find_starts_of_functions_made_late(input, &mut walk);
     walk
+}
+
+// Every iteration of a loop around the declaration has a binding of its own.
+fn find_outermost_loop_sharing_binding(
+    input: &ScopeInput<'_, '_>,
+    loops: &[WalkedLoop],
+    read: DeclarationRead,
+) -> Option<usize> {
+    let scopes = &input.bound.scopes;
+    let declared_in = input.bound.symbol_scope(read.symbol);
+    let mut found = None;
+    let mut current = read.enclosing_loop;
+    while let Some(index) = current {
+        let walked = &loops[index as usize];
+        let parent_of = |&scope: &ScopeId| scopes[scope.idx()].parent.some();
+        if !std::iter::successors(walked.boundary.some(), parent_of)
+            .any(|scope| scope == declared_in)
+        {
+            break;
+        }
+        found = Some(index as usize);
+        current = walked.parent;
+    }
+    found
 }
 
 // A function runs once something starts it: a call in the function that declares it, from the time of that call on, or a call in another function below that one, from the time on from which that function could run:
@@ -84,8 +135,13 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
             CodeUnit::Function(_)
         ) && !bound.is_visible_to_eval(symbol)
             && walk.use_counts.get(symbol.idx()) == Some(&0);
-        if let Some(walked) = function_of_fn[function.idx()].filter(|_| is_never_made) {
+        let is_made_at_first_read = find_by_key(&walk.made_at_first_read, symbol).is_some();
+        if !is_never_made && !is_made_at_first_read {
+            continue;
+        }
+        if let Some(walked) = function_of_fn[function.idx()] {
             functions[walked.index()].is_made_late = true;
+            functions[walked.index()].is_only_called_directly = is_never_made;
             functions[walked.index()].created_at = u32::MAX;
         }
     }
@@ -302,6 +358,7 @@ impl<'x, 's> Walker<'x, 's> {
             created_at: 0,
             hoisted_to: None,
             is_made_late: false,
+            is_only_called_directly: false,
         });
         WalkedFunctionId(self.walk.functions.len() as u32 - 1)
     }

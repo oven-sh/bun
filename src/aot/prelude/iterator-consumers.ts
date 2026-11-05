@@ -264,8 +264,10 @@ export function closeIterator(iterator: unknown): void {
 }
 
 // The error that is already being thrown wins: whatever reading `return` or calling it throws is dropped.
+// Undefined: the loop has opened no iterator: it reads what it iterates over by index, and its handler asks nobody which way the open went.
 $visibility = "Private";
 export function closeIteratorAfterThrow(iterator: unknown): void {
+  if (iterator === undefined) return;
   try {
     $iteratorGenericClose(iterator as any);
   } catch {}

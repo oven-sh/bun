@@ -9,11 +9,13 @@ use crate::ir::generated::{
 use crate::ir::parallel::map_each;
 use crate::ir::{Id, ModuleId, StringId};
 use crate::link::{
-    self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, run_steps_beside,
+    self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
+    run_steps_beside,
 };
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
-use crate::statistics::{Stage, StepClock};
+use crate::modules::Shape;
+use crate::statistics::{Stage, StatisticId, StepClock};
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
@@ -69,6 +71,29 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        let (mut with_names, mut with_value, mut faces) = (0, 0, 0);
+        for &module in &modules {
+            let (project, own) = match module {
+                ProgramModule::File(_) | ProgramModule::Inner { .. } => module
+                    .in_own_project()
+                    .expect("the module has its text in a file"),
+                ProgramModule::Face(_) => {
+                    faces += 1;
+                    continue;
+                }
+                _ => continue,
+            };
+            match bound.projects.get(project).graph.shape(own) {
+                Shape::Names => with_names += 1,
+                Shape::Value => with_value += 1,
+                Shape::EsModule | Shape::AsToday => {}
+            }
+        }
+        self.statistics
+            .count(StatisticId::ModulesWithNames, with_names);
+        self.statistics
+            .count(StatisticId::ModulesWithValue, with_value);
+        self.statistics.count(StatisticId::Faces, faces);
         let mut steps = StepClock::new(Stage::LinkAndEmit);
         let views = loaded.projects.as_ref().map(|_, project| project.view());
         let runs_tests = self.options.aot.runs_tests;
@@ -117,6 +142,7 @@ impl Build<'_> {
                             .map(|&number| ReplaceableBuiltin {
                                 member: BuiltinId::from_wire(number)
                                     .expect("the load lists members of the table"),
+                                stays_locked: false,
                             })
                             .collect();
                         // No file is folded with whether it is the main module, so the run time may take another path for `Bun.main`.
@@ -130,7 +156,31 @@ impl Build<'_> {
                             let place = listed
                                 .binary_search_by_key(&member.to_wire(), |it| it.member.to_wire());
                             if let Err(place) = place {
-                                listed.insert(place, ReplaceableBuiltin { member });
+                                let stays_locked = false;
+                                listed.insert(
+                                    place,
+                                    ReplaceableBuiltin {
+                                        member,
+                                        stays_locked,
+                                    },
+                                );
+                            }
+                        }
+                        // A test run leaves the lock of most members to what the engine's flow finds. What the build has folded by stays locked whatever it finds. An executable locks it anyway.
+                        let fixed = loaded.contents.fixed_builtins.list();
+                        for member in fixed.into_iter().filter(|_| runs_tests) {
+                            let listed = &mut program.replaceable_builtins;
+                            let place = listed
+                                .binary_search_by_key(&member.to_wire(), |it| it.member.to_wire());
+                            if let Err(place) = place {
+                                let stays_locked = true;
+                                listed.insert(
+                                    place,
+                                    ReplaceableBuiltin {
+                                        member,
+                                        stays_locked,
+                                    },
+                                );
                             }
                         }
                         // The front end asks nothing of these names, so what the files spell goes straight to the engine.
@@ -201,6 +251,7 @@ impl Build<'_> {
         let (functions, functions_without_code) = functions;
         self.leftovers.push(leftovers);
         let output = FrontEndOutput {
+            #[cfg(not(test))]
             holds_source_paths: (loaded.projects.iter())
                 .any(|(_, project)| project.sources.holds_source_paths()),
             modules: listed_modules,

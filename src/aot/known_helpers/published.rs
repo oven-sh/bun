@@ -295,12 +295,6 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         origin: "babel 7.8 to 7.15",
     },
     PublishedFunction {
-        shape: Shape::TypeofAnswersSymbolForSymbols,
-        text: "function _typeof(o) {\n\"@babel/helpers - typeof\";\nreturn module.exports = _typeof = \"function\" == typeof Symbol && \"symbol\" == typeof Symbol.iterator ? function (o) {\nreturn typeof o;\n} : function (o) {\nreturn o && \"function\" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? \"symbol\" : typeof o;\n}, module.exports.__esModule = true, module.exports[\"default\"] = module.exports, _typeof(o);\n}",
-        references: &[],
-        origin: "@babel/runtime 7.16 and after, its CommonJS file",
-    },
-    PublishedFunction {
         shape: Shape::ExportStarBindsNamesTheTargetLacks,
         text: "function(m, o) {\nfor (var p in m) if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);\n}",
         references: &[("__createBinding", Reference::Helper(Helper::CreateBinding))],

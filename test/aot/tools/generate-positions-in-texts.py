@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# all 67; ../parallel/positions-in-texts/ holds 3 of them.
 # Writes test/aot/parallel/positions-in-texts/: one program a shape, each held to `bun <file>` by run-parallel.ts.
 # What they guard: behind `pos < text.length` the compiler reads text.charCodeAt(pos) without a test of the bounds, as an integer (aot/walk/AOTWalkPositionsInTexts.cpp, AOTWalkStringCharacters.cpp).
 # A deed: a function that tests a position against a length and reads a character, and values for which the test says less than it seems to: the lower end, another text, another position, a relation that lets the end in.

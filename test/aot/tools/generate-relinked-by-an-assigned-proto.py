@@ -1,3 +1,4 @@
+# all 8,392; ../parallel/relinked-by-an-assigned-proto/ holds 3 of them.
 # generate-relinked-by-an-assigned-proto.py <outdir>: all 8,392: `Object.assign(record, { ["__proto__"]: evil })`: an own enumerable `__proto__` of the SOURCE is ASSIGNED, so the record stands below `evil` from then on.
 # source x evil x target x use. ONE SHAPE A FILE. The controls: a spread, which defines and does not relink . the link laid by hand. Every program prints what plain Bun prints.
 import sys, os

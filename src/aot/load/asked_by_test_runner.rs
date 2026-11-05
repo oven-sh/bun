@@ -32,6 +32,10 @@ fn writes_import_of_values_from_vitest(hir: &File<'_>) -> bool {
 /// `bun test` asks this at run time about a compiled test file or preload. It has to ask the same two questions that `import_used_names` asks of the file
 /// in a build. If the answers differ, the file gets the globals of one runner and the files it loads get the globals of the other.
 pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
+    // The parser of `bun test` does not look into a file under the mark, so what such a file loads has the names of "bun:test".
+    if find_transpiled_mark(text).is_some() {
+        return false;
+    }
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
@@ -44,7 +48,7 @@ pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        ignores_pure_comments: find_transpiled_mark(text).is_some(),
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
     if hir.has_errors
@@ -142,6 +146,14 @@ mod tests {
                 false,
             ),
             ("data.json", "[\"vitest\"]", false),
+            ("a.test.js", "// @bun\nimport 'vitest';", false),
+            (
+                "a.test.js",
+                "#!/usr/bin/env bun\n// @bun\nimport 'vitest';",
+                false,
+            ),
+            ("a.test.cjs", "// @bun @bun-cjs\nrequire('vitest');", false),
+            ("a.test.js", "\n// @bun\nimport 'vitest';", true),
         ];
         for (name, text, expected) in rows {
             let path = format!("/project/{name}");

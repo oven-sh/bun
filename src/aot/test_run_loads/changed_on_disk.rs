@@ -1,6 +1,6 @@
 //! The files of a test run that the run itself writes, moves or removes, and the files that it loads once more under a query.
 
-use bun_core::strings::{contains_char, last_index_of_char};
+use bun_core::strings::{contains_char, index_of_char_usize, last_index_of_char};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Atom;
@@ -14,7 +14,10 @@ use bun_sema_driver::host::from_argument;
 use crate::diagnostics::range_of_node;
 
 fn node_of_site(hir: &File<'_>, site: &ImportSite) -> NodeData {
-    match (site.specifier_node.some().or(site.kind.call()), site.kind) {
+    match (
+        site.specifier_node.some().or_else(|| site.kind.call()),
+        site.kind,
+    ) {
         (Some(expression), _) => NodeData::Expr(expression),
         (None, ImportSiteKind::Import(import)) => NodeData::Stmt(hir[import].stmt),
         (None, ImportSiteKind::ExportFrom(export)) => NodeData::Stmt(hir[export].stmt),
@@ -73,7 +76,7 @@ pub(super) fn find_file_in_front_of_query(
     text: Atom,
 ) -> Option<FileId> {
     let text = files.atoms.bytes(text);
-    let path = &text[..text.iter().position(|&byte| byte == b'?')?];
+    let path = &text[..index_of_char_usize(text, b'?')?];
     if !matches!(path, [b'/', ..] | [b'.', b'/', ..] | [b'.', b'.', b'/', ..]) {
         return None;
     }

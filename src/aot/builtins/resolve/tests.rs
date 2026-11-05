@@ -233,6 +233,7 @@ fn with_parts<R>(
             jsx_fragment_root: None,
             emits_decorator_metadata: setup.emits_decorator_metadata,
             hoists_top_level_variables: false,
+            object_prototype_takes_names: false,
         }),
         ..BindOptions::default()
     };

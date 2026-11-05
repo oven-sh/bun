@@ -7,6 +7,7 @@ use crate::hir::{
 };
 use crate::session::Arena;
 use std::cell::RefCell;
+use std::cmp::Reverse;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct TypeRange {
@@ -48,6 +49,7 @@ impl TypeRanges {
         self.ranges.is_empty()
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn remove_from(&self, text: &[u8]) -> Vec<u8> {
         let mut kept = Vec::with_capacity(text.len());
         let mut at = 0;
@@ -108,32 +110,19 @@ impl TypeRanges {
             None => offset,
         }
     }
-
-    /// Whether the text holds all of this part of the source, byte for byte.
-    pub fn keeps_as_written(&self, from: u32, to: u32) -> bool {
-        let (start, end) = (self.map_offset(from), self.map_offset(to));
-        let next =
-            (self.written_over).partition_point(|(at, text)| at + text.len() as u32 <= start);
-        end - start == to - from && (self.written_over.get(next)).is_none_or(|(at, _)| end <= *at)
-    }
 }
 
 /// The ranges in two or three bytes each, for whoever keeps them as long as the text.
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct PackedTypeRanges {
-    // For each range, how far it starts behind the range before it, and its length.
+    // For each range, how many bytes are kept between it and the range before it, and its length: seven bits a byte, the lowest first.
+    // No length: how many bytes the text has there that the source lacks follows.
     bytes: Box<[u8]>,
     removed: i64,
     written_over: Box<[(u32, Box<[u8]>)]>,
 }
 
 impl PackedTypeRanges {
-    /// For each range, how many bytes are kept between it and the range before it, and its length: seven bits a byte, the lowest first.
-    /// No length: how many bytes the text has there that the source lacks follows.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
     pub fn kept_len(&self, len_of_text: usize) -> usize {
         (len_of_text as i64 - self.removed) as usize
     }
@@ -218,6 +207,7 @@ pub fn find_type_ranges_beside(file: &File<'_>, mut replaced: Vec<ReplacedText>)
     if !file.is_js {
         finder.run();
     }
+    finder.leave_what_stands_in(&mut replaced);
     replaced.append(&mut finder.replaced);
     for part in &replaced {
         finder.add(part.start + part.text.len() as u32, part.end);
@@ -387,6 +377,44 @@ impl<'a, 's> Finder<'a, 's> {
                 self.add(modifier.pos, self.skip_spaces(end) as u32);
             }
         }
+    }
+
+    // `(Color as any).Green`: a part that the caller replaces goes as a whole, and nothing is found in it.
+    fn leave_what_stands_in(&mut self, replaced: &mut Vec<ReplacedText>) {
+        if replaced.is_empty() {
+            return;
+        }
+        // Where two start at one offset, text that is only added comes first: it belongs to what stands in front.
+        replaced.sort_unstable_by_key(|part| {
+            let is_written_over = part.start < part.end;
+            (part.start, is_written_over, Reverse(part.end))
+        });
+        replaced.dedup_by_key(|part| (part.start, part.end));
+        let mut outermost: Vec<ReplacedText> = Vec::with_capacity(replaced.len());
+        for part in replaced.drain(..) {
+            match outermost.last_mut() {
+                // `-Level.Low` and the `Level.Low` in it: the outer part stays.
+                Some(last) if part.start < last.end => {}
+                // What is only added behind a part is the end of what stands in the place of that part.
+                Some(last) if part.end == last.end => {
+                    last.text = [&last.text[..], &part.text[..]].concat().into();
+                }
+                _ => outermost.push(part),
+            }
+        }
+        *replaced = outermost;
+        // Text that is only added where a part starts belongs to what stands in front of the part.
+        let stands_in_part = |start: u32, end: u32| {
+            let behind = replaced.partition_point(|part| part.start < end);
+            let last = behind.checked_sub(1).map(|last| &replaced[last]);
+            last.is_some_and(|part| part.start <= start && end <= part.end)
+        };
+        self.found
+            .retain(|&(start, end)| !stands_in_part(start, end));
+        self.replaced
+            .retain(|part| !stands_in_part(part.start, part.end));
+        self.ends_of_statements
+            .retain(|&at| !stands_in_part(at, at + 1));
     }
 
     fn end_of_erased_statement(&self, end: usize) -> usize {

@@ -740,6 +740,50 @@ fn an_import_holds_a_copy_of_a_name_stored_after_the_body_ends() {
 }
 
 #[test]
+// Each file is linked at a time of its own, so what its importers hold is its own: no face stores the copy of another.
+fn an_import_through_a_getter_holds_a_copy_of_its_own_unless_the_name_behind_it_is_settled() {
+    let main = "import { a } from './m.cjs'; import { b } from './k.cjs'; import './other.cjs'; console.log(a, b);";
+    let imported = |k: &str, other: &str| {
+        let files = [
+            ("main.mjs", main),
+            ("m.cjs", BARREL),
+            ("k.cjs", k),
+            ("other.cjs", other),
+        ];
+        with_program(&files, |program| {
+            let member = |module: &str, name: &str| {
+                let variable = program
+                    .graph
+                    .variable_of(program.module(module), program.atom(name));
+                let variable = variable.expect("no binding asks for the name");
+                program.describe(Some(program.exports().imported_member(variable)))
+            };
+            assert!(
+                program.graph.faces_behind(program.file("m.cjs")).is_empty(),
+                "{k} {other}"
+            );
+            format!("{}, {}", member("m.cjs", "a"), member("k.cjs", "b"))
+        })
+    };
+    assert_eq!(imported("exports.b = 1;", ""), "k.cjs b, k.cjs b");
+    for (k, other) in [
+        ("exports.b = 1; exports.set = () => { exports.b = 2; };", ""),
+        ("exports.b = 1;", "require('./k.cjs').b = 2;"),
+        (
+            "exports.b = 1;",
+            "exports.set = () => { require('./k.cjs').b = 2; };",
+        ),
+        ("exports.b = 1;", "console.log(require('./k.cjs'));"),
+    ] {
+        assert_eq!(
+            imported(k, other),
+            "copy of m.cjs a, copy of k.cjs b",
+            "{k} {other}"
+        );
+    }
+}
+
+#[test]
 fn names_that_may_be_absent_are_checked_in_link_order() {
     let main = "import './first.mjs'; import { late } from './m.cjs'; console.log(late);";
     let files = [
@@ -1098,6 +1142,122 @@ fn a_marker_that_another_file_stores_is_unknown() {
 }
 
 #[test]
+fn whoever_has_the_object_may_change_the_marker() {
+    let unmarked = "exports.default = 'inner'; exports.a = 1;";
+    let marked = "exports.__esModule = true; exports.default = 'inner'; exports.a = 1;";
+    let defined = format!("{MARKER} exports.default = 'inner'; exports.a = 1;");
+    let texts = [unmarked, marked, defined.as_str()];
+    // Each use gets three files of its own, so one build holds them all: `K` stands for the path.
+    let markers_with = |main: &str, uses: &[&str]| -> Vec<[Option<bool>; 3]> {
+        let name_of = |use_number: usize, text: usize| format!("m{use_number}-{text}.cjs");
+        let numbers = (0..uses.len()).flat_map(|number| (0..3).map(move |text| (number, text)));
+        let written = numbers.clone().map(|(number, text)| {
+            let path = format!("./{}", name_of(number, text));
+            uses[number]
+                .replace('K', &path)
+                .replace('N', &format!("n{number}_{text}"))
+        });
+        let written: String = written.collect::<Vec<String>>().join("\n");
+        let names: Vec<String> = numbers
+            .clone()
+            .map(|(number, text)| name_of(number, text))
+            .collect();
+        let mut files = vec![
+            (main, written.as_str()),
+            (
+                "stamp.cjs",
+                "exports.stamp = function (o) { o.__esModule = 1; };",
+            ),
+        ];
+        files.extend(
+            names
+                .iter()
+                .zip(numbers)
+                .map(|(name, (_, text))| (name.as_str(), texts[text])),
+        );
+        with_program(&files, |program| {
+            let marker = |number: usize, text: usize| program.marker(&name_of(number, text));
+            (0..uses.len())
+                .map(|number| [0, 1, 2].map(|text| marker(number, text)))
+                .collect()
+        })
+    };
+    let takes = [
+        "{ const m = require('K'); require('./stamp.cjs').stamp(m); }",
+        "{ const box = { m: require('K') }; box.m.__esModule = 1; }",
+        "{ const m = require('K'); (0, m).__esModule = 1; }",
+        "{ const m = require('K'); (m || {}).__esModule = 1; }",
+        "{ const m = require('K'); const get = () => m; get().__esModule = 1; }",
+        "{ const m = require('K'); const other = m; other.__esModule = 1; }",
+        "{ const m = require('K'); Object.assign(m, { __esModule: 1 }); }",
+        "{ const m = require('K'); Reflect.set(m, '__esModule', 1); }",
+        "{ const m = require('K'); Object.defineProperties(m, { __esModule: { value: 1 } }); }",
+        "{ const m = require('K'); Object.setPrototypeOf(m, { __esModule: 1 }); }",
+        "{ const m = require('K'); m[process.argv[2]] = 1; }",
+        "{ const m = require('K'); delete m[process.argv[2]]; }",
+        "{ const m = require('K'); m.late = process.argv.pop; m.late(); }",
+    ];
+    // The object of the third file refuses.
+    for (markers, taken) in markers_with("main.cjs", &takes).iter().zip(takes) {
+        assert_eq!(*markers, [None, None, Some(true)], "{taken}");
+    }
+    let way = ["require('K'); module.children[0].exports.__esModule = 1;"];
+    assert_eq!(markers_with("main.cjs", &way), [[None, None, Some(true)]]);
+    // What an ES module gets as `default` is the object only where the module lacks the marker.
+    let defaults = [
+        "import N from 'K'; globalThis.held = N;",
+        "import { default as N } from 'K'; globalThis.held = N;",
+        "import * as N from 'K'; globalThis.held = N.default;",
+        "export { default as N } from 'K';",
+    ];
+    for (markers, taken) in markers_with("main.mjs", &defaults).iter().zip(defaults) {
+        assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
+    }
+    let known = [Some(false), Some(true), Some(true)];
+    let leaves = [
+        "require('K');",
+        "{ const m = require('K'); if (m && typeof m.a === 'number') m.a = 2; }",
+        "{ const { a, ...rest } = require('K'); globalThis.held = [a, rest]; }",
+    ];
+    for (markers, left) in markers_with("main.cjs", &leaves).iter().zip(leaves) {
+        assert_eq!(*markers, known, "{left}");
+    }
+    let leaves = [
+        "import N from 'K'; globalThis.held = N.a;",
+        "import * as N from 'K'; globalThis.held = [N.a, N.default.a];",
+    ];
+    for (markers, left) in markers_with("main.mjs", &leaves).iter().zip(leaves) {
+        assert_eq!(*markers, known, "{left}");
+    }
+    // A call through the object hands it over as `this`. In sloppy code `this` may be the global object, which leads to every module object.
+    let files = [
+        (
+            "main.cjs",
+            "require('./stores.cjs').f(); require('./returns.cjs').f(); require('./ignores.cjs').f(); globalThis.held = typeof require('./read.cjs').f;",
+        ),
+        (
+            "stores.cjs",
+            "'use strict'; exports.f = function () { this.__esModule = 1; };",
+        ),
+        (
+            "returns.cjs",
+            "'use strict'; exports.f = function () { return this; };",
+        ),
+        ("ignores.cjs", "exports.f = function () { return 1; };"),
+        (
+            "read.cjs",
+            "'use strict'; exports.f = function () { return this; };",
+        ),
+    ];
+    with_program(&files, |program| {
+        assert_eq!(program.marker("stores.cjs"), None);
+        assert_eq!(program.marker("returns.cjs"), None);
+        assert_eq!(program.marker("ignores.cjs"), Some(false));
+        assert_eq!(program.marker("read.cjs"), Some(false));
+    });
+}
+
+#[test]
 fn importers_ignore_the_marker_in_a_package_of_type_module() {
     let markers_in = |package: &str| {
         let marked = ("m.cjs", "exports.__esModule = true; exports.a = 1;");
@@ -1230,7 +1390,8 @@ fn a_marker_that_other_code_stores_on_an_inner_module_is_unknown() {
             graph.commonjs().marker(ModuleRef::Inner { file, callback })
         })
     };
-    let own = format!("var require_a = __commonJS((exports) => {{ {MARKER} exports.x = 1; }});\n");
+    let own =
+        "var require_a = __commonJS((exports) => { exports.__esModule = true; exports.x = 1; });\n";
     assert_eq!(
         marker_of_first(&format!("{own}console.log(require_a().x);")),
         Some(true)
@@ -1243,4 +1404,16 @@ fn a_marker_that_other_code_stores_on_an_inner_module_is_unknown() {
         marker_of_first(&format!("{own}var a = require_a(); delete a.__esModule;")),
         None
     );
+    // A marker that is defined is neither writable nor configurable: the object refuses both.
+    let own = format!("var require_a = __commonJS((exports) => {{ {MARKER} exports.x = 1; }});\n");
+    for body in [
+        "require_a().__esModule = false;",
+        "var a = require_a(); delete a.__esModule;",
+    ] {
+        assert_eq!(
+            marker_of_first(&format!("{own}{body}")),
+            Some(true),
+            "{body}"
+        );
+    }
 }

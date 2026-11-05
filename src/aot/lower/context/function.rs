@@ -29,6 +29,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) callees_read_on_answers: FxHashMap<ValueId, ValueId>,
     // The call that is being lowered stands in tail position. What loads a module in its place says so.
     pub(in crate::lower) is_call_in_tail_position: bool,
+    // `const made = Object.create(parent); made.name = ..`: the call of the declaration that is being lowered, or of one before it.
+    pub(in crate::lower) object_created_for_maker: Option<bun_sema::hir::ExprId>,
     // The counter of the expression that is being lowered, where it has one.
     pub(in crate::lower) counted_expression: Option<u32>,
     handler: Option<Handler>,
@@ -58,6 +60,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             coroutine: CoroutineState::default(),
             callees_read_on_answers: FxHashMap::default(),
             is_call_in_tail_position: false,
+            object_created_for_maker: None,
             counted_expression: None,
             handler: None,
             position,

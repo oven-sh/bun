@@ -497,26 +497,24 @@ console.log("push", String(readPush()));
 // CHECK-LABEL: function {{*}}name="makeAFunctionDeclaration"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = NewObject layout=[[L_16]]
-// CHECK-NEXT: v2 = Data data=[[d_17]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_16]]
-// CHECK-NEXT: v5 = Data data=[[d_18]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = NewClosure v1 function=[[f_19]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=[[f_19]] flags=[IsFromCompiler]}
-// CHECK-NEXT: PropSet v3, v8 key="k0"
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: v1 = Data data=[[d_16]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Data data=[[d_17]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v5 = Undefined
+// CHECK-NEXT: v6 = NewClosure v2 function=[[f_18]]
+// CHECK-NEXT: PropSet v2, v6 key="k0"
+// CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeASetter"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Data data=[[d_20]]
+// CHECK-NEXT: v1 = Data data=[[d_19]]
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_21]]
+// CHECK-NEXT: v3 = Data data=[[d_20]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = NewObject layout=[[L_22]]
-// CHECK-NEXT: v6 = NewClosure v2 function=[[f_23]]
+// CHECK-NEXT: v5 = NewObject layout=[[L_21]]
+// CHECK-NEXT: v6 = NewClosure v2 function=[[f_22]]
 // CHECK-NEXT: DefineSetter v5, v6 key="n"
 // CHECK-NEXT: v8 = FinishObject v5
 // CHECK-NEXT: PropSet v2, v8 key="k0"
@@ -525,9 +523,9 @@ console.log("push", String(readPush()));
 // CHECK-LABEL: function {{*}}name="makeASet"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Data data=[[d_24]]
+// CHECK-NEXT: v1 = Data data=[[d_23]]
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_25]]
+// CHECK-NEXT: v3 = Data data=[[d_24]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v5 = Builtin builtin=Set
 // CHECK-NEXT: v6 = Construct v5 calleeName="Set"
@@ -540,12 +538,12 @@ console.log("push", String(readPush()));
 // CHECK-LABEL: function {{*}}name="makeAGetter"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Data data=[[d_26]]
+// CHECK-NEXT: v1 = Data data=[[d_25]]
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_27]]
+// CHECK-NEXT: v3 = Data data=[[d_26]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = NewObject layout=[[L_28]]
-// CHECK-NEXT: v6 = NewClosure v2 function=[[f_29]]
+// CHECK-NEXT: v5 = NewObject layout=[[L_27]]
+// CHECK-NEXT: v6 = NewClosure v2 function=[[f_28]]
 // CHECK-NEXT: DefineGetter v5, v6 key="back"
 // CHECK-NEXT: v8 = FinishObject v5
 // CHECK-NEXT: PropSet v2, v8 key="k0"
@@ -554,13 +552,13 @@ console.log("push", String(readPush()));
 // CHECK-LABEL: function {{*}}name="makeAssign"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Data data=[[d_30]]
+// CHECK-NEXT: v1 = Data data=[[d_29]]
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_31]]
+// CHECK-NEXT: v3 = Data data=[[d_30]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v5 = Builtin builtin=Object
 // CHECK-NEXT: v6 = Builtin builtin=ObjectAssign
-// CHECK-NEXT: v7 = Data data=[[d_32]]
+// CHECK-NEXT: v7 = Data data=[[d_31]]
 // CHECK-NEXT: v8 = NewObject -, v2 layout=[[L_4]] fields=[0]
 // CHECK-NEXT: v9 = FinishObject v8
 // CHECK-NEXT: v10 = Call v6, v5, v7, v9 calleeName="Object.assign"
@@ -571,10 +569,10 @@ console.log("push", String(readPush()));
 // CHECK-LABEL: function {{*}}name="Holder"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]]):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_33]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_33]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_33]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_34]]
+// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_32]]
+// CHECK-NEXT: v3 = NewObject v2 layout=[[L_32]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_32]]}
+// CHECK-NEXT: v5 = CallDirect v4 function=[[f_33]]
 // CHECK-NEXT: PropSet v4, v1 key="back"
 // CHECK-NEXT: v7 = Undefined
 // CHECK-NEXT: v8 = TypeTest v7 testedType=object
@@ -591,12 +589,10 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_16]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: env [[L_16]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_16]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="made"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="n"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {

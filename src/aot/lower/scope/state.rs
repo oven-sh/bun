@@ -1,4 +1,4 @@
-use bun_sema::bind::ScopeId;
+use bun_sema::bind::{ScopeId, SymbolId};
 use rustc_hash::FxHashMap;
 
 use super::BindingRef;
@@ -31,6 +31,8 @@ pub(crate) struct ScopeState {
     pub(in crate::lower) entry_this: Option<ValueId>,
     /// The captures of a function that gets them in one object, read out of it at entry.
     pub(in crate::lower) unpacked_captures: Vec<ValueId>,
+    /// By declared function that is created at its first read: a value of its local that is known to be the closure.
+    pub(super) created_functions: FxHashMap<SymbolId, ValueId>,
 }
 
 impl ScopeState {

@@ -312,23 +312,6 @@ pub fn load_for_aot_package(host: &dyn Host, session: &Session, manifest_path: &
     project
 }
 
-impl Project {
-    pub fn key_of_compiler_options(&self) -> Vec<u8> {
-        let mut options: Vec<&(Vec<u8>, Json)> = self.raw_compiler_options.iter().collect();
-        options.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let mut key = self.options.base_url.clone();
-        for (name, value) in options {
-            key.push(b'\n');
-            key.extend_from_slice(name);
-            value.stringify(&mut key);
-            if name == b"types" {
-                key.extend_from_slice(&self.config_path);
-            }
-        }
-        key
-    }
-}
-
 fn exclude_output_directories(raw: &mut Raw, base: &[u8]) {
     if raw.exclude.is_array {
         return;

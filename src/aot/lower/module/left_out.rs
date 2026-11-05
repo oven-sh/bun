@@ -24,15 +24,6 @@ enum Declaration {
 pub struct LeftOutDeclarations(FxHashSet<(FileId, Declaration)>);
 
 impl LeftOutDeclarations {
-    /// The same declarations under the numbers that another program gives the files.
-    pub fn in_other_program(
-        &self,
-        file_of: &dyn Fn(FileId) -> Option<FileId>,
-    ) -> LeftOutDeclarations {
-        let renumbered = (self.0.iter()).filter_map(|&(file, id)| Some((file_of(file)?, id)));
-        LeftOutDeclarations(renumbered.collect())
-    }
-
     /// For the log: the same for the same declarations, whatever numbers the files have. `hash_of_file`: a number that stands for a file.
     pub fn fingerprint(&self, hash_of_file: &dyn Fn(FileId) -> u64) -> u64 {
         let hashes = (self.0.iter())

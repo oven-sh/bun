@@ -517,12 +517,85 @@ fn pattern_site_lists_candidates() {
         let expected = pages.map(|name| SpelledModule {
             spelling: program.atom(&format!("./{name}")),
             module: program.module(name),
+            is_left_to_loader: false,
         });
         assert_eq!(program.only_candidates("main.ts"), expected);
         assert!(program.request_lines("main.ts").is_empty());
         for name in pages {
             assert!(program.graph.has_record(program.file(name)));
         }
+    });
+}
+
+#[test]
+fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
+    const PLUGIN: &str = r#"Bun.plugin({ name: "p", setup() {} });"#;
+    const CHOICE: &str = r#"(flag ? "./pages/home.js" : "./pages/about.js")"#;
+    // The file, the body of a function, and whether the loader is given the names beside a plugin.
+    let rows = [
+        (
+            "main.mjs",
+            "const pick = CHOICE; return import(pick);",
+            true,
+        ),
+        ("main.mjs", "return import(`./pages/${flag}.js`);", true),
+        (
+            "main.cjs",
+            "return require('./pages/' + flag + '.js');",
+            true,
+        ),
+        ("main.mjs", "return import.meta.require(CHOICE);", true),
+        // `bun build` links these two.
+        ("main.mjs", "return import(CHOICE);", false),
+        ("main.cjs", "return require(CHOICE);", false),
+    ];
+    for (name, body, is_left_beside_plugin) in rows {
+        for plugin in [PLUGIN, ""] {
+            let body = body.replace("CHOICE", CHOICE);
+            let main = format!("{plugin}\nglobalThis.load = function (flag) {{ {body} }};\n");
+            let files = [
+                (name, &main[..]),
+                ("pages/home.js", "globalThis.home = 1;"),
+                ("pages/about.js", "globalThis.about = 1;"),
+            ];
+            with_program(&files, |program| {
+                let candidates = program.only_candidates(name).iter();
+                let mut spelled: Vec<(String, ModuleRef, bool)> = candidates
+                    .map(|it| {
+                        let spelling = program.text_of(it.spelling).to_string();
+                        (spelling, it.module, it.is_left_to_loader)
+                    })
+                    .collect();
+                spelled.sort_by(|left, right| left.0.cmp(&right.0));
+                let is_left = is_left_beside_plugin && !plugin.is_empty();
+                let expected = ["pages/about.js", "pages/home.js"]
+                    .map(|page| (format!("./{page}"), program.module(page), is_left));
+                assert_eq!(spelled, expected, "{main}");
+            });
+        }
+    }
+}
+
+#[test]
+fn name_that_a_package_json_resolves_stays_linked_beside_a_plugin() {
+    let files = [
+        (
+            "main.mjs",
+            r#"Bun.plugin({ name: "p", setup() {} });
+            globalThis.load = function (flag) { const pick = flag ? "kit" : "./tool"; return import(pick); };"#,
+        ),
+        (
+            "node_modules/kit/package.json",
+            r#"{ "name": "kit", "main": "./start.js" }"#,
+        ),
+        ("node_modules/kit/start.js", "globalThis.kit = 1;"),
+        ("tool/package.json", r#"{ "main": "./start.js" }"#),
+        ("tool/start.js", "globalThis.tool = 1;"),
+    ];
+    with_program(&files, |program| {
+        let candidates = program.only_candidates("main.mjs");
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|it| !it.is_left_to_loader));
     });
 }
 
@@ -590,6 +663,7 @@ fn candidates_of_each_site_are_a_range() {
         let spelled = |spelling, module| SpelledModule {
             spelling: Atom(spelling),
             module,
+            is_left_to_loader: false,
         };
         let expected = [
             spelled(1, ModuleRef::File(FileId(5))),

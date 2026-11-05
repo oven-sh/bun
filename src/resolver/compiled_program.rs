@@ -75,9 +75,6 @@ pub struct CompiledPathAlias {
     pub is_base_url: bool,
 }
 
-/// `bun test --aot`: the programs that share their realms with the program of the process, and the range that holds the images of all.
-pub static PROGRAMS_ABOVE: OnceLock<Box<[&'static CompiledProgram]>> = OnceLock::new();
-pub static RANGE_OF_ALL_IMAGES: OnceLock<&'static [u8]> = OnceLock::new();
 /// `--aot-program-file`: the file stands where the executable would.
 pub static FILE_IN_PLACE_OF_EXECUTABLE: OnceLock<FileInPlaceOfExecutable> = OnceLock::new();
 

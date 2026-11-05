@@ -13,8 +13,8 @@ use crate::load::data_modules::parse_json;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
-    FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions, SaidTypes,
-    lower_file, lower_file_that_throws,
+    FileInputs, KnownHelpersLowered, LibraryFunctions, LoweredFile, LoweringInputs,
+    LoweringOptions, SaidTypes, lower_file, lower_file_that_throws,
 };
 use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleKind};
 use crate::report;
@@ -48,6 +48,7 @@ pub(crate) struct LoweredUnit {
     pub functions_lowered: u64,
     /// The values in the bodies of those functions.
     pub values_lowered: u64,
+    pub known_helpers: KnownHelpersLowered,
     /// `lower_file_that_throws` made the unit.
     pub throws_at_load: bool,
 }
@@ -56,7 +57,7 @@ struct DecidedProject {
     roles: RoleDecision,
     files_to_lower: Vec<FileId>,
     left_out_bodies: LeftOutBodies,
-    /// For each file where `RoleDecision::reported_early_error` holds: where in `RoleDecision::diagnostics` the first one in the text stands. Ascending.
+    /// For each file in which `RoleDecision::diagnostics` has an early error: where the first one in the text stands there. Ascending.
     first_reported_early_errors: Vec<(FileId, u32)>,
     /// The files of `RoleDecision::incomplete` that `add_incomplete_files` has the error `FileNestedTooDeeply` for. Ascending.
     files_nested_too_deeply: Vec<FileId>,
@@ -258,7 +259,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         }
         if let Some(first) = self.decided.first_reported_early_error(file) {
             // What follows the first line elaborates on it.
-            let sentence = first.text.split(|&byte| byte == b'\n').next()?;
+            let sentence = bun_core::strings::split(&first.text, b"\n").next()?;
             return Some(with_position(sentence.to_vec(), (first.line, first.column)));
         }
         describe_first_fold_error(self.loaded.view(), file)
@@ -513,6 +514,9 @@ impl Build<'_> {
             let statistics = &mut self.statistics;
             statistics.count(StatisticId::FunctionsLowered, lowered.functions_lowered);
             statistics.count(StatisticId::ValuesLowered, lowered.values_lowered);
+            let known_helpers = lowered.known_helpers;
+            statistics.count(StatisticId::KnownHelperFunctions, known_helpers.functions);
+            statistics.count(StatisticId::KnownHelperCalls, known_helpers.calls);
             lowered_units.push(lowered.unit);
         }
         extend_from_boxes(units, lowered_units, &in_parallel);
@@ -691,6 +695,8 @@ impl Build<'_> {
             page_manifests: &page_manifests,
             reads_source_paths,
             replaced_builtins: &loaded.contents.replaced_builtins,
+            fixed_builtins: &loaded.contents.fixed_builtins,
+            names_added_to_builtins: &loaded.contents.names_added_to_builtins,
             limits: &self.limits,
             options: self.lowering_options(),
             said_types: &SaidTypes::default(),
@@ -887,6 +893,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         fragment,
         diagnostics,
         queries,
+        known_helpers,
     } = lowered;
     let functions = fragment.functions.iter().map(|(_, function)| function);
     let (mut functions_lowered, mut values_lowered) = (0, 0);
@@ -900,6 +907,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         queries,
         functions_lowered,
         values_lowered,
+        known_helpers,
         throws_at_load: false,
     }
 }

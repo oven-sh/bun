@@ -1,9 +1,0 @@
-import types from "node:util/types";
-new Function(
-  JSON.parse(
-    JSON.stringify(
-      'Object.defineProperty(process.getBuiltinModule("node:util/types"), "isDate", { get() { return () => "mine"; }, configurable: true })',
-    ),
-  ),
-)();
-console.log(JSON.stringify(types.isDate.name));

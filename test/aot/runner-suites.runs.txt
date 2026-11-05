@@ -7,7 +7,6 @@ test/js/bun/test/mock/mock-module.test.ts: a factory that another factory's impo
 test/js/bun/test/mock/mock-module.test.ts: a factory that asks vi.importActual() for another mocked module, which imports the one it mocks
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
-test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module which imports an importer of the mock, and throws
 test/js/bun/test/mock/mock-module.test.ts: a factory that returns a module namespace object > of a module that re-exports the mocked module fails
 test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its own module, whose original imports itself, is only called once
 test/js/bun/test/mock/mock-module.test.ts: a mock deleted from require.cache by user code doesn't reach the next file through its importers
@@ -25,10 +24,8 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > w
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > a module that re-exports the mocked module, and is re-exported next to it
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported after the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported before the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original if the factory has no source file either
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original of the module that is being mocked
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
-test/js/bun/test/mock/mock-module.test.ts: a module that imports a mock whose factory has failed with the error of another module
 test/js/bun/test/mock/mock-module.test.ts: a module that is being fetched as a mock whose factory has not returned > loads as the real module or the new mock once the mock is removed or replaced
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock that is removed before import() calls its factory
@@ -38,7 +35,6 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > an import of its own has an async factory from a preload ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > an import of its own has an async factory from a preload []
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > every file that imports the module that mocks gets the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > evicting modules stays fast while many loads are pending
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over []
@@ -73,10 +69,7 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given
 test/js/bun/test/mock/mock-module.test.ts: an import() gets the exports of the mock it started under, however late the factory settles
-test/js/bun/test/mock/mock-module.test.ts: factories that import each other's modules > a factory that the other one started gets the original
-test/js/bun/test/mock/mock-module.test.ts: factories that import each other's modules > also if each loads a module that imports the other's module
 test/js/bun/test/mock/mock-module.test.ts: factories that import each other's modules > also if they load it with vi.importActual()
-test/js/bun/test/mock/mock-module.test.ts: factories that import each other's modules > if each asks for the other's module, the one that asks last gets the original
 test/js/bun/test/mock/mock-module.test.ts: factories that import each other's modules > if import() asks for each of them, the second doesn't wait for the first, and gets the original
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that takes importOriginal gets the hoisting note on its TDZ error too

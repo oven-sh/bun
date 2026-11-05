@@ -2,6 +2,7 @@ use super::effects::{can_lose_trust, requested_diagnostics};
 use super::queue::{LOWERING_ROUNDS, ROLE_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
+use bun_sema::check::aot::LeftOutBodies;
 use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Requested};
 use bun_sema::hir::FileKind;
@@ -100,7 +101,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     // Lowering asks the checker of its task what the first early error of a file says, also where the roles were decided by it.
     let requested = |file: FileId| match is_left_out(file) {
         true => Requested::Types,
-        false => requested_diagnostics(loaded.origin(file)),
+        false => requested_diagnostics(loaded.origin(file), request.code.looks_for_type_errors),
     };
     let slots = slots_by_file(files, roles, files_to_lower);
     let products: Vec<Guarded<Option<T>>> =
@@ -111,9 +112,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         .copied()
         .filter(|&file| files.module(file).is_read_by_every_task)
         .collect();
-    if !loaded.is_read_again {
-        files.let_trees_go_behind(&to_check);
-    }
+    files.let_trees_go_behind(&to_check);
     let passes_left = AtomicUsize::new(usize::MAX);
     let prepare_lowered_file = |file: FileId| {
         if let Some(prepare) = prepare
@@ -139,7 +138,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
             }
         },
         beside_file: prepare.map(|_| &prepare_lowered_file as &(dyn Fn(FileId) + Sync)),
-        frees_tree: &|_| !loaded.is_read_again,
+        frees_tree: &|_| true,
         is_last_pass: &|| passes_left.load(Ordering::Relaxed) == 0,
         note_cycles_entered: Some(&|file, cycles| {
             loaded.note_cycles_entered(LOWERING_ROUNDS, file, cycles);
@@ -149,7 +148,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
             false => CyclesEntered::default(),
         },
         first_round: LOWERING_ROUNDS,
-        left_out_bodies: request.left_out_bodies,
+        left_out_bodies: bodies_left_out_of_check(request),
     };
     let pass_count = match passes.count {
         PassCount::Exactly(count) => count,
@@ -204,11 +203,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     }
     let report = report.expect("there is a first pass");
     files.watch_no_more();
-    if !loaded.is_read_again {
-        for &file in &read_by_every_task {
-            // SAFETY: every task has ended, and nothing reads a tree after them.
-            unsafe { files.free_tree(file) };
-        }
+    for &file in &read_by_every_task {
+        // SAFETY: every task has ended, and nothing reads a tree after them.
+        unsafe { files.free_tree(file) };
     }
     let mut lowered: Vec<(FileId, T)> = files_to_lower
         .iter()
@@ -314,8 +311,16 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
 
 // None of its statements is compiled, also where it is lowered for its place among the modules.
 fn is_left_out(request: &CompileRequest<'_, '_>, file: FileId) -> bool {
-    let left_out = request.left_out_bodies;
+    let left_out = bodies_left_out_of_check(request);
     left_out.is_some_and(|left_out| left_out.contains_file(file))
+}
+
+/// Whoever looks for type errors looks at all that is written, also at what no build compiles.
+fn bodies_left_out_of_check<'a>(request: &CompileRequest<'a, '_>) -> Option<&'a LeftOutBodies> {
+    match request.code.looks_for_type_errors {
+        true => None,
+        false => request.left_out_bodies,
+    }
 }
 
 fn is_reported_with_roles(roles: &RoleDecision, diagnostic: &Diagnostic) -> bool {

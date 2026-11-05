@@ -1,8 +1,8 @@
 use super::aliases::declared_names;
 use super::{
-    BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache, LOADED_BELOW_VITEST,
-    LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
-    SpyCall,
+    BuiltinPath, CommonJsBuiltins, EvaluatedText, GLOBALS_LEFT_ALONE, KeyOfModuleCache,
+    LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved,
+    ResolvedBuiltins, SourceDialect, SpyCall,
 };
 use crate::builtins::runtime_uses::{
     Mentions, RuntimeUses, is_unknown_module_loader, reaches_unknown_module_loader,
@@ -13,7 +13,7 @@ use crate::builtins::table::{
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, Decision, KnownSets};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, MemberKey};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, MemberKey, UnOp};
 use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::cell::{OnceCell, RefCell};
@@ -188,7 +188,6 @@ pub(super) struct ResolverOutput {
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
     pub(super) gets_at_entries_of_module_cache: bool,
-    pub(super) reads_entries_of_module_cache: bool,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -548,13 +547,22 @@ impl<'a, 's> Resolver<'a, 's> {
                 target,
                 ..
             } => {
-                matches!(hir[target].kind, ExprKind::Ident(name) if [LOADED_BY_WORKER, LOADED_BELOW_VITEST].contains(&atoms.bytes(name)))
+                matches!(hir[target].kind, ExprKind::Ident(name) if [LOADED_BY_WORKER, LOADED_BELOW_VITEST, GLOBALS_LEFT_ALONE].contains(&atoms.bytes(name)))
             }
             ExprKind::Binary {
                 op: BinOp::Or,
                 left,
                 right,
             } => self.asks_who_loads(left) && self.asks_who_loads(right),
+            ExprKind::Binary {
+                op: BinOp::BitAnd,
+                left,
+                ..
+            } => self.asks_who_loads(left),
+            ExprKind::Unary {
+                op: UnOp::Not,
+                operand,
+            } => self.asks_who_loads(operand),
             _ => false,
         }
     }
@@ -628,7 +636,8 @@ impl<'a, 's> Resolver<'a, 's> {
                 }
             }
             // `(loadedByWorker ??= ..) ? vi : local`: load/test_runner_names.rs writes a name of the test runner so in every file that a Worker may load. Where the file has the names it is the object of the
-            // runner. In any other realm it is what that realm calls so, which reaches nothing of this run. So whoever looks for what the tests replace follows it, and lowering is told nothing.
+            // runner. In any other realm it is what that realm calls so, which reaches nothing of this run. Where a script has laid the name on `globalThis` it is what the script has laid, and what that does
+            // to the run it does in code of its own. So whoever looks for what the tests replace follows it, and lowering is told nothing.
             ExprKind::Cond { test, branches } if self.asks_who_loads(test) => {
                 let of_runner = self.input.hir.branches(branches).no;
                 match self.value_of(of_runner).or_else(|| self.held_value_of(of_runner)) {
@@ -678,8 +687,6 @@ impl<'a, 's> Resolver<'a, 's> {
             && reaches_loader_of_paths(&output.loaded, &called, &handed_on, input.platform);
         let reaches_module_cache =
             input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache;
-        let reads_entries_of_module_cache =
-            input.dialect == SourceDialect::Program && output.reads_entries_of_module_cache;
         let mut ids = mentioned.iter();
         let names_plugin = ids.any(|&id| {
             table::canonical_id(id) == BuiltinId::BunPlugin || table::resets_modules(id)
@@ -746,7 +753,6 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_module_cache_on: output.hands_module_cache_on,
             names_plugin,
             reaches_module_cache,
-            reads_entries_of_module_cache,
         }
     }
 }

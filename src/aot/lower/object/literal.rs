@@ -454,6 +454,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // A property of a literal that somebody else writes out, laid as the literal lays it.
+    pub(in crate::lower) fn lower_property_of_written_literal(
+        &mut self,
+        object: &mut ObjectBuilder,
+        property: PropId,
+    ) {
+        self.lower_property_definition(object, None, property);
+    }
+
     fn lower_property_definition(
         &mut self,
         object: &mut ObjectBuilder,

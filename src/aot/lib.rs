@@ -27,7 +27,6 @@ pub mod prelude;
 pub mod report;
 pub mod statistics;
 mod test_run_loads;
-#[allow(dead_code, reason = "most of its callers land apart from it")]
 mod test_run_report;
 mod test_runs;
 

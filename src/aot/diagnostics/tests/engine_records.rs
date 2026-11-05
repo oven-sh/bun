@@ -343,6 +343,28 @@ fn warning_at_witness_in_module_without_source_has_no_location() {
 }
 
 #[test]
+fn worker_start_of_no_place_warns_nobody() {
+    let mut diagnostics = Diagnostics::new();
+    diagnostics.add_worker_start_without_name(&witness(NO_LOCATION), &texts());
+    assert!(written(diagnostics).msgs.is_empty());
+}
+
+#[test]
+fn worker_start_at_place_warns_there() {
+    let seen = Witness {
+        function: 0,
+        ..witness(at(PROGRAM, 7))
+    };
+    let mut diagnostics = Diagnostics::new();
+    diagnostics.add_worker_start_without_name(&seen, &texts());
+    let sentence = sentence_of(Code::WorkerStartedFromUnknownValue, &[]);
+    assert_eq!(
+        describe(&written(diagnostics)),
+        [format!("/p/a.ts:2:1 Warn {sentence}")]
+    );
+}
+
+#[test]
 fn error_at_witness_stops_build() {
     let location = at(DEPENDENCY, 0);
     let diagnostics = add_at_witness(Code::UnsupportedOption, &[b"--splitting"], location);

@@ -1,5 +1,4 @@
 use bun_exe_format::builtins::Builtins;
-use std::borrow::Cow;
 use std::sync::OnceLock;
 
 const HEADER: &[u8] = b"bun-builtins-manifest\t6";
@@ -10,36 +9,6 @@ pub struct Module {
     pub id: u32,
     pub path: Option<Box<[u8]>>,
     pub specifier: Option<Box<[u8]>>,
-}
-
-/// An identifier of a module that names a function or a class, where the text that `bun run` evaluates does not have it as the module writes it.
-pub struct BundledName {
-    pub position: u32,
-    /// None: what the identifier names in the module has no name in that text.
-    pub name: Option<Box<[u8]>>,
-    /// In that text it is the function's or the class's own name, not a variable that holds an anonymous one.
-    pub is_own_name: bool,
-}
-
-/// A word of a file that a stack trace shows where `bun run` has a word of another file. Lines and columns count from 0.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct PlaceInOtherFile {
-    /// Where the word starts.
-    pub offset: u32,
-    pub line: u32,
-    pub column: u32,
-    /// Where the word of the other file ends, on the same line.
-    pub end_column: u32,
-}
-
-/// What it takes to find the words of a file in the text that `bun run` evaluates.
-pub struct BundledPositions {
-    /// Of a file of functions: what `bun run` evaluates for each, one behind the other in the order in which the file writes them.
-    pub evaluated: Cow<'static, [u8]>,
-    /// As src/codegen/bundled-positions.ts writes them.
-    pub corrections: &'static [u8],
-    /// In order of offset.
-    pub places_in_other_files: &'static [PlaceInOtherFile],
 }
 
 /// Of a file that declares for every file. Each list says where statements stand, in ascending order.
@@ -69,9 +38,6 @@ pub struct Manifest {
     files_declaring_for_every_file: Vec<(Box<[u8]>, PartSeenByEveryFile)>,
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
-    bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
-    evaluated_functions: Vec<(Box<[u8]>, Box<[(u32, u32)]>)>,
-    places_in_other_files: Vec<(Box<[u8]>, Vec<PlaceInOtherFile>)>,
     parts_of_modules: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
@@ -128,41 +94,6 @@ impl Manifest {
                     };
                     (manifest.files_declaring_for_every_file).push((file, part));
                 }
-                b"name" => {
-                    let file = field()?;
-                    let name = BundledName {
-                        position: number(field()?).ok_or_else(error)?,
-                        name: optional(field()?),
-                        is_own_name: match field()? {
-                            b"own" => true,
-                            b"variable" => false,
-                            _ => return Err(error()),
-                        },
-                    };
-                    match manifest.bundled_names.last_mut() {
-                        Some((last, names)) if **last == *file => names.push(name),
-                        _ => manifest.bundled_names.push((file.into(), vec![name])),
-                    }
-                }
-                b"evaluated-functions" => {
-                    let file = field()?.into();
-                    let ranges = ranges(field()?).ok_or_else(error)?;
-                    manifest.evaluated_functions.push((file, ranges));
-                }
-                b"place" => {
-                    let file = field()?;
-                    let mut number = || number(field()?).ok_or_else(error);
-                    let place = PlaceInOtherFile {
-                        offset: number()?,
-                        line: number()?,
-                        column: number()?,
-                        end_column: number()?,
-                    };
-                    match manifest.places_in_other_files.last_mut() {
-                        Some((last, places)) if **last == *file => places.push(place),
-                        _ => (manifest.places_in_other_files).push((file.into(), vec![place])),
-                    }
-                }
                 b"part" => (manifest.parts_of_modules).push((field()?.into(), field()?.into())),
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
@@ -178,12 +109,6 @@ impl Manifest {
         }
         manifest.builtin_functions.sort_unstable();
         manifest.files_declaring_for_every_file.sort_unstable();
-        for (_, names) in &mut manifest.bundled_names {
-            names.sort_unstable_by_key(|name| name.position);
-        }
-        for (_, places) in &mut manifest.places_in_other_files {
-            places.sort_unstable_by_key(|place| place.offset);
-        }
         let files = manifest.function_files.iter().map(|file| &**file);
         let mut sorted_files: Vec<(&[u8], u32)> = files.zip(0..).collect();
         sorted_files.sort_unstable();
@@ -257,16 +182,6 @@ impl Manifest {
         self.module(id).is_some_and(|module| module.path.is_some())
     }
 
-    /// In order of position.
-    pub fn bundled_names(&self, module: u32) -> &[BundledName] {
-        let path = self
-            .module(module)
-            .and_then(|module| module.path.as_deref());
-        let mut files = self.bundled_names.iter();
-        let found = files.find(|(file, _)| Some(&**file) == path);
-        found.map_or(&[], |(_, names)| names)
-    }
-
     /// The module that `module` holds a part of. A stack trace shows the part under the name of that module, where the part stands there.
     pub fn module_held_in_part(&self, module: u32) -> Option<u32> {
         let path = self.module(module)?.path.as_deref()?;
@@ -274,12 +189,6 @@ impl Manifest {
         let mut modules = self.modules.iter();
         let whole = modules.find(|module| module.path.as_deref() == Some(&**whole))?;
         Some(whole.id)
-    }
-
-    fn places_in_other_files(&self, path: &[u8]) -> &[PlaceInOtherFile] {
-        let mut files = self.places_in_other_files.iter();
-        let found = files.find(|(file, _)| **file == *path);
-        found.map_or(&[], |(_, places)| places)
     }
 
     pub fn function_files(&self) -> &[Box<[u8]>] {
@@ -374,9 +283,6 @@ fn evaluated_text(module: u32) -> Option<&'static [u8]> {
     Some(evaluated_texts()?.module(module)?.source)
 }
 
-/// In the file `positions`, the files of functions follow on the modules: this and the index of the file in `Manifest::function_files`.
-const FIRST_ID_OF_FUNCTION_FILES: u32 = 1 << 20;
-
 const NAME_LEN: usize = 63;
 const RECORD_LEN: usize = 1 + NAME_LEN + 4 + 4 + 4;
 
@@ -430,58 +336,6 @@ impl Archive {
         }
     }
 
-    /// None: a stack trace shows the lines and columns of the module as it is written.
-    pub fn bundled_positions(module: u32) -> Option<BundledPositions> {
-        let manifest = Archive::embedded().manifest();
-        let path = manifest.module(module)?.path.as_deref()?;
-        let shown = manifest.module_held_in_part(module).unwrap_or(module);
-        Some(BundledPositions {
-            evaluated: evaluated_text(shown)?.into(),
-            corrections: Archive::corrections(module)?,
-            places_in_other_files: manifest.places_in_other_files(path),
-        })
-    }
-
-    /// The same for a file of src/js/builtins. `path` starts behind `VIRTUAL_ROOT`.
-    pub fn bundled_positions_of_functions(path: &[u8]) -> Option<BundledPositions> {
-        let manifest = Archive::embedded().manifest();
-        let index = (manifest.function_files.iter()).position(|file| **file == *path)?;
-        let mut files = manifest.evaluated_functions.iter();
-        let (_, ranges) = files.find(|(file, _)| **file == *path)?;
-        let texts = evaluated_texts()?;
-        let mut evaluated = Vec::new();
-        for &(start, end) in ranges {
-            evaluated.extend_from_slice(texts.source_of_functions(start, end)?);
-        }
-        Some(BundledPositions {
-            evaluated: evaluated.into(),
-            corrections: Archive::corrections(FIRST_ID_OF_FUNCTION_FILES + index as u32)?,
-            places_in_other_files: manifest.places_in_other_files(path),
-        })
-    }
-
-    fn corrections(id: u32) -> Option<&'static [u8]> {
-        // The part of each file stands behind its id and its length, in the order of the ids.
-        static POSITIONS: OnceLock<(Vec<u8>, Vec<(u32, core::ops::Range<usize>)>)> =
-            OnceLock::new();
-        let (positions, parts) = POSITIONS.get_or_init(|| {
-            let positions = Archive::read(b"positions").unwrap_or_default();
-            let mut parts = Vec::new();
-            let mut rest = &positions[..];
-            while let (Some(id), Some(length)) = (read_number(&mut rest), read_number(&mut rest)) {
-                let start = positions.len() - rest.len();
-                let Some(behind) = rest.get(length as usize..) else {
-                    break;
-                };
-                parts.push((id, start..start + length as usize));
-                rest = behind;
-            }
-            (positions, parts)
-        });
-        let found = parts.binary_search_by_key(&id, |part| part.0).ok()?;
-        Some(&positions[parts[found].1.clone()])
-    }
-
     pub fn has(name: &[u8]) -> bool {
         records()
             .binary_search_by(|record| name_of(record).cmp(name))
@@ -509,20 +363,6 @@ fn records() -> &'static [[u8; RECORD_LEN]] {
             .expect("the archive starts with the list of its files")
     });
     records.as_chunks::<RECORD_LEN>().0
-}
-
-/// 7 bits a byte, the lowest first.
-fn read_number(bytes: &mut &[u8]) -> Option<u32> {
-    let mut value = 0u32;
-    for shift in (0..32).step_by(7) {
-        let (byte, rest) = bytes.split_first()?;
-        *bytes = rest;
-        value |= u32::from(byte & 0x7F) << shift;
-        if byte & 0x80 == 0 {
-            return Some(value);
-        }
-    }
-    None
 }
 
 fn name_of(record: &[u8; RECORD_LEN]) -> &[u8] {
@@ -572,11 +412,6 @@ mod tests {
         functions\tengine/ArrayPrototype.js\n\
         functions\tbuiltins/Fifo.ts\n\
         declarations\tnode/fs.listed.d.ts\n\
-        name\tinternal/a.ts\t40\t-\tvariable\n\
-        name\tinternal/a.ts\t12\tread2\town\n\
-        evaluated-functions\tbuiltins/Fifo.ts\t30 40 0 10\n\
-        place\tinternal/a.ts\t50\t1\t2\t3\n\
-        place\tinternal/a.ts\t12\t39\t11\t19\n\
         part\tinternal/b.ts\tinternal/a.ts\n";
 
     fn error_line(text: &[u8]) -> Option<usize> {
@@ -600,29 +435,6 @@ mod tests {
         assert_eq!(&*manifest.function_files()[1], b"builtins/Fifo.ts");
         assert_eq!(manifest.module_declarations().len(), 1);
         assert_eq!(&*manifest.module_declarations()[0], b"node/fs.listed.d.ts");
-        let [first, second] = manifest.bundled_names(1) else {
-            panic!("the module has two names");
-        };
-        assert_eq!(first.position, 12);
-        assert_eq!(first.name.as_deref(), Some(&b"read2"[..]));
-        assert!(first.is_own_name);
-        assert_eq!(second.position, 40);
-        assert!(second.name.is_none());
-        assert!(!second.is_own_name);
-        assert!(manifest.bundled_names(0).is_empty());
-        assert!(manifest.bundled_names(4).is_empty());
-        assert_eq!(manifest.evaluated_functions.len(), 1);
-        assert_eq!(*manifest.evaluated_functions[0].1, [(30, 40), (0, 10)]);
-        let places = manifest.places_in_other_files(b"internal/a.ts");
-        assert_eq!(places.len(), 2);
-        let first = PlaceInOtherFile {
-            offset: 12,
-            line: 39,
-            column: 11,
-            end_column: 19,
-        };
-        assert_eq!(places[0], first);
-        assert!(manifest.places_in_other_files(b"internal/b.ts").is_empty());
         assert_eq!(manifest.module_held_in_part(2), Some(1));
         assert_eq!(manifest.module_held_in_part(1), None);
     }

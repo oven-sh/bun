@@ -200,17 +200,6 @@ const programs: Record<string, Program> = {
     },
     plain: "[ 1 ]\n",
   },
-  "url-polyfill": {
-    files: {
-      "main.js": `
-        (function (global) {
-          var proto = global.URLSearchParams.prototype;
-          if (typeof proto._fromString !== "function") Object.defineProperty(proto, "_fromString", { value(text) { return text; } });
-        })(typeof global !== "undefined" ? global : globalThis);
-        console.log(new URLSearchParams()._fromString("a"));`,
-    },
-    plain: "a\n",
-  },
   "array.prototype.map": {
     files: {
       "main.js": `

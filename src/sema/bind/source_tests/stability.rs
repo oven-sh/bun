@@ -116,6 +116,37 @@ const PARAMETERS: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", r#"function f(p) { eval(""); }"#, VisibleToEval),
 ];
 
+/// With `RuntimeBindOptions::object_prototype_takes_names`, and without.
+const PARAMETERS_BELOW_OBJECT_PROTOTYPE: &[(&str, BindingStability, BindingStability)] = &[
+    ("function f(p) { arguments.extra; }", MappedArgument, Stable),
+    ("function f(p, k) { arguments[k]; }", MappedArgument, Stable),
+    ("function f(p) { arguments['0']; }", MappedArgument, Stable),
+    (
+        "function f(p) { typeof arguments?.extra; }",
+        MappedArgument,
+        Stable,
+    ),
+    (
+        "function f(p) { () => arguments.toString; }",
+        MappedArgument,
+        Stable,
+    ),
+    ("function f(p) { arguments.length; }", Stable, Stable),
+    ("function f(p) { arguments.callee; }", Stable, Stable),
+    (
+        "function f(p) { arguments[0] + arguments[1.5]; }",
+        Stable,
+        Stable,
+    ),
+    ("function f(p) { p = 1; arguments.length; }", Stored, Stored),
+    (
+        r#"function f(p) { "use strict"; arguments.extra; }"#,
+        Stable,
+        Stable,
+    ),
+    ("function f(p = 1) { arguments.extra; }", Stable, Stable),
+];
+
 const WRAPPER_PARAMETERS: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", "var exports; arguments;", MappedArgument),
     ("a.cjs", "var exports; () => arguments;", MappedArgument),
@@ -192,6 +223,25 @@ fn parameters() {
         analyzed(path, text, |s| {
             assert_stability(s, s.parameter("p", 0), expected, text)
         });
+    }
+}
+
+#[test]
+fn parameters_below_an_object_prototype_that_takes_names() {
+    for &(text, below_names, otherwise) in PARAMETERS_BELOW_OBJECT_PROTOTYPE {
+        for (object_prototype_takes_names, expected) in [(true, below_names), (false, otherwise)] {
+            let runtime = RuntimeBindOptions {
+                object_prototype_takes_names,
+                ..Default::default()
+            };
+            let source = Source {
+                runtime,
+                ..Source::new("a.cjs", text)
+            };
+            analyzed_source(&source, |s| {
+                assert_stability(s, s.parameter("p", 0), expected, text)
+            });
+        }
     }
 }
 

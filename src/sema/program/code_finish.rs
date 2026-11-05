@@ -126,7 +126,6 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             declared_module_type: analyzed.declared_module_type,
             type_where_imported: analyzed.type_where_imported,
             runs_inside_require: analyzed.runs_inside_require,
-            is_only_imported_from_above: analyzed.is_only_imported_from_above,
             is_package_type_module: analyzed.is_package_type_module,
             package: entry.package,
             side_effects: entry.side_effects,

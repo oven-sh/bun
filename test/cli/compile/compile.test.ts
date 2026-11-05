@@ -1,10 +1,9 @@
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
-import { describe, test } from "../../aot/listed";
 
 async function run(cwd: string, cmd: string[]) {
   const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, NO_COLOR: "1" });
@@ -59,9 +58,9 @@ describe.concurrent("bun compile", () => {
       exitCode: 0,
     });
 
-    expect(await bun(String(dir), "compile", "--no-aot", "--aot-log-type-mismatches", "app.ts")).toEqual({
+    expect(await bun(String(dir), "compile", "--no-aot", "--aot-huge-heap", "app.ts")).toEqual({
       stdout: "",
-      stderr: "error: --aot-log-type-mismatches requires --aot\n",
+      stderr: "error: --aot-huge-heap requires --aot\n",
       exitCode: 1,
     });
   });
@@ -119,7 +118,7 @@ describe.concurrent("bun compile", () => {
       expect(await bun(String(dir), "compile", "app.ts", "--explain=nonsense")).toEqual({
         stdout: "",
         stderr:
-          'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics\n',
+          'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, allocations, forms, statistics\n',
         exitCode: 1,
       });
     },

@@ -51,7 +51,7 @@ show("in an arrow", () => { Reflect.construct(F, []); });
 show("in a constructor", function () { class K { constructor() { return Reflect.construct(F, [], new.target); } } new K(); });
 show("in tail position", function () { "use strict"; return Reflect.construct(F, []); });
 show("held, in tail position", function () { "use strict"; return held(F, []); });
-// Todo: only frames (stack-trace-only differences are fine, 11-02): frames stored as data in its last comment
+// Todo: only frames (stack-trace-only differences are fine): frames stored as data in its last comment
 /* Output:
 written | Error | new F < 
 written, three arguments | Error | new F < 

@@ -3523,19 +3523,6 @@ impl StandaloneModuleGraph {
         Ok(Some(graph))
     }
 
-    /// A graph beside that of the process.
-    #[cfg(unix)]
-    pub(crate) fn read_payload(
-        base: *mut u8,
-        len: usize,
-        payload_file: Option<ImageFile>,
-    ) -> crate::Result<Option<StandaloneModuleGraph>> {
-        let Some(offsets) = Self::read_offsets(base, len) else {
-            return Ok(None);
-        };
-        Self::from_bytes(base, len, offsets, payload_file).map(Some)
-    }
-
     fn read_offsets(base: *mut u8, len: usize) -> Option<Offsets> {
         if len < size_of::<Offsets>() + TRAILER.len() {
             bun_core::debug_warn!("bun standalone module graph is too small to be valid");

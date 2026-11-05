@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-lists-out-of-places.py <folder>: a list declared `Node[]` comes out of a place (a field, a variable, a map, a call), something lies in it, and its elements are used in one way: one program each, held to `bun <file>`.
+# generate-lists-out-of-places.py <folder>: all 952; ../parallel/lists-out-of-places/ holds 8 of them: a list declared `Node[]` comes out of a place (a field, a variable, a map, a call), something lies in it, and its elements are used in one way: one program each, held to `bun <file>`.
 # What is written of the contents of a list is a guess wherever the list comes from. Now and then the type lies.
 import os, sys
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)

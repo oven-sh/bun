@@ -14,10 +14,10 @@ use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 
-use crate::builtins::resolve::{LOADED_BELOW_VITEST, LOADED_BY_WORKER};
+use crate::builtins::resolve::{GLOBALS_LEFT_ALONE, LOADED_BELOW_VITEST, LOADED_BY_WORKER};
 use crate::load::hoisted_mocks;
 use crate::load::react_compiler::module_items::{
-    POSITION, finish_file, put_around_body, write_constant, write_declaration, write_import,
+    POSITION, finish_file, put_around_body, write_constant, write_import,
 };
 
 const MODULE: &[u8] = b"bun:test";
@@ -25,15 +25,55 @@ const MODULE_OF_VITEST: &[u8] = b"vitest";
 const MODULE_OF_CHAI: &[u8] = b"chai";
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
-const OWN_GLOBAL_PREFIX: &[u8] = b"%global:";
 const NAME_OF_VITEST_PREFIX: &[u8] = b"%vitest:";
 // The object `Bun`, whatever the file itself calls `Bun`.
 const MODULE_OF_BUN: &[u8] = b"bun";
 const LOCAL_NAME_OF_BUN: &[u8] = b"%bun";
 
-/// `jest` for the name that stands in its place in a file that got the import, as a message quotes it. Any other name unchanged.
+/// `jest` for a name that stands in its place in a file that got the import, as a message quotes it, and `_temp` for a function that the React Compiler has outlined. Any other name unchanged.
 pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
-    name.strip_prefix(LOCAL_NAME_PREFIX).unwrap_or(name)
+    name_asked_of_scope_objects(name)
+        .or_else(|| crate::load::react_compiler::module_items::name_of_outlined_function(name))
+        .unwrap_or(name)
+}
+
+/// `expect` for `(%loaded-by-worker ??= ..) ? expect : %test:expect`, which `choose_by_flavor` has put in the place of the name, as a message quotes it. Type syntax is passed over.
+pub(crate) fn skip_to_written_use<'a>(
+    hir: &File<'_>,
+    bytes_of: impl Fn(Atom) -> &'a [u8],
+    expression: ExprId,
+) -> ExprId {
+    let is_asked_by_build = |mut test: ExprId| {
+        while let ExprKind::Binary {
+            op: BinOp::Or | BinOp::BitAnd,
+            left: first,
+            ..
+        }
+        | ExprKind::Unary {
+            op: UnOp::Not,
+            operand: first,
+        } = hir[test].kind
+        {
+            test = first;
+        }
+        let ExprKind::Assign {
+            op: Some(BinOp::Nullish),
+            target,
+            ..
+        } = hir[test].kind
+        else {
+            return false;
+        };
+        // No program can write the name that takes the answer.
+        matches!(hir[target].kind, ExprKind::Ident(name) if bytes_of(name).starts_with(b"%"))
+    };
+    let mut written = hir.skip_type_assertions(expression);
+    while let ExprKind::Cond { test, branches } = hir[written].kind
+        && is_asked_by_build(test)
+    {
+        written = hir.skip_type_assertions(hir.branches(branches).yes);
+    }
+    written
 }
 
 /// What the object of a `with` and the variables of an `eval` are asked for: `jest` for a name that stands in its place, and nothing for any other name that the build has made.
@@ -41,7 +81,7 @@ pub(crate) fn name_asked_of_scope_objects(name: &[u8]) -> Option<&[u8]> {
     if !name.starts_with(b"%") {
         return Some(name);
     }
-    let prefixes = [LOCAL_NAME_PREFIX, OWN_GLOBAL_PREFIX, NAME_OF_VITEST_PREFIX];
+    let prefixes = [LOCAL_NAME_PREFIX, NAME_OF_VITEST_PREFIX];
     prefixes
         .iter()
         .find_map(|prefix| name.strip_prefix(*prefix))
@@ -118,6 +158,22 @@ fn find_how_use_reads(request: &TransformRequest<'_, '_>, expression: ExprId) ->
 struct Flavor {
     variable: Atom,
     path: Atom,
+    /// The name is free where the file has the names of this runner: `jest` below "vitest", `suite` below "bun:test".
+    lacks_name: Runner,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Runner {
+    Bun,
+    Vitest,
+}
+
+/// The variable that holds which names of the runner `bun test` would leave alone in the file, the path that the file asks with, and the bit of the name.
+#[derive(Copy, Clone)]
+struct OwnGlobal {
+    variable: Atom,
+    path: Atom,
+    bit: u32,
 }
 
 /// What a file finds out at its load, in each realm that loads it, before it reads a name of the runner.
@@ -126,8 +182,10 @@ struct Asked {
     /// The variable that says whether a Worker has loaded the file. `bun test` gives the names to what its own realm loads, and to nothing else.
     by_worker: Option<Atom>,
     flavor: Option<Flavor>,
+    own_global: Option<OwnGlobal>,
 }
-/// `(loadedByWorker ??= ..) || (loadedBelowVitest ??= ..) ? yes : no`. A function of the file may run ahead of its body, while the file loads.
+/// `(loadedByWorker ??= ..) || (loadedBelowVitest ??= ..) || (globalsLeftAlone ??= ..) & bit ? yes : no`. A function of the file may run ahead of its body, while the file loads.
+/// `!(loadedBelowVitest ??= ..)` for a name that "vitest" alone has.
 fn choose_by_flavor(
     file: &mut FileBuilder,
     atoms: &Interner<'_>,
@@ -147,16 +205,27 @@ fn choose_by_flavor(
     });
     let flavor = asked.flavor.map(|flavor| {
         let value = write_question(file, atoms, flavor.path);
-        ask(file, flavor.variable, value)
-    });
-    let test = match (by_worker, flavor) {
-        (Some(left), Some(right)) => {
-            let op = BinOp::Or;
-            file.expr(ExprKind::Binary { op, left, right }, pos, end)
+        let operand = ask(file, flavor.variable, value);
+        let op = UnOp::Not;
+        match flavor.lacks_name {
+            Runner::Vitest => operand,
+            Runner::Bun => file.expr(ExprKind::Unary { op, operand }, pos, end),
         }
-        (Some(test), None) | (None, Some(test)) => test,
-        (None, None) => unreachable!("a use that asks nothing is written as it is"),
-    };
+    });
+    let own_global = asked.own_global.map(|own| {
+        let value = write_question_of_own_globals(file, atoms, own.path);
+        let left = ask(file, own.variable, value);
+        let bit = file.number(f64::from(own.bit));
+        let right = file.expr(ExprKind::Number(bit), pos, end);
+        let op = BinOp::BitAnd;
+        file.expr(ExprKind::Binary { op, left, right }, pos, end)
+    });
+    let questions = [by_worker, flavor, own_global].into_iter().flatten();
+    let test = questions.reduce(|left, right| {
+        let op = BinOp::Or;
+        file.expr(ExprKind::Binary { op, left, right }, pos, end)
+    });
+    let test = test.expect("a use that asks nothing is written as it is");
     let branches = file.store_branches(branches);
     file[chosen].kind = ExprKind::Cond { test, branches };
 }
@@ -195,7 +264,7 @@ fn write_use_by_flavor(
 }
 
 /// Both runners have the name, and theirs behave differently: vitest runs `afterEach` hooks last laid first, runs what a `beforeAll` hook returns, ignores a hook laid by a running
-/// test and hands a test its context. `vi` and `expect` stay "bun:test"'s: the build reads what is spied on and replaced by them.
+/// test and hands a test its context, and its `vi` is an object of its own, which fakes the timers in its own way. `expect` is one object in both.
 fn differs_by_flavor(name: &str) -> bool {
     matches!(
         name,
@@ -209,10 +278,11 @@ fn differs_by_flavor(name: &str) -> bool {
             | "onTestFinished"
             | "aroundEach"
             | "aroundAll"
+            | "vi"
     )
 }
 
-/// `beforeEach` is `loadedBelowVitest ? ofVitest : ofBun`, and `loadedByWorker ? beforeEach : ..` around that where a Worker may load the file.
+/// `beforeEach` is `loadedBelowVitest ? ofVitest : ofBun`, and `loadedByWorker || globalsLeftAlone & bit ? beforeEach : ..` around that where the name may be neither's.
 fn write_use_of_either_runner(
     file: &mut FileBuilder,
     atoms: &Interner<'_>,
@@ -227,9 +297,10 @@ fn write_use_of_either_runner(
     write_use(file, no, written, of_bun);
     let by_flavor = Asked {
         by_worker: None,
+        own_global: None,
         ..asked
     };
-    if asked.by_worker.is_none() {
+    if asked.by_worker.is_none() && asked.own_global.is_none() {
         return choose_by_flavor(file, atoms, expression, by_flavor, Branches { yes, no });
     }
     let of_runner = file.expr(ExprKind::Ident(written), pos, end);
@@ -259,8 +330,14 @@ fn write_question_of_realm(file: &mut FileBuilder, atoms: &Interner<'_>) -> Expr
     let op = UnOp::Not;
     add(file, ExprKind::Unary { op, operand })
 }
-/// `typeof Bun.jest(path, true).suite === "function"`: "vitest" alone has `suite`.
-fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>, path: Atom) -> ExprId {
+/// `Bun.jest(path, true)`: the module that `bun test` would take the names of the file from if it transpiled the file now.
+/// `Bun.jest(path, true, true)`: the names that it would leave alone, a bit for each as `Jest::GLOBALS` lists them: it has looked for them on `globalThis` in front of the test file.
+fn write_call_of_jest(
+    file: &mut FileBuilder,
+    atoms: &Interner<'_>,
+    path: Atom,
+    asks_for_own_globals: bool,
+) -> ExprId {
     let add = |file: &mut FileBuilder, kind: ExprKind| file.expr(kind, POSITION, POSITION);
     let mut bun = add(file, ExprKind::Ident(atoms.intern(LOCAL_NAME_OF_BUN)));
     if !file.is_js {
@@ -271,7 +348,11 @@ fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>, path: Atom) -> E
     let callee = add(file, callee);
     let path = add(file, ExprKind::String(path));
     let by_who_loads = add(file, ExprKind::True);
-    let args = file.list(&[path, by_who_loads]);
+    let mut args = vec![path, by_who_loads];
+    if asks_for_own_globals {
+        args.push(add(file, ExprKind::True));
+    }
+    let args = file.list(&args);
     let call = file.add_call(Call {
         callee,
         args,
@@ -280,7 +361,26 @@ fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>, path: Atom) -> E
         chain: Chain::No,
         is_pure: false,
     });
-    let module = add(file, ExprKind::Call(call));
+    add(file, ExprKind::Call(call))
+}
+
+/// `Bun.jest(path, true, true) | 0`. The operator changes nothing of the number: whoever follows the module that the function answers otherwise sees here that it is kept nowhere.
+fn write_question_of_own_globals(
+    file: &mut FileBuilder,
+    atoms: &Interner<'_>,
+    path: Atom,
+) -> ExprId {
+    let left = write_call_of_jest(file, atoms, path, true);
+    let zero = file.number(0.0);
+    let right = file.expr(ExprKind::Number(zero), POSITION, POSITION);
+    let op = BinOp::BitOr;
+    file.expr(ExprKind::Binary { op, left, right }, POSITION, POSITION)
+}
+
+/// `typeof Bun.jest(path, true).suite === "function"`: "vitest" alone has `suite`.
+fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>, path: Atom) -> ExprId {
+    let add = |file: &mut FileBuilder, kind: ExprKind| file.expr(kind, POSITION, POSITION);
+    let module = write_call_of_jest(file, atoms, path, false);
     let member = file.dot(
         (module, Chain::No),
         (atoms.intern(b"suite"), POSITION),
@@ -400,45 +500,6 @@ fn write_bun(
     }
 }
 
-/// A name of the global object that the file has not declared for itself. The statement that reads it stands at the top of the file.
-fn find_name_of_global_object(bound: &Bound<'_>, atoms: &Interner<'_>) -> Atom {
-    let declared = bound.scopes[0].locals;
-    let names = [known::globalThis, known::global, atoms.intern(b"self")];
-    let mut free = names
-        .into_iter()
-        .filter(|&name| bound.lookup(declared, name).is_none());
-    free.next().unwrap_or(known::globalThis)
-}
-
-/// `const { expect: %global:expect = %test:expect } = globalThis;`
-fn write_own_globals(
-    file: &mut FileBuilder,
-    global_object: Atom,
-    names: &[(Atom, Atom, Atom)],
-) -> StmtId {
-    let properties: Vec<PatProp> = names
-        .iter()
-        .map(|&(name, local, of_runner)| PatProp {
-            key: PropKey::Name(name),
-            name_kind: NameKind::Identifier,
-            value: file.pat(PatKind::Ident(local), POSITION, POSITION),
-            default: file.expr(ExprKind::Ident(of_runner), POSITION, POSITION),
-            is_rest: false,
-            pos: POSITION,
-            key_pos: POSITION,
-            end: POSITION,
-        })
-        .collect();
-    let properties = file.add_pat_props(&properties);
-    let pat = file.pat(PatKind::Object(properties), POSITION, POSITION);
-    let mut global = file.expr(ExprKind::Ident(global_object), POSITION, POSITION);
-    if !file.is_js {
-        let ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION);
-        global = file.expr(ExprKind::As { expr: global, ty }, POSITION, POSITION);
-    }
-    write_declaration(file, pat, global)
-}
-
 /// "vitest" hands on `assert` and `should` of chai. The parser gives `bun test` the project's chai for them: `ChaiImports`.
 /// Asked by atom alone: an import in a text that only looks like code may have no name, and nobody can read the text of that.
 #[derive(Copy, Clone)]
@@ -530,11 +591,16 @@ pub(crate) fn import_used_names<'s>(
     } else {
         MODULE
     };
-    let given = Jest::GLOBALS.iter().filter(|name| match is_of_vitest {
+    let given = (0u32..).zip(Jest::GLOBALS);
+    // Only the run knows who loads the file first.
+    let asks_flavor_of_run = file_of_run.may_load_below_vitest && !is_of_vitest;
+    let given = given.filter(|(_, name)| match is_of_vitest {
         true => !Jest::is_of_bun_only(name),
-        false => !Jest::is_of_vitest_only(name),
+        false => asks_flavor_of_run || !Jest::is_of_vitest_only(name),
     });
-    let given: Vec<&[u8]> = given.map(|name| name.as_bytes()).collect();
+    let (bits, given): (Vec<u32>, Vec<&[u8]>) = given
+        .map(|(index, name)| (1u32 << index, name.as_bytes()))
+        .unzip();
     let names: Vec<Atom> = given.iter().map(|name| atoms.intern(name)).collect();
     let uses = find_uses(request, &names);
     let is_entry_point = file_of_run.is_entry_point;
@@ -550,12 +616,8 @@ pub(crate) fn import_used_names<'s>(
         locals.collect()
     };
     let of_runner = with_prefix(LOCAL_NAME_PREFIX);
-    // A file that imports a test module keeps any global that a script put on `globalThis` itself. Only the run knows which.
+    // A file that imports a test module keeps any global that a script put on `globalThis` itself. Only the run knows which: it looks once, in front of each test file.
     let keeps_own_globals = imports(request, atoms, is_test_module);
-    let locals = match keeps_own_globals {
-        true => with_prefix(OWN_GLOBAL_PREFIX),
-        false => of_runner.clone(),
-    };
     let mut file = FileBuilder::from_file(request.hir);
     if let Some(hoisting) = &hoisting {
         hoisting.apply(&mut file, atoms);
@@ -566,34 +628,65 @@ pub(crate) fn import_used_names<'s>(
         *request.hir = finish_file(file, arena, atoms);
         return TreeChange::Changed;
     }
-    // Only the run knows who loads the file first.
-    let flavor = (file_of_run.may_load_below_vitest && !is_of_vitest).then(|| Flavor {
+    let path = atoms.intern(request.path);
+    let flavor = asks_flavor_of_run.then(|| Flavor {
         variable: atoms.intern(LOADED_BELOW_VITEST),
-        path: atoms.intern(request.path),
+        path,
+        lacks_name: Runner::Vitest,
     });
+    let left_alone = atoms.intern(GLOBALS_LEFT_ALONE);
     let by_worker = (file_of_run.may_load_in_worker).then(|| atoms.intern(LOADED_BY_WORKER));
     let mut asks_flavor = false;
     let mut asks_realm = false;
+    let mut asks_for_own_globals = false;
     let of_vitest = with_prefix(NAME_OF_VITEST_PREFIX);
     let mut taken_from_vitest: Vec<usize> = Vec::new();
     for &(expression, name) in &uses {
         let text = core::str::from_utf8(given[name]).unwrap_or("");
+        let own_global = keeps_own_globals.then(|| OwnGlobal {
+            variable: left_alone,
+            path,
+            bit: bits[name],
+        });
         if flavor.is_some()
-            && !keeps_own_globals
             && differs_by_flavor(text)
             && find_how_use_reads(request, expression) == Some(Reads::Value)
         {
             asks_flavor = true;
             asks_realm |= by_worker.is_some();
+            asks_for_own_globals |= own_global.is_some();
             taken_from_vitest.push(name);
-            let atoms_of_use = (names[name], locals[name], of_vitest[name]);
-            let asked = Asked { by_worker, flavor };
+            let atoms_of_use = (names[name], of_runner[name], of_vitest[name]);
+            let asked = Asked {
+                by_worker,
+                flavor,
+                own_global,
+            };
             write_use_of_either_runner(&mut file, atoms, expression, atoms_of_use, asked);
             continue;
         }
-        let flavor = flavor.filter(|_| Jest::is_of_bun_only(text));
-        let asked = Asked { by_worker, flavor };
-        let reads = (by_worker.is_some() || flavor.is_some())
+        // Such a name is among the names only where the run is asked.
+        let is_of_vitest_alone = !is_of_vitest && Jest::is_of_vitest_only(text);
+        let lacks_name = match is_of_vitest_alone {
+            true => Runner::Bun,
+            false => Runner::Vitest,
+        };
+        let flavor = flavor
+            .filter(|_| is_of_vitest_alone || Jest::is_of_bun_only(text))
+            .map(|flavor| Flavor {
+                lacks_name,
+                ..flavor
+            });
+        let local = match is_of_vitest_alone {
+            true => of_vitest[name],
+            false => of_runner[name],
+        };
+        let asked = Asked {
+            by_worker,
+            flavor,
+            own_global,
+        };
+        let reads = (by_worker.is_some() || flavor.is_some() || own_global.is_some())
             .then(|| find_how_use_reads(request, expression))
             .flatten()
             .map(|reads| (asked, reads));
@@ -601,10 +694,16 @@ pub(crate) fn import_used_names<'s>(
             Some((flavor, reads)) => {
                 asks_flavor |= flavor.flavor.is_some();
                 asks_realm |= by_worker.is_some();
-                let atoms_of_use = (names[name], locals[name], flavor);
+                asks_for_own_globals |= own_global.is_some();
+                if is_of_vitest_alone {
+                    taken_from_vitest.push(name);
+                }
+                let atoms_of_use = (names[name], local, flavor);
                 write_use_by_flavor(&mut file, atoms, expression, atoms_of_use, reads);
             }
-            None => write_use(&mut file, expression, names[name], locals[name]),
+            // "bun:test" has no such name to store to.
+            None if is_of_vitest_alone => {}
+            None => write_use(&mut file, expression, names[name], of_runner[name]),
         }
     }
     // `{ test }` has the key `test` and the value of the import.
@@ -617,14 +716,22 @@ pub(crate) fn import_used_names<'s>(
         }
     }
     let is_used = |name: usize| uses.iter().any(|&(_, used)| used == name);
-    let used: Vec<usize> = (0..names.len()).filter(|&name| is_used(name)).collect();
+    let has_name = |name: usize| {
+        let text = core::str::from_utf8(given[name]).unwrap_or("");
+        is_of_vitest || !Jest::is_of_vitest_only(text)
+    };
+    let used = (0..names.len()).filter(|&name| is_used(name) && has_name(name));
+    let used: Vec<usize> = used.collect();
     let imported = used.iter().map(|&name| (names[name], of_runner[name]));
     let imported: Vec<(Atom, Atom)> = imported.collect();
     let tables = (atoms, request.bound);
-    let mut added = vec![match request.analysis.module_format {
-        ModuleFormat::Esm => write_import(&mut file, atoms, module, imported.iter().copied()),
-        ModuleFormat::CommonJs => write_require(&mut file, tables, module, &imported),
-    }];
+    let mut added = Vec::new();
+    if !imported.is_empty() {
+        added.push(match request.analysis.module_format {
+            ModuleFormat::Esm => write_import(&mut file, atoms, module, imported.iter().copied()),
+            ModuleFormat::CommonJs => write_require(&mut file, tables, module, &imported),
+        });
+    }
     taken_from_vitest.sort_unstable();
     taken_from_vitest.dedup();
     if !taken_from_vitest.is_empty() {
@@ -639,15 +746,7 @@ pub(crate) fn import_used_names<'s>(
             ModuleFormat::CommonJs => write_require(&mut file, tables, MODULE_OF_VITEST, &imported),
         });
     }
-    if keeps_own_globals {
-        let own = used
-            .iter()
-            .map(|&name| (names[name], locals[name], of_runner[name]));
-        let own: Vec<(Atom, Atom, Atom)> = own.collect();
-        let global_object = find_name_of_global_object(request.bound, atoms);
-        added.push(write_own_globals(&mut file, global_object, &own));
-    }
-    if asks_flavor || asks_realm {
+    if asks_flavor || asks_realm || asks_for_own_globals {
         let format = request.analysis.module_format;
         added.push(write_bun(&mut file, tables, format));
     }
@@ -658,6 +757,10 @@ pub(crate) fn import_used_names<'s>(
         let init = write_question_of_realm(&mut file, atoms);
         added.push(write_answer(&mut file, variable, init));
     }
+    if asks_for_own_globals {
+        let init = write_question_of_own_globals(&mut file, atoms, path);
+        added.push(write_answer(&mut file, left_alone, init));
+    }
     added.extend(of_chai);
     put_around_body(&mut file, &added, &[]);
     *request.hir = finish_file(file, arena, atoms);
@@ -667,6 +770,7 @@ pub(crate) fn import_used_names<'s>(
 #[cfg(test)]
 mod tests {
     use bstr::BStr;
+    use bun_sema::atom::Atom;
     use bun_sema::bind::{Binding, CommonJsVariable};
     use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, StmtKind, TypeNodeKind, UnOp};
 
@@ -678,21 +782,107 @@ mod tests {
     #[test]
     fn names_asked_of_scope_objects() {
         let asked = |name: &'static [u8]| super::name_asked_of_scope_objects(name);
-        for name in [
-            &b"%test:jest"[..],
-            b"%global:jest",
-            b"%vitest:jest",
-            b"jest",
-        ] {
+        for name in [&b"%test:jest"[..], b"%vitest:jest", b"jest"] {
             assert_eq!(asked(name), Some(&b"jest"[..]), "{}", BStr::new(name));
+            assert_eq!(
+                super::written_name_of_local(name),
+                b"jest",
+                "{}",
+                BStr::new(name)
+            );
         }
         for name in [
             super::LOADED_BY_WORKER,
             super::LOADED_BELOW_VITEST,
+            super::GLOBALS_LEFT_ALONE,
             super::LOCAL_NAME_OF_BUN,
         ] {
             assert_eq!(asked(name), None, "{}", BStr::new(name));
+            assert_eq!(super::written_name_of_local(name), name);
         }
+        assert_eq!(asked(b"%react:outlined:12:_temp2"), None);
+        assert_eq!(
+            super::written_name_of_local(b"%react:outlined:12:_temp2"),
+            b"_temp2"
+        );
+        assert_eq!(
+            super::written_name_of_local(b"%react:import:_c"),
+            b"%react:import:_c"
+        );
+    }
+
+    // The arguments of the call of `tell`, as a message quotes them.
+    fn describe_quoted_arguments(
+        loaded: &crate::compile::LoadedBuild<'_, '_>,
+        name: &str,
+    ) -> String {
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        let path = format!("/project/{name}");
+        let file = files
+            .by_path
+            .get(path.as_bytes())
+            .expect("the file is in the program");
+        let hir = files.hir(file);
+        let bytes_of = |atom| files.atoms.bytes(atom);
+        let name_of = |expression: ExprId| match hir[expression].kind {
+            ExprKind::Ident(name) => {
+                BStr::new(super::written_name_of_local(bytes_of(name))).to_string()
+            }
+            _ => "?".to_owned(),
+        };
+        let mut calls = hir.exprs.iter().filter_map(|node| match node.kind {
+            ExprKind::Call(call) if name_of(hir[call].callee) == "tell" => Some(hir[call]),
+            _ => None,
+        });
+        let call = calls.next().expect("the file calls `tell`");
+        let quoted = hir.ids(call.args).map(|argument| {
+            let written = super::skip_to_written_use(hir, bytes_of, argument);
+            match hir[written].kind {
+                ExprKind::Unary {
+                    op: UnOp::Typeof,
+                    operand,
+                } => format!(
+                    "typeof {}",
+                    name_of(super::skip_to_written_use(hir, bytes_of, operand))
+                ),
+                _ => name_of(written),
+            }
+        });
+        quoted.collect::<Vec<String>>().join(", ")
+    }
+
+    #[test]
+    fn a_message_quotes_a_use_as_it_is_written() {
+        let written = "expect, jest, vi, describe, test, it, beforeEach, typeof jest, typeof it";
+        let call = format!("function tell() {{}} tell({written});");
+        let settings = default_settings();
+        for head in [
+            "",
+            "import { test } from 'bun:test'; ",
+            "new Worker(import.meta.url); ",
+        ] {
+            for name in ["a.test.js", "a.test.ts"] {
+                let text = format!("{head}{call}");
+                let files = [(name, text.as_str())];
+                let quoted = with_loaded_test_run(&files, &settings, |_, loaded| {
+                    describe_quoted_arguments(loaded, name)
+                });
+                assert_eq!(quoted, written, "{name}: {text}");
+                let quoted = with_loaded_test_run_of_vitest(&files, &settings, |_, loaded| {
+                    describe_quoted_arguments(loaded, name)
+                });
+                assert_eq!(quoted, written, "under vitest: {name}: {text}");
+            }
+        }
+        // What the program wrote itself stays.
+        let files = [(
+            "a.test.js",
+            "function tell() {} let k; tell((k ??= 1) ? expect : jest);",
+        )];
+        let quoted = with_loaded_test_run(&files, &settings, |_, loaded| {
+            describe_quoted_arguments(loaded, "a.test.js")
+        });
+        assert_eq!(quoted, "?");
     }
 
     // What the name is bound to that the call begins with which loads "bun:test".
@@ -952,7 +1142,7 @@ mod tests {
         }
     }
 
-    // What the file takes off `globalThis`, each with the name that it has where `globalThis` lacks it.
+    // The reads of names of the runner that first ask the run whether a script has laid the name, each with the bit that it asks for and what it reads where none has.
     fn describe_own_globals(name: &str, text: &str) -> String {
         with_loaded_test_run(&[(name, text)], &default_settings(), |_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
@@ -962,84 +1152,71 @@ mod tests {
                 .get(path.as_bytes())
                 .expect("the file is in the program");
             let hir = files.hir(file);
-            let text_of = |atom| BStr::new(files.atoms.bytes(atom)).to_string();
-            let properties = hir.pat_props.iter().filter(|it| it.default != ExprId::NONE);
-            let taken =
-                properties.filter_map(|it| match (hir[it.value].kind, hir[it.default].kind) {
-                    (PatKind::Ident(local), ExprKind::Ident(of_runner)) => {
-                        Some(format!("{} = {}", text_of(local), text_of(of_runner)))
-                    }
-                    _ => None,
-                });
-            taken.collect::<Vec<String>>().join(", ")
+            let text_of = |it: ExprId| match hir[hir.skip_type_assertions(it)].kind {
+                ExprKind::Ident(name) => BStr::new(files.atoms.bytes(name)).to_string(),
+                _ => String::new(),
+            };
+            let asked = hir.exprs.iter().filter_map(|it| {
+                let ExprKind::Cond { test, branches } = it.kind else {
+                    return None;
+                };
+                let ExprKind::Binary {
+                    op: BinOp::Or,
+                    right,
+                    ..
+                } = hir[test].kind
+                else {
+                    return None;
+                };
+                let ExprKind::Binary {
+                    op: BinOp::BitAnd,
+                    left,
+                    right: bit,
+                } = hir[right].kind
+                else {
+                    return None;
+                };
+                let ExprKind::Assign { target, .. } = hir[left].kind else {
+                    return None;
+                };
+                let ExprKind::Number(bit) = hir[bit].kind else {
+                    return None;
+                };
+                let branches = hir.branches(branches);
+                Some(format!(
+                    "{} & {} ? {} : {}",
+                    text_of(target),
+                    hir.numbers[bit as usize],
+                    text_of(branches.yes),
+                    text_of(branches.no)
+                ))
+            });
+            asked.collect::<Vec<String>>().join(", ")
         })
     }
 
     #[test]
-    fn a_file_that_imports_a_runner_asks_global_this_first() {
+    fn a_file_that_imports_a_runner_asks_the_run_which_names_it_leaves_alone() {
         let rows = [
             ("a.test.js", "describe;", ""),
             (
                 "a.test.js",
                 "import { test } from 'bun:test'; test('a', () => {}); describe; expect;",
-                "%global:describe = %test:describe, %global:expect = %test:expect",
+                "%globals-left-alone & 4 ? describe : %test:describe, %globals-left-alone & 8 ? expect : %test:expect",
             ),
             (
                 "a.test.ts",
                 "import { test } from 'vitest'; test('a', () => {}); suite;",
-                "%global:suite = %test:suite",
+                "%globals-left-alone & 32768 ? suite : %test:suite",
             ),
             (
                 "a.test.cjs",
                 "require('@jest/globals'); it;",
-                "%global:it = %test:it",
+                "%globals-left-alone & 2 ? it : %test:it",
             ),
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe_own_globals(name, text), expected, "{text}");
-        }
-    }
-
-    #[test]
-    fn a_file_with_its_own_global_this_asks_the_global_object_by_another_name() {
-        let rows = [
-            ("a.test.js", "expect;", "globalThis"),
-            ("a.test.js", "const globalThis = {}; expect;", "global"),
-            ("a.test.ts", "const globalThis = {}; expect;", "global"),
-            ("a.test.js", "var globalThis, global; expect;", "self"),
-            ("a.test.js", "function globalThis() {} expect;", "global"),
-            (
-                "a.test.js",
-                "{ const globalThis = {}; } expect;",
-                "globalThis",
-            ),
-            (
-                "a.test.js",
-                "(globalThis => globalThis)(1); expect;",
-                "globalThis",
-            ),
-        ];
-        for (name, text, expected) in rows {
-            let text = format!("import {{ test }} from 'bun:test'; test('a', () => {{}}); {text}");
-            let files = [(name, text.as_str())];
-            let asked = with_loaded_test_run(&files, &default_settings(), |_, loaded| {
-                let files = loaded.project(ProjectId::Application).loaded.files();
-                let path = format!("/project/{name}");
-                let file = files.by_path.get(path.as_bytes());
-                let hir = files.hir(file.expect("the file is in the program"));
-                let taken_apart = hir.var_decls.iter().find(|it| match hir[it.pat].kind {
-                    PatKind::Object(properties) => {
-                        (properties.iter()).any(|property| hir[property].default != ExprId::NONE)
-                    }
-                    _ => false,
-                });
-                let taken_apart = taken_apart.expect("the file takes its names off an object");
-                match hir[hir.skip_type_assertions(taken_apart.init)].kind {
-                    ExprKind::Ident(object) => BStr::new(files.atoms.bytes(object)).to_string(),
-                    _ => String::new(),
-                }
-            });
-            assert_eq!(asked, expected, "{text}");
         }
     }
 
@@ -1140,6 +1317,107 @@ mod tests {
                 expected,
                 "{text}"
             );
+        }
+    }
+
+    // `(questions ? yes : no)` for a choice that the build has written, by the variables that take the answers.
+    fn describe_choice(hir: &File<'_>, text_of: &dyn Fn(Atom) -> String, e: ExprId) -> String {
+        let describe = |e: ExprId| describe_choice(hir, text_of, e);
+        match hir[hir.skip_type_assertions(e)].kind {
+            ExprKind::Ident(name) => text_of(name),
+            ExprKind::Number(number) => hir.numbers[number as usize].to_string(),
+            ExprKind::Assign { target, .. } => describe(target),
+            ExprKind::Unary { op, operand } => match op {
+                UnOp::Not => format!("!{}", describe(operand)),
+                UnOp::Typeof => format!("typeof {}", describe(operand)),
+                _ => "?".to_string(),
+            },
+            ExprKind::Binary { op, left, right } => match op {
+                BinOp::Or => format!("{} || {}", describe(left), describe(right)),
+                BinOp::BitAnd => format!("{} & {}", describe(left), describe(right)),
+                _ => "?".to_string(),
+            },
+            ExprKind::Cond { test, branches } => {
+                let (test, branches) = (describe(test), hir.branches(branches));
+                let (yes, no) = (describe(branches.yes), describe(branches.no));
+                format!("({test} ? {yes} : {no})")
+            }
+            _ => "?".to_string(),
+        }
+    }
+
+    // The last statement of a file that the test file imports.
+    fn describe_last_statement(test_file: &str, name: &str, text: &str) -> String {
+        let files = [("a.test.js", test_file), (name, text)];
+        with_loaded_test_run_of_vitest(&files, &default_settings(), |_, loaded| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let path = format!("/project/{name}");
+            let file = files.by_path.get(path.as_bytes());
+            let hir = files.hir(file.expect("the file is in the program"));
+            let text_of = |atom| BStr::new(files.atoms.bytes(atom)).to_string();
+            match hir.ids(hir.body).last().map(|it| hir[it].kind) {
+                Some(StmtKind::Expr(e)) => describe_choice(hir, &text_of, e),
+                _ => String::new(),
+            }
+        })
+    }
+
+    #[test]
+    fn a_file_has_the_names_of_the_runner_that_loads_it() {
+        let of_vitest = "import { test } from 'vitest'; import './lib'; test('a', () => {});";
+        let rows = [
+            (
+                "lib.js",
+                "jest;",
+                "(%loaded-by-worker || %loaded-below-vitest ? jest : %test:jest)",
+            ),
+            (
+                "lib.js",
+                "suite;",
+                "(%loaded-by-worker || !%loaded-below-vitest ? suite : %vitest:suite)",
+            ),
+            (
+                "lib.ts",
+                "vitest;",
+                "(%loaded-by-worker || !%loaded-below-vitest ? vitest : %vitest:vitest)",
+            ),
+            (
+                "lib.cjs",
+                "typeof assertType;",
+                "(%loaded-by-worker || !%loaded-below-vitest ? typeof assertType : typeof %vitest:assertType)",
+            ),
+            // "bun:test" has no such name to store to.
+            ("lib.js", "onTestFailed = 1;", "onTestFailed"),
+            (
+                "lib.js",
+                "afterEach;",
+                "(%loaded-by-worker ? afterEach : (%loaded-below-vitest ? %vitest:afterEach : %test:afterEach))",
+            ),
+            (
+                "lib.js",
+                "vi;",
+                "(%loaded-by-worker ? vi : (%loaded-below-vitest ? %vitest:vi : %test:vi))",
+            ),
+            // What the file imports for itself says nothing of the names that it does not import, unless it is "vitest".
+            (
+                "lib.js",
+                "import 'bun:test'; afterEach;",
+                "(%loaded-by-worker || %globals-left-alone & 128 ? afterEach : (%loaded-below-vitest ? %vitest:afterEach : %test:afterEach))",
+            ),
+            (
+                "lib.js",
+                "import 'bun:test'; suite;",
+                "(%loaded-by-worker || !%loaded-below-vitest || %globals-left-alone & 32768 ? suite : %vitest:suite)",
+            ),
+            (
+                "lib.js",
+                "import 'vitest'; suite;",
+                "(%loaded-by-worker || %globals-left-alone & 32768 ? suite : %test:suite)",
+            ),
+        ];
+        for (name, text, expected) in rows {
+            let described = describe_last_statement(of_vitest, name, text);
+            assert_eq!(described, expected, "{text}");
         }
     }
 

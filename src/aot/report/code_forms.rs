@@ -36,9 +36,9 @@ fn form_entry(operation: &[u8], form: CodeForm, size: CodeSize) -> ReportEntry {
     write_counted(&mut line, size.sites, "site", "sites");
     line.extend_from_slice(b", ");
     write_counted(&mut line, size.bytes, "byte", "bytes");
-    if size.sites > 0 {
+    if let Some(bytes_a_site) = size.bytes.checked_div(size.sites) {
         line.extend_from_slice(b", ");
-        write_count(&mut line, size.bytes / size.sites);
+        write_count(&mut line, bytes_a_site);
         line.extend_from_slice(b" a site");
     }
     ReportEntry::line(ExplainSet::FORMS, line)

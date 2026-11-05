@@ -59,7 +59,7 @@ fn lower_function_of_throwing_file(
         // Both are made from the graph of modules and read nothing of the tree. The face evaluates the file first, so it throws what the body throws.
         FunctionKey::FaceBody(_) => file.lower_face_body(function),
         FunctionKey::CheckBody(_) => file.lower_check_body(function),
-        // The link of a graph throws nothing for the text of a file: its body does.
+        // The link of a graph throws nothing for the text of a file: its body does, ahead of every other body of the graph (`end_loads_at_modules_that_throw`).
         FunctionKey::Instantiation(_) => {
             super::finish_body(FunctionLowering::begin(file, function), None);
         }

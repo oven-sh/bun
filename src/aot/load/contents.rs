@@ -7,6 +7,7 @@ pub(crate) mod worker_entries;
 
 use std::mem::{replace, take};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
@@ -51,11 +52,42 @@ pub(crate) struct FileContents {
     pub starts_worker_out_of_sight: bool,
 }
 
+/// The members of built-in objects that this build has folded by: it has left a lookup out, because no file of the run spells a store to the member.
+/// Written by whoever folds, read once, where the program is linked. The engine keeps each locked, so a store that no file spells throws and names the member.
+pub struct FixedBuiltins {
+    /// By `BuiltinId::to_wire()`.
+    is_fixed: Box<[AtomicBool]>,
+}
+
+impl Default for FixedBuiltins {
+    fn default() -> FixedBuiltins {
+        let members = 0..BuiltinId::COUNT;
+        FixedBuiltins {
+            is_fixed: members.map(|_| AtomicBool::new(false)).collect(),
+        }
+    }
+}
+
+impl FixedBuiltins {
+    pub fn note(&self, member: BuiltinId) {
+        self.is_fixed[member.to_wire() as usize].store(true, Ordering::Relaxed);
+    }
+
+    /// Ascending.
+    pub fn list(&self) -> Vec<BuiltinId> {
+        let is_fixed =
+            |member: &BuiltinId| self.is_fixed[member.to_wire() as usize].load(Ordering::Relaxed);
+        let members = (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
+        members.filter(is_fixed).collect()
+    }
+}
+
 pub(crate) struct ProgramContents {
     pub found_entry_points: Vec<FoundEntryPoint>,
     /// `LoadOptions::replaced_builtins` and, in a test run, `ResolvedBuiltins::replaced_members` of every compiled file. With each come the object that it holds
     /// and all that the table lists below it. Of `ResolvedBuiltins::opened_holders` come the members, each in the same way. Ascending, each once.
     pub replaced_builtins: Arc<[u32]>,
+    pub fixed_builtins: FixedBuiltins,
     /// `ResolvedBuiltins::names_added` of every compiled file. Ascending by holder, then by the bytes of the name.
     pub names_added_to_builtins: Vec<(BuiltinId, Atom)>,
     /// In some file: a live `ImportSiteKind::MockModule` site one of whose values is no `Constant`, or `ResolvedBuiltins::hands_mock_on()`.
@@ -67,9 +99,6 @@ pub(crate) struct ProgramContents {
     pub loads_by_unknown_path: bool,
     /// `import path from "./addon.node" with { type: "file" }`: the executable holds the file, the program has its path there, and whoever loads that path gets a native addon.
     pub embeds_addon_as_file: bool,
-    /// Whoever asks while the load still finds files asks `load_names::names_plugin`, and so does Bind.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub names_plugin: bool,
     pub names_worker_constructor: bool,
     pub hands_worker_constructor_on: bool,
     /// `FileContents::starts_worker_out_of_sight` of some compiled file. True, like every other bit, where a file has no payload.
@@ -78,6 +107,16 @@ pub(crate) struct ProgramContents {
     pub run: RunContents,
     /// `ContentsInput::any_file_may_become_main_module`
     pub any_file_may_become_main_module: bool,
+}
+
+impl ProgramContents {
+    /// What no file takes for what the table says, Bun's own code no more than the application's. In a test run: all that a test may replace, spelled or not.
+    pub(crate) fn builtins_written_as_reads(&self) -> &[u32] {
+        match self.run.members_written_as_reads.is_empty() {
+            true => &self.replaced_builtins,
+            false => &self.run.members_written_as_reads,
+        }
+    }
 }
 
 pub(crate) struct ContentsInput<'a, 's> {
@@ -122,7 +161,6 @@ struct FoundInFiles {
     any_module_loads_again: bool,
     loads_by_unknown_name: bool,
     loads_by_unknown_path: bool,
-    names_plugin: bool,
     names_worker_constructor: bool,
     hands_worker_constructor_on: bool,
     starts_worker_out_of_sight: bool,
@@ -139,7 +177,6 @@ impl FoundInFiles {
             any_module_loads_again: true,
             loads_by_unknown_name: true,
             loads_by_unknown_path: true,
-            names_plugin: true,
             names_worker_constructor: true,
             hands_worker_constructor_on: true,
             starts_worker_out_of_sight: true,
@@ -178,7 +215,6 @@ impl FoundInFiles {
             contents.names.loads_by_unknown_name || gives_unknown_name_to_imported_loader;
         self.loads_by_unknown_path |=
             contents.names.loads_by_unknown_path || gives_unknown_name_to_imported_loader;
-        self.names_plugin |= builtins.names_plugin();
         self.names_worker_constructor |= contents.names_worker_constructor;
         self.hands_worker_constructor_on |= contents.hands_worker_constructor_on;
         self.starts_worker_out_of_sight |= contents.starts_worker_out_of_sight;
@@ -193,7 +229,6 @@ impl FoundInFiles {
         self.any_module_loads_again |= following.any_module_loads_again;
         self.loads_by_unknown_name |= following.loads_by_unknown_name;
         self.loads_by_unknown_path |= following.loads_by_unknown_path;
-        self.names_plugin |= following.names_plugin;
         self.names_worker_constructor |= following.names_worker_constructor;
         self.hands_worker_constructor_on |= following.hands_worker_constructor_on;
         self.starts_worker_out_of_sight |= following.starts_worker_out_of_sight;
@@ -399,6 +434,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     ProgramContents {
         found_entry_points,
         replaced_builtins,
+        fixed_builtins: FixedBuiltins::default(),
         names_added_to_builtins: all.names_added,
         mocks_any_module: all.mocks_any_module || run.mocks_any_module,
         any_module_loads_again: match is_test_run {
@@ -408,7 +444,6 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         loads_by_unknown_name: all.loads_by_unknown_name,
         loads_by_unknown_path: all.loads_by_unknown_path,
         embeds_addon_as_file: embeds_addon_as_file(files),
-        names_plugin: all.names_plugin,
         names_worker_constructor: all.names_worker_constructor,
         hands_worker_constructor_on: all.hands_worker_constructor_on,
         starts_worker_out_of_sight: all.starts_worker_out_of_sight,

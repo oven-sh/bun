@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # facts_by_consequence.py <folder> ..
 # Each folder holds old.explain.json and new.explain.json: what `bun build --compile --aot --explain=json` prints for one program,
-# by a binary built from the tag and by this tree.
+# by an earlier binary and by this tree.
 #
 # The two flows number nothing alike, so their facts cannot be laid side by side. What the facts lead to can: both compilers name
 # the place in the source that cost a proof, why, and how many accesses and calls it cost.

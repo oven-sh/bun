@@ -125,9 +125,9 @@ fn end_build_where_allocation_fails(layout: core::alloc::Layout) {
     if place_of_this_thread().is_some() {
         crate::out_of_memory();
     }
-    let _ = write!(
+    let _ = writeln!(
         stderr_writer(),
-        "memory allocation of {} bytes failed\n",
+        "memory allocation of {} bytes failed",
         layout.size()
     );
 }

@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
@@ -8,7 +8,6 @@ import type { Readable } from "stream";
 import { text } from "stream/consumers";
 import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
-import { describe, test } from "../../aot/listed";
 
 const supported = !unsupported;
 
@@ -393,7 +392,11 @@ describe.skipIf(!supported)("bun run --aot", () => {
         `,
       });
       // The source map of bun run has no entry for a call of require(): its frame names the brace in front of the call, 3:17. A compiled program names the call, as it does for every other call.
-      await expectSameAsBunRun(files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1")`), "entry.cjs");
+      // Of the call of the arrow function bun run names the end of what is called, a compiled program its beginning.
+      await expectSameAsBunRun(
+        files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1").replace(/(throws\\.cjs:3):\\d+/g, "$1")`),
+        "entry.cjs",
+      );
       using dir = tempDir("run-aot", files(""));
       const { stdout } = await run(String(dir), true, "entry.cjs");
       expect(stdout.replaceAll("\\", "/")).toMatch(

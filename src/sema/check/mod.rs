@@ -1047,6 +1047,9 @@ impl<'s> Program<'s> {
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
             unions_without_subtypes: Default::default(),
+            unrelated_classes: Default::default(),
+            grown_unions: Default::default(),
+            grown_signatures: Default::default(),
             union_members_compared: 0,
             union_calls: Default::default(),
             constraint_stack: Vec::new(),
@@ -1758,6 +1761,10 @@ pub struct Checker<'p, 's> {
     /// The unions in which `removeSubtypes` has compared every member with every other and removed none, and whether
     /// primitives were compared too.
     unions_without_subtypes: FxHashMap<TypeId, bool>,
+    unrelated_classes: unions::UnrelatedClasses,
+    grown_unions: FxHashMap<TypeId, unions::Growth>,
+    /// The same for the signature of a union of function types: the signature that combines one fewer, and the one more.
+    grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// Non-cacheable query results, kept for reuse while the computation that made them

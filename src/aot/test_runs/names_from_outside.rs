@@ -146,9 +146,9 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
 
     fn find_import_of(&self, symbol: SymbolId) -> Option<ImportId> {
         let &FinishedFile { hir, bound, .. } = self.request;
-        match bound.symbol(symbol).decls {
-            &[Decl::ImportSpec(specifier)] => Some(hir[specifier].import),
-            &[Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => Some(import),
+        match *bound.symbol(symbol).decls {
+            [Decl::ImportSpec(specifier)] => Some(hir[specifier].import),
+            [Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => Some(import),
             _ => None,
         }
     }
@@ -392,12 +392,14 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
 
     /// The texts that the file itself spells for `value`: a constant, one of a known set, what the calls of a function of the file pass for a parameter, the elements of a list
     /// that a callback walks or that the call in front of the callback's was handed. What is not spelled here comes from outside.
+    /// `being_filled`: the texts with holes around `value`. False: one of them fills a hole of its own, `watch(name + "Next")` in `watch(name)`, so nobody can list what the run makes.
     fn push_texts_spelled_for(
         &self,
         known: &mut KnownSets<'a, 's>,
         value: ExprId,
+        being_filled: &mut Vec<ExprId>,
         texts: &mut Vec<Atom>,
-    ) {
+    ) -> bool {
         let &FinishedFile {
             hir,
             bound,
@@ -436,7 +438,16 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
                     continue;
                 }
                 ExprKind::Template { .. } | ExprKind::Binary { op: BinOp::Add, .. } => {
-                    self.push_texts_with_holes_filled(known, value, texts);
+                    if being_filled.contains(&value) {
+                        return false;
+                    }
+                    being_filled.push(value);
+                    let is_listed =
+                        self.push_texts_with_holes_filled(known, value, being_filled, texts);
+                    being_filled.pop();
+                    if !is_listed {
+                        return false;
+                    }
                     continue;
                 }
                 _ => continue,
@@ -451,15 +462,18 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
                 pending.push(taken_apart);
             }
         }
+        true
     }
 
     /// `logHalf` and `logAdd` for `` `log${kind}` `` where `kind` is spelled as `Half` and `Add`. A hole that nobody spells leaves the whole text unspelled.
+    /// `being_filled` ends with `text`. False as for `push_texts_spelled_for`.
     fn push_texts_with_holes_filled(
         &self,
         known: &mut KnownSets<'a, 's>,
         text: ExprId,
+        being_filled: &mut Vec<ExprId>,
         texts: &mut Vec<Atom>,
-    ) {
+    ) -> bool {
         let &FinishedFile { hir, atoms, .. } = self.request;
         let mut parts: Vec<Result<Atom, ExprId>> = Vec::new();
         match hir[text].kind {
@@ -471,15 +485,19 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
                 }
             }
             ExprKind::Binary { left, right, .. } => parts.extend([Err(left), Err(right)]),
-            _ => return,
+            _ => return true,
         }
         let mut joined: Vec<Vec<u8>> = vec![Vec::new()];
         for part in parts {
             let mut fillings = Vec::new();
             match part {
-                Ok(written) if written.is_none() => return,
+                Ok(written) if written.is_none() => return true,
                 Ok(written) => fillings.push(written),
-                Err(hole) => self.push_texts_spelled_for(known, hole, &mut fillings),
+                Err(hole) => {
+                    if !self.push_texts_spelled_for(known, hole, being_filled, &mut fillings) {
+                        return false;
+                    }
+                }
             }
             let longer = joined.iter().flat_map(|start| {
                 let fillings = fillings.iter();
@@ -488,6 +506,7 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             joined = longer.collect();
         }
         texts.extend(joined.iter().map(|text| atoms.intern(text)));
+        true
     }
 
     pub(super) fn finish(mut self, found: &mut FileOfRun) {
@@ -509,7 +528,8 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             if let ExprKind::Call(call) = hir[spy.call].kind
                 && let Some(name) = hir.ids(hir[call].args).nth(1)
             {
-                self.push_texts_spelled_for(&mut known, name, &mut spelled);
+                found.spies_under_names_made_of_themselves |=
+                    !self.push_texts_spelled_for(&mut known, name, &mut Vec::new(), &mut spelled);
             }
         }
         (found.texts_passed).extend(spelled.into_iter().map(|text| (OWN_FILE, text)));

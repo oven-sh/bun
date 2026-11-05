@@ -1,5 +1,5 @@
 // Prints the frames that console.log shows under an error that a constructor throws below three expressions that construct.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): a frame a line, in a form of its own
+// Todo: only frames (stack-trace-only differences are fine): a frame a line, in a form of its own
 class Inner {
   constructor(value) {
     if (value) throw new RangeError("out of range");

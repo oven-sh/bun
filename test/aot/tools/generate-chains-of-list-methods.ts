@@ -4,7 +4,7 @@
 //
 // The library's own methods go over a plain vector by a run of their own, and the compiler may put one traversal in the place of `list.filter(f).map(g)`. What neither may ever change: the order in which the callbacks are seen to run, which elements they meet,
 // what is thrown and when, and who is asked where the list is no plain list. A program prints, for each run, the answer, the log of all that ran and the list as it is left.
-// Of the words of "is not a function" the quoted source goes: a compiled program quotes a call without the text of a function among its arguments, with or without a chain (11-03).
+// Of the words of "is not a function" the quoted source goes: a compiled program quotes a call without the text of a function among its arguments, with or without a chain.
 // A chain: a line of `chains`. F G H E R P are the callbacks. Quiet ones do nothing that anybody sees, so the compiler may run them element by element; loud ones log each call.
 // A deed on the list: a line of `deedsOnList`, the body of deed(list), done through names that only the run knows. It goes with every chain, quiet and loud.
 // A deed of a callback: a line of `deedsOfCallbacks`, what F does at its third call or G at its first: run element by element, G's first call comes in front of F's third. It goes with every chain, loud.

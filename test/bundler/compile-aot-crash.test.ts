@@ -3,7 +3,6 @@ import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { withoutCoreDump } from "../aot/harness/without-core-dump";
 import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
@@ -72,7 +71,7 @@ async function crashed(flags: string[]) {
   expect(buildExitCode).toBe(0);
   await using run = spawn({
     // It crashes on purpose, and leaves no core file.
-    cmd: withoutCoreDump([join(dir, "app")]),
+    cmd: isWindows ? [join(dir, "app")] : ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", join(dir, "app")],
     cwd: dir,
     env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
     stdout: "pipe",

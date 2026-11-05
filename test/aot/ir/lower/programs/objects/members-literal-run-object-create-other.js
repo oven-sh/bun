@@ -164,10 +164,10 @@ console.log(lines.join("\n"));
 // CHECK-LABEL: function {{*}}name="create"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_1]], v1: anything, v2: anything):
-// CHECK-NEXT: v3 = Builtin builtin=Object
-// CHECK-NEXT: v4 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v5 = PropGet v0 key="answers"
-// CHECK-NEXT: v6 = Call v4, v3, v5 calleeName="Object.create"
+// CHECK-NEXT: v3 = PropGet v0 key="answers"
+// CHECK-NEXT: v4 = NewObject layout=[[L_3]]
+// CHECK-NEXT: SetLiteralPrototype v4, v3 [refusesOtherValues]
+// CHECK-NEXT: v6 = FinishObject v4
 // CHECK-NEXT: PropSet v6, v0 key="app"
 // CHECK-NEXT: PropSet v6, v1 key="req"
 // CHECK-NEXT: PropSet v6, v2 key="res"
@@ -206,6 +206,6 @@ console.log(lines.join("\n"));
 // CHECK-LABEL: function {{*}}name="newRes"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_3]]
+// CHECK-NEXT: v0 = Data data=[[d_4]]
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }

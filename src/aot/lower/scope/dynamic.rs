@@ -7,7 +7,7 @@ use super::identifiers::BindingRead;
 use super::lexical_owners::{ScopeObjectSearch, find_container_binding, for_each_scope_object};
 use super::{BindingRef, ScopeSlot, bindings};
 use crate::builtins::{Mutability, Resolved};
-use crate::ir::generated::ECMAMode;
+use crate::ir::generated::{ECMAMode, RuntimeErrorKind};
 use crate::ir::{BlockId, Edge, LocalVariable, PropertyKeyId, TypeTable, ValueId};
 use crate::load::test_runner_names::name_asked_of_scope_objects;
 use crate::lower::FunctionLowering;
@@ -197,7 +197,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (object, dynamic) = self.begin_dynamic_use(holder);
         let key = self.scope_object_key(name);
         // A store to a binding of an object asks once more whether the object still has the name. A proxy sees the question.
-        self.builder.prop_has(object, key);
+        let still_has_name = self.builder.prop_has(object, key);
+        if self.mode() == ECMAMode::Strict {
+            let kept = self.create_block();
+            let lost = self.create_block();
+            self.builder
+                .branch(still_has_name, Edge::to(kept), Edge::to(lost));
+            self.continue_in(lost);
+            self.emit_binding_error(RuntimeErrorKind::UnresolvableReference, Binding::Free, name);
+            self.continue_in(kept);
+        }
         self.emit_set(object, PropertyName::Constant(key), value);
         self.finish_object_path(dynamic, value);
         self.store_binding(binding, name, value, None, true);

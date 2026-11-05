@@ -25,6 +25,9 @@ use crate::ir::classify_name;
 use crate::ir::generated::NameClass;
 use crate::load::fold_inputs::MAX_FOLDED_STRING_BYTES;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Validity {
     /// `bun build` has the value in the place of the read too.
@@ -674,6 +677,10 @@ impl<'a, 's> KnownObjects<'a, 's> {
             is_known_to_build_alone,
         } = self.known.value_at(values, index)?;
         let name = declared_in[member].name;
+        // `bun test` assigns the members and reads a member of another file off the object. Below a name that a test run lays on `Object.prototype` the enum may have no such member.
+        if enumeration.file != file && self.is_laid_on_object_prototype(name) {
+            return None;
+        }
         let validity = if !is_known_to_build_alone {
             Validity::Always
         } else if enumeration.file != file
@@ -880,6 +887,25 @@ impl<'a, 's> KnownObjects<'a, 's> {
         };
         // Such a module has its value before any code of the program runs.
         is_plain_read(hir, bound, access).then_some((object, value))
+    }
+
+    fn is_laid_on_object_prototype(&self, name: Atom) -> bool {
+        match name.is_some() {
+            true => (self.graph).is_laid_on_object_prototype(self.files.atoms.bytes(name)),
+            // `enum E { [key] }`: the parser recovers, the member has no name, and what it would store under may be any of them.
+            false => !self.graph.names_laid_on_object_prototype.is_empty(),
+        }
+    }
+
+    /// To run such a declaration may be to run a setter of the tests.
+    pub(crate) fn stores_under_name_laid_on_object_prototype(
+        &self,
+        file: FileId,
+        declaration: EnumId,
+    ) -> bool {
+        let hir = self.files.hir(file);
+        let mut members = hir[declaration].members.iter();
+        members.any(|member| self.is_laid_on_object_prototype(hir[member].name))
     }
 
     /// To run such a declaration is to make the object and nothing else.

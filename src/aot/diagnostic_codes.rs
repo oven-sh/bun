@@ -45,6 +45,7 @@ diagnostic_codes! {
         WorkerFileNotCompiled = 100081, Warning, "This Worker may start from a file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or write its path as new URL(\"./file\", import.meta.url)";
         WorkerStartedFromUnknownValue = 100082, Warning, "The build can't tell which file this Worker starts from. If that file isn't an entry point, the Worker fails to load";
         WorkerTextNotCompiled = 100084, Warning, "This Worker may start from code in a data: or blob: URL. That code isn't compiled, so it runs in the interpreter. To compile it, move it to a file and write the path as new URL(\"./file\", import.meta.url)";
+        FolderNamedAsParentIsSpelled = 100085, Error, "Two files would have the path \"{0}\" in the executable: \"{1}\" and \"{2}\". A \"..\" that leaves the folder of the entry point is written \"_.._\" there, so no folder beside it can have that name";
     }
     Fold 100100..=100149 {
         FeatureArgumentCount = 100100, Error, "feature() requires exactly one string argument";

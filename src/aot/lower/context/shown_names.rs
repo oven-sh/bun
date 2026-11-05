@@ -101,7 +101,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn intern_function_name(&mut self, binding: Binding, written: Atom) -> StringId {
         match self.short_function_name(binding) {
             Some(name) => name,
-            None => self.intern_atom(written),
+            None => self.intern_written_name(written),
         }
     }
 

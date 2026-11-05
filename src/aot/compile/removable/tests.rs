@@ -222,6 +222,35 @@ fn annotations_can_be_ignored() {
 }
 
 #[test]
+fn global_names_that_are_not_locked_are_read_where_something_takes_them() {
+    let plain = RemovableOptions::default();
+    let removable = [
+        "const MARK = Map;",
+        "const MARK = process;",
+        "const MARK = { table: Map };",
+        "Date, \"MARK\";",
+        "Promise, URL, \"MARK\";",
+        "process, \"MARK\";",
+    ];
+    for source in removable {
+        assert!(ask_one(source, "ts", plain), "{source}");
+    }
+    let kept = [
+        "const MARK = Date;",
+        "const MARK = structuredClone;",
+        "const MARK = { when: Date };",
+        "const MARK = [URL];",
+        "export default [URL, \"MARK\"];",
+        "class MARK { static when = Date; }",
+        "structuredClone, \"MARK\";",
+        "Buffer, \"MARK\";",
+    ];
+    for source in kept {
+        assert!(!ask_one(source, "ts", plain), "{source}");
+    }
+}
+
+#[test]
 fn constructions_of_known_globals_are_left_out() {
     let plain = RemovableOptions::default();
     let removable = [
@@ -232,10 +261,10 @@ fn constructions_of_known_globals_are_left_out() {
         "const MARK = new Set();",
         "const MARK = new Set([\"a\", \"b\"]);",
         "const MARK = new Set(undefined);",
-        "const MARK = new WeakMap();",
+        "new WeakMap(), \"MARK\";",
         "const MARK = new WeakSet([]);",
-        "const MARK = new Date();",
-        "const MARK = new Date(0);",
+        "new Date(), \"MARK\";",
+        "new Date(0), \"MARK\";",
         "const MARK = [...[\"a\"]];",
         "class MARK { static a = new Map([[\"a\", 1]]); }",
     ];
@@ -252,6 +281,9 @@ fn constructions_of_known_globals_are_left_out() {
         "const o: any = {}; const MARK = new Date(o);",
         "class Map { constructor(a?: any) { sideEffect(); } } declare function sideEffect(): void; const MARK = new Map();",
         "const MARK = new Map([], 1 as any);",
+        "const MARK = new WeakMap();",
+        "const MARK = new Date();",
+        "const MARK = new Date(0);",
     ];
     for source in kept {
         assert!(!ask_one(source, "ts", plain), "{source}");

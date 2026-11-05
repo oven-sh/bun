@@ -238,8 +238,10 @@ export const buildScaling = (part: number, parts: number) =>
           // What a doubling adds still wavers where it adds little: tables double and the allocators take memory in pieces of tens of MB. 2,000 texts more add 40 MB, 4,000 more 88, and that reads 2.2;
           // 8,000 more add 169, 16,000 more 324, 32,000 more 645: a straight line. So where the work has not grown past its bound, memory that is still over its own is asked at twice the size again.
           // Of a square that doubling too adds four times what the one before it added.
+          let builtAtFourTimes: Promise<Built> | undefined;
+          const buildAtFourTimes = () => (builtAtFourTimes ??= slot(() => measure(shape, 4 * size, carrier)));
           if (growsInMemory && growth.peakBytes! > mostGrowth && (growth.instructions ?? 0) <= mostGrowth) {
-            const fourTimes = await slot(() => measure(shape, 4 * size, carrier));
+            const fourTimes = await buildAtFourTimes();
             growth.peakBytes = Math.min(
               growth.peakBytes!,
               (fourTimes.peakBytes - twice.peakBytes) / Math.max(twice.peakBytes - once.peakBytes, leastBytesJudged / 4),
@@ -253,7 +255,17 @@ export const buildScaling = (part: number, parts: number) =>
             half!.counts[name] > none.counts[name] &&
             grownInCount([none, half, once!], name) > mostGrowth &&
             (twice.counts[name] - once!.counts[name]) / Math.max(once!.counts[name] - half!.counts[name], 1) > mostGrowth;
-          const growthOfCounts = [...(shape.counts ?? []), ...suspects.filter(growsAtHalfTheSizeToo)].map(
+          // Past such a limit each may also count for more than in front of it: a name adds 5 edges to Link's flow up to 4,095 names and 12 from there on. That is a straight line with a bend, and with the bend
+          // between half the size and the size all three readings take it for a square: 2.66, 2.89, 2.54. Behind the bend it is straight, so it is asked at twice the size again, as memory is: 2.00.
+          let growing = suspects.filter(growsAtHalfTheSizeToo);
+          if (growing.length && (growth.instructions ?? 0) <= mostGrowth) {
+            const fourTimes = await buildAtFourTimes();
+            growing = growing.filter(
+              name =>
+                (fourTimes.counts[name] - twice.counts[name]) / Math.max(twice.counts[name] - once!.counts[name], 1) > mostGrowth,
+            );
+          }
+          const growthOfCounts = [...(shape.counts ?? []), ...growing].map(
             name => [name, grownInCount(costs, name)] as const,
           );
           const row = (cost: Cost | undefined) =>

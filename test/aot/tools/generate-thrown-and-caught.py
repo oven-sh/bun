@@ -1,5 +1,5 @@
 # generate-thrown-and-caught.py <outdir>: an object is thrown by one road, whoever catches it does ONE DEED to it, and the thrower then uses the object as what it is.
-# For branches-and-exceptions-1 T1 (what is thrown no longer escapes by itself): every road by which a thrown value comes to a handler must be a road of Link's, or the value must escape on it.
+# What is thrown does not escape by itself: every road by which a thrown value comes to a handler must be a road of Link's, or the value must escape on it.
 # road x deed x use. Every program prints what plain Bun prints.
 import sys, os
 out = sys.argv[1]

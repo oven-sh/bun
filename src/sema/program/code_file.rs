@@ -321,6 +321,7 @@ fn accept_tree<'s, 'r>(
     } = context;
     let path = key.path;
     let request = CodeParseRequest {
+        package_module_type: context.resolver.package_module_type(path),
         path,
         loader: key.loader,
         options: parse_options_of(context, path, settings),
@@ -425,6 +426,7 @@ fn analyze<'s, 'r>(
         jsx_fragment_root: root(&file_jsx.fragment),
         emits_decorator_metadata: settings.emits_decorator_metadata,
         hoists_top_level_variables: host.hoists_top_level_variables(path),
+        object_prototype_takes_names: host.object_prototype_takes_names(),
     };
     let declared_module_type = tree.request.declared_module_type;
     let jsx_mode = jsx_mode_of(file_jsx, atoms);
@@ -453,7 +455,6 @@ fn analyze<'s, 'r>(
         declared_module_type,
         type_where_imported: declared_module_type_of(context, path, true),
         runs_inside_require: false,
-        is_only_imported_from_above: context.is_only_imported_from_above(key),
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),
@@ -486,6 +487,7 @@ fn analyze_with_host<'s>(
             path,
             hir: &mut tree.hir,
             module_format,
+            takes_import_statements: module_format == ModuleFormat::Esm,
             settings,
             import_meta_main: file.import_meta_main,
         };

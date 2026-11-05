@@ -3292,7 +3292,7 @@ export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "r
   passStructure?: boolean;
 }
 
-type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedObjects"> & EntryColumns;
+type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedMembers"> & EntryColumns;
 
 export interface ClassOptions extends ClassTableColumns {
   /** Path of the Rust struct. The members are its own methods. A class with `extends` has its base's. */

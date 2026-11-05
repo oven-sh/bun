@@ -1,5 +1,5 @@
 // Reference: bun build --compile
-// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run` (11-02).
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // A key made of constants of the module, in a function that may run ahead of them: behind the tests of the variables it is a written name, and the message for `undefined` or `null` names it.
 const moduleKey = "x";
 const twoWords = "two words";

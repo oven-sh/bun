@@ -173,13 +173,11 @@ fn the_mark_of_a_namespace_that_something_looks_at_is_read_from_the_object() {
         ),
         ("m.mjs", "export const c = 1;"),
     ];
+    // Whoever has the object may store the mark, as in `a_store_to_the_mark_of_an_es_module_leaves_its_reads_to_the_object`.
     with_plan(&files, |plan| {
-        assert_eq!(
-            plan.member("reader.cjs", "__esModule"),
-            Some(Member::OnObject)
-        );
-        let namespace = View::Namespace(plan.module("m.mjs"));
-        assert_eq!(plan.holder("reader.cjs", "a"), Some(namespace));
+        assert_eq!(plan.graph.marker(plan.module("m.mjs")), None);
+        assert_eq!(plan.member("reader.cjs", "__esModule"), None);
+        assert_eq!(plan.holder("reader.cjs", "a"), None);
     });
 }
 
@@ -198,10 +196,8 @@ fn the_mark_of_exports_that_something_looks_at_is_read_from_the_object() {
     ];
     with_plan(&files, |plan| {
         assert_eq!(plan.shape("m.cjs"), Shape::Value);
-        assert_eq!(
-            plan.member("reader.cjs", "__esModule"),
-            Some(Member::OnObject)
-        );
+        assert_eq!(plan.graph.marker(plan.module("m.cjs")), None);
+        assert_eq!(plan.member("reader.cjs", "__esModule"), None);
         assert_eq!(plan.holder("reader.cjs", "a"), None);
     });
 }
@@ -229,6 +225,74 @@ fn require_of_a_commonjs_module_binds_its_names() {
     });
 }
 
+// In a test run `Object.prototype` takes the names that the build sees a test lay on it, and an object that lacks such a name finds it there.
+#[test]
+fn a_name_that_a_test_lays_on_object_prototype_is_read_off_the_exports_object() {
+    use crate::modules::testing::with_test_run_graph;
+    let reader = "const lib = require('./lib.cjs'); export const peek = () => [lib.extra, lib.a];";
+    let lays = "Object.prototype.extra = 'from above';";
+    for (deed, shape) in [(lays, Shape::Value), ("", Shape::Names)] {
+        let test = format!("import {{ peek }} from './reader.mjs'; {deed} console.log(peek());");
+        let files = [
+            ("above.test.js", &test[..]),
+            ("reader.mjs", reader),
+            ("lib.cjs", "exports.a = 1;"),
+        ];
+        with_test_run_graph(&files, |graph, input| {
+            let lib = ModuleRef::File(file_named(input, "lib.cjs"));
+            assert_eq!(graph.shape(lib), shape, "{deed}");
+        });
+    }
+}
+
+#[test]
+fn a_commonjs_file_that_may_run_again_keeps_its_object() {
+    let lib =
+        "exports.first = 1; if (globalThis.fails) throw new Error('boom'); exports.second = 2;";
+    let read = "const lib = require('./lib.cjs'); console.log(lib.first, lib.second);";
+    let caught = format!("try {{ require('./lib.cjs'); }} catch {{}} {read}");
+    with_plan(&[("main.cjs", &caught[..]), ("lib.cjs", lib)], |plan| {
+        assert!(plan.graph.runs_again(plan.file("lib.cjs")));
+        assert_eq!(plan.shape("lib.cjs"), Shape::Value);
+        assert_eq!(plan.holder("main.cjs", "lib"), None);
+    });
+    // Whoever calls the function may catch what the file throws.
+    let late = format!("exports.read = function () {{ {read} }};");
+    with_plan(&[("main.cjs", &late[..]), ("lib.cjs", lib)], |plan| {
+        assert!(plan.graph.runs_again(plan.file("lib.cjs")));
+        assert_eq!(plan.shape("lib.cjs"), Shape::Value);
+    });
+    // Nobody outlives what the one run throws.
+    with_plan(&[("main.cjs", read), ("lib.cjs", lib)], |plan| {
+        assert!(!plan.graph.runs_again(plan.file("lib.cjs")));
+        assert_eq!(plan.shape("lib.cjs"), Shape::Names);
+        let exports = View::Exports(plan.module("lib.cjs"));
+        assert_eq!(plan.holder("main.cjs", "lib"), Some(exports));
+    });
+}
+
+#[test]
+fn no_binding_of_a_file_that_may_run_again_is_a_variable_for_the_sake_of_a_getter() {
+    let lib = "
+        function _export(target, all) {
+            for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] });
+        }
+        _export(exports, { n: function () { return n; } });
+        const n = 1;
+        if (globalThis.fails) throw new Error('boom');
+    ";
+    let read = "const lib = require('./lib.cjs'); console.log(lib.n);";
+    let caught = format!("try {{ require('./lib.cjs'); }} catch {{}} {read}");
+    for (main, is_variable) in [(read, true), (&caught[..], false)] {
+        with_plan(&[("main.cjs", main), ("lib.cjs", lib)], |plan| {
+            let file = plan.file("lib.cjs");
+            let n = symbol_named(plan.input, file, "n");
+            let commonjs = plan.graph.commonjs();
+            assert_eq!(commonjs.is_exported_binding(file, n), is_variable, "{main}");
+        });
+    }
+}
+
 // What must work exactly as under `bun run`: a module that is required again while its body runs shows what it has stored so far.
 #[test]
 fn a_cycle_of_requires_reads_the_variables_as_far_as_they_are_stored() {
@@ -250,7 +314,6 @@ fn a_cycle_of_requires_reads_the_variables_as_far_as_they_are_stored() {
         let (a, b) = (plan.module("a.cjs"), plan.module("b.cjs"));
         assert!(plan.graph.half(a) && plan.graph.half(b));
         assert!(!plan.graph.half(plan.module("main.cjs")));
-        assert!(!plan.graph.exposed(a) && !plan.graph.exposed(b));
         // Every site stays a site where it is written, and every read a read of the variable at that point.
         assert_eq!(plan.sites("a.cjs"), [plan.evaluates("b.cjs", true)]);
         assert_eq!(plan.sites("b.cjs"), [plan.evaluates("a.cjs", true)]);
@@ -330,8 +393,6 @@ fn a_ring_that_closes_through_a_site_that_does_not_evaluate_leaves_the_file_half
         // The run time answers for an ES module on a ring, so no request says that ledger.cjs leads to probe.mjs.
         assert_eq!(plan.sites("ledger.cjs"), [Site::AsToday]);
         assert!(plan.requests("ledger.cjs").is_empty());
-        let total = plan.variable("ledger.cjs", "total");
-        assert_eq!(plan.member("probe.mjs", "total"), Some(total));
         let half_done = ["request ledger.cjs require may-be-half-done"];
         assert_eq!(plan.requests("probe.mjs"), half_done);
         assert_eq!(plan.requests("main.cjs"), half_done);
@@ -390,11 +451,15 @@ fn a_pattern_evaluates_the_es_modules_that_a_written_name_evaluates() {
 
 #[test]
 fn a_site_in_a_function_is_not_bare_and_still_binds() {
-    let main = "exports.f = function () { const a = require('./m.cjs'); return a.c; };";
+    // The file has run when somebody calls the function. One that the function is the first to load may run again: whoever calls the function may catch what the file throws.
+    let main = "require('./m.cjs'); exports.f = function () { const a = require('./m.cjs'); return a.c; };";
     let files = [("main.cjs", main), ("m.cjs", "exports.c = 1;")];
     with_plan(&files, |plan| {
-        assert_eq!(plan.sites("main.cjs"), [plan.evaluates("m.cjs", false)]);
-        assert!(plan.graph.exposed(plan.module("m.cjs")));
+        let sites = [
+            plan.evaluates("m.cjs", true),
+            plan.evaluates("m.cjs", false),
+        ];
+        assert_eq!(plan.sites("main.cjs"), sites);
         let c = plan.variable("m.cjs", "c");
         assert_eq!(plan.member("main.cjs", "c"), Some(c));
         // Whoever has the function may call it while the body of the module runs.

@@ -392,23 +392,14 @@ fn unknown_subtype_in_default_library_keeps_type_exact() {
 }
 
 #[test]
-fn symbols_list_each_class_with_final_denotation() {
+fn symbols_hold_each_class_with_final_denotation() {
     const SUBTYPE: &[Declaration] = &[subinterface("Registry", &["Map"])];
     with_files(&[LIBRARY, script("/registry.d.ts", SUBTYPE)], |files| {
         let symbols = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
-        let listed: Vec<(Sym, BuiltinTypeClass)> = symbols.classes().collect();
-        assert_eq!(listed.len(), TYPE_PATHS.len() - 1);
-        for &(symbol, class) in &listed {
-            assert_eq!(symbols.class_of(symbol), Some(class));
-        }
-        let listed_classes_of = |name: &str| -> Vec<Option<BuiltinTypeClass>> {
-            let symbol = interface_symbol(files, LIBRARY_PATH, name);
-            let entries = listed.iter().filter(|(candidate, _)| *candidate == symbol);
-            entries.map(|&(_, class)| Some(class)).collect()
-        };
-        assert_eq!(listed_classes_of("Map"), [view(MAP)]);
-        assert_eq!(listed_classes_of("Set"), [exact(SET)]);
-        assert_eq!(listed_classes_of("PropertyDescriptor"), []);
+        let class_of = |name: &str| symbols.class_of(interface_symbol(files, LIBRARY_PATH, name));
+        assert_eq!(class_of("Map"), view(MAP));
+        assert_eq!(class_of("Set"), exact(SET));
+        assert_eq!(class_of("PropertyDescriptor"), None);
     });
 }
 

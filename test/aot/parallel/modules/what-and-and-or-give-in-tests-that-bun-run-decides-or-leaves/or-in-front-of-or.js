@@ -1,2 +1,0 @@
-(0x0n || "x") || (module.exports = 1);
-globalThis.mode = (function () { return this === undefined ? "strict" : "sloppy"; })();

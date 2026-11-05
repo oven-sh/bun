@@ -1,7 +1,7 @@
 mod support;
 use support::*;
 
-use bun_sema::erasure::keep_only_comments_beside_types;
+use bun_sema::erasure::{ReplacedText, find_type_ranges_beside, keep_only_comments_beside_types};
 use std::borrow::Cow;
 use std::sync::Mutex;
 
@@ -413,6 +413,65 @@ fn what_is_added_belongs_to_what_stands_in_front_of_it() {
             let mapped = &kept[ranges.map_start(start) as usize..end];
             assert_eq!(String::from_utf8_lossy(mapped), part);
         }
+    });
+}
+
+#[test]
+fn a_part_that_the_caller_replaces_goes_with_the_types_in_it() {
+    let text = "const f = (): T => [(E as any).A, <T>E.B as T, E!.C.d, (<any>E).A!, E.B, -E.D]; class A{constructor(public x = E.A){E.B}}";
+    let expected = "const f = () => [5, \"a longer text\", 7 .d, 5, \"a longer text\", (-9)]; class A{x; constructor(x = 5){ this.x = x;\"a longer text\"}}";
+    let values = [
+        ("(E as any).A", "5"),
+        ("(<any>E).A", "5"),
+        ("E.A", "5"),
+        ("E.B", "\"a longer text\""),
+        ("E!.C", "7 "),
+        ("E.D", "9"),
+        ("-E.D", "(-9)"),
+    ];
+    with_workspace(|w| {
+        let typed = parse_typescript(w, "a.ts", text.as_bytes());
+        let places = values.iter().flat_map(|&(read, value)| {
+            let places = text.match_indices(read);
+            places.map(move |(start, _)| ReplacedText {
+                start: start as u32,
+                end: (start + read.len()) as u32,
+                text: value.as_bytes().into(),
+            })
+        });
+        let ranges = find_type_ranges_beside(&typed, places.collect());
+        let kept = ranges.remove_from(text.as_bytes());
+        assert_eq!(String::from_utf8_lossy(&kept), expected);
+        let arrow_end = text.find(';').unwrap() as u32;
+        let arrow = &kept[ranges.map_start(10) as usize..ranges.map_end(arrow_end) as usize];
+        let expected_arrow = &expected[10..expected.find(';').unwrap()];
+        assert_eq!(String::from_utf8_lossy(arrow), expected_arrow);
+    });
+}
+
+#[test]
+fn text_that_the_caller_adds_behind_a_part_is_the_end_of_that_part() {
+    let text = "enum E { C = f() + A}";
+    let at = |part: &str| text.find(part).unwrap() as u32;
+    let part = |start: u32, end: u32, text: &str| ReplacedText {
+        start,
+        end,
+        text: text.as_bytes().into(),
+    };
+    let end = text.len() as u32;
+    let parts = vec![
+        part(end - 1, end, "])(E ||= {});"),
+        part(end - 1, end - 1, "] = \"C\""),
+        part(at("A}"), end - 1, "E.A"),
+        part(at("C ="), at("f()"), "E[E[\"C\"] = "),
+        part(0, at("C ="), "let E; ((E) => ["),
+        part(end - 1, end - 1, "] = \"C\""),
+    ];
+    with_workspace(|w| {
+        let typed = parse_typescript(w, "a.ts", text.as_bytes());
+        let kept = find_type_ranges_beside(&typed, parts).remove_from(text.as_bytes());
+        let expected = "let E; ((E) => [E[E[\"C\"] = f() + E.A] = \"C\"])(E ||= {});";
+        assert_eq!(String::from_utf8_lossy(&kept), expected);
     });
 }
 

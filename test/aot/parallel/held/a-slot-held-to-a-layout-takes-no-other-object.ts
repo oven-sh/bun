@@ -1,4 +1,4 @@
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 9 Todo: no slot is held to a type since 11-03 08:25 (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan()): it bought nothing and cost the servers 1 to 5%
+// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 9 Todo: no slot is held to a type (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan()): it bought nothing and cost the servers 1 to 5%
 // Every store of the program brings an object of one layout to `point`, so that `holder.point.x` can be two loads. Code that the build has not seen stores primitives, objects of other layouts, ordinary objects with the same names,
 // lists, functions, a proxy of the very object and an object below it. None of them may lie in the slot.
 class Holder {

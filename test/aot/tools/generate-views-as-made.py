@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-views-as-made.py <folder>: one-shape programs: what a typed array answers under the names that its class gives it, where the array is as its class makes it and where it is not.
+# generate-views-as-made.py <folder>: all 500; ../parallel/views-as-made/ holds 8 of them: one-shape programs: what a typed array answers under the names that its class gives it, where the array is as its class makes it and where it is not.
 # Each program holds one class, one way to read and one deed. What is printed is primitive. The reference is `bun <file>`.
 import os, sys
 

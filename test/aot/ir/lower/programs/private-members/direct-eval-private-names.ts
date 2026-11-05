@@ -158,10 +158,11 @@ export {};
 // CHECK-NEXT: b0(v0: [[L_1]], v1: number):
 // CHECK-NEXT: v2 = Integer integer=10
 // CHECK-NEXT: v3 = Div v1, v2
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: PrivateSet v0, v4, v3 layout=[[L_1]] field=1
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: v4 = Convert v3 declared={type=number}
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_1]] field=1
+// CHECK-NEXT: v7 = Undefined
+// CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#s"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {

@@ -1,6 +1,6 @@
 // Prints the own properties and the lines `name@file` of the stacks of the DOMException objects that host functions make. The functions in the frames take their names from declarations, variables, properties, keys in
 // brackets, symbols, classes, `displayName` and a `name` that is defined later. Some run below callbacks of built-in functions and some are made of text by `new Function` and `eval`.
-// Todo: only frames (stack-trace-only differences are fine, 11-02): error.line, column, sourceURL and the stack of an exception of the host
+// Todo: only frames (stack-trace-only differences are fine): error.line, column, sourceURL and the stack of an exception of the host
 const file = /[^ @()]*names-files-stacks-exceptions-host\.mjs(:\d+:\d+)?/g;
 let kept;
 function reason() {

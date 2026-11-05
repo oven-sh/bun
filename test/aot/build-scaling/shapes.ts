@@ -430,6 +430,7 @@ export const shapes: Shape[] = [
   },
   // To see what an expression names, the front end steps through a call into what the callee returns. Each step copied the lists of what the walk had passed and looked through them from end to end:
   // depth x depth a walk, and a walk starts at each call: 2,000 functions took 143 G instructions where 25 G do. What is left is the sum of the depths: the call of f7 still walks seven deep.
+  // Each literal is a type of its own to the checker, so the parameter of f7 was a union of every literal that arrives in it: 2,000 functions, 2,000,000 members, and whoever reads a union looks at each.
   {
     name: "functions that each return a call of the one before, each called once, in a test run",
     counted: "functions",
@@ -526,6 +527,24 @@ export const shapes: Shape[] = [
     write: size => ({
       "main.js":
         `const all = [\n${lines(size, index => `  { n${index}: ${index}, shared: ${index}, m${index % 17}: "t" },`)}];\nlet sum = 0;\nfor (const each of all) sum += each.shared;\nfunction keys(o) { return Object.keys(o).length; }\nfor (const each of all) sum += keys(each);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "literals of different layouts in one list that is handed to a function",
+    counted: "layouts",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function count(list) { return list.length; }\nconsole.log(count([\n${lines(size, index => `  { n${index}: ${index}, shared: ${index} },`)}]));\n`,
+    }),
+  },
+  {
+    name: "records of one shape in one list that is handed to a function",
+    counted: "records",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function count(list) { return list.length; }\nconsole.log(count([\n${lines(size, index => `  { id: ${index}, amount: ${index} },`)}]));\n`,
     }),
   },
   {
@@ -827,6 +846,34 @@ export const shapes: Shape[] = [
         `const all: Any[] = [${upTo(Math.max(size, 1), index => `{ kind: "k${index}", v${index}: ${index} }`).join(", ")}];\nlet sum = 0;\nfor (const each of all) sum += read(each);\nnote();\nconsole.log(sum, noted > 0);\n`,
     }),
   })),
+  // Whether all the cases of one condition come to one place was asked, for each case, by going down every name that the comparisons in front of it had given the object.
+  {
+    name: "texts that one condition compares a field of an object with, the object read behind it",
+    counted: "comparisons",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `interface Part { name: string; weight: number }\nfunction weigh(part: Part): number {\n  let extra = 0;\n  if (${upTo(Math.max(size, 1), index => `part.name === "n${index}"`).join(" || ")}) extra = part.weight;\n  return extra + part.weight;\n}\n` +
+        `const all: Part[] = [{ name: "n0", weight: 1 }, { name: "other", weight: 2 }, { name: "n${Math.max(size, 1) - 1}", weight: 3 }];\nlet sum = 0;\nfor (const each of all) sum += weigh(each);\nconsole.log(sum);\n`,
+    }),
+  },
+  // All the edges of the switch lead to one block that only hands on a constant. Whether the switch has an edge of its own to where that block leads was asked for each edge, of all the edges.
+  {
+    name: "texts that one condition compares a field of an object with, a constant stored behind it",
+    counted: "comparisons",
+    size: 2500,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `interface Part { name: string; weight: number }\nfunction mark(part: Part): number {\n  let hit = 0;\n  if (${upTo(Math.max(size, 1), index => `part.name === "n${index}"`).join(" || ")}) hit = 1;\n  return hit;\n}\n` +
+        `const all: Part[] = [{ name: "n0", weight: 1 }, { name: "other", weight: 2 }, { name: "n${Math.max(size, 1) - 1}", weight: 3 }];\nlet sum = 0;\nfor (const each of all) sum += mark(each);\nconsole.log(sum);\n`,
+    }),
+  },
   // The row was gone through to its end and then refused for the form of what is compared, and the next comparison began the same again.
   {
     name: "a row of ifs that compare a field that holds fractions with whole numbers",
@@ -1008,6 +1055,19 @@ export const shapes: Shape[] = [
       "m0.mjs": "export const v0 = 0;\n",
       ...Object.fromEntries(upTo(size, index => [`m${index + 1}.mjs`, `export * from "./m${index}.mjs";\nexport const v${index + 1} = ${index + 1};\n`])),
       "main.mjs": `import * as all from "./m${size}.mjs";\nconsole.log(all.v0 + all.v${size});\n`,
+    }),
+  },
+  // The walk to what a name stands for goes on from both arms of `c ? a : a`: without a memory of what it found from `a`, twice as long with each name.
+  {
+    name: "names that each stand for one of two of the one before",
+    counted: "names",
+    size: 10000,
+    entry: "main.mjs",
+    write: size => ({
+      "main.mjs":
+        `function Base() { if (new.target) this.tag = "base"; }\nconst pick = JSON.parse("true");\nconst a0 = pick ? Base : Base;\n` +
+        lines(size, index => `const a${index + 1} = pick ? a${index} : a${index};`) +
+        `class Top extends a${size} {}\nconsole.log(new Top().tag, typeof a${size}());\n`,
     }),
   },
   // A lookup that goes up a row of classes notes a condition for each class that it passes, in a sorted list, once for each access of each constructor.
@@ -1676,6 +1736,16 @@ export const shapes: Shape[] = [
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts": `${declaredConsole}function atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length);\n`,
+    }),
+  },
+  {
+    name: "lines that add a number of their own and a text to two texts in turns, all of them known, and hand each to a function",
+    counted: "lines",
+    size: 5000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}let seen = 0;\nfunction use(text: string) {\n  seen += text.length;\n}\nfunction atTheEnd(a: string, n: number): string {\n  let s = a;\n  let t = a;\n${lines(size, index => (index % 2 ? `  s = s + (n + ${index}) + a;\n  use(s);` : `  t = t + (n + ${index}) + a;\n  use(t);`))}  return s + t;\n}\nconsole.log(atTheEnd("x", 1).length);\n`,
     }),
   },
   {

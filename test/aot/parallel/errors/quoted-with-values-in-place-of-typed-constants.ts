@@ -1,5 +1,5 @@
 // Reference: bun build --compile
-// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run` (11-02).
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // What `bun <file>` prints in place of a name is found by where the name stands in the file, and the text that an executable keeps has no types.
 type Box = { value: { deep: number } | null; run?: (n: number) => void };
 function tell(cases: Record<string, () => unknown>) {

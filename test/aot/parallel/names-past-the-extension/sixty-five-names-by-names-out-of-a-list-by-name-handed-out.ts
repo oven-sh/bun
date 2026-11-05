@@ -1,8 +1,0 @@
-interface Wide { id: number; a0?: number; a1?: number; a2?: number; a3?: number; a4?: number; a5?: number; a6?: number; a7?: number; a8?: number; a9?: number; a10?: number; a11?: number; a12?: number; a13?: number; a14?: number; a15?: number; a16?: number; a17?: number; a18?: number; a19?: number; a20?: number; a21?: number; a22?: number; a23?: number; a24?: number; a25?: number; a26?: number; a27?: number; a28?: number; a29?: number; a30?: number; a31?: number; a32?: number; a33?: number; a34?: number; a35?: number; a36?: number; a37?: number; a38?: number; a39?: number; a40?: number; a41?: number; a42?: number; a43?: number; a44?: number; a45?: number; a46?: number; a47?: number; a48?: number; a49?: number; a50?: number; a51?: number; a52?: number; a53?: number; a54?: number; a55?: number; a56?: number; a57?: number; a58?: number; a59?: number; a60?: number; a61?: number; a62?: number; a63?: number; a64?: number; }
-function make(id: number): Wide { return { id }; }
-(globalThis as any).made = make;
-const all = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12", "a13", "a14", "a15", "a16", "a17", "a18", "a19", "a20", "a21", "a22", "a23", "a24", "a25", "a26", "a27", "a28", "a29", "a30", "a31", "a32", "a33", "a34", "a35", "a36", "a37", "a38", "a39", "a40", "a41", "a42", "a43", "a44", "a45", "a46", "a47", "a48", "a49", "a50", "a51", "a52", "a53", "a54", "a55", "a56", "a57", "a58", "a59", "a60", "a61", "a62", "a63", "a64"] as const;
-function fill(w: Wide, n: number): void { for (const name of all) w[name] = n; }
-const said: string[] = [];
-for (let i = 0; i < 12; i++) { const w = make(i); if (i & 1) fill(w, i); if (i > 8) said.push(String(w.id + (w.a64 ?? 0) + (w.a32 ?? 0) + (w.a0 ?? 0))); }
-console.log(said.join(" "));

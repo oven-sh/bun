@@ -41,10 +41,6 @@ fn half<'n>(files: &Sources<'n>) -> Vec<&'n str> {
     files_that(files, EvaluationOrder::half)
 }
 
-fn exposed<'n>(files: &Sources<'n>) -> Vec<&'n str> {
-    files_that(files, EvaluationOrder::exposed)
-}
-
 const LEAF: (&str, &str) = ("leaf.cjs", "exports.x = 1;");
 
 fn assert_position(expected: SitePosition, sources: &[&str]) {
@@ -148,7 +144,6 @@ fn a_chain_of_requires_is_seen_whole() {
         ("c.cjs", "exports.x = 1;"),
     ];
     assert!(half(&files).is_empty());
-    assert!(exposed(&files).is_empty());
 }
 
 #[test]
@@ -166,7 +161,6 @@ fn the_modules_of_a_cycle_are_seen_half_done() {
         ("c.cjs", "exports.x = 1;"),
     ];
     assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
-    assert!(exposed(&files).is_empty());
 }
 
 #[test]
@@ -210,7 +204,6 @@ fn what_a_late_site_may_run_is_exposed() {
         ("b.cjs", "exports.x = 1;"),
         ("c.cjs", "exports.x = 1;"),
     ];
-    assert_eq!(exposed(&files), ["a.cjs", "b.cjs"]);
     assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
 }
 
@@ -221,7 +214,7 @@ fn what_an_import_call_names_is_exposed() {
         ("a.cjs", "require('./b.cjs');"),
         ("b.cjs", "exports.x = 1;"),
     ];
-    assert_eq!(exposed(&files), ["a.cjs", "b.cjs"]);
+    assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
 }
 
 #[test]
@@ -233,7 +226,7 @@ fn what_a_computed_require_may_name_is_exposed() {
         ),
         ("pages/home.js", "exports.x = 1;"),
     ];
-    assert_eq!(exposed(&files), ["pages/home.js"]);
+    assert_eq!(half(&files), ["pages/home.js"]);
 }
 
 #[test]

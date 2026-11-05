@@ -322,7 +322,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn find_member_container(&self, identifier: ExprId) -> Option<SymbolId> {
+    pub(in crate::lower) fn find_member_container(&self, identifier: ExprId) -> Option<SymbolId> {
         let symbol = match self.bound.binding(identifier) {
             Binding::Symbol(symbol) => symbol,
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return None,

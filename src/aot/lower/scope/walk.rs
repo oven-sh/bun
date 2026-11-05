@@ -32,8 +32,10 @@ pub(in crate::lower) struct WalkedFunction {
     pub(in crate::lower) creator: Option<WalkedFunctionId>,
     pub(in crate::lower) created_at: u32,
     pub(in crate::lower) hoisted_to: Option<ScopeId>,
-    // A declared function that nobody makes where its scope is entered: whoever calls it enters the function itself. `created_at` is the time from which something could start it.
+    // A declared function that is not instantiated at scope entry. `created_at` is the earliest time at which a direct call can enter it or a read of its name can create its closure.
     pub(in crate::lower) is_made_late: bool,
+    // Nothing reads the name, so the function has no closure.
+    pub(in crate::lower) is_only_called_directly: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -60,6 +62,16 @@ pub(super) struct EvalUse {
     pub(super) time: u32,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub(super) struct DeclarationRead {
+    pub(super) symbol: SymbolId,
+    pub(super) function: FnId,
+    pub(super) owner: WalkedFunctionId,
+    pub(super) reader: WalkedFunctionId,
+    pub(super) enclosing_loop: Option<u32>,
+    pub(super) time: u32,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ArgumentRead {
     Count,
@@ -72,6 +84,7 @@ pub(super) struct WalkedLoop {
     pub(super) boundary: ScopeId,
     pub(super) function: WalkedFunctionId,
     pub(super) parent: Option<u32>,
+    pub(super) entered_at: u32,
     /// The loop of the same code that no other loop is around, itself where it is that one.
     pub(super) outermost: u32,
     /// What is stored in it and in no loop inside it, once for each store.
@@ -93,15 +106,10 @@ pub(super) struct ScopeWalk {
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
     // The declared functions that somebody reads as values, each made where it is first read.
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
-    // Who reads them. Of those, the names that every run of the function around them reads: they are made where their scope is entered, as ever.
-    // With the loop that the read stands in.
-    pub(super) readers_of_declarations: Vec<(
-        SymbolId,
-        WalkedFunctionId,
-        FnId,
-        Option<u32>,
-        WalkedFunctionId,
-    )>,
+    // Of those, the ones that a loop of their owner reads: the closure is created in front of the loop.
+    pub(super) functions_created_before_loops: Vec<(StmtId, SymbolId)>,
+    pub(super) declaration_reads: Vec<DeclarationRead>,
+    // A nested function reads them too, and every run of the function around them reads them: they are made where their scope is entered.
     pub(super) declarations_read_by_every_run: Vec<SymbolId>,
     // The functions of which every run makes a closure: `function createChecker() { .. return { check, typeOf: n => .. }; }`. Their scopes live on whatever is made late,
     // and a function like that declares hundreds of names which thousands of places read: they are made where the scope is entered, as ever.

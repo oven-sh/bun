@@ -25,12 +25,20 @@ pub struct Quiet<'a, 's> {
 }
 
 /// A plain object that has no such property of its own answers `undefined`: `Object.prototype` has none, and in an executable it takes none.
-/// A test run adds the names of `ProgramContents::names_added_to_builtins` to it, which this function does not see: code that relies on the answer in a test run must ask that list itself.
-pub(super) fn is_absent_from_object_prototype(atoms: &Interner<'_>, name: Atom) -> bool {
+/// `added`: `ProgramContents::names_added_to_builtins`: what the tests of a run lay there.
+pub(super) fn is_absent_from_object_prototype(
+    atoms: &Interner<'_>,
+    added: &[(BuiltinId, Atom)],
+    name: Atom,
+) -> bool {
     let known_name = table::find_name(atoms.bytes(name));
     let is_inherited = known_name
         .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-    !is_inherited && name != known::__proto__
+    let sought = (BuiltinId::ObjectPrototype, atoms.bytes(name));
+    let is_added = added
+        .binary_search_by(|&(holder, laid)| (holder, atoms.bytes(laid)).cmp(&sought))
+        .is_ok();
+    !is_inherited && !is_added && name != known::__proto__
 }
 
 pub(super) fn enclosing_statement(bound: &Bound<'_>, mut expression: ExprId) -> Option<StmtId> {

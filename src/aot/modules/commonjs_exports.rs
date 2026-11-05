@@ -22,10 +22,11 @@ use super::requests::{FileScan, ScannedSite, Scans};
 use super::synthetic_exports::SyntheticExports;
 use super::wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 use super::{BindInput, DescribedPart, ModuleRef, WrittenDescriptor, find_library_files};
+use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::{BuiltinNames, ResolvedBuiltins, table};
+use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
 use crate::ir::for_each_mut;
-use crate::known_helpers::{Quiet, Shape as HelperShape};
+use crate::known_helpers::{Helper, Quiet, Shape as HelperShape};
 use crate::load::SourceKind;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
@@ -36,12 +37,12 @@ use bun_sema::bind::{
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, PatKind,
-    PropKey, PropKind, StmtId, StmtKind, UnOp,
+    self, BinOp, CallId, Chain, ExportSpecId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind,
+    MemberKey, NodeData, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ThisPositions;
-use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::program::{FileId, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use std::cell::OnceCell;
 
@@ -78,10 +79,22 @@ pub(in crate::modules) struct NameEntry {
     pub is_seen_unfilled: bool,
 }
 
+/// Whether plain Bun comes to a name that the object has where it lists the names for the ES modules that import the file.
+/// An object without accessors it lists by its Structure, which has every name. Any other it asks for its names, the object of a marked file for the enumerable ones alone, and it drops an accessor that is not enumerable.
+pub(in crate::modules) fn is_listed_for_importers(
+    is_enumerable: bool,
+    is_accessor: bool,
+    lists_only_enumerable_names: bool,
+) -> bool {
+    is_enumerable || !(is_accessor || lists_only_enumerable_names)
+}
+
 pub(in crate::modules) struct ModuleEntries {
     pub module: ModuleRef,
     pub has_names: bool,
     pub knows_all_names: bool,
+    /// `ModuleText::lists_only_enumerable_names`
+    pub lists_only_enumerable_names: bool,
     pub is_half: bool,
     pub is_replaced_late: bool,
     /// `ModuleText::exports_ordinary_object`
@@ -138,6 +151,8 @@ struct Creation {
     position: SitePosition,
     is_enumerable: bool,
     is_read_only: bool,
+    /// Nothing stores, defines or deletes the name from here on: the object refuses.
+    is_fixed: bool,
     start: u32,
     end: u32,
 }
@@ -206,6 +221,8 @@ struct ModuleText {
     names_called: Vec<Atom>,
     /// What `__esModule` reads. `false`: the text never gives the module one. `true`: once, in order, a true constant. `None`: only the run knows.
     marker: Option<bool>,
+    /// `Object.defineProperty(exports, "__esModule", { value: true })`: whoever has the object finds the marker as the text leaves it.
+    is_marker_fixed: bool,
     /// The package of the file says `"type": "module"`: to an ES importer the `default` of the file is its value, whatever `__esModule` reads.
     is_marker_ignored_by_imports: bool,
     needs_wrapped_body: bool,
@@ -240,11 +257,37 @@ impl ModuleText {
         self.creations_of(name).iter().any(Creation::is_in_order) || self.alias_of(name).is_some()
     }
 
-    /// Whoever lists the names of the object once the body has run to its end finds the name: a getter that is not enumerable is passed over.
+    /// The object has an accessor, and the file is marked or only the run knows whether it is.
+    fn lists_only_enumerable_names(&self) -> bool {
+        !self.aliases.is_empty() && !self.is_marker_ignored_by_imports && self.marker != Some(false)
+    }
+
+    /// Whoever lists the names of the object for an ES importer once the body has run to its end finds the name.
     fn always_lists(&self, name: Atom) -> bool {
+        let (is_enumerable, is_accessor) = match (self.alias_of(name), self.creations_of(name)) {
+            (Some(alias), _) => (alias.is_enumerable, true),
+            (None, [first, ..]) => (first.is_enumerable, false),
+            (None, []) => return false,
+        };
+        self.always_creates(name)
+            && is_listed_for_importers(
+                is_enumerable,
+                is_accessor,
+                self.lists_only_enumerable_names(),
+            )
+    }
+
+    /// Something that is stored under the name may look at its `this`.
+    fn may_look_at_this_under(&self, name: Atom) -> bool {
+        let is_unknown = |value: StoredValue| value == StoredValue::Unknown;
         match self.alias_of(name) {
-            Some(alias) => alias.is_enumerable,
-            None => self.always_creates(name),
+            Some(alias) => {
+                !matches!(alias.target, AliasTarget::Binding(_)) || is_unknown(alias.value)
+            }
+            None => self
+                .creations_of(name)
+                .iter()
+                .any(|it| is_unknown(it.value)),
         }
     }
 
@@ -262,7 +305,7 @@ struct Text<'a, 's> {
     analysis: &'a FileAnalysis<'s>,
     decisions: &'a Decisions<'s>,
     builtins: &'a ResolvedBuiltins,
-    builtin_names: &'a BuiltinNames,
+    bind: &'a BindInput<'a, 's>,
     places: FileText<'a, 's>,
     this_positions: OnceCell<ThisPositions>,
     names_super: OnceCell<bool>,
@@ -277,11 +320,11 @@ enum Node {
 
 impl<'a, 's> Text<'a, 's> {
     fn new(
-        files: &'a Files<'s>,
+        bind: &'a BindInput<'a, 's>,
         wrapped: &'a WrappedModules,
-        builtin_names: &'a BuiltinNames,
         file: FileId,
     ) -> Option<Text<'a, 's>> {
+        let files = bind.files;
         let analysis = files.analysis(file);
         Some(Text {
             file,
@@ -291,7 +334,7 @@ impl<'a, 's> Text<'a, 's> {
             analysis,
             decisions: &analysis.decisions,
             builtins: &parsed_source(files, file)?.builtins,
-            builtin_names,
+            bind,
             places: FileText::new(files, wrapped, file),
             this_positions: OnceCell::new(),
             names_super: OnceCell::new(),
@@ -324,16 +367,7 @@ impl<'a, 's> Text<'a, 's> {
 
     // An object finds the other names without having them, or keeps what is stored under them elsewhere.
     fn is_plain_name(&self, name: Atom) -> bool {
-        let is_index = self
-            .atoms
-            .bytes(name)
-            .first()
-            .is_some_and(u8::is_ascii_digit);
-        let is_inherited = self
-            .builtin_names
-            .get(name)
-            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-        !is_index && !is_inherited && name != known::__proto__
+        self.bind.is_plain_name(name)
     }
 
     fn plain_constant_name(&self, key: ExprId) -> Option<Atom> {
@@ -449,6 +483,36 @@ impl<'a, 's> Text<'a, 's> {
             _ => AccessKind::Read,
         };
         Some(Access { node, name, kind })
+    }
+
+    // A pattern reads names off the object, a test asks whether there is one, a statement drops it.
+    fn only_reads_or_tests(&self, object: ExprId) -> bool {
+        let hir = self.hir;
+        let (object, parent) = self.parent(object);
+        match parent {
+            Parent::VarInit(declaration) => {
+                matches!(hir[hir[declaration].pat].kind, PatKind::Object(_))
+            }
+            Parent::Stmt(user) => match hir[user].kind {
+                StmtKind::Expr(_) => true,
+                StmtKind::If { test, .. }
+                | StmtKind::While { test, .. }
+                | StmtKind::DoWhile { test, .. }
+                | StmtKind::For { test, .. } => test == object,
+                _ => false,
+            },
+            Parent::Expr(user) if user.is_some() => match hir[user].kind {
+                ExprKind::Unary { op, .. } => matches!(op, UnOp::Not | UnOp::Typeof | UnOp::Void),
+                ExprKind::Cond { test, .. } => test == object,
+                ExprKind::Binary { op, left, .. } => match op {
+                    BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => true,
+                    BinOp::And => left == object,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     fn classify_function(&self, function: FnId) -> StoredValue {
@@ -679,21 +743,28 @@ fn needs_wrapped_body(text: &Text<'_, '_>) -> bool {
         })
 }
 
-// `const k = value`
-fn find_name_declared_with(text: &Text<'_, '_>, value: ExprId) -> Option<Decl> {
-    let hir = text.hir;
-    match text.parent(value).1 {
-        Parent::VarInit(declaration)
-            if matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_)) =>
-        {
-            Some(Decl::Var(hir[declaration].pat))
-        }
-        _ => None,
+// `const k = value`, where every use of `k` is written in the file.
+fn find_holder_declared_with(text: &Text<'_, '_>, value: ExprId) -> Option<SymbolId> {
+    let (hir, bound) = (text.hir, text.bound);
+    let Parent::VarInit(declaration) = text.parent(value).1 else {
+        return None;
+    };
+    let pattern = hir[declaration].pat;
+    if !matches!(hir[pattern].kind, PatKind::Ident(_))
+        || hir[declaration].flags.contains(Flags::EXPORT)
+        || bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_some()
+    {
+        return None;
     }
+    let holder = bound.declared_symbol(Decl::Var(pattern)).some()?;
+    (!bound.is_visible_to_eval(holder)).then_some(holder)
 }
 
-// `f(argument)`
-fn find_call_with_argument(text: &Text<'_, '_>, argument: ExprId) -> Option<ExprId> {
+// `__toESM(argument)`, `__importStar(argument)`, `__importDefault(argument)`: each only reads what it is given. The call, and the number of its arguments.
+fn find_call_of_helper_with_argument(
+    text: &Text<'_, '_>,
+    argument: ExprId,
+) -> Option<(ExprId, usize)> {
     let hir = text.hir;
     let (argument, Parent::Expr(user)) = text.parent(argument) else {
         return None;
@@ -701,184 +772,242 @@ fn find_call_with_argument(text: &Text<'_, '_>, argument: ExprId) -> Option<Expr
     let ExprKind::Call(call) = hir[user.some()?].kind else {
         return None;
     };
-    let mut arguments = hir.ids(hir[call].args);
-    arguments
-        .any(|written: ExprId| written == argument)
-        .then_some(user)
+    let call = hir[call];
+    if call.chain != Chain::No
+        || call.args.len() == 0
+        || hir.id_at::<ExprId>(call.args, 0) != argument
+    {
+        return None;
+    }
+    let helpers = text.bind.known_helpers;
+    let known = helpers.certain_callee(text.bind.files, text.file, call.callee)?;
+    matches!(
+        known.shape.helper(),
+        Helper::ToEsModule | Helper::ImportStar | Helper::ImportDefault
+    )
+    .then_some((user, call.args.len()))
 }
 
-// `const k = require(K)`, `const k = f(require(K))`, `import k = require(K)`, `import k from K` and `import * as k from K`: the name, and the module whose exports it may hold. By name.
-// A name that may hold something else too only makes one more marker unknown.
-fn find_names_that_hold_exports(
-    text: &Text<'_, '_>,
-    sites: &[ScannedSite],
-) -> Vec<(SymbolId, ModuleRef)> {
-    let (hir, bound, decisions) = (text.hir, text.bound, text.decisions);
-    let mut holders = Vec::new();
-    for (site, answer) in text.analysis.import_sites.iter().zip(sites) {
-        let &ScannedSite::Module(module) = answer else {
-            continue;
+/// How an expression stands for the object of a module.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Held {
+    /// What `require` answers.
+    Object,
+    /// What an ES module gets as `default`: the object, unless the module has the marker.
+    Default,
+    /// The namespace object of an ES importer, which shows that under the name `default`.
+    Namespace,
+    /// What `__toESM`, `__importStar` and `__importDefault` answer, which shows the same. The last two answer a marked object itself.
+    Answer,
+    /// `__toESM(k, 1)` passes over the marker: `default` is the object.
+    AnswerPastMarker,
+}
+
+/// What the text of a file does with the objects of the modules that it loads.
+/// Whoever has such an object can lay `__esModule` on it, take it off or define it, under a key that arrives, through a built-in or in another file: only the run knows what the name reads then.
+#[derive(Default)]
+struct TakenObjects {
+    /// What `require` answers is a value somewhere.
+    required: Vec<ModuleRef>,
+    /// So is the namespace object.
+    imported: Vec<ModuleRef>,
+    /// So is what an ES module gets as `default`.
+    defaults: Vec<ModuleRef>,
+    /// `k.n()` hands the object over as `this`.
+    called: Vec<(ModuleRef, Atom)>,
+    /// `module.children`, `module.parent`, a module object that goes somewhere: the `exports` of each shows the object of its file.
+    names_way_to_module_objects: bool,
+}
+
+impl TakenObjects {
+    fn take(&mut self, held: Held, module: ModuleRef) {
+        match held {
+            Held::Object | Held::Answer | Held::AnswerPastMarker => self.required.push(module),
+            Held::Namespace => self.imported.push(module),
+            Held::Default => self.defaults.push(module),
+        }
+    }
+
+    // `k.n`, `k.n = 1`, `const { n } = k`, `if (k)` and `k;` leave the object where it is.
+    fn look_at_use(&mut self, text: &Text<'_, '_>, used: ExprId, held: Held, module: ModuleRef) {
+        let Some(access) = text.find_access(used) else {
+            if !text.only_reads_or_tests(used) {
+                self.take(held, module);
+            }
+            return;
         };
-        let declarations = match site.kind {
-            ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) => {
-                if decisions.is_dead_expr(call) {
-                    continue;
+        let shown_as_default = match held {
+            Held::Namespace | Held::Answer => Some(Held::Default),
+            Held::AnswerPastMarker => Some(Held::Object),
+            Held::Object | Held::Default => None,
+        };
+        match (
+            access.kind,
+            shown_as_default.filter(|_| access.name == known::default),
+        ) {
+            (AccessKind::Read, Some(shown)) => self.look_at_use(text, access.node, shown, module),
+            (AccessKind::Read, None) => {}
+            _ if access.name == known::__esModule => self.take(held, module),
+            (AccessKind::Call, _) => self.called.push((module, access.name)),
+            // A later call under the name hands the object to what is stored here.
+            (AccessKind::Store(stored) | AccessKind::Choice(stored), _) => {
+                if stored == StoredValue::Unknown {
+                    self.take(held, module);
                 }
-                // `__importDefault` and `__importStar` answer a marked module as it is.
-                let handed_on =
-                    || find_name_declared_with(text, find_call_with_argument(text, call)?);
-                [find_name_declared_with(text, call).or_else(handed_on), None]
             }
-            ImportSiteKind::ImportEquals(declaration)
-                if !decisions.is_dead_stmt(hir[declaration].stmt) =>
-            {
-                [Some(Decl::ImportEquals(declaration)), None]
-            }
-            ImportSiteKind::Import(import) => {
-                let (default, namespace) = (hir[import].default, hir[import].namespace);
-                [
-                    default.is_some().then_some(Decl::ImportDefault(import)),
-                    namespace.is_some().then_some(Decl::ImportNamespace(import)),
-                ]
-            }
-            _ => continue,
+            (AccessKind::Update, _) => {}
+        }
+    }
+
+    // `const k = require(K)` and `const k = __toESM(require(K))` are asked about where `k` stands.
+    fn look_at_answer(
+        &mut self,
+        text: &Text<'_, '_>,
+        call: ExprId,
+        module: ModuleRef,
+        holders: &mut Vec<(SymbolId, Held, ModuleRef)>,
+    ) {
+        let (answer, held) = match find_call_of_helper_with_argument(text, call) {
+            Some((answer, 1)) => (answer, Held::Answer),
+            Some((answer, _)) => (answer, Held::AnswerPastMarker),
+            None => (call, Held::Object),
         };
-        for declaration in declarations.into_iter().flatten() {
-            let holder = bound.declared_symbol(declaration);
-            if holder.is_some() {
-                holders.push((holder, module));
+        match find_holder_declared_with(text, answer) {
+            Some(holder) => holders.push((holder, held, module)),
+            None => self.look_at_use(text, answer, held, module),
+        }
+    }
+}
+
+/// `find_open_marker`: true for a CommonJS module whose marker is known and may change, false for an ES module, which has the marker on what `require` answers.
+fn find_taken_objects(
+    text: &Text<'_, '_>,
+    scan: &FileScan,
+    commonjs_file_may_be_main: bool,
+    find_open_marker: &dyn Fn(ModuleRef) -> Option<bool>,
+) -> TakenObjects {
+    let (hir, bound, decisions) = (text.hir, text.bound, text.decisions);
+    let mut taken = TakenObjects::default();
+    let mut mentions = text.builtins.module_object_mentions().iter();
+    taken.names_way_to_module_objects = mentions.any(|mention| {
+        // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined.
+        (mention.owner != ModuleObjectOwner::EntryPoint || commonjs_file_may_be_main)
+            && matches!(
+                mention.object_use,
+                ModuleObjectUse::Parent
+                    | ModuleObjectUse::Children
+                    | ModuleObjectUse::HandedOn
+                    | ModuleObjectUse::HolderHandedOn
+            )
+    });
+    // `require.cache` lists the files of the program in a test run alone.
+    taken.names_way_to_module_objects |=
+        text.bind.runs_tests && text.builtins.reaches_module_cache();
+    let mut holders = Vec::new();
+    for (site, answer) in text.analysis.import_sites.iter().zip(&scan.sites) {
+        let modules = match answer {
+            ScannedSite::Module(module) => core::slice::from_ref(module),
+            ScannedSite::Candidates(_) => &scan.candidates[..],
+            // As in a bundle, only an entry point answers to a name that the build does not know, and the text of an entry point says nothing of its marker.
+            ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => continue,
+        };
+        for &module in modules {
+            let Some(is_commonjs) = find_open_marker(module) else {
+                continue;
+            };
+            let mut hold = |declaration: Decl, held: Held| {
+                let holder = bound.declared_symbol(declaration);
+                match holder.is_some() && !bound.is_visible_to_eval(holder) {
+                    true => holders.push((holder, held, module)),
+                    false => taken.take(held, module),
+                }
+            };
+            match site.kind {
+                ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) => {
+                    if !decisions.is_dead_expr(call) {
+                        taken.look_at_answer(text, call, module, &mut holders);
+                    }
+                }
+                ImportSiteKind::RequireByTestRunner(_) => taken.take(Held::Object, module),
+                ImportSiteKind::ImportEquals(declaration) => {
+                    if hir[declaration].flags.contains(Flags::EXPORT) {
+                        taken.take(Held::Object, module);
+                    } else if !decisions.is_dead_stmt(hir[declaration].stmt) {
+                        hold(Decl::ImportEquals(declaration), Held::Object);
+                    }
+                }
+                // The namespace object of an ES module takes no name.
+                _ if !is_commonjs => {}
+                ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_) => {
+                    taken.take(Held::Namespace, module);
+                }
+                ImportSiteKind::Import(import) => {
+                    if hir[import].default.is_some() {
+                        hold(Decl::ImportDefault(import), Held::Default);
+                    }
+                    if hir[import].namespace.is_some() {
+                        hold(Decl::ImportNamespace(import), Held::Namespace);
+                    }
+                    for name in hir[import].named.iter() {
+                        if hir[name].imported == known::default {
+                            hold(Decl::ImportSpec(name), Held::Default);
+                        }
+                    }
+                }
+                ImportSiteKind::ExportFrom(export) => {
+                    let mut names = hir[export].items.iter();
+                    if names.any(|name| hir[name].local == known::default) {
+                        taken.take(Held::Default, module);
+                    }
+                }
+                ImportSiteKind::ExportStar(statement) => {
+                    if matches!(hir[statement].kind, StmtKind::ExportStar { alias, .. } if alias.is_some())
+                    {
+                        taken.take(Held::Namespace, module);
+                    }
+                }
+                _ => {}
             }
         }
     }
     for (call, module) in text.places.calls_of_inner_commonjs_modules() {
-        let handed_on = || find_name_declared_with(text, find_call_with_argument(text, call)?);
-        let declaration = find_name_declared_with(text, call).or_else(handed_on);
-        let holder = declaration.map(|declaration| bound.declared_symbol(declaration));
-        holders.extend(holder.filter(|it| it.is_some()).map(|it| (it, module)));
+        if find_open_marker(module).is_some() {
+            taken.look_at_answer(text, call, module, &mut holders);
+        }
+    }
+    if holders.is_empty() {
+        return taken;
     }
     holders.shared_sort_by_key(|holder| holder.0);
-    holders
-}
-
-// The object that the expression stores `__esModule` on, deletes it from or defines it on.
-fn find_object_whose_marker_changes(text: &Text<'_, '_>, expression: ExprId) -> Option<ExprId> {
-    let (hir, bound) = (text.hir, text.bound);
-    let is_marker = |key: ExprId| text.constant(key) == Some(Constant::String(known::__esModule));
-    match hir[expression].kind {
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-            let (object, key) = hir.member_key(expression)?;
-            let names_marker = match key {
-                MemberKey::Name(name) => name == known::__esModule,
-                MemberKey::Computed(computed) => is_marker(computed),
-                MemberKey::PrivateName(_) => false,
-            };
-            let changes = names_marker
-                && (bound
-                    .get_assignment_target(hir, text.parent(expression).0)
-                    .is_some()
-                    || text.is_deleted(expression));
-            changes.then_some(object)
-        }
-        ExprKind::Call(definition) => {
-            let definition = hir[definition];
-            let defines = definition.args.len() >= 2
-                && is_marker(hir.id_at(definition.args, 1))
-                && text.defines_property(definition.callee);
-            defines.then(|| hir.id_at(definition.args, 0))
-        }
-        _ => None,
-    }
-}
-
-// The modules whose exports the file gets hold of. A site whose specifier is computed answers with one of the candidates.
-fn find_loaded_modules<'a>(
-    text: &'a Text<'_, '_>,
-    scan: &'a FileScan,
-) -> impl Iterator<Item = ModuleRef> + 'a {
-    let answers = text.analysis.import_sites.iter().zip(&scan.sites);
-    let spelled = answers.filter_map(|(site, answer)| match (site.kind, answer) {
-        (
-            ImportSiteKind::Import(_)
-            | ImportSiteKind::ImportEquals(_)
-            | ImportSiteKind::ImportCall(_)
-            | ImportSiteKind::Require(_)
-            | ImportSiteKind::ImportMetaRequire(_),
-            &ScannedSite::Module(module),
-        ) => Some(module),
-        _ => None,
-    });
-    let inner_modules = text.places.inner_commonjs_modules().map(|inner| inner.0);
-    spelled
-        .chain(scan.candidates.iter().copied())
-        .chain(inner_modules)
-}
-
-// `require(K).__esModule = v`, `delete require(K).__esModule` and `Object.defineProperty(require(K), "__esModule", d)`, also through a name that holds what `K` exports: only the run knows what the name reads on `K` from then on.
-// A name of which the text does not say what it holds may hold the exports of any module that the file loads. `require(c ? K : L)` answers with one of the candidates.
-fn find_markers_stored_on_other_modules(text: &Text<'_, '_>, scan: &FileScan) -> Vec<ModuleRef> {
-    let (hir, bound, analysis) = (text.hir, text.bound, text.analysis);
-    let mut stored = Vec::new();
-    let answers_module = |site: &ScannedSite| matches!(site, ScannedSite::Module(_));
-    let has_inner_modules = text.places.inner_commonjs_modules().next().is_some();
-    if !scan.sites.iter().any(answers_module) && scan.candidates.is_empty() && !has_inner_modules {
-        return stored;
-    }
-    // What a callback does to its own `exports` its own text says.
-    let own_exports = text.places.inner_commonjs_modules();
-    let mut own_exports: Vec<SymbolId> = own_exports.filter_map(|inner| inner.1).collect();
-    own_exports.shared_sort_unstable();
-    let holders = find_names_that_hold_exports(text, &scan.sites);
-    let mut may_be_any_loaded_module = false;
-    for expression in (0..hir.exprs.len() as u32).map(ExprId) {
-        let Some(object) = find_object_whose_marker_changes(text, expression) else {
-            continue;
+    let held_by = |binding: Binding| {
+        let name = match binding {
+            Binding::Symbol(name) => name,
+            _ => SymbolId::NONE,
         };
-        if text.decisions.is_dead_expr(expression) {
+        let first = holders.partition_point(|holder| holder.0 < name);
+        holders[first..]
+            .iter()
+            .take_while(move |holder| holder.0 == name)
+    };
+    for reference in (0..hir.exprs.len() as u32).map(ExprId) {
+        if !bound.is_evaluated_ident(reference) {
             continue;
         }
-        let object = hir.skip_type_assertions(object);
-        match hir[object].kind {
-            ExprKind::Ident(_) => {
-                let Binding::Symbol(name) = bound.binding(object) else {
-                    continue;
-                };
-                if own_exports.binary_search(&name).is_ok() {
-                    continue;
-                }
-                let first = holders.partition_point(|holder| holder.0 < name);
-                let held = holders[first..]
-                    .iter()
-                    .take_while(|holder| holder.0 == name);
-                let count = stored.len();
-                stored.extend(held.map(|holder| holder.1));
-                // `let k; k = require(K)`, `const k = c ? require(K) : require(L)`, a parameter. A name that holds a literal, a function or a class holds no module.
-                let holds_those_alone = stored.len() != count && bound.is_stable_binding(name);
-                may_be_any_loaded_module |=
-                    !holds_those_alone && text.classify_name(object, 0) == StoredValue::Unknown;
+        for &(_, held, module) in held_by(bound.binding(reference)) {
+            if !decisions.is_dead_expr(reference) && !bound.is_in_type_query(reference) {
+                taken.look_at_use(text, reference, held, module);
             }
-            ExprKind::Call(_) => {
-                stored.extend(text.places.find_inner_commonjs_module_of_call(object));
-                let Some(site) = analysis.import_site_of_call(object) else {
-                    continue;
-                };
-                let requires = matches!(
-                    analysis.import_sites[site].kind,
-                    ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
-                );
-                match scan.sites[site] {
-                    _ if !requires => {}
-                    ScannedSite::Module(module) => stored.push(module),
-                    ScannedSite::Candidates(_) => stored.extend_from_slice(&scan.candidates),
-                    ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => {}
-                }
-            }
-            _ => {}
         }
     }
-    if may_be_any_loaded_module {
-        stored.extend(find_loaded_modules(text, scan));
+    // `export { k }`, the root of `import b = k.c`, the factory of a JSX element: no expression spells the name.
+    let exported = (0..hir.export_specs.len() as u32).map(ExportSpecId);
+    let exported = exported.map(|name| bound.exported_binding(name));
+    for binding in exported.chain(text.analysis.bindings_read_without_expression(hir, bound)) {
+        for &(_, held, module) in held_by(binding) {
+            taken.take(held, module);
+        }
     }
-    stored
+    taken
 }
 
 #[derive(Copy, Clone)]
@@ -1037,6 +1166,7 @@ impl Scan<'_, '_, '_> {
             position: self.position_of(node),
             is_enumerable: true,
             is_read_only: false,
+            is_fixed: false,
             start: self.text.hir[node].pos,
             end: self.text.hir[node].end,
         }
@@ -1191,6 +1321,7 @@ impl Scan<'_, '_, '_> {
                 self.found.creations.push(Creation {
                     is_enumerable,
                     is_read_only: is_writable != Some(true),
+                    is_fixed: is_writable != Some(true) && written.is_configurable != Some(true),
                     ..creation
                 });
                 self.found.defined_values.push((call_node, name));
@@ -1263,6 +1394,8 @@ impl Scan<'_, '_, '_> {
             self.found.creations.push(Creation {
                 is_enumerable: false,
                 is_read_only: true,
+                // A helper defines it with `{ value: true }`.
+                is_fixed: !matches!(text.hir[definition].kind, ExprKind::Call(call) if text.defines_property(text.hir[call].callee)),
                 ..creation
             });
             self.marking_calls.push(definition);
@@ -1509,6 +1642,7 @@ impl Scan<'_, '_, '_> {
                 position: SitePosition::InOrder,
                 is_enumerable: true,
                 is_read_only: false,
+                is_fixed: false,
                 start: property.start,
                 end: property.end,
             });
@@ -1778,6 +1912,7 @@ impl Scan<'_, '_, '_> {
         let found = &mut self.found;
         found.marker = marker;
         if let (Some(true), [creation]) = (marker, &creations[..]) {
+            found.is_marker_fixed = creation.is_fixed;
             found.marker_nodes.push(creation.node);
             found.erased.extend(text.statement_of(creation.node));
             found.creations.retain(|it| it.name != known::__esModule);
@@ -1907,6 +2042,7 @@ fn begin_scan<'t, 'a, 's>(
             names_read: Vec::new(),
             names_called: Vec::new(),
             marker: None,
+            is_marker_fixed: false,
             is_marker_ignored_by_imports: false,
             needs_wrapped_body: false,
             uses_module_object: summary.module_object_escapes,
@@ -1984,12 +2120,13 @@ fn scan_own_text(
     certain_helper: &dyn Fn(ExprId) -> Option<HelperShape>,
     is_half: bool,
     is_entry_point: bool,
+    runs_again: bool,
 ) -> ModuleText {
     let (hir, bound, decisions) = (text.hir, text.bound, text.decisions);
     let needs_wrapped_body = needs_wrapped_body(text);
     let mut scan = begin_scan(text, sites, summary, certain_helper, None, is_half);
-    // The host may ask what an entry point exports.
-    scan.found.has_names &= !needs_wrapped_body && !is_entry_point;
+    // The host may ask what an entry point exports. Each run of a body fills an object of its own, and whoever got hold of it during a run that threw keeps it.
+    scan.found.has_names &= !needs_wrapped_body && !is_entry_point && !runs_again;
     scan.found.needs_wrapped_body = needs_wrapped_body;
     for &(name, binding) in bound.ident_bindings() {
         if decisions.is_dead_expr(name) {
@@ -2083,21 +2220,24 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
     for entry_point in sources.entry_points() {
         is_entry_point[entry_point.file.idx()] = true;
     }
+    let is_commonjs =
+        |file: FileId| modules.interop(ModuleRef::File(file)).kind == ModuleKind::CommonJs;
+    let mut parsed = modules.compiled_files.iter();
+    // `Bun.main = path`: from there on the file at the path is the main module.
+    let commonjs_file_may_be_main = sources.entry_points().iter().any(|it| is_commonjs(it.file))
+        || parsed.any(|&file| {
+            parsed_source(files, file)
+                .is_some_and(|source| source.builtins.may_store_path_of_main_module())
+        });
     let compiled_files = modules.compiled_files.iter();
-    let mut scanned: Vec<(FileId, Vec<ModuleText>, Vec<ModuleRef>)> = compiled_files
-        .map(|&file| (file, Vec::new(), Vec::new()))
-        .collect();
-    for_each_mut(&mut scanned, bind.in_parallel, &|(
-        file,
-        found,
-        stored_markers,
-    )| {
+    let mut scanned: Vec<(FileId, Vec<ModuleText>)> =
+        compiled_files.map(|&file| (file, Vec::new())).collect();
+    for_each_mut(&mut scanned, bind.in_parallel, &|(file, found)| {
         let file = *file;
-        let Some(text) = Text::new(files, &modules.wrapped, bind.builtin_names, file) else {
+        let Some(text) = Text::new(bind, &modules.wrapped, file) else {
             return;
         };
         let scan = scans.of(file);
-        *stored_markers = find_markers_stored_on_other_modules(&text, scan);
         let certain_helper = |callee: ExprId| {
             let known = bind.known_helpers.certain_callee(files, file, callee)?;
             Some(known.shape)
@@ -2136,6 +2276,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
             &certain_helper,
             is_half,
             is_entry_point[file.idx()],
+            modules.runs_again(file),
         );
         found.push(ModuleText {
             is_marker_ignored_by_imports: interop.export_rule
@@ -2152,16 +2293,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         },
         stored_markers: Vec::new(),
     };
-    let mut is_listed = FxHashSet::default();
-    for (file, found, stored_markers) in scanned {
-        for module in stored_markers {
-            // What a test file does to a module that the loader links for it, it does to the compiled file.
-            for module in [module, modules.module_behind(module)] {
-                if is_listed.insert(module) {
-                    texts.stored_markers.push(module);
-                }
-            }
-        }
+    for (file, found) in scanned {
         for found in found {
             let number = texts.modules.len() as u32;
             match found.inner {
@@ -2173,15 +2305,81 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
     }
     let inner_modules = &mut texts.index.inner_modules;
     inner_modules.shared_sort_unstable_by_key(|entry| entry.0);
-    for &module in &texts.stored_markers {
-        if let Some(number) = texts.index.find(module) {
-            texts.modules[number].marker = None;
+    let find_open_marker_of = |module: ModuleRef| match modules.interop(module).kind {
+        ModuleKind::CommonJs => {
+            let text = &texts.modules[texts.index.find(module)?];
+            (text.marker.is_some() && !text.is_marker_fixed).then_some(true)
         }
+        ModuleKind::SourceText => Some(false),
+        _ => None,
+    };
+    // What a test file does to a module that the loader links for it, it does to the compiled file.
+    let find_open_marker = |module: ModuleRef| {
+        find_open_marker_of(module).or_else(|| find_open_marker_of(modules.module_behind(module)))
+    };
+    // None of Bun's own files loads a file of the program.
+    let program_files = modules
+        .compiled_files
+        .iter()
+        .filter(|file| sources.kind(**file) == SourceKind::Program && !is_library[file.idx()]);
+    let mut taken_in_files: Vec<(FileId, TakenObjects)> = program_files
+        .map(|&file| (file, TakenObjects::default()))
+        .collect();
+    for_each_mut(&mut taken_in_files, bind.in_parallel, &|(file, taken)| {
+        if let Some(text) = Text::new(bind, &modules.wrapped, *file) {
+            let scan = scans.of(*file);
+            *taken = find_taken_objects(&text, scan, commonjs_file_may_be_main, &find_open_marker);
+        }
+    });
+    let mut all_taken = TakenObjects::default();
+    for (_, mut taken) in taken_in_files {
+        all_taken.required.append(&mut taken.required);
+        all_taken.imported.append(&mut taken.imported);
+        all_taken.defaults.append(&mut taken.defaults);
+        all_taken.called.append(&mut taken.called);
+        all_taken.names_way_to_module_objects |= taken.names_way_to_module_objects;
     }
+    texts.forget_markers_that_may_change(modules, &all_taken);
     texts
 }
 
 impl CommonJsTexts {
+    fn forget_markers_that_may_change(&mut self, modules: &ModuleSet, taken: &TakenObjects) {
+        let text_of = |module: ModuleRef| Some(&self.modules[self.index.find(module)?]);
+        let lacks_marker =
+            |module: &ModuleRef| text_of(*module).is_some_and(|text| text.marker != Some(true));
+        let own_calls = self.modules.iter().flat_map(|text| {
+            let calls = text.names_called.iter();
+            calls.map(|&name| (text.module(), name))
+        });
+        let calls = taken.called.iter().copied().chain(own_calls);
+        let handed_over = calls.filter(|&(module, name)| {
+            text_of(module).is_some_and(|text| text.may_look_at_this_under(name))
+        });
+        let every_module = self.modules.iter().map(ModuleText::module);
+        let every_module = every_module.filter(|_| taken.names_way_to_module_objects);
+        let changed = taken.required.iter().chain(&taken.imported).copied();
+        let changed = changed.chain(taken.defaults.iter().copied().filter(lacks_marker));
+        let changed = changed.chain(handed_over.map(|(module, _)| module));
+        let changed: Vec<ModuleRef> = changed.chain(every_module).collect();
+        let mut is_listed = FxHashSet::default();
+        for module in changed {
+            // What a test file does to a module that the loader links for it, it does to the compiled file.
+            for module in [module, modules.module_behind(module)] {
+                if let Some(number) = self.index.find(module) {
+                    let text = &mut self.modules[number];
+                    if text.marker.is_none() || text.is_marker_fixed {
+                        continue;
+                    }
+                    text.marker = None;
+                }
+                if is_listed.insert(module) {
+                    self.stored_markers.push(module);
+                }
+            }
+        }
+    }
+
     /// What `__esModule` reads on the module, as far as the text of the program says it.
     pub(super) fn marker(&self, module: ModuleRef) -> Option<bool> {
         self.modules[self.index.find(module)?].marker
@@ -2240,6 +2438,7 @@ fn create_entries(text: &ModuleText) -> ModuleEntries {
         module: text.module(),
         has_names: text.has_names,
         knows_all_names: text.knows_all_names(),
+        lists_only_enumerable_names: text.lists_only_enumerable_names(),
         is_half: text.is_half,
         is_replaced_late: text.is_replaced_late,
         exports_ordinary_object: text.exports_ordinary_object,
@@ -2277,8 +2476,8 @@ pub struct CommonJsExports {
     /// By number: the module that has the variable, and the name. Of CommonJS modules of the program alone.
     names_by_id: Vec<Option<(ModuleRef, Atom)>>,
     targets: FxHashMap<(ModuleRef, Atom), Target>,
-    /// Of those, the names that an ES importer has a copy of: it holds what the getter answered when the file was linked.
-    copied_names: FxHashSet<(ModuleRef, Atom)>,
+    /// Of those, the names that an ES importer has a copy of: it holds what the getter answered when the file was linked. `true`: `CommonJsNames::is_copy_of_name`
+    copied_names: FxHashMap<(ModuleRef, Atom), bool>,
     /// The names that other files store, and whether all that they store ignores `this`.
     stored_by_other_files: FxHashMap<(ModuleRef, Atom), bool>,
     /// Ascending.
@@ -2392,7 +2591,9 @@ impl CommonJsExports {
                 self.add_name_source(number, module, owner);
             }
             if tables.commonjs.is_copied(module, alias.name) {
-                self.copied_names.insert((module, alias.name));
+                let is_copy_of_name = tables.commonjs.is_copy_of_name(module, alias.name);
+                self.copied_names
+                    .insert((module, alias.name), is_copy_of_name);
             }
             if let Target::Binding(symbol) = target {
                 self.exported_bindings.push(symbol);
@@ -2432,14 +2633,8 @@ impl CommonJsExports {
                 if own_text.creations_of(name).iter().any(|it| it.is_read_only) {
                     looked_at.push(module);
                 }
-                let text = text.get_or_insert_with(|| {
-                    Text::new(
-                        files,
-                        &input.modules.wrapped,
-                        input.bind.builtin_names,
-                        file,
-                    )
-                });
+                let text =
+                    text.get_or_insert_with(|| Text::new(input.bind, &input.modules.wrapped, file));
                 let stored = text.as_ref().and_then(|text| {
                     let (_, value) = text.find_assignment(member)?;
                     Some(text.classify_value(value, 0))
@@ -2677,7 +2872,12 @@ impl CommonJsExports {
             aliases.map(|alias| (text.module(), alias.name))
         });
         names.filter_map(|(module, name)| {
-            let member = match self.imported_target(module, name) {
+            // `require` reads past such a name at all times, and an import does while the name behind it is settled.
+            let target = match self.copied_names.get(&(module, name)) {
+                Some(true) => self.targets[&(module, name)],
+                _ => self.imported_target(module, name),
+            };
+            let member = match target {
                 Target::Name(owner, _) if owner == module => return None,
                 Target::Name(owner, owner_name) => {
                     Member::Variable(*self.ids.get(&(owner, owner_name))?)
@@ -2691,7 +2891,7 @@ impl CommonJsExports {
 
     fn imported_target(&self, module: ModuleRef, name: Atom) -> Target {
         match self.targets.get(&(module, name)) {
-            Some(&target) if !self.copied_names.contains(&(module, name)) => target,
+            Some(&target) if !self.copied_names.contains_key(&(module, name)) => target,
             Some(_) | None => Target::Name(module, name),
         }
     }
@@ -2793,7 +2993,8 @@ impl CommonJsExports {
     pub fn imported_member(&self, variable: SyntheticExportId) -> Member {
         match self.name_of_variable(variable) {
             Some((owner, name)) if self.is_import_bound_to_variable(owner, name) => {
-                Member::Variable(variable)
+                let behind = self.member_behind_getter(owner, name);
+                behind.unwrap_or(Member::Variable(variable))
             }
             _ => Member::Copy(variable),
         }
@@ -2830,6 +3031,12 @@ impl CommonJsExports {
         let Some(text) = self.text_of(module) else {
             return false;
         };
+        // What the getter answered at the link is what a settled name of the other module holds ever after.
+        if self.copied_names.get(&(module, name)) == Some(&true)
+            && let Some(&Target::Name(owner, owner_name)) = self.targets.get(&(module, name))
+        {
+            return self.has_names(module) && self.settled(owner, owner_name);
+        }
         let creations = text.creations_of(name);
         self.has_names(module)
             && !text.is_half

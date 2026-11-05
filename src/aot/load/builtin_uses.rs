@@ -10,10 +10,10 @@ use bun_sema::util::SharedSort;
 
 use crate::builtins::{
     BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins, RuntimeFunction,
-    RuntimeModule, SourceDialect, resolve_file, table,
+    RuntimeModule, SourceDialect, resolve_file,
 };
 use crate::load::react_compiler;
-use crate::load::runtime_modules::RuntimeModules;
+use crate::load::runtime_modules::{RuntimeModules, find_module_named};
 use crate::load::sources::ParsedSource;
 
 pub(crate) struct BuiltinUseInput<'a> {
@@ -43,7 +43,7 @@ pub(crate) fn finish_application_file(
             // What stands between two quotes, whatever the text does with it.
             let quoted = bun_core::strings::split_any(part, b"\"'`");
             (source.library_modules_named_in_text_left_to_run_time)
-                .extend(quoted.filter_map(table::module_by_specifier));
+                .extend(quoted.filter_map(find_module_named));
         }
     }
     if needs_react_declarations {

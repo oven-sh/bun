@@ -1,10 +1,9 @@
 import { readTrimTable } from "bun:internal-for-testing";
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/harness/commands";
-import { describe, test } from "../aot/listed";
 import { canTrim, featureNamed, getMappedSegments, model, tempDirForAotBuilds } from "./compile-trim-features";
 
 // An AOT-compiled program never runs the CLI or the JIT, so --aot removes the code that only those two need.

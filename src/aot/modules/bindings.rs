@@ -185,6 +185,8 @@ impl RequiredName {
 pub struct ModuleRequest {
     pub target: ModuleRef,
     pub phase: ImportPhase,
+    /// `export * from` the target, whoever follows the star.
+    pub is_star_export: bool,
     pub is_dynamic_star_export: bool,
     pub kind: ModuleRequestKind,
     /// Behind the request, and behind any site of it, the target has run to its end: `EvaluationOrder::half` is false of it.
@@ -198,6 +200,7 @@ impl ModuleRequest {
         ModuleRequest {
             target,
             phase: ImportPhase::Evaluation,
+            is_star_export: false,
             is_dynamic_star_export: false,
             kind: ModuleRequestKind::Import,
             completes: true,
@@ -225,6 +228,8 @@ impl ModuleRequest {
 pub struct SpelledModule {
     pub spelling: Atom,
     pub module: ModuleRef,
+    /// The call hands the name to the loader of the run time, which asks the plugins and then finds the module: `is_followed_further_than_bundler`.
+    pub is_left_to_loader: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -43,11 +43,13 @@ pub enum Reason {
     Guest,
     Stack,
     TooLong,
+    /// Something was written or read beyond a buffer: a mistake in the quick way that it has noticed.
+    Lost,
     Other,
 }
 
 impl Reason {
-    pub const ALL: [Reason; 10] = [
+    pub const ALL: [Reason; 11] = [
         Reason::Options,
         Reason::Language,
         Reason::InMarkdown,
@@ -57,6 +59,7 @@ impl Reason {
         Reason::Guest,
         Reason::Stack,
         Reason::TooLong,
+        Reason::Lost,
         Reason::Other,
     ];
 }
@@ -305,6 +308,7 @@ pub fn format(
             6 => Reason::Stack,
             7 => Reason::Rare,
             8 => Reason::Guest,
+            9 => Reason::Lost,
             _ => Reason::Other,
         };
         return Err(scratch.refuse(reason, code.text));

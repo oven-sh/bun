@@ -114,84 +114,9 @@ const makeLater = () => async function* () {}
 console.log("async closures:", makeLater().prototype !== makeLater().prototype)
 ;(async () => { let s = 0; for await (const v of countLater(4)) s += v; countLater.prototype.next = async () => ({ done: true }); for await (const v of countLater(4)) s += 100; return s })().then(s => console.log(s))
 
-// GENERATED: said sum outer K [Symbol.iterator] inner
 // CHECK-LABEL: function {{*}}name="said"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = Call v0 calleeName="f"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v4 = CatchValue
-// CHECK-NEXT: v5 = String string="threw "
-// CHECK-NEXT: v6 = PropGet v4 key="name"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v9 = Add v4, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v10)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v11 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="outer"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = NewClosure v0 function=[[f_1]]
-// CHECK-NEXT: v3 = Call v2 calleeName="inner"
-// CHECK-NEXT: v4 = NewArray v3, v2 contents=anything
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inner"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="n"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = Yield v0
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

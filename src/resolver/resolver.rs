@@ -1188,17 +1188,25 @@ impl<'a> Resolver<'a> {
     }
 
     /// The same from one of the folders that `require.resolve(name, { paths })` was given, in a compiled program.
+    /// `None`: the executable says nothing, and the search goes on.
     fn look_in_executable_from_given_folder(
         &self,
         folder: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> PackageLookup {
+    ) -> Option<ResultUnion<'static>> {
         let is_compiled =
             (self.standalone_module_graph).is_some_and(|graph| graph.compiled_program().is_some());
-        match is_compiled {
-            true => self.look_in_executable(folder, import_path, kind),
-            false => PackageLookup::Unknown,
+        if !is_compiled {
+            return None;
+        }
+        match self.look_in_executable(folder, import_path, kind) {
+            PackageLookup::Found(file_name) => {
+                let found = Self::result_of_module_in_executable(file_name, kind);
+                Some(ResultUnion::Success(found))
+            }
+            PackageLookup::Hidden => Some(ResultUnion::NotFound),
+            PackageLookup::Unknown => None,
         }
     }
 
@@ -2180,18 +2188,12 @@ impl<'a> Resolver<'a> {
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
                     }
-                    match self.look_in_executable_from_given_folder(
+                    if let Some(answer) = self.look_in_executable_from_given_folder(
                         custom_utf8.slice(),
                         import_path,
                         kind,
                     ) {
-                        PackageLookup::Found(file_name) => {
-                            return ResultUnion::Success(Self::result_of_module_in_executable(
-                                file_name, kind,
-                            ));
-                        }
-                        PackageLookup::Hidden => return ResultUnion::NotFound,
-                        PackageLookup::Unknown => {}
+                        return answer;
                     }
                 }
                 debug_assert!(!check_package); // always from JavaScript
@@ -2328,18 +2330,12 @@ impl<'a> Resolver<'a> {
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
                     }
-                    match self.look_in_executable_from_given_folder(
+                    if let Some(answer) = self.look_in_executable_from_given_folder(
                         custom_utf8.slice(),
                         import_path,
                         kind,
                     ) {
-                        PackageLookup::Found(file_name) => {
-                            return ResultUnion::Success(Self::result_of_module_in_executable(
-                                file_name, kind,
-                            ));
-                        }
-                        PackageLookup::Hidden => return ResultUnion::NotFound,
-                        PackageLookup::Unknown => {}
+                        return answer;
                     }
                 }
             } else {

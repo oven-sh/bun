@@ -515,6 +515,7 @@ class Comparison {
     const { protocols, roles } = parameter;
     if ((content === "Iterator" || content === "IteratorResult") && this.hasAnyProtocol(parameter, "Iterate", "CallsNamed")) return;
     if ((content === "Iterator" || content === "IteratorResult") && membersMaking[content].some(maker => this.escapesFromMember(origin.operand, maker, depth))) return;
+    if ((content === "Iterator" || content === "IteratorResult") && event.trap === "has" && event.key === Symbol.iterator && membersMaking[content].some(maker => this.isAskedWhetherIterable(origin.operand, maker, depth))) return;
     if (key === "constructor" && protocols.includes("Species")) return;
     const eventKey = event.key === undefined ? undefined : spellingOf(event.key);
     const convertsMembers = protocols.includes("ToPrimitive") && !roles.includes("MembersAreOnlyInspected");
@@ -543,8 +544,17 @@ class Comparison {
 
   // What a handler returns is in the hands of native code.
   escapesFromMember(operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
+    return this.isReturnedByMemberFor("Escapes", operand, key, depth);
+  }
+
+  // Of what a handler returns native code asks whether it has @@iterator, and nothing else.
+  isAskedWhetherIterable(operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
+    return this.isReturnedByMemberFor("AskedWhetherIterable", operand, key, depth);
+  }
+
+  isReturnedByMemberFor(use: string, operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
     return this.overload.handlerCalls.some(({ callee, resultUse }) => {
-      if (resultUse !== "Escapes" || callee.place !== "Member" || !covers(callee.operand, operand)) return false;
+      if (resultUse !== use || callee.place !== "Member" || !covers(callee.operand, operand)) return false;
       const last = callee.path[callee.path.length - 1];
       return callee.path.length === depth && (last === null || (key !== undefined && last === spellingOf(key)));
     });
@@ -696,7 +706,7 @@ class Comparison {
     if (transfers.some(({ from, to }) => reachesResult(to) && this.isSourceOf(from, origin, value))) return true;
     if (origin.kind === "CallbackResult") {
       return callbacks.some(
-        ({ callee, resultUse }) => covers(callee, origin.operand) && ["Returned", "Stored", "Escapes"].includes(resultUse),
+        ({ callee, resultUse }) => covers(callee, origin.operand) && ["Returned", "Stored", "Flattened", "Escapes"].includes(resultUse),
       ) || origin.callee.kind !== "Operand";
     }
     return propertyActions.some(

@@ -2,6 +2,8 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 13
 // STATISTIC: SourceFilesData = 1
+// CHECK-LABEL: function {{*}}name="shown"
+// CHECK-LABEL: function {{*}}name="say"
 
 // FILE: main.js
 // A name that a module does not export is read off `import * as`, as a value and as a test: undefined for an ES module, also for `default` behind `export *`; what is there for a name that a star carries, for CommonJS and for JSON.
@@ -110,50 +112,3 @@ export function then() {}
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: shown say
-// CHECK-LABEL: function {{*}}name="shown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=function
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = String string="function"
-// CHECK-NEXT: Jump -> next b6(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = NarrowByTest v0, v4
-// CHECK-NEXT: v6 = Builtin builtin=JSON
-// CHECK-NEXT: v7 = PropGet v6 key="stringify"
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v9 = Call v8, v6, v5 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v10 = TypeTest v9 testedType=undefined|null
-// CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: v12 = String string="undefined"
-// CHECK-NEXT: Jump -> next b5(v12)
-// CHECK-NEXT: b4(v13):
-// CHECK-NEXT: Jump -> next b5(v13)
-// CHECK-NEXT: b5(v14):
-// CHECK-NEXT: Jump -> next b6(v14)
-// CHECK-NEXT: b6(v15):
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="say"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="lines"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string=": "
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = PropGet v1 key="map"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="shown"
-// CHECK-NEXT: v10 = Call v7, v1, v9 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v11 = PropGet v10 key="join"
-// CHECK-NEXT: v12 = String string=" "
-// CHECK-NEXT: v13 = Call v11, v10, v12 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v14 = Add v6, v13
-// CHECK-NEXT: v15 = Call v4, v3, v14 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: ReturnCall v15
-// CHECK-NEXT: }

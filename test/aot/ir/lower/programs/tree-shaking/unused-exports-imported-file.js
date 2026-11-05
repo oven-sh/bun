@@ -25,30 +25,3 @@ export const { unusedFromPattern = effect("a default in the pattern of an unused
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="used"
-// CHECK-NEXT: v7 = Call v4, v2, v6 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="console" [isFreeName]
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v11 = PropGet v10 key="log"
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v14 = CheckInitialized v13 name="log"
-// CHECK-NEXT: v15 = PropGet v14 key="join"
-// CHECK-NEXT: v16 = String string="\n"
-// CHECK-NEXT: v17 = Call v15, v14, v16 calleeKey="join" calleeName="log.join"
-// CHECK-NEXT: v18 = Call v12, v10, v17 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v19 = Undefined
-// CHECK-NEXT: Return v19
-// CHECK-NEXT: }

@@ -462,12 +462,15 @@ impl<'a, 's> Removable<'a, 's> {
         let Some(constructor) = self.builtins.builtin_of_expression(callee) else {
             return false;
         };
-        // `bun run` leaves the construction out only where nothing takes the object. Elsewhere a lock alone proves that the name still holds the constructor.
+        // Without a lock the name may hold another class by now, and whoever runs the program without this compiler constructs, unless it minifies syntax:
+        // then `bun build` leaves the construction out with the declaration that nothing uses, and `bun run` only where nothing takes the object.
+        let is_left_out = self.options.minifies_syntax()
+            && (!self.is_value_taken.get() || !self.options.has_no_bundle);
         let may_be_replaced = matches!(
             self.builtins.of_expr(callee),
             Some(Resolved::Builtin(path)) if path.mutability != Mutability::AlwaysLocked
         );
-        if may_be_replaced && self.is_value_taken.get() {
+        if may_be_replaced && !is_left_out {
             return false;
         }
         let mut arguments = hir.ids(call.args);
@@ -855,10 +858,11 @@ impl<'a, 's> Removable<'a, 's> {
         // A holder lists such a member from its first read on. `bun run` leaves a path out with every read on the way to it.
         let is_unused = !self.is_value_taken.get();
         let mut is_left_out = false;
-        // A name of the global object that is not locked may be a getter by now, or gone. `bun run` reads it, but for a name that its parser lists where nothing takes the value.
+        // A name of the global object that is not locked may be a getter by now, or gone, and is read, but for a name that the parser lists:
+        // `bun build` leaves that out with the declaration that nothing uses, `bun run` only where nothing takes the value.
         let is_name_left_out = || {
             let name = self.find_free_name(expression);
-            is_unused
+            (is_unused || !self.options.has_no_bundle)
                 && name.is_some_and(|name| is_name_left_out_by_bun_run(self.atoms.bytes(name)))
         };
         (is_locked || (members.is_empty() && is_name_left_out()))

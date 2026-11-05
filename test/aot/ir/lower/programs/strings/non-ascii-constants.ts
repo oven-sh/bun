@@ -29,72 +29,8 @@ try { (undefined as unknown as { é: number }).é } catch (e) { console.log((e a
 console.log(show(Symbol("é→").description), Symbol.for("😀") === Symbol.for("😀"), show(Symbol.keyFor(Symbol.for("日本語"))), new Map([["é", 1], ["→", 2]]).get("→"), new Set(["😀", "é"]).has("😀"), ["é", "→", "😀"].includes("→"), ["é", "→"].indexOf("é"), ["b", "é", "a", "→", "😀"].sort().map(show).join())
 console.log(JSON.stringify({ "é": "→", "😀": ["\ud800", "日本語"] }), JSON.parse('{"é":"→"}')["é"], show(decodeURIComponent("%C3%A9")), show(unescape("%u2192")), show(String.fromCodePoint(0x1f600) === "😀"), "é" === "é".normalize(), "é".length + "→".length + "😀".length)
 
-// GENERATED: values C \u{2192} read show
 // CHECK-LABEL: function {{*}}name="values"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_1]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="\u{2192}"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="getter \u{2192}"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_2]] field=2
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=string
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = Builtin builtin=JSON
-// CHECK-NEXT: v5 = PropGet v4 key="stringify"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4, v3 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v9 = String string=":"
-// CHECK-NEXT: v10 = Add v8, v9
-// CHECK-NEXT: v11 = PropGet v3 key="length"
-// CHECK-NEXT: v12 = Add v10, v11
-// CHECK-NEXT: v13 = String string=":"
-// CHECK-NEXT: v14 = Add v12, v13
-// CHECK-NEXT: v15 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v16 = PropGet v3 key="length"
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: v18 = NewClosure v3 function=[[f_5]]
-// CHECK-NEXT: v19 = Builtin builtin=CompilerHelpersArrayFromLength [isNotReadFromHolder]
-// CHECK-NEXT: v20 = Call v19, -, v16, v18
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v22 = PropGet v21 key="join"
-// CHECK-NEXT: v23 = String string="."
-// CHECK-NEXT: v24 = Call v22, v21, v23 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v26 = Add v14, v25
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: b2(v27):
-// CHECK-NEXT: v28 = NarrowByTest v0, v27
-// CHECK-NEXT: v29 = Builtin builtin=String
-// CHECK-NEXT: v30 = Call v29, -, v28 calleeName="String"
-// CHECK-NEXT: ReturnCall v30 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

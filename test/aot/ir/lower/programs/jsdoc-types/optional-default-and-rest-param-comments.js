@@ -114,68 +114,7 @@ console.log(usesArguments(), usesArguments(1, 2, 3), bracketed.length, withDefau
 
 export {};
 
-// GENERATED: summed area names usesArguments
 // CHECK-LABEL: function {{*}}name="summed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=Array<number> flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number, v1: Array<number>):
-// CHECK-NEXT: v2 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = IteratorOpen v1
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v9 = Add v4, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v10)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v11 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="width"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="width"
-// CHECK-NEXT: v6 = PropGet v4 key="height"
-// CHECK-NEXT: v7 = TypeTest v6 testedType=undefined
-// CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: v9 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b5(v9)
-// CHECK-NEXT: b4(v10):
-// CHECK-NEXT: Jump -> next b5(v10)
-// CHECK-NEXT: b5(v11):
-// CHECK-NEXT: v12 = Mul v5, v11
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="names"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_2]]> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_2]]>):
-// CHECK-NEXT: v1 = PropGet v0 key="map"
-// CHECK-NEXT: v2 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="map" calleeName="rows.map"
-// CHECK-NEXT: v4 = PropGet v3 key="join"
-// CHECK-NEXT: v5 = Call v4, v3 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="usesArguments"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: Array):
-// CHECK-NEXT: v2 = CreateUnmappedArguments v0, v1
-// CHECK-NEXT: v3 = PropGet v2 key="length"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

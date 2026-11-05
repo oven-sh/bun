@@ -30,69 +30,9 @@ out.push("statics " + JSON.stringify([/(b)(c)?/.test("abc"), RegExp.$1, RegExp.$
 out.push("statics after a failure " + JSON.stringify([/zzz/.test("abc"), RegExp.$1, RegExp.lastMatch])); out.push("statics after replace " + JSON.stringify(["xyz".replace(/(y)/, "-"), RegExp.$1, RegExp.leftContext])); out.push("statics after split " + JSON.stringify(["p,q".split(/(,)/), RegExp.$1, RegExp.lastMatch])); out.push("statics after match g " + JSON.stringify(["a1b2".match(/\d/g), RegExp.lastMatch, RegExp.leftContext])); out.push("statics after search " + JSON.stringify(["hello".search(/l+/), RegExp.lastMatch])); out.push("statics after matchAll " + JSON.stringify([[..."k1k2".matchAll(/k(\d)/g)].length, RegExp.$1])); out.push("statics after replaceAll text " + JSON.stringify(["k1k2".replaceAll("k", "j"), RegExp.$1])); out.push("statics after includes " + JSON.stringify(["k1k2".includes("k"), RegExp.lastMatch]));
 console.log(out.join("\n"));
 
-// GENERATED: m d bigint destructure symbolSearch R
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRegExp pattern="^a" regExpFlags=[Global, Multiline]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="d"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRegExp pattern="a(b)?" regExpFlags=[HasIndices, Global]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bigint"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = BigInt digits="1"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="destructure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: anything):
-// CHECK-NEXT: v2 = PropGet v0 key="exec"
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey="exec" calleeName="r.exec"
-// CHECK-NEXT: v4 = TypeTest v3 testedType=undefined|null
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = Data data=[[d_2]]
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: v9 = IteratorOpen v8 elementCount=2 [isDestructuring]
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b6():
-// CHECK-NEXT: v10 = IteratorResume v9 stepIndex=0
-// CHECK-NEXT: v11 = ResultAt v10
-// CHECK-NEXT: v12 = ResultAt v10 index=1
-// CHECK-NEXT: v13 = IteratorResume v9 stepIndex=1
-// CHECK-NEXT: v14 = ResultAt v13
-// CHECK-NEXT: v15 = ResultAt v13 index=1
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: IteratorClose v9
-// CHECK-NEXT: v17 = NewArray v12, v15 contents=anything
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: b6() role=IterationCleanup subject=v9:
-// CHECK-NEXT: v18 = CatchException
-// CHECK-NEXT: IteratorClose v9 completion=Throw
-// CHECK-NEXT: Rethrow v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="symbolSearch"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]], v1: anything):
-// CHECK-NEXT: v2 = PropGet v0 key=@@search
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey=@@search
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="R"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

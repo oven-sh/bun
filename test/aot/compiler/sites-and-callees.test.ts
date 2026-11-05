@@ -9,8 +9,9 @@
 // No clock is read: the build counts the instructions of the stage itself, on Linux.
 import { expect } from "bun:test";
 import { isASAN, isDebug, isLinux, tempDir } from "harness";
+import { without } from "../harness/capabilities";
 import { describe, test } from "../supported";
-import { build, countsInstructions, stagesOf } from "./measure";
+import { build, stagesOf } from "./measure";
 
 const sizes = [0, 64, 128, 256, 512];
 const maxGrowth = 2.1;
@@ -39,22 +40,19 @@ async function instructionsOfWalk(size: number) {
   return instructions;
 }
 
-const skipped =
-  isDebug || isASAN
-    ? "a debug or ASAN build works every shared answer out again at every site"
-    : !isLinux || !countsInstructions()
-      ? "only on Linux does a build count the instructions of a stage"
-      : undefined;
-if (skipped) console.error(`SKIPPED: test/aot/compiler/sites-and-callees.test.ts: ${skipped}`);
-
-describe.skipIf(!!skipped)("compile/aot/sites and callees", () => {
-  test("n sites with n callees cost n + n", async () => {
-    const [empty, ...costs] = await Promise.all(sizes.map(instructionsOfWalk));
-    const added = costs.map(cost => cost - empty);
-    const growths = added.slice(1).map((cost, index) => cost / added[index]);
-    console.error(
-      `SITES AND CALLEES: walk and sweep adds ${added.map((cost, index) => `${cost} at ${sizes[index + 1]}`).join(", ")}: grows ${growths.map(growth => growth.toFixed(2)).join(" | ")} times`,
-    );
-    for (const growth of growths) expect(growth).toBeLessThanOrEqual(maxGrowth);
-  }, 1_800_000);
+// A debug or ASAN build works every shared answer out again at every site. Only on Linux does a build count the instructions of a stage.
+describe.skipIf(isDebug || isASAN || !isLinux)("compile/aot/sites and callees", () => {
+  test.skipIf(!!without("a counter of instructions"))(
+    "n sites with n callees cost n + n",
+    async () => {
+      const [empty, ...costs] = await Promise.all(sizes.map(instructionsOfWalk));
+      const added = costs.map(cost => cost - empty);
+      const growths = added.slice(1).map((cost, index) => cost / added[index]);
+      console.error(
+        `SITES AND CALLEES: walk and sweep adds ${added.map((cost, index) => `${cost} at ${sizes[index + 1]}`).join(", ")}: grows ${growths.map(growth => growth.toFixed(2)).join(" | ")} times`,
+      );
+      for (const growth of growths) expect(growth).toBeLessThanOrEqual(maxGrowth);
+    },
+    1_800_000,
+  );
 });

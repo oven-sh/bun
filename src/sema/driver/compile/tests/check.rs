@@ -3,6 +3,7 @@ use super::support::{
     LacksBunTypes, PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines,
     with_host, with_program, with_runtime_project,
 };
+use crate::compile::BunTypes;
 use crate::{
     BuildDiagnostic, CompileRequest, Locator, Progress, check_and_lower, decide_roles,
     equal_diagnostics, global, log_message,
@@ -643,7 +644,8 @@ fn untyped_package_stops_no_build() {
         ];
         let disk = project_disk(&files, 1);
         with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
-            assert_eq!(program.loaded.brings_bun_types, !is_installed);
+            let is_brought = matches!(program.loaded.bun_types, BunTypes::Brought);
+            assert_eq!(is_brought, !is_installed);
             assert_eq!(check_only(program).codes(), [0; 0]);
         });
     }

@@ -72,7 +72,7 @@ diagnostic_codes! {
         InvalidPackageTarget = 100156, Error, "The package target for \"{0}\" is not valid";
         InvalidPackageConfiguration = 100157, Error, "The package.json that \"{0}\" resolves through is not valid";
         UnsupportedDirectoryImport = 100158, Error, "\"{0}\" is a directory, which cannot be imported";
-        QueryStringInSpecifier = 100159, Error, "bun compile does not support a query string in an import path: \"{0}\"";
+        QueryStringInSpecifier = 100159, Error, "bun compile can't load \"{0}\": a query string works on an import of code, not in require(), on a data file, or as ?raw or ?url. Drop the query. Under bun run --aot, --aot-allow-code-from-disk loads it as bun run does";
         EntryPointNotFound = 100160, Error, "Entry point \"{0}\" was not found";
         EntryPointIsBuiltinModule = 100161, Error, "Cannot use \"{0}\" as an entry point: it resolves to a builtin module";
         EntryPointIsExternal = 100162, Error, "The entry point \"{0}\" cannot be marked as external";

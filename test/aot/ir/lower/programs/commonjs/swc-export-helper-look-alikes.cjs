@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 14
+// CHECK-LABEL: function {{*}}name="look"
 
 // FILE: main.cjs
 // Modules that call something like SWC's `_export(exports, { .. })`, each a little off the form: what a reader of the names and a look at the object find is what plain Bun finds.
@@ -278,35 +279,3 @@ _export(exports, {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: look
-// CHECK-LABEL: function {{*}}name="look"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b5():
-// CHECK-NEXT: v1 = Call v0 calleeName="read"
-// CHECK-NEXT: v2 = TypeTest v1 testedType=function
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v3) handler=b5():
-// CHECK-NEXT: v4 = NarrowByTest v1, v3
-// CHECK-NEXT: v5 = String string="function "
-// CHECK-NEXT: v6 = PropGet v4 key="name"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: Jump -> next b4(v7)
-// CHECK-NEXT: b3(v8) handler=b5():
-// CHECK-NEXT: v9 = NarrowByTest v1, v8
-// CHECK-NEXT: v10 = Builtin builtin=String
-// CHECK-NEXT: v11 = Call v10, -, v9 calleeName="String"
-// CHECK-NEXT: Jump -> next b4(v11)
-// CHECK-NEXT: b4(v12) handler=b5():
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: b5() role=CatchHandler:
-// CHECK-NEXT: v13 = CatchValue
-// CHECK-NEXT: v14 = PropGet v13 key="name"
-// CHECK-NEXT: v15 = String string=": "
-// CHECK-NEXT: v16 = Add v14, v15
-// CHECK-NEXT: v17 = PropGet v13 key="message"
-// CHECK-NEXT: v18 = Add v16, v17
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }

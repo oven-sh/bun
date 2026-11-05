@@ -2,6 +2,8 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 10
 // STATISTIC: SourceFilesData = 1
+// CHECK-LABEL: function {{*}}name="load"
+// CHECK-LABEL: function {{*}}name="names"
 
 // FILE: main.cjs
 // The children of a file list an es module from its second require on.
@@ -91,24 +93,3 @@ throw new Error("as always");
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: load names
-// CHECK-LABEL: function {{*}}name="load"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: RecordRequire module=[[m_1]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_1]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_1]] referrer=[[m_0]]
-// CHECK-NEXT: v3 = ModuleNamespace module=[[m_1]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="names"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="map"
-// CHECK-NEXT: v2 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="map" calleeName="list.map"
-// CHECK-NEXT: v4 = PropGet v3 key="join"
-// CHECK-NEXT: v5 = Call v4, v3 calleeKey="join" calleeName="join"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

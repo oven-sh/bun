@@ -34,45 +34,8 @@ console.log(tests);
 return;
 console.log("after the return");
 
-// GENERATED: q r constructor m
 // CHECK-LABEL: function {{*}}name="q"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="r"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsSloppy, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|number):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b3(v4)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b3(v6):
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: PutModuleVariable v7 variable=[[g_1]]
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="constructor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="a static method"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=2
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

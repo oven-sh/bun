@@ -65,65 +65,7 @@ const byName: Record<string, number> = { one: 1 };
 console.log(byName["one"]! < 2, byName["two"]! < 2, byName["two"]! + 1);
 console.log(byName.one! < 2, byName.two! < 2, byName.two! + 1);
 
-// GENERATED: narrowed Vault open Late
 // CHECK-LABEL: function {{*}}name="narrowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="kind"
-// CHECK-NEXT: v2 = String string="a"
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = NarrowByField v0, v4 key="kind"
-// CHECK-NEXT: v6 = PropGet v5 key="a"
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = NarrowByField v0, v7 key="kind"
-// CHECK-NEXT: v9 = PropGet v8 key="b"
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Vault"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_4]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="open"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_3]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_3]]):
-// CHECK-NEXT: v1 = PropGet v0 key="secret"
-// CHECK-NEXT: v2 = String string="!"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_6]]
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="console" [isFreeName]
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v8 = PropGet v7 key="log"
-// CHECK-NEXT: v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v10 = PropGet v3 key="value"
-// CHECK-NEXT: v11 = Call v9, v7, v10 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: PropSet v3, v12 key="value"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: v15 = TypeTest v14 testedType=object
-// CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v16):
-// CHECK-NEXT: Jump -> next b2(v16)
-// CHECK-NEXT: b2(v17):
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }

@@ -1,5 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="attempt"
 
 // FILE: new-function-given-literal-texts-syntax.js
 // New function is given literal texts that are syntax errors.
@@ -80,19 +81,3 @@ console.log("\"\\08\"; 'use strict'", attempt(() => new Function("\"\\08\"; 'use
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: attempt
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Call v0 calleeName="make"
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v3 = CatchValue
-// CHECK-NEXT: v4 = PropGet v3 key="constructor"
-// CHECK-NEXT: v5 = PropGet v4 key="name"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

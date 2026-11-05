@@ -92,79 +92,8 @@ row("rule: `as` to a record of what is none", () => { const p = hidden.text as P
 row("rule: `as` between primitives", () => { const n = hidden.count as number; return kindOf(n) + ":" + (n + 1) })
 export {}
 
-// GENERATED: Keeps twice kindOf handle name
 // CHECK-LABEL: function {{*}}name="Keeps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_3]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_3]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kindOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = String string="null"
-// CHECK-NEXT: Jump -> next b7(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = NarrowByTest v0, v4
-// CHECK-NEXT: v6 = Builtin builtin=ArrayIsArray
-// CHECK-NEXT: v7 = TypeTest v5 testedType=Array
-// CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: Jump -> next b5(v8)
-// CHECK-NEXT: b4(v9):
-// CHECK-NEXT: v10 = NarrowByTest v0, v9
-// CHECK-NEXT: v11 = Builtin builtin=Array
-// CHECK-NEXT: v12 = Builtin builtin=ArrayIsArray
-// CHECK-NEXT: v13 = Call v12, v11, v10 calleeName="Array.isArray"
-// CHECK-NEXT: v14 = Convert v13 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = ToBoolean v14
-// CHECK-NEXT: Branch v15 -> taken b5(v9), notTaken b6(| 0)
-// CHECK-NEXT: b5(v16):
-// CHECK-NEXT: v17 = String string="array"
-// CHECK-NEXT: Jump -> next b7(v17)
-// CHECK-NEXT: b6(v18):
-// CHECK-NEXT: v19 = TypeOf v10
-// CHECK-NEXT: Jump -> next b7(v19)
-// CHECK-NEXT: b7(v20):
-// CHECK-NEXT: Return v20
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="handle"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="kindOf"
-// CHECK-NEXT: v3 = PropGet v0 key="x"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="kindOf"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = String string="red"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = String string="green"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

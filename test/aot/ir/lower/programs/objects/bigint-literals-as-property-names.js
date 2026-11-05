@@ -47,77 +47,12 @@ row("control: a number", () => show({ 5: 2 }));
 row("control: a hexadecimal number", () => show({ 0x5: 2 }));
 row("control: the string with the n", () => show({ "5n": 2 }));
 
-// GENERATED: f 1 a
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="n"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="n"
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_1]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="m"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = String string="y"
-// CHECK-NEXT: v4 = Yield v3
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="a"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

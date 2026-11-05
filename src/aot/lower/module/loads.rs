@@ -201,24 +201,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(modules)
     }
 
-    // The build has read every text that the name can be, and has found a module under each.
-    fn finds_module_under_every_name(
-        &self,
-        written: ImportSpecifier,
-        spelled_modules: &[SpelledModule],
-    ) -> bool {
-        let mut spellings: Vec<u32> = spelled_modules.iter().map(|it| it.spelling.0).collect();
-        spellings.sort_unstable();
-        let alternatives = self.compiled.analysis.alternatives_of(&written);
-        !alternatives.is_empty()
-            && alternatives.iter().all(|alternative| match alternative {
-                ImportSpecifier::Constant(text) => spellings.binary_search(&text.0).is_ok(),
-                ImportSpecifier::Pattern { .. }
-                | ImportSpecifier::OneOf(_)
-                | ImportSpecifier::Unknown => false,
-            })
-    }
-
     fn find_constant_text(&self, expression: ExprId) -> Option<Atom> {
         match self.decisions().constant(self.hir, expression) {
             FoldedValue::Constant(Constant::String(text))
@@ -1221,6 +1203,107 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_require(&mut self, site: &AnsweredSite<'_>, specifier: Option<ValueId>) -> ValueId {
+        let (SiteAnswer::Module(module), ImportSpecifier::Constant(written)) =
+            (site.answer, site.specifier)
+        else {
+            return self.emit_require_that_build_answers(site, specifier);
+        };
+        // `process.getBuiltinModule` asks nobody, and `bun test` writes `require("bun")` and `require("bun:test")` as something else than a call of `require`.
+        let is_call_of_require = site.looks_in_cache
+            && !matches!(
+                module,
+                ModuleRef::Runtime(RuntimeModule::Bun | RuntimeModule::BunTest)
+            );
+        if !is_call_of_require || !self.asks_loader_functions() {
+            return self.emit_require_that_build_answers(site, specifier);
+        }
+        let referrer = self.referrer_of(site);
+        let are_stored = self.builder.are_loader_functions_stored();
+        self.emit_one_of(
+            are_stored,
+            &mut |this| {
+                let name = this.emit_name_for_loader_functions(module, written, specifier);
+                this.builder.require_dynamic(name, referrer, false)
+            },
+            &mut |this| this.emit_require_that_build_answers(&site.in_one_arm(true), specifier),
+        )
+    }
+
+    // The host asks the functions that the program has stored, by the name as it is written.
+    fn asks_loader_functions(&self) -> bool {
+        let modules = self.file.inputs.modules;
+        modules.asks_loader_functions() && modules.is_code_of_program(self.current_module())
+    }
+
+    // The name as the transpiler of `bun test` leaves it. Where the build has bound `bun:fs` to the module, the transpiler reads the name, and prints `fs`: no loader knows `bun:fs`.
+    // It prints `fs` as `node:fs` in a CommonJS file that an import has loaded: `emit_require_beside_entry_in_cache`.
+    fn emit_name_for_loader_functions(
+        &mut self,
+        module: ModuleRef,
+        written: Atom,
+        given: Option<ValueId>,
+    ) -> ValueId {
+        let read = match module {
+            ModuleRef::Runtime(_) => self.file.builtin_named(written, module),
+            _ => None,
+        };
+        let Some((name, alias)) = read else {
+            return self.emit_name_as_given(written, given);
+        };
+        let is_as_written = name == self.file.queries.atom_bytes(written);
+        let name = name.to_vec();
+        let gets_prefix = is_as_written
+            && alias.node_builtin
+            && !name.starts_with(b"node:")
+            && self.file.inputs.modules.tracks_first_load(self.file.file);
+        if !gets_prefix {
+            return self.emit_text(&name);
+        }
+        let file = self.file.module_id();
+        let reads_as_written = self.builder.was_loaded_synchronously(file);
+        self.emit_one_of(
+            reads_as_written,
+            &mut |this| this.emit_text(&name),
+            &mut |this| this.emit_text(alias.path.as_bytes()),
+        )
+    }
+
+    // Two ways to one answer, and the run says which.
+    fn emit_one_of(
+        &mut self,
+        takes_first: ValueId,
+        emit_first: &mut dyn FnMut(&mut Self) -> ValueId,
+        emit_second: &mut dyn FnMut(&mut Self) -> ValueId,
+    ) -> ValueId {
+        let answer = self.builder.create_variable(None);
+        let first = self.create_block();
+        let second = self.create_block();
+        let done = self.create_block();
+        self.builder
+            .branch(takes_first, Edge::to(first), Edge::to(second));
+        let was_call_in_tail_position =
+            std::mem::replace(&mut self.is_call_in_tail_position, false);
+
+        self.continue_in(first);
+        let found = emit_first(self);
+        self.builder.write_variable(answer, found);
+        self.jump(done);
+
+        self.continue_in(second);
+        let found = emit_second(self);
+        self.builder.write_variable(answer, found);
+        self.jump(done);
+
+        self.is_call_in_tail_position = was_call_in_tail_position;
+        self.continue_in(done);
+        self.builder.read_variable(answer)
+    }
+
+    fn emit_require_that_build_answers(
+        &mut self,
+        site: &AnsweredSite<'_>,
+        specifier: Option<ValueId>,
+    ) -> ValueId {
         let whole_path = specifier
             .filter(|_| (self.file).is_whole_path_for_loader(site.answer, site.specifier_node));
         if let Some(whole_path) = whole_path {
@@ -1280,44 +1363,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         name: NameLookedUpInCache,
         referrer: ModuleId,
-        emit_past_cache: impl FnOnce(&mut Self) -> ValueId,
+        mut emit_past_cache: impl FnMut(&mut Self) -> ValueId,
     ) -> ValueId {
         if !name.is_node_builtin || !self.file.inputs.modules.tracks_first_load(self.file.file) {
             return self.builder.require_dynamic(name.text, referrer, false);
         }
         let file = self.file.module_id();
         let reads_as_written = self.builder.was_loaded_synchronously(file);
-        let answer = self.builder.create_variable(None);
-        let as_written = self.create_block();
-        let with_prefix = self.create_block();
-        let done = self.create_block();
-        self.builder.branch(
+        self.emit_one_of(
             reads_as_written,
-            Edge::to(as_written),
-            Edge::to(with_prefix),
-        );
-        let was_call_in_tail_position =
-            std::mem::replace(&mut self.is_call_in_tail_position, false);
-
-        self.continue_in(as_written);
-        let found = self.builder.require_dynamic(name.text, referrer, false);
-        self.builder.write_variable(answer, found);
-        self.jump(done);
-
-        self.continue_in(with_prefix);
-        let found = match name.name_for_host {
-            Some(with_prefix) => {
-                let with_prefix = self.emit_text(with_prefix);
-                self.builder.require_dynamic(with_prefix, referrer, false)
-            }
-            None => emit_past_cache(self),
-        };
-        self.builder.write_variable(answer, found);
-        self.jump(done);
-
-        self.is_call_in_tail_position = was_call_in_tail_position;
-        self.continue_in(done);
-        self.builder.read_variable(answer)
+            &mut |this| this.builder.require_dynamic(name.text, referrer, false),
+            &mut |this| match name.name_for_host {
+                Some(with_prefix) => {
+                    let with_prefix = this.emit_text(with_prefix);
+                    this.builder.require_dynamic(with_prefix, referrer, false)
+                }
+                None => emit_past_cache(this),
+            },
+        )
     }
 
     /// At the head of the body of a CommonJS file: how the file is loaded shows while it is loaded.
@@ -1564,7 +1627,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let spelled_modules = candidates.spelled_modules();
         let all_names_are_known =
-            (self.file).finds_module_under_every_name(written, spelled_modules);
+            candidates.hold_every_name(&self.file.compiled.analysis, &written);
         // A plugin answers first for a name that is left to the loader.
         let linked: Vec<SpelledModule>;
         let spelled_modules = match spelled_modules.iter().any(|it| it.is_left_to_loader) {
@@ -1743,14 +1806,64 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // What `bun build` leaves in a call of `require.resolve`: the name as it is given, and in place of the name of a file that is written out the path of the file on the machine that builds.
+    // `None`: the name of a module of the library that is written out, which it answers itself, or a name that the build has not found.
+    fn emit_name_that_bundler_leaves(
+        &mut self,
+        site: &AnsweredSite<'_>,
+        given: Option<ValueId>,
+    ) -> Option<ValueId> {
+        let (module, name) = match (site.answer, site.specifier) {
+            (SiteAnswer::Module(module), ImportSpecifier::Constant(name)) => (module, name),
+            (SiteAnswer::Computed(_), _) => {
+                return Some(given.unwrap_or_else(|| self.builder.undefined()));
+            }
+            _ => return None,
+        };
+        if !bun_sema::import_sites::is_name_written_out(self.file.hir, site.specifier_node) {
+            return Some(self.emit_name_as_given(name, given));
+        }
+        let ModuleRef::File(file) = module else {
+            return None;
+        };
+        match self.file.inputs.sources.source_path(file) {
+            Some(path) if !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name)) => {
+                Some(self.emit_text(&path))
+            }
+            _ => Some(self.emit_name_as_given(name, given)),
+        }
+    }
+
     fn emit_require_resolve(
         &mut self,
         site: &AnsweredSite<'_>,
         specifier: Option<ValueId>,
     ) -> ValueId {
+        // The resolver of the host asks the plugins first, and finds the files of the program where none answers.
+        if self.file.inputs.may_have_plugins
+            && let Some(name) = self.emit_name_that_bundler_leaves(site, specifier)
+        {
+            let referrer = self.referrer_of(site);
+            return self.builder.resolve_dynamic(name, referrer, false, false);
+        }
         match site.answer {
             SiteAnswer::Module(module) => {
-                self.emit_resolve_module(site.specifier, specifier, module, false)
+                let ImportSpecifier::Constant(written) = site.specifier else {
+                    unreachable!("only a constant specifier names one module");
+                };
+                if !self.asks_loader_functions() {
+                    return self.emit_resolve_module(site.specifier, specifier, module, false);
+                }
+                let (referrer, spelled) = (self.referrer_of(site), site.specifier);
+                let are_stored = self.builder.are_loader_functions_stored();
+                self.emit_one_of(
+                    are_stored,
+                    &mut |this| {
+                        let name = this.emit_name_for_loader_functions(module, written, specifier);
+                        this.builder.resolve_dynamic(name, referrer, false, false)
+                    },
+                    &mut |this| this.emit_resolve_module(spelled, specifier, module, false),
+                )
             }
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
@@ -1952,7 +2065,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     SiteAnswer::Failed(_) => self.file.is_path_from_own_directory(argument),
                     _ => self.file.is_whole_path_for_loader(answer, argument),
                 };
-                if is_named_in_error || self.file.decisions().is_path_made_by_call(argument) {
+                // A plugin is asked about the whole path, which the build spells `./a.js`.
+                let is_asked_of_plugins = self.file.inputs.may_have_plugins
+                    && self.file.is_path_from_own_directory(argument);
+                if is_named_in_error
+                    || is_asked_of_plugins
+                    || self.file.decisions().is_path_made_by_call(argument)
+                {
                     return Some(self.lower_expression(argument));
                 }
                 self.lower_taken_value_for_effect(argument);

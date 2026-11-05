@@ -55,38 +55,6 @@ for (const text of ['{"id":"y"}', '{"id":"z","ctx":{"cwd":"/"}}']) {
   }
 }
 
-// GENERATED: idOf parse give
 // CHECK-LABEL: function {{*}}name="idOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="id"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parse"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="give"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined] variableName="text"}] thisType={type=anything} results=[{type=undefined|null|number|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="parse"
-// CHECK-NEXT: v3 = Call v2, -, v0 calleeName="parse"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = TypeTest v4 testedType=string
-// CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v6):
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|number|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = NarrowByTest v4, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|number|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

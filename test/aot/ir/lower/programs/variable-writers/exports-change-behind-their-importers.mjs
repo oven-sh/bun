@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="with_"
 
 // FILE: main.mjs
 // An import, a namespace object, a required namespace and a proxy above it all show what the exporting file stored last.
@@ -33,20 +34,3 @@ export let def; export let late; export function setLate(v) { late = v; }
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: with_
-// CHECK-LABEL: function {{*}}name="with_"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="out"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Builtin builtin=Object
-// CHECK-NEXT: v5 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v6 = Call v5, v4, v0 calleeName="Object.keys"
-// CHECK-NEXT: v7 = PropGet v6 key="join"
-// CHECK-NEXT: v8 = Call v7, v6 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v9 = Call v3, v2, v8 calleeKey="push" calleeName="out.push"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

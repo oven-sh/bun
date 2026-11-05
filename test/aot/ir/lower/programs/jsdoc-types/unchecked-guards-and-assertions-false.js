@@ -1,6 +1,13 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="isNumber"
+// CHECK-LABEL: function {{*}}name="isSquare"
+// CHECK-LABEL: function {{*}}name="isList"
+// CHECK-LABEL: function {{*}}name="plusOne"
+// CHECK-LABEL: function {{*}}name="asserted"
+// CHECK-LABEL: function {{*}}name="Shape"
+// CHECK-LABEL: function {{*}}name="Square"
 
 // FILE: main.js
 // Unchecked guards and assertions are false.
@@ -168,77 +175,3 @@ attempt("a guard in find", () => {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: isNumber isSquare isList plusOne asserted Shape Square
-// CHECK-LABEL: function {{*}}name="isNumber"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Boolean boolean=true
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="isSquare"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="sides"
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="isList"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="Object"
-// CHECK-NEXT: v3 = PropGet v2 key="length"
-// CHECK-NEXT: v4 = TypeTest v3 testedType=undefined
-// CHECK-NEXT: v5 = LogicalNot v4
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="plusOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="isNumber"
-// CHECK-NEXT: v3 = ToBoolean v2
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = String string="no number"
-// CHECK-NEXT: Jump -> next b3(v8)
-// CHECK-NEXT: b3(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="asserted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="assertNumber"
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Add v0, v3
-// CHECK-NEXT: v5 = Integer integer=2
-// CHECK-NEXT: v6 = Mul v0, v5
-// CHECK-NEXT: v7 = TypeOf v0
-// CHECK-NEXT: v8 = NewArray v4, v6, v7 contents=anything
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Shape"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Square"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_7]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_8]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

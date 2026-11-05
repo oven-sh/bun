@@ -2619,6 +2619,8 @@ pub enum FileKind {
 pub struct JsxPragmas {
     /// `Some(true)`: classic. `Some(false)`: automatic.
     pub classic: Option<bool>,
+    /// `@jsxRuntime react-jsxdev`: `Some(true)`. `@jsxRuntime react-jsx`: `Some(false)`. Only `bun run` reads the two.
+    pub is_development: Option<bool>,
     pub factory: Atom,
     /// `@jsxFrag`
     pub fragment_factory: Atom,
@@ -2629,6 +2631,7 @@ impl Default for JsxPragmas {
     fn default() -> Self {
         JsxPragmas {
             classic: None,
+            is_development: None,
             factory: Atom::NONE,
             fragment_factory: Atom::NONE,
             import_source: Atom::NONE,

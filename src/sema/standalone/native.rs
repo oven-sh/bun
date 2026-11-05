@@ -212,21 +212,6 @@ mod fake_mimalloc {
     extern "C" fn mi_collect(_force: bool) {}
     #[unsafe(no_mangle)]
     extern "C" fn mi_arenas_purge() {}
-    /// Refuses.
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_reserve_os_memory_ex(
-        _size: usize,
-        _commit: bool,
-        _allow_large: bool,
-        _exclusive: bool,
-        _arena_id: *mut *mut c_void,
-    ) -> core::ffi::c_int {
-        libc::ENOMEM
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_arena_area(_arena_id: *mut c_void, _size: *mut usize) -> *mut c_void {
-        core::ptr::null_mut()
-    }
     #[unsafe(no_mangle)]
     extern "C" fn mi_option_get(_option: u32) -> core::ffi::c_long {
         0

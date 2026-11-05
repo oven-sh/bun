@@ -1,8 +1,9 @@
 // The native tests machine/random/* draw the same procedures on every run. Here `testaot fuzz-allocation` draws others each day:
 // each procedure is compiled with the allocation checker on, run, and compared with what an interpreter answers.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { isASAN } from "harness";
 import { without } from "../harness/capabilities";
+import { test } from "../harness/default-timeout";
 import { run, testaot } from "./testaot";
 
 // What one day takes fits below seedsPerDay, so no two days share a seed. All of them lie far above the seeds of the native tests.

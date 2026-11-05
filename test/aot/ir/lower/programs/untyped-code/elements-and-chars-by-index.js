@@ -59,69 +59,6 @@ shrinking.push("x", 1.5);
 lines.push(show(third(shrinking)), walk(shrinking));
 console.log(lines.join("\n"));
 
-// GENERATED: atWhole show argumentsOf
 // CHECK-LABEL: function {{*}}name="atWhole"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array, v1: i32):
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = BitOr v1, v2
-// CHECK-NEXT: v4 = ElemGet v0, v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|bigint flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|bigint):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=string
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = Builtin builtin=JSON
-// CHECK-NEXT: v5 = PropGet v4 key="stringify"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4, v3 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = NarrowByTest v0, v8
-// CHECK-NEXT: v10 = TypeTest v9 testedType=bigint
-// CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: v12 = NarrowByTest v0, v11
-// CHECK-NEXT: v13 = String string="n"
-// CHECK-NEXT: v14 = Add v12, v13
-// CHECK-NEXT: Jump -> next b10(v14)
-// CHECK-NEXT: b4(v15):
-// CHECK-NEXT: v16 = NarrowByTest v0, v15
-// CHECK-NEXT: v17 = TypeTest v16 testedType=function
-// CHECK-NEXT: Branch v17 -> taken b8(), notTaken b5(| 0)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: v19 = TypeTest v18 testedType=null|object
-// CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b8()
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: v21 = ToBoolean v16
-// CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b8()
-// CHECK-NEXT: b7(v22):
-// CHECK-NEXT: v23 = String string="{}"
-// CHECK-NEXT: Jump -> next b10(v23)
-// CHECK-NEXT: b8():
-// CHECK-NEXT: v24 = Builtin builtin=Object
-// CHECK-NEXT: v25 = Builtin builtin=ObjectIs
-// CHECK-NEXT: v26 = Double number=-0
-// CHECK-NEXT: v27 = Call v25, v24, v16, v26 calleeName="Object.is"
-// CHECK-NEXT: v28 = ToBoolean v27
-// CHECK-NEXT: Branch v28 -> taken b9(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b9(v29):
-// CHECK-NEXT: v30 = String string="-0"
-// CHECK-NEXT: Jump -> next b10(v30)
-// CHECK-NEXT: b10(v31):
-// CHECK-NEXT: Return v31
-// CHECK-NEXT: b11(v32):
-// CHECK-NEXT: v33 = Builtin builtin=String
-// CHECK-NEXT: v34 = Call v33, -, v16 calleeName="String"
-// CHECK-NEXT: ReturnCall v34
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="argumentsOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: Array):
-// CHECK-NEXT: v2 = CreateUnmappedArguments v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

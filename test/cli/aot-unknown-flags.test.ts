@@ -129,7 +129,7 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
 `,
     });
     expect((await bun(String(dir), "build.ts")).stdout).toBe(
-      `compile.${key} is not a valid option.${meant ? ` Did you mean compile.${meant}?` : ""} Options that start with "aot": aot, aotCheck, aotExplain, aotOut, aotTesting\n`,
+      `compile.${key} is not a valid option.${meant ? ` Did you mean compile.${meant}?` : ""} Options that start with "aot": aot, aotCheck, aotExplain, aotHarden, aotOut, aotTesting\n`,
     );
   });
 
@@ -138,6 +138,7 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
     ["aot", "false", "true"],
     ["aotExplain", '"guards"', "undefined"],
     ["aotCheck", '"Validate"', '{ outfile: "./out", aot: true }'],
+    ["aotHarden", '["proof-checks"]', '{ outfile: "./out", aot: true }'],
   ])("Bun.build: %s: %s beside compile: %s", async (key, value, compile) => {
     using dir = tempDir("aot-option-beside-compile", {
       ...files,

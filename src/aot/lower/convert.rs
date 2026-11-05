@@ -183,6 +183,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
+    // `for (let i: int32 = 0; i < point[key]; i++)`, `return Math.max(point.x, point.y)`: what is read out of a position whose numbers are all `int32`s was judged where it entered (breaks_no_int32_promise()).
+    // Where the read itself flows into a promise the conversion there says so. AS AN OPERAND IT ENTERS NO POSITION, and the proof of what is made of it had only what the engine finds by itself: nothing of a read under one of two names,
+    // `number` of a field whose layout a type with the same names and other numbers shares. So the type goes out behind the read: it serves the proof of an `int32`, as `source` does. The old front end laid the checker's type behind every expression.
+    pub(in crate::lower) fn state_int32_of_read(
+        &mut self,
+        read: ExprId,
+        value: ValueId,
+    ) -> ValueId {
+        match self.file.position_of_int32_read(read) {
+            Some(position) => self.convert_read(value, position, Construct::Flow),
+            None => value,
+        }
+    }
+
     fn convert_read(
         &mut self,
         value: ValueId,

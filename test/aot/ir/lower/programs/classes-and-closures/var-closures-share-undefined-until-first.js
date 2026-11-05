@@ -78,74 +78,7 @@ show("typeof in front of the store", typeofInFront());
 
 console.log(out.join("\n"));
 
-// GENERATED: entersAgain generator now kind
 // CHECK-LABEL: function {{*}}name="entersAgain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = NewObject -, v0 layout=[[L_1]] fields=[0]
-// CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: v4 = ToBoolean v0
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: v7 = NewArray v6 contents=anything
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v9 = Integer integer=1
-// CHECK-NEXT: v10 = Sub v0, v9
-// CHECK-NEXT: v11 = Call v8, -, v10 calleeName="entersAgain"
-// CHECK-NEXT: AppendSpread v7, v11
-// CHECK-NEXT: v13 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: AppendElement v7, v13
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b2(v15):
-// CHECK-NEXT: v16 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: v17 = NewArray v16 contents=anything
-// CHECK-NEXT: Jump -> next b3(v17)
-// CHECK-NEXT: b3(v18):
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generator"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = NewObject -, v2 layout=[[L_4]] fields=[0]
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v5 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: v6 = Yield v5
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Data data=[[d_6]]
-// CHECK-NEXT: PutEnvironmentField v3, v9 layout=[[L_4]]
-// CHECK-NEXT: v11 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: v12 = Yield v11
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="now"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_7]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kind"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_8]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_8]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

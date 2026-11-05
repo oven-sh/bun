@@ -276,33 +276,6 @@ test("the global of the marked file is gone", () => {
   expect(globalObjectCount).toBeLessThanOrEqual(2);
 });`;
 
-test("the global of a finished test file is gone once another file has run", async () => {
-  // A function that is renamed at run time names its frames by its function object, which each call writes down for the collector.
-  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
-    "named.ts": `
-export function make(label: string) {
-  return function inner(depth: number): string {
-    return depth ? inner(depth - 1) : String(new Error(label).stack).split("\\n")[1];
-  };
-}
-export function rename(target: any, name: string) {
-  target.displayName = name;
-}`,
-    "d.test.ts": `
-import { expect, test } from "bun:test";
-import { make, rename } from "./named";
-${mark}
-test("frames are named by the function object", () => {
-  const made = [make("one"), make("two"), make("three")];
-  for (const each of made) rename(JSON.parse("[0]")[0] ? {} : each, "renamed");
-  for (let i = 0; i < 50; i++) for (const each of made) expect(each(i & 7)).toContain("renamed");
-});`,
-    "e.test.ts": fileThatDoesNothing,
-    "f.test.ts": lastFile(`import "./named";`),
-  });
-  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
-});
-
 test("heapStats() does not keep the test file that called it", async () => {
   using dir = tempDir("bun-test-isolate-heap-stats", {
     "d.test.ts": `

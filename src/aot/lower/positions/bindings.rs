@@ -130,7 +130,12 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             None => self.find_defined_function(find_only_definition(self, symbol)?),
         };
-        key.filter(|key| self.inputs.modules.load_failure(key.home_file()).is_none())
+        // A file whose load fails makes nothing of what it declares, and neither does a placeholder.
+        let modules = self.inputs.modules;
+        key.filter(|key| {
+            let home = key.home_file();
+            modules.load_failure(home).is_none() && !modules.is_placeholder(home)
+        })
     }
 
     fn is_function_binding(&self, symbol: Sym) -> bool {

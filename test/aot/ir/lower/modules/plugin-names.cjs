@@ -1,5 +1,6 @@
 // A program that names Bun.plugin. `bun build` leaves a name that is not written out in the call to the run time, where a plugin answers first.
-// So does this build where it works the name out and finds no module under it: the call asks the loader. A name that is written out fails at the call.
+// So does this build where it works the name out and finds no module under it: the call asks the loader. So does an import() of a name that is written out and that the build
+// does not find: where `bun build` finds nothing it links nothing. There the build warns.
 // DIAGNOSTIC: TS100150 1
 
 // RUN(IMPORTED): lower
@@ -20,8 +21,9 @@
 
 // RUN(WRITTEN): lower
 // WRITTEN-LABEL: function {{*}}name="written"
-// WRITTEN-NOT: ImportDynamic
-// WRITTEN: ThrowModuleFailure failure=q
+// WRITTEN-NOT: ThrowModuleFailure
+// WRITTEN: = String string="./imports/none"
+// WRITTEN: = ImportDynamic
 // WRITTEN-NOT: ImportDynamic
 
 Bun.plugin({ name: "p", setup() {} });

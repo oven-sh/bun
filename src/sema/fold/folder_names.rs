@@ -3,7 +3,7 @@ use super::folder::{Effects, Folded, Folder};
 use super::inputs::{
     DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
 };
-use super::run_order::{ReadOrder, RunOrder};
+use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
 use crate::bind::{
@@ -20,7 +20,7 @@ impl<'s> Folder<'_, 's> {
             Binding::Free
             | Binding::CommonJs(
                 CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname,
-            ) if self.is_define_root(e) => {
+            ) if self.is_define_root(e) && !self.is_bound_through_name_in_place(e, name) => {
                 let root = self.inputs.root(DefineRoot::Global(name));
                 let state = root.map(|root| PathState {
                     has_dynamic_root: !self.has_static_lookup(e),
@@ -50,6 +50,11 @@ impl<'s> Folder<'_, 's> {
             Binding::CommonJs(_) => self.fold_loader_name(e),
             Binding::Free | Binding::Arguments(_) => Folded::UNKNOWN,
         }
+    }
+
+    fn is_bound_through_name_in_place(&self, e: ExprId, name: Atom) -> bool {
+        let mut names_in_place = self.inputs.names_in_place.iter();
+        self.bound.binding(e) != Binding::Free && names_in_place.any(|it| it.0 == name)
     }
 
     fn is_process_import(&self, symbol: SymbolId) -> bool {
@@ -245,17 +250,7 @@ impl<'s> Folder<'_, 's> {
             return false;
         }
         let order = self.run_order.get_or_init(|| RunOrder::new(self.hir));
-        match order.order_of_read(self.hir, self.bound, ident, init) {
-            ReadOrder::MayComeFirst => false,
-            ReadOrder::Behind => true,
-            ReadOrder::BehindUnlessCalledByImporter => {
-                let is_behind = !self.inputs.is_called_before_it_runs;
-                if is_behind {
-                    self.relies_on_running_before_calls.set(true);
-                }
-                is_behind
-            }
-        }
+        order.is_read_behind(self.hir, ident, init)
     }
 
     fn fold_const_read(&mut self, ident: ExprId, symbol: SymbolId) -> Folded {

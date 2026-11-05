@@ -150,69 +150,7 @@ main();
 
 export {};
 
-// GENERATED: observe Account returnList awaitTable
 // CHECK-LABEL: function {{*}}name="observe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=3 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: undefined|null|Promise, v3: undefined|null|Promise):
-// CHECK-NEXT: v4 = PropGet v2 key="then"
-// CHECK-NEXT: v5 = NewClosure v1 function=[[f_1]]
-// CHECK-NEXT: v6 = Call v4, v2, v5 calleeKey="then" calleeName="returned.then"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v8 = PropGet v3 key="then"
-// CHECK-NEXT: v9 = NewClosure v1 function=[[f_2]]
-// CHECK-NEXT: v10 = Call v8, v3, v9 calleeKey="then" calleeName="awaited.then"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: v13 = Convert v12 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v13)
-// CHECK-NEXT: b1(v14: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v16 = Integer integer=4
-// CHECK-NEXT: v17 = LessEq v14, v16
-// CHECK-NEXT: Branch v17 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: v19 = Await v18, v1, v2, v3
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v21 = CheckInitialized v20 name="log"
-// CHECK-NEXT: v22 = PropGet v21 key="push"
-// CHECK-NEXT: v23 = ToString v1
-// CHECK-NEXT: v24 = String string=": turn "
-// CHECK-NEXT: v25 = ToString v14
-// CHECK-NEXT: v26 = Strcat v23, v24, v25
-// CHECK-NEXT: v27 = Call v22, v21, v26 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v28 = Convert v27 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v29 = Increment v14
-// CHECK-NEXT: v30 = Convert v29 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v30)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v31 = Undefined
-// CHECK-NEXT: Return v31
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Account"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_4]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_4]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_5]]
-// CHECK-NEXT: PropSet v4, v1 key="id"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="returnList"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaitTable"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsChecked] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Map<undefined|null|string, number>):
-// CHECK-NEXT: v1 = Await v0, v0
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

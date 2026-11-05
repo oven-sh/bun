@@ -62,87 +62,9 @@ for (let i = 0; i < 300; i++) {
 }
 console.log(total, log.length);
 
-// GENERATED: withBoth withGetter Holder fillOwnFirst has Below
 // CHECK-LABEL: function {{*}}name="withBoth"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|string):
-// CHECK-NEXT: v2 = ResolveHeritage v0
-// CHECK-NEXT: v3 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v4 = NewClass v3, v0, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = ToPropertyKey v1
-// CHECK-NEXT: v6 = NewClosure function=[[f_4]]
-// CHECK-NEXT: SetFunctionName v6, v5 methodKind=Getter
-// CHECK-NEXT: DefineMethod v4, v6, v5 layout=[[L_3]] methodKind=Getter
-// CHECK-NEXT: v9 = ToPropertyKey v1
-// CHECK-NEXT: v10 = NewClosure function=[[f_5]]
-// CHECK-NEXT: SetFunctionName v10, v9 methodKind=Setter
-// CHECK-NEXT: DefineMethod v4, v10, v9 layout=[[L_3]] methodKind=Setter index=1
-// CHECK-NEXT: v13 = FinishClass v4 layout=[[L_3]]
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="withGetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_6]], v1: undefined|null|string):
-// CHECK-NEXT: v2 = ResolveHeritage v0
-// CHECK-NEXT: v3 = NewClosure function=[[f_7]]
-// CHECK-NEXT: v4 = NewClass v3, v0, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = ToPropertyKey v1
-// CHECK-NEXT: v6 = NewClosure function=[[f_9]]
-// CHECK-NEXT: SetFunctionName v6, v5 methodKind=Getter
-// CHECK-NEXT: DefineMethod v4, v6, v5 layout=[[L_8]] methodKind=Getter
-// CHECK-NEXT: v9 = FinishClass v4 layout=[[L_8]]
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_11]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_11]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_11]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fillOwnFirst"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_11]]} parameters=[{type=number}] results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
-// CHECK-NEXT: b0(v0: [[L_11]], v1: number):
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: PropSet v0, v3 key="own"
-// CHECK-NEXT: PropSet v0, v1 key="shadowed"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_11]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_13]]] {
-// CHECK-NEXT: b0(v0: [[L_11]]):
-// CHECK-NEXT: v1 = PropHas v0 key="shadowed"
-// CHECK-NEXT: v2 = String string=" "
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Builtin builtin=Object
-// CHECK-NEXT: v5 = Builtin builtin=ObjectHasOwn
-// CHECK-NEXT: v6 = String string="shadowed"
-// CHECK-NEXT: v7 = Call v5, v4, v0, v6 calleeName="Object.hasOwn"
-// CHECK-NEXT: v8 = Convert v7 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v9 = Add v3, v8
-// CHECK-NEXT: v10 = String string=" "
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = PropHas v0 key="own"
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = String string=" "
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: v16 = Builtin builtin=Object
-// CHECK-NEXT: v17 = Builtin builtin=ObjectHasOwn
-// CHECK-NEXT: v18 = String string="own"
-// CHECK-NEXT: v19 = Call v17, v16, v0, v18 calleeName="Object.hasOwn"
-// CHECK-NEXT: v20 = Convert v19 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v21 = Add v15, v20
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v22
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Below"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_14]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_15]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_15]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

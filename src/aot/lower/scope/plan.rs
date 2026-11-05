@@ -131,10 +131,7 @@ impl<'x, 's> Context<'x, 's> {
     }
 
     fn is_holder_without_value(&self, binding: BindingRef) -> bool {
-        match binding {
-            BindingRef::Symbol(symbol) => self.holders_without_value.binary_search(&symbol).is_ok(),
-            BindingRef::Slot(..) => false,
-        }
+        binding.is_listed_in(&self.holders_without_value)
     }
 }
 

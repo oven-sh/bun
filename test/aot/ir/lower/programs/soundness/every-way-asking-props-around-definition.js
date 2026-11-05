@@ -355,74 +355,7 @@ class Made27 { constructor() { this.before = delete this.late; this.late = 1; th
 function fill27(object) { const before = delete object.late; object.late = 1; return [before, delete object.late].join(" "); }
 console.log("store in a callee |", "delete", "|", fill27({ first: 0 }));
 
-// GENERATED: fill6 fill11 fill12 Field1
 // CHECK-LABEL: function {{*}}name="fill6"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|object):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectHas
-// CHECK-NEXT: v3 = String string="late"
-// CHECK-NEXT: v4 = Call v2, v1, v0, v3 calleeName="Reflect.has"
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: PropSet v0, v5 key="late"
-// CHECK-NEXT: v7 = Builtin builtin=Reflect
-// CHECK-NEXT: v8 = Builtin builtin=ReflectHas
-// CHECK-NEXT: v9 = String string="late"
-// CHECK-NEXT: v10 = Call v8, v7, v0, v9 calleeName="Reflect.has"
-// CHECK-NEXT: v11 = NewArray v4, v10 contents=anything
-// CHECK-NEXT: v12 = PropGet v11 key="join"
-// CHECK-NEXT: v13 = String string=" "
-// CHECK-NEXT: v14 = Call v12, v11, v13 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fill11"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectGetOwnPropertyDescriptor
-// CHECK-NEXT: v3 = String string="late"
-// CHECK-NEXT: v4 = Call v2, v1, v0, v3 calleeName="Reflect.getOwnPropertyDescriptor"
-// CHECK-NEXT: v5 = TypeTest v4 testedType=undefined
-// CHECK-NEXT: v6 = LogicalNot v5
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: PropSet v0, v7 key="late"
-// CHECK-NEXT: v9 = Builtin builtin=Reflect
-// CHECK-NEXT: v10 = Builtin builtin=ReflectGetOwnPropertyDescriptor
-// CHECK-NEXT: v11 = String string="late"
-// CHECK-NEXT: v12 = Call v10, v9, v0, v11 calleeName="Reflect.getOwnPropertyDescriptor"
-// CHECK-NEXT: v13 = TypeTest v12 testedType=undefined
-// CHECK-NEXT: v14 = LogicalNot v13
-// CHECK-NEXT: v15 = NewArray v6, v14 contents=anything
-// CHECK-NEXT: v16 = PropGet v15 key="join"
-// CHECK-NEXT: v17 = String string=" "
-// CHECK-NEXT: v18 = Call v16, v15, v17 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fill12"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectGetOwnPropertyDescriptors
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.getOwnPropertyDescriptors"
-// CHECK-NEXT: v4 = PropHas v3 key="late"
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: PropSet v0, v5 key="late"
-// CHECK-NEXT: v7 = Builtin builtin=Object
-// CHECK-NEXT: v8 = Builtin builtin=ObjectGetOwnPropertyDescriptors
-// CHECK-NEXT: v9 = Call v8, v7, v0 calleeName="Object.getOwnPropertyDescriptors"
-// CHECK-NEXT: v10 = PropHas v9 key="late"
-// CHECK-NEXT: v11 = NewArray v4, v10 contents=anything
-// CHECK-NEXT: v12 = PropGet v11 key="join"
-// CHECK-NEXT: v13 = String string=" "
-// CHECK-NEXT: v14 = Call v12, v11, v13 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Field1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

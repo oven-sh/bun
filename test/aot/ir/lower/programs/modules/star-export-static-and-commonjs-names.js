@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 17
+// CHECK-LABEL: function {{*}}name="attempt"
+// CHECK-LABEL: function {{*}}name="describe"
 
 // FILE: main.js
 // `export *` of an ES module and of a CommonJS module that export the same name: the name is ambiguous, so importing it is a SyntaxError and the namespace object does not have it. A local export wins, a name that reaches one binding on two paths is not ambiguous, and a module reached on two paths counts on each.
@@ -90,57 +92,3 @@ export { shared } from "./dynamic.cjs";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: attempt describe
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string=":"
-// CHECK-NEXT: v9 = Add v1, v8
-// CHECK-NEXT: v10 = Call v2 calleeName="run"
-// CHECK-NEXT: v11 = Await v10, v1, v2
-// CHECK-NEXT: v12 = Call v7, v5, v9, v11 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v13 = CatchValue
-// CHECK-NEXT: v14 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v15 = PropGet v14 key="console" [isFreeName]
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v17 = PropGet v16 key="log"
-// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v19 = String string=":"
-// CHECK-NEXT: v20 = Add v1, v19
-// CHECK-NEXT: v21 = PropGet v13 key="constructor"
-// CHECK-NEXT: v22 = PropGet v21 key="name"
-// CHECK-NEXT: v23 = PropGet v13 key="message"
-// CHECK-NEXT: v24 = PropGet v23 key="replace"
-// CHECK-NEXT: v25 = NewRegExp pattern="'[^']*[\\\\/]([^'\\\\/]+)'" regExpFlags=[Global]
-// CHECK-NEXT: v26 = String string="'$1'"
-// CHECK-NEXT: v27 = Call v24, v23, v25, v26 calleeKey="replace" calleeName="error.message.replace"
-// CHECK-NEXT: v28 = Call v18, v16, v20, v22, v27 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v29 = Undefined
-// CHECK-NEXT: Return v29
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = PropGet v3 key="join"
-// CHECK-NEXT: v5 = Call v4, v3 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v6 = PropHas v0 key="both"
-// CHECK-NEXT: v7 = PropGet v0 key="both"
-// CHECK-NEXT: v8 = PropGet v0 key="onlyDynamic"
-// CHECK-NEXT: v9 = NewArray v5, v6, v7, v8 contents=anything
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

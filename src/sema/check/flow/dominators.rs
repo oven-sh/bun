@@ -1,18 +1,24 @@
 use super::*;
 
+#[derive(Copy, Clone)]
+struct DominatedNode {
+    /// The last node that every path to it goes through. A node where paths begin has itself.
+    /// But for the back edges of loops an antecedent has a lower number, so a dominator has too.
+    dominator: u32,
+    /// A dominator further up, such that n steps up take about log n.
+    jump: u32,
+    depth: u32,
+    /// The node where the paths to it begin: the start of its function. A walk passes the nodes of one function, and
+    /// goes on in another only from that start.
+    start: u32,
+}
+
 /// FOR SPEED, where types alone are read. See `Checker::skip_to_dominator`.
 #[derive(Default)]
 pub(super) struct FlowDominators {
     pub(super) file: Option<FileId>,
-    /// Indexed by flow node: the last node that every path to it goes through. A node where paths begin has itself.
-    /// But for the back edges of loops an antecedent has a lower number, so a dominator has too.
-    dominator: Vec<u32>,
-    /// A dominator further up, such that n steps up take about log n.
-    jump: Vec<u32>,
-    depth: Vec<u32>,
-    /// The node where the paths to it begin: the start of its function. A walk passes the nodes of one function, and
-    /// goes on in another only from that start.
-    start: Vec<u32>,
+    /// Indexed by flow node.
+    nodes: Vec<DominatedNode>,
     /// The label of the innermost loop whose body holds the node, or 0.
     enclosing_loop: Vec<u32>,
     /// The values of `start` with so many nodes that a walk among them can be far, in ascending order. What follows is
@@ -54,46 +60,48 @@ impl NarrowingSubjects for TestRoots {
 
 impl FlowDominators {
     fn add(&mut self, node: u32, dominator: Option<u32>) {
-        debug_assert_eq!(node as usize, self.dominator.len());
+        debug_assert_eq!(node as usize, self.nodes.len());
         let Some(up) = dominator else {
-            self.dominator.push(node);
-            self.jump.push(node);
-            self.depth.push(0);
-            self.start.push(node);
+            self.nodes.push(DominatedNode {
+                dominator: node,
+                jump: node,
+                depth: 0,
+                start: node,
+            });
             return;
         };
-        let (near, far) = (
-            self.jump[up as usize],
-            self.jump[self.jump[up as usize] as usize],
-        );
-        let depth = |node: u32| self.depth[node as usize];
+        let above = self.nodes[up as usize];
+        let (near, far) = (above.jump, self.nodes[above.jump as usize].jump);
+        let depth = |node: u32| self.nodes[node as usize].depth;
         let is_doubled = depth(up) - depth(near) == depth(near) - depth(far);
-        self.dominator.push(up);
-        self.jump.push(if is_doubled { far } else { up });
-        self.depth.push(self.depth[up as usize] + 1);
-        self.start.push(self.start[up as usize]);
+        self.nodes.push(DominatedNode {
+            dominator: up,
+            jump: if is_doubled { far } else { up },
+            depth: above.depth + 1,
+            start: above.start,
+        });
     }
 
     /// The last node that every path to `a` and every path to `b` goes through.
     fn find_common(&self, mut a: u32, mut b: u32) -> Option<u32> {
-        let depth = |node: u32| self.depth[node as usize];
+        let at = |node: u32| self.nodes[node as usize];
         while a != b {
-            if depth(a) < depth(b) {
+            if at(a).depth < at(b).depth {
                 std::mem::swap(&mut a, &mut b);
             }
-            if depth(a) > depth(b) {
-                let far = self.jump[a as usize];
-                a = if depth(far) >= depth(b) {
+            if at(a).depth > at(b).depth {
+                let far = at(a).jump;
+                a = if at(far).depth >= at(b).depth {
                     far
                 } else {
-                    self.dominator[a as usize]
+                    at(a).dominator
                 };
-            } else if depth(a) == 0 {
+            } else if at(a).depth == 0 {
                 return None;
-            } else if self.jump[a as usize] != self.jump[b as usize] {
-                (a, b) = (self.jump[a as usize], self.jump[b as usize]);
+            } else if at(a).jump != at(b).jump {
+                (a, b) = (at(a).jump, at(b).jump);
             } else {
-                (a, b) = (self.dominator[a as usize], self.dominator[b as usize]);
+                (a, b) = (at(a).dominator, at(b).dominator);
             }
         }
         Some(a)
@@ -102,11 +110,12 @@ impl FlowDominators {
     /// Of `node` and its dominators, the one with the lowest number that is at least `least`.
     fn find_highest_from(&self, mut node: u32, least: u32) -> u32 {
         loop {
-            let up = self.dominator[node as usize];
+            let here = self.nodes[node as usize];
+            let up = here.dominator;
             if up == node || up < least {
                 return node;
             }
-            let far = self.jump[node as usize];
+            let far = here.jump;
             node = if far >= least { far } else { up };
         }
     }
@@ -153,10 +162,7 @@ impl Checker<'_, '_> {
         let count = bound.flow.len();
         let mut index = FlowDominators {
             file: Some(file),
-            dominator: Vec::with_capacity(count),
-            jump: Vec::with_capacity(count),
-            depth: Vec::with_capacity(count),
-            start: Vec::with_capacity(count),
+            nodes: Vec::with_capacity(count),
             enclosing_loop: Vec::with_capacity(count),
             ..Default::default()
         };
@@ -191,14 +197,14 @@ impl Checker<'_, '_> {
             index.add(i, dominator);
         }
         let mut counts = vec![0u32; count];
-        for &start in &index.start {
-            counts[start as usize] += 1;
+        for node in &index.nodes {
+            counts[node.start as usize] += 1;
         }
         let far_walk = self.flow_memo.far_walk.unwrap_or(WORTHWHILE_FAR_SKIP);
         let many = counts.iter().enumerate().filter(|it| *it.1 > far_walk);
         index.starts_of_many = many.map(|it| it.0 as u32).collect();
         for (i, &node) in bound.flow.iter().enumerate() {
-            let (i, start) = (i as u32, index.start[i]);
+            let (i, start) = (i as u32, index.nodes[i].start);
             if counts[start as usize] <= far_walk {
                 continue;
             }
@@ -334,7 +340,7 @@ impl Checker<'_, '_> {
             }
             _ => flow.0,
         };
-        let start = index.start[flow.idx()];
+        let start = index.nodes[flow.idx()].start;
         if index.starts_of_many.binary_search(&start).is_err() {
             return None;
         }
@@ -344,7 +350,7 @@ impl Checker<'_, '_> {
             .max(index.enclosing_loop[flow.idx()])
             .max(index.find_last_test_about(root, start, up_to))
             .max(index.find_last_about_anything(start, up_to));
-        if index.dominator[flow.idx()] < least || least > flow.0 {
+        if index.nodes[flow.idx()].dominator < least || least > flow.0 {
             return None;
         }
         let least = least.max(self.find_last_busy_call_between(file, start, least, up_to));
@@ -356,7 +362,7 @@ impl Checker<'_, '_> {
             return None;
         }
         let arrived_at = index.find_highest_from(flow.0, least);
-        let passed = index.depth[flow.idx()] - index.depth[arrived_at as usize];
+        let passed = index.nodes[flow.idx()].depth - index.nodes[arrived_at as usize].depth;
         (arrived_at != flow.0).then_some((FlowId(arrived_at), passed))
     }
 }

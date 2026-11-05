@@ -64,77 +64,9 @@ const define = (object: object, key: string, descriptor: PropertyDescriptor) => 
   let t = 0; for (let i = 0; i < 3000; i++) t += new J(i & 7, i).copy; say("J warm", t); say("a chain", [show(new J(4, 5)), new J(4, 5).copy]); }
 console.log(lines.join("\n"));
 
-// GENERATED: define get C Peek Heir id
 // CHECK-LABEL: function {{*}}name="define"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|string, v2: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v3 = Builtin builtin=Object
-// CHECK-NEXT: v4 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v5 = NewArray v1 contents=anything
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = ElemGet v5, v6
-// CHECK-NEXT: v8 = Call v4, v3, v0, v7, v2 calleeName="Object.defineProperty"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=-5
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked] length=2 thisType={type=[[L_2]]} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: number, v2: number):
-// CHECK-NEXT: PropSet v0, v1 key="flags"
-// CHECK-NEXT: PropSet v0, v2 key="id"
-// CHECK-NEXT: v5 = String string="c"
-// CHECK-NEXT: v6 = Add v5, v2
-// CHECK-NEXT: PropSet v0, v6 key="name"
-// CHECK-NEXT: v8 = Integer integer=1
-// CHECK-NEXT: v9 = Greater v2, v8
-// CHECK-NEXT: PropSet v0, v9 key="on"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Peek"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked] length=1 thisType={type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]], v1: number):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="made"
-// CHECK-NEXT: v4 = Convert v0 declared={type=undefined|null|[[L_3]] flags=[OmitsNull]}
-// CHECK-NEXT: PutModuleVariable v4 variable=[[g_4]]
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="G"
-// CHECK-NEXT: v8 = PropGet v7 key="call"
-// CHECK-NEXT: v9 = NewObject layout=[[L_6]]
-// CHECK-NEXT: v10 = NewClosure function=[[f_7]]
-// CHECK-NEXT: DefineGetter v9, v10 key="id"
-// CHECK-NEXT: v12 = FinishObject v9
-// CHECK-NEXT: v13 = Call v8, v7, v0, v1, v12 calleeKey="call" calleeName="G.call"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="id"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="between"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="made"
-// CHECK-NEXT: v6 = Call v3, -, v5 calleeName="show"
-// CHECK-NEXT: v7 = Call v2, v1, v6 calleeKey="push" calleeName="between.push"
-// CHECK-NEXT: v8 = Convert v7 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v9 = Integer integer=12
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

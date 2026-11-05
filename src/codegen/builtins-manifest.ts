@@ -6,6 +6,7 @@ import own from "../js/tsconfig.json";
 import "./builtin-parser";
 import {
   type EngineFunctions,
+  findModuleHeldInPart,
   functionFiles,
   functionIds,
   helperModules,
@@ -27,7 +28,6 @@ const flagValue = (flag: string) =>
     .find(argument => argument.startsWith(flag))
     ?.slice(flag.length);
 const engineFunctions = flagValue("--engine-functions=");
-const bundledNamesOfModules = flagValue("--bundled-names-of-modules=");
 const bundledHelpers = flagValue("--bundled-helpers=");
 const evaluatedModules = flagValue("--evaluated-modules=");
 if (
@@ -35,12 +35,11 @@ if (
   !output ||
   output.startsWith("--") ||
   !engineFunctions ||
-  !bundledNamesOfModules ||
   !bundledHelpers ||
   (archive && !evaluatedModules)
 ) {
   console.error(
-    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --bundled-names-of-modules=<bundled_names_of_modules.txt> --evaluated-modules=<InternalModuleRegistryConstants.bin> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
+    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --evaluated-modules=<InternalModuleRegistryConstants.bin> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
   );
   process.exit(1);
 }
@@ -168,8 +167,11 @@ for (const [file, text] of [
   lines.push(`declares-for-every-file\t${file}\t${seen.join(" ")}\t${asked.join(" ") || "-"}`);
 }
 
-for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
-  if (line.startsWith("part\t")) lines.push(line);
+for (const file of sourceFiles) {
+  const whole = findModuleHeldInPart(fs.readFileSync(locate(file), "utf8"));
+  if (whole === undefined) continue;
+  if (!sourceFiles.includes(whole)) throw new Error(`${file} holds a part of ${whole}: no such module`);
+  lines.push(`part\t${file}\t${whole}`);
 }
 
 const manifest = lines.join("\n") + "\n";

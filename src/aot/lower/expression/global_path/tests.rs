@@ -493,6 +493,20 @@ fn local_binding_is_not_the_defined_name() {
 }
 
 #[test]
+fn name_in_place_is_the_binding_at_hand() {
+    let source = "export function probe(probeTarget) { return PROBE_NAME; }";
+    let probe = lower_file(PATHS, "main.js", source);
+    probe.expect_parameter(probe.returned());
+    assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+
+    let source = "export function probe(Symbol) { return PROBE_SYMBOL; }";
+    let probe = lower_file(BUILTINS, "main.js", source);
+    probe.expect_parameter(probe.returned());
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+}
+
+#[test]
 fn defined_path_is_read_for_effect() {
     let probe = lower_body(PATHS, "PROBE_PATH;");
     let [_, _, member] = probe.reads()[..] else {
@@ -659,6 +673,18 @@ fn typeof_defined_name() {
         path.reads().iter().all(|read| !read.is_for_type_of),
         "{path}"
     );
+}
+
+#[test]
+fn typeof_path_that_a_define_turns_into_a_name() {
+    let defines = [("holder.flag", GlobalPath("probeTarget"))];
+    for body in ["return typeof holder.flag;", "return typeof (holder.flag);"] {
+        let probe = lower_body(&defines, body);
+        let operand = ValueId::from_word(probe.only(Opcode::TypeOf).fields[0]);
+        let read = probe.read_of(operand);
+        assert!(read.is_free_name && !read.is_for_type_of, "{probe}");
+        probe.expect_path(operand, &["probeTarget"]);
+    }
 }
 
 #[test]

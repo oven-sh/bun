@@ -57,7 +57,7 @@ impl JsxSettings {
         });
         let fields = JsxFields {
             runtime,
-            is_development: None,
+            is_development: pragmas.is_development,
             factory: text(pragmas.factory).and_then(split_members),
             fragment: text(pragmas.fragment_factory).and_then(split_members),
             import_source: text(pragmas.import_source).map(<[u8]>::to_vec),

@@ -79,5 +79,8 @@ test("a fixture that cannot be compiled costs the test that imports it and no ot
   const [plain, one] = await Promise.all([seenIn(undefined), seenIn("TestRunLayers:0", "--aot")]);
   expect(plain.seen.length).toBe(imported.length + 1);
   expect(plain.exitCode).toBe(0);
-  expect(one).toEqual(plain);
+  // BuildMessage is the class of Bun's transpiler. What only the checker or the compiler finds in a file is a SyntaxError.
+  const compiled = (line: string) =>
+    /^SEEN (?:dup-export|too-deep)\.js /.test(line) ? line.replace("BuildMessage", "SyntaxError") : line;
+  expect(one).toEqual({ ...plain, seen: plain.seen.map(compiled) });
 }, 240_000);

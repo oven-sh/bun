@@ -72,8 +72,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 });
             }
             None => {
-                if init.is_some() {
-                    self.lower_statement(init);
+                // `bun run` prints an expression that opens the head as it is written.
+                match init.some().map(|init| self.file.hir[init].kind) {
+                    Some(StmtKind::Expr(opening)) => self.lower_taken_value_for_effect(opening),
+                    Some(_) => self.lower_statement(init),
+                    None => {}
                 }
                 self.lower_for_loop(statement);
             }

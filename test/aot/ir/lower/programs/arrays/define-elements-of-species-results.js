@@ -39,62 +39,8 @@ attempt("typed array", length => new Uint8Array(length || 3), result => Array.fr
 attempt("subclass", length => new (class Numbers extends Array {})(length), result => result.constructor.name + " " + JSON.stringify(result));
 attempt("proxy", () => new Proxy([], { defineProperty(target, key, descriptor) { console.log("  defineProperty", String(key), JSON.stringify(descriptor)); return Reflect.defineProperty(target, key, descriptor); } }));
 
-// GENERATED: withSpecies get set Numbers defineProperty
 // CHECK-LABEL: function {{*}}name="withSpecies"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: v1 = Data data=[[d_2]]
-// CHECK-NEXT: v2 = NewObject layout=[[L_3]]
-// CHECK-NEXT: PropDefine v2, v0 key=@@species
-// CHECK-NEXT: v4 = FinishObject v2
-// CHECK-NEXT: PropSet v1, v4 key="constructor"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=-1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="setterCalls"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="setterCalls"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_4]]
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Numbers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<never> flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<never>, v1: undefined|null|string|symbol, v2: undefined|null|number|string|symbol|bigint|[[L_6]]):
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string="  defineProperty"
-// CHECK-NEXT: v9 = Builtin builtin=String
-// CHECK-NEXT: v10 = Call v9, -, v1 calleeName="String"
-// CHECK-NEXT: v11 = Builtin builtin=JSON
-// CHECK-NEXT: v12 = PropGet v11 key="stringify"
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v14 = Call v13, v11, v2 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v15 = Call v7, v5, v8, v10, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v16 = Builtin builtin=Reflect
-// CHECK-NEXT: v17 = Builtin builtin=ReflectDefineProperty
-// CHECK-NEXT: v18 = Call v17, v16, v0, v1, v2 calleeName="Reflect.defineProperty"
-// CHECK-NEXT: ReturnCall v18
-// CHECK-NEXT: }

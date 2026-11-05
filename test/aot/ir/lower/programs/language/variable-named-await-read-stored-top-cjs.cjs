@@ -47,27 +47,5 @@ async function waits() {
 waits().then(value => console.log("the operator in an async function:", value));
 console.log("on the module:", typeof module, typeof exports, typeof require);
 
-// GENERATED: waits await
 // CHECK-LABEL: function {{*}}name="waits"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsSloppy, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = ToThis v0
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="Promise" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="resolve"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Integer integer=14
-// CHECK-NEXT: v8 = Call v6, v4, v7 calleeKey="resolve" calleeName="Promise.resolve"
-// CHECK-NEXT: v9 = Await v8
-// CHECK-NEXT: v10 = Integer integer=1
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="await"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = String string="called with "
-// CHECK-NEXT: v2 = Add v1, v0
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

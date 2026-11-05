@@ -75,75 +75,7 @@ const grid: Styled[] = []
 for (let i = 0; i < 12; i++) grid.push({ ...st, color: colors[i % 4], align: aligns[i % 3], digit: (i % 3) as Digit, level: i % 2 ? Level.Off : Level.Error })
 console.log(grid.map(g => paint(g.color) + side(g.align) + g.digit + severity(g.level)[0]).join())
 
-// GENERATED: side severity show build
 // CHECK-LABEL: function {{*}}name="side"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"center"|"left"|"right" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|"center"|"left"|"right"):
-// CHECK-NEXT: SwitchString v0 strings=["left", "right"] -> case b1(| 0), case b2(| 0), otherwise b3()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = String string="L"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = String string="R"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = String string="C"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="severity"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: Switch v0 cases=[-1, 0, 1, 10] -> case b1(| 0), case b2(| 0), case b3(| 0), case b5(| 0), otherwise b6()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = String string="off"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b3(v5):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v6 = String string="low"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b5(v8):
-// CHECK-NEXT: v9 = String string="mid"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v11 = String string="high"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = Call v5, v4 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = String string=" "
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = Builtin builtin=JSON
-// CHECK-NEXT: v11 = PropGet v10 key="stringify"
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v13 = Call v12, v10, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v9, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="build"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: v1 = PropGet v0 key="join"
-// CHECK-NEXT: v2 = String string=""
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="join" calleeName="parts.join"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

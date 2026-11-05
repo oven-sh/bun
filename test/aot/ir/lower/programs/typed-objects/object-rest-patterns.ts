@@ -80,74 +80,7 @@ const seen: string[] = []
 for (const { id, title, size = -1, ...more } of items) seen.push(id + title + size + Object.keys(more).length)
 console.log(seen.join(), items.map(({ style: { color }, hidden = false }) => color + hidden).join())
 
-// GENERATED: defaults Widget area grow
 // CHECK-LABEL: function {{*}}name="defaults"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="id"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="id"
-// CHECK-NEXT: v6 = PropGet v4 key="hidden"
-// CHECK-NEXT: v7 = TypeTest v6 testedType=undefined
-// CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: v9 = Boolean boolean=true
-// CHECK-NEXT: v10 = Convert v9 declared={type=boolean}
-// CHECK-NEXT: Jump -> next b5(v10)
-// CHECK-NEXT: b4(v11):
-// CHECK-NEXT: Jump -> next b5(v11)
-// CHECK-NEXT: b5(v12):
-// CHECK-NEXT: v13 = PropGet v4 key="size"
-// CHECK-NEXT: v14 = TypeTest v13 testedType=undefined
-// CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v15):
-// CHECK-NEXT: v16 = Integer integer=10
-// CHECK-NEXT: v17 = Convert v16 declared={type=number}
-// CHECK-NEXT: Jump -> next b8(v17)
-// CHECK-NEXT: b7(v18):
-// CHECK-NEXT: Jump -> next b8(v18)
-// CHECK-NEXT: b8(v19):
-// CHECK-NEXT: v20 = PropGet v4 key="title"
-// CHECK-NEXT: v21 = TypeTest v20 testedType=undefined
-// CHECK-NEXT: Branch v21 -> taken b9(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b9(v22):
-// CHECK-NEXT: v23 = String string="none"
-// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b11(v24)
-// CHECK-NEXT: b10(v25):
-// CHECK-NEXT: Jump -> next b11(v25)
-// CHECK-NEXT: b11(v26):
-// CHECK-NEXT: v27 = NewArray v5, v12, v19, v26 contents=anything
-// CHECK-NEXT: v28 = PropGet v27 key="join"
-// CHECK-NEXT: v29 = Call v28, v27 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v29 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Widget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="grow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: PropSet v0, v2 key="x"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

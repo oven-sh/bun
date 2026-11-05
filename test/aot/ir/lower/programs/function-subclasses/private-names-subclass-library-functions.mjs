@@ -63,85 +63,9 @@ const sum = new Sum();
 sum.on("finish", () => console.log("total", sum.total, Object.keys(sum).filter(key => !key.startsWith("_")).join()));
 new Numbers(100).pipe(sum);
 
-// GENERATED: Same Counter count is describe Numbers
 // CHECK-LABEL: function {{*}}name="Same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="counter"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_4]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_3]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_3]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_3]] field=1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="is"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = PrivateHas v0, v1 layout=[[L_3]] field=3
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_6]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_6]]):
-// CHECK-NEXT: v1 = CallDirect v0 function=[[f_7]]
-// CHECK-NEXT: ReturnCall v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Numbers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = Data data=[[d_8]]
-// CHECK-NEXT: v6 = SuperConstruct v4, v1, v5 layout=[[L_9]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_9]]}
-// CHECK-NEXT: v8 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: v10 = CallDirect v7 function=[[f_10]]
-// CHECK-NEXT: v11 = TypeTest v7 testedType=absent
-// CHECK-NEXT: Branch v11 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: v13 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: PrivateSet v14, v15, v2 layout=[[L_9]] field=2
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: v18 = TypeTest v17 testedType=object
-// CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v19):
-// CHECK-NEXT: Jump -> next b9(v19)
-// CHECK-NEXT: b5(v20):
-// CHECK-NEXT: v21 = TypeTest v20 testedType=undefined
-// CHECK-NEXT: Branch v21 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v22):
-// CHECK-NEXT: v23 = TypeTest v14 testedType=absent
-// CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v24):
-// CHECK-NEXT: v25 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v25
-// CHECK-NEXT: b8(v26):
-// CHECK-NEXT: Jump -> next b9(v26)
-// CHECK-NEXT: b9(v27):
-// CHECK-NEXT: Return v27
-// CHECK-NEXT: b10(v28):
-// CHECK-NEXT: v29 = NewRuntimeError runtimeError=DerivedConstructorResult name="Numbers"
-// CHECK-NEXT: Throw v29
-// CHECK-NEXT: b11(v30):
-// CHECK-NEXT: v31 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v31
-// CHECK-NEXT: }

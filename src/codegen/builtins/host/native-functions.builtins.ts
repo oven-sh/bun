@@ -292,7 +292,8 @@ export default b.declarations(
   }),
   // It keeps the function. The process object calls it when the process or the worker starts to exit: inside process.exit() and process.reallyExit(), and when nothing is left to do.
   b.static(cpp("BunProcess.cpp", "jsFunctionRunWhenProcessExits"), {
-    args: { run: b.callable },
+    // It refuses nothing: what is no object is as good as nothing.
+    args: { run: b.any },
     returns: b.undefined,
     capability: "none",
     uses: {
@@ -357,11 +358,12 @@ export default b.declarations(
 
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {
-    args: { filename: b.any.optional },
-    returns: b.union(b.builtin("bun:test"), b.object),
+    // It hands all that it was called with to Bun.jest(path, byWhoLoads, ownGlobals), which answers with a number where the third is true.
+    args: { filename: b.any.optional, byWhoLoads: b.any.optional, ownGlobals: b.any.optional },
+    returns: b.union(b.builtin("bun:test"), b.object, b.f64),
     capability: "js",
     throws: true,
-    uses: { filename: converted },
+    uses: { filename: converted, byWhoLoads: b.inspected, ownGlobals: b.inspected },
     implementation: b.hostCall,
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),

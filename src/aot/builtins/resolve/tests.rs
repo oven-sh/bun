@@ -164,7 +164,7 @@ fn find_target(atoms: &Interner<'_>, specifier: ImportSpecifier) -> Option<Runti
 fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins, source: &str) {
     let describe = |resolved: &ResolvedBuiltins| {
         format!(
-            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
             resolved.exprs,
             resolved.expr_bits,
             resolved.exprs_with_side_effects,
@@ -179,6 +179,7 @@ fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins
             resolved.hands_spy_on,
             resolved.hands_mock_on,
             resolved.resets_modules,
+            resolved.stores_loader_functions,
             resolved.mentioned,
             resolved.exposed,
             resolved.uses,

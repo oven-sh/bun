@@ -3132,7 +3132,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
-            if (!JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement))
+            bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
+            RETURN_IF_EXCEPTION(scope, true);
+            if (!isReplaced)
                 throwTypeError(globalObject, scope, JSC::AOT::refusedSpyOnExportMessage(object, propertyKey.impl()));
             return true;
         }

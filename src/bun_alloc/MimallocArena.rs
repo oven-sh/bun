@@ -17,7 +17,7 @@
 //! with the previous `Arena = bumpalo::Bump` alias.
 
 use core::alloc::{AllocError, Allocator, Layout};
-use core::cell::Cell;
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
@@ -73,7 +73,7 @@ pub struct MimallocArena {
     #[cfg(debug_assertions)]
     owning_thread: AtomicU64,
     /// For `lay`. A field, so it moves with the arena, `reset` forgets it, and no other arena can find it.
-    filling: Cell<Filling>,
+    filling: OwnerCell,
 }
 
 /// The head of a chunk that `MimallocArena::lay` fills.
@@ -124,6 +124,31 @@ impl Filling {
     };
 }
 
+/// What `lay` fills. The thread that allocates in the arena reads and writes it, and no other.
+struct OwnerCell(UnsafeCell<Filling>);
+
+// SAFETY: only `lay` and `reset` touch the cell. `lay` is an allocation, which by the arena's contract only the owning
+// thread makes (`assert_owning_thread()` in debug builds), and `reset` takes `&mut self`.
+unsafe impl Sync for OwnerCell {}
+
+impl OwnerCell {
+    fn new(filling: Filling) -> OwnerCell {
+        OwnerCell(UnsafeCell::new(filling))
+    }
+
+    #[inline]
+    fn get(&self) -> Filling {
+        // SAFETY: no other thread is at the cell: see `Sync`.
+        unsafe { *self.0.get() }
+    }
+
+    #[inline]
+    fn set(&self, filling: Filling) {
+        // SAFETY: as in `get`.
+        unsafe { *self.0.get() = filling };
+    }
+}
+
 // SAFETY: mimalloc heaps are not generally thread-safe for allocation from
 // multiple threads, but `mi_free` may be called from any thread, and
 // same-thread allocation is enforced by `assert_owning_thread()` in debug
@@ -157,7 +182,7 @@ impl MimallocArena {
             owns: true,
             #[cfg(debug_assertions)]
             owning_thread: AtomicU64::new(debug_thread_stamp()),
-            filling: Cell::new(Filling::NOTHING),
+            filling: OwnerCell::new(Filling::NOTHING),
         }
     }
 
@@ -183,7 +208,7 @@ impl MimallocArena {
             // owning-thread assert is disabled by stamping 0 — see
             // `assert_owning_thread`.
             owning_thread: AtomicU64::new(0),
-            filling: Cell::new(Filling::NOTHING),
+            filling: OwnerCell::new(Filling::NOTHING),
         }
     }
 

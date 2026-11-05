@@ -35,10 +35,7 @@ pub(super) fn compute_sharing(
         let Some(owner) = context.owner_of(binding) else {
             continue;
         };
-        let is_exported = match binding {
-            BindingRef::Symbol(symbol) => exported.binary_search(&symbol).is_ok(),
-            BindingRef::Slot(..) => false,
-        };
+        let is_exported = binding.is_listed_in(&exported);
         let is_seen_by_eval = seen_by_eval.binary_search(&binding).is_ok();
         let mut readers = Users::new();
         if !is_exported && !is_seen_by_eval && context.is_holder_without_value(binding) {

@@ -158,6 +158,12 @@ struct Replacement {
     is_whole_statement: bool,
 }
 
+/// `target = value`
+struct Assignment {
+    assignment: ExprId,
+    value: ExprId,
+}
+
 // `Quiet::runs_nothing` for the head in which `exports` must still be empty: no call qualifies, not even a definition on `exports`.
 fn is_call_that_runs_nothing(_: CallId) -> bool {
     false
@@ -577,7 +583,7 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
     }
 
     /// `target = value`: the assignment and the value.
-    fn find_assignment(&self, target: ExprId) -> Option<(ExprId, ExprId)> {
+    fn find_assignment(&self, target: ExprId) -> Option<Assignment> {
         let (target, Parent::Expr(user)) = self.parent(target) else {
             return None;
         };
@@ -590,7 +596,10 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             } if assigned == target
                 && self.bound.get_assignment_target(self.hir, user).is_none() =>
             {
-                Some((user, value))
+                Some(Assignment {
+                    assignment: user,
+                    value,
+                })
             }
             _ => None,
         }
@@ -973,7 +982,7 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         match self.bound.get_assignment_target(hir, outermost) {
             Some(AssignmentTarget::Assign(None)) => {
                 // `None`: a part of a pattern.
-                let Some((assignment, value)) = self.find_assignment(access) else {
+                let Some(Assignment { assignment, value }) = self.find_assignment(access) else {
                     return false;
                 };
                 let statement = self.find_statement_in_every_run(assignment);
@@ -1019,7 +1028,7 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
     fn add_replacement(&mut self, target: ExprId) {
         self.replacement_count += 1;
         // `None`: a compound assignment, or a part of a pattern.
-        let Some((assignment, value)) = self.find_assignment(target) else {
+        let Some(Assignment { assignment, value }) = self.find_assignment(target) else {
             self.summary.object_escapes = true;
             return;
         };

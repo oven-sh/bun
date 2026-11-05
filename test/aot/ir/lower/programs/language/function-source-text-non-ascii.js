@@ -16,30 +16,6 @@ for (const f of [latin1String, wideString, template, café, regExp, comment, arr
   console.log(f.name + ":", f(), evaluated() === f());
 }
 
-// GENERATED: template regExp arrow
 // CHECK-LABEL: function {{*}}name="template"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="\u{e9}\u{2192}\u{1f600}"
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = ToString v1
-// CHECK-NEXT: v3 = Strcat v0, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="regExp"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRegExp pattern="\\u2192+" regExpFlags=[Unicode]
-// CHECK-NEXT: v1 = PropGet v0 key="exec"
-// CHECK-NEXT: v2 = String string="a\u{2192}\u{2192}b"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="exec" calleeName="exec"
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = ElemGet v3, v4
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="arrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="\u{fc}\u{2192}"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

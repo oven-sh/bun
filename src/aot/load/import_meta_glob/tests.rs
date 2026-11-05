@@ -75,6 +75,7 @@ fn with_expanded<R>(
         &atoms,
         &mut request,
         &source,
+        &|_, _| {},
     );
     assert_eq!(change, TreeChange::Changed);
     then(&tree, &atoms, &take_messages(&messages))
@@ -271,44 +272,44 @@ fn text_that_stores_its_exports_stays_a_commonjs_file() {
 
 #[test]
 fn module_of_eager_entry() {
-    let write = |specifier: &str| write_module_of_eager_entry(specifier.as_bytes());
-    let text = |text: &str| Some(text.as_bytes().to_vec());
-    let whole = "export * as entry from \"./pages/a.cjs\";\n";
-    assert_eq!(write("%glob::./pages/a.cjs"), text(whole));
-    let raw = "export * as entry from \"./a:b \\\"c\\\".txt\" with { type: \"text\" };\n";
-    assert_eq!(write("%glob:text:./a:b \"c\".txt"), text(raw));
-    for other in [
-        "./pages/a.cjs",
-        "glob::./a.cjs",
-        "%glob",
-        "%glob:",
-        "%glob:84",
-    ] {
-        assert_eq!(write(other), None, "{other}");
-    }
+    let whole = b"export * as entry from \"./pages/a.cjs\";\n";
+    assert_eq!(write_module_of_eager_entry(b"", b"./pages/a.cjs"), whole);
+    let raw = b"export * as entry from \"./a:b \\\"c\\\".txt\" with { type: \"text\" };\n";
+    assert_eq!(
+        write_module_of_eager_entry(b"text", b"./a:b \"c\".txt"),
+        raw
+    );
 }
 
 #[test]
 fn eager_entries_of_a_commonjs_file_stand_in_es_modules_beside_it() {
     let text = "module.exports = import.meta.glob(\"./pages/*.ts\", { eager: true });";
-    let directory = write_project("glob_modules_of_eager_entries", ("main.js", text));
+    let found = find_modules_of_eager_entries("glob_modules_of_eager_entries", text);
+    assert_eq!(found, [true, true]);
+}
+
+#[test]
+fn a_specifier_that_the_program_writes_finds_no_module_of_the_build() {
+    let text = "module.exports = import.meta.glob(\"./pages/a.ts\", { eager: true });\n\
+        try {\n  require(\"%glob::./pages/b.ts\");\n} catch {}";
+    let found = find_modules_of_eager_entries("glob_written_specifier", text);
+    assert_eq!(found, [true, false]);
+}
+
+// Whether the ES module that the build makes for `./pages/a.ts`, and the one for `./pages/b.ts`, is compiled.
+fn find_modules_of_eager_entries(test: &str, text: &str) -> [bool; 2] {
+    let directory = write_project(test, ("main.js", text));
     let project = TestProject::on_disk(directory.path(), &["main.js"]);
     run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
         build.with_loaded_projects(|_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
-            let find = |name: &str| {
-                let mut compiled = files.compiled_files().iter().copied();
+            Ok(["a", "b"].map(|page| {
+                let name = format!("/main%3f%25glob%3a%3a%2e%2fpages%2f{page}%2ets.js.mjs");
                 let is_named =
                     |&file: &_| files.module(file).file_name().ends_with(name.as_bytes());
-                compiled.find(is_named)
-            };
-            assert!(find("/pages/a.ts").is_some() && find("/pages/b.ts").is_some());
-            for page in ["a", "b"] {
-                let name = format!("/main%3f%25glob%3a%3a%2e%2fpages%2f{page}%2ets.js.mjs");
-                let entry = find(&name).expect("it is compiled");
-                assert_eq!(files.analysis(entry).module_format, ModuleFormat::Esm);
-            }
-            Ok(())
+                let entry = files.compiled_files().iter().copied().find(is_named);
+                entry.is_some_and(|it| files.analysis(it).module_format == ModuleFormat::Esm)
+            }))
         })
-    });
+    })
 }

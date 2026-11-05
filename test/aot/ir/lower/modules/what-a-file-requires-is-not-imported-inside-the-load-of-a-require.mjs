@@ -10,9 +10,9 @@
 // ONCE-NOT: IsModuleToImports
 
 // FILE: main.mjs
+import "./real.cjs";
 import "./plain.cjs";
 import "./other.cjs";
-import "./real.cjs";
 
 // FILE: real.cjs
 exports.side = require("./side.mjs");

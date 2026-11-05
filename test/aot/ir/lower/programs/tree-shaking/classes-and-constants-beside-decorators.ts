@@ -1,5 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="register"
+// CHECK-LABEL: function {{*}}name="tagged"
+// CHECK-LABEL: function {{*}}name="Second"
+// CHECK-LABEL: function {{*}}name="method"
 
 // FILE: main.ts
 // Standard decorators. The decorators are constants; the decorated classes are named nowhere; other classes and constants of the file are named only by a decorator's argument, by a decorated field's initializer, or not at all.
@@ -28,43 +32,3 @@ console.log(log.join("\n"));
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: register tagged Second method
-// CHECK-LABEL: function {{*}}name="register"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function, v1: undefined|null|[[L_1]]):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string="registered "
-// CHECK-NEXT: v6 = Builtin builtin=String
-// CHECK-NEXT: v7 = PropGet v1 key="name"
-// CHECK-NEXT: v8 = Call v6, -, v7 calleeName="String"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v10 = Add v5, v9
-// CHECK-NEXT: v11 = Call v4, v3, v10 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="tagged"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]]):
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_4]]
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Second"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_6]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

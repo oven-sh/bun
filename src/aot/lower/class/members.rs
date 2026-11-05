@@ -163,8 +163,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let node = hir[member];
         self.set_position(node.name_pos);
         let computed_name = match hir.runtime_member_key(member) {
-            PropKey::Computed(_) => Some(self.emit_name_value(name)),
-            PropKey::Name(_) | PropKey::Private(_) | PropKey::None => None,
+            PropKey::Computed(_) if self.file.names_functions_by_keys() => {
+                Some(self.emit_name_value(name))
+            }
+            PropKey::Computed(_) | PropKey::Name(_) | PropKey::Private(_) | PropKey::None => None,
         };
         let halves = [
             (AccessorFunction::Getter, MethodKind::Getter),

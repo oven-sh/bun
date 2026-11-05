@@ -1,6 +1,5 @@
 // A query answers rows of the type it is written under, whatever holds the function that makes it: the log stays empty.
 // Nothing in the program makes a Row: the rows do.
-// STATISTIC: TypedResultsSelected >= 7
 import { sql, SQL } from "bun";
 
 const OID = { bool: 16, int4: 23, text: 25, float8: 701 } as const;

@@ -376,7 +376,7 @@ fn number_behind_word(prefix: &[u8]) -> Option<u32> {
     bun_core::fmt::parse_int::<u32>(digits, 10).ok()
 }
 
-/// Where `use_graph_descriptor` maps the program.
+/// Where `use_graph_descriptor` and `load_program_file` map the program.
 pub(crate) fn place_of_program_being_built() -> Option<PlaceOfProgram> {
     Some(PlaceOfProgram {
         mapped_at: Graph::address_of_program(0)?,
@@ -1032,13 +1032,6 @@ pub(crate) fn writes_program_alone() -> bool {
 #[cfg(bun_locked_environment)]
 pub(crate) fn writes_program_alone() -> bool {
     false
-}
-
-/// Where `load_program_file` maps the file.
-pub(crate) fn place_of_program_alone() -> Option<PlaceOfProgram> {
-    Some(PlaceOfProgram {
-        mapped_at: Graph::address_of_program(0)?,
-    })
 }
 
 /// The program begins behind it, at the head of a page of any machine.

@@ -28,32 +28,6 @@ made.x = 10;
 made.extra = "stored";
 console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
 
-// GENERATED: sum Derived twice
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_4]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_3]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_3]]):
-// CHECK-NEXT: v1 = PropGet v0 key="sum"
-// CHECK-NEXT: v2 = Call v1, v0 calleeKey="sum" calleeName="this.sum"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Mul v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

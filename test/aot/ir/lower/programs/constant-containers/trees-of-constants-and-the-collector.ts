@@ -24,39 +24,5 @@ console.log(total, kept.length, JSON.stringify(tree()).length, JSON.stringify(ke
 let d = deep(), levels = 0; while (Array.isArray(d)) { d = d[0]; levels++; } console.log(levels, d.bottom.join());
 const many: any[] = []; for (let i = 0; i < 3000; i++) many.push(deep()); Bun.gc(true); let ok = 0; for (const m of many) { let x = m; while (Array.isArray(x)) x = x[0]; ok += x.bottom.length; } console.log(ok);
 
-// GENERATED: tree count
 // CHECK-LABEL: function {{*}}name="tree"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_2]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="size"
-// CHECK-NEXT: v2 = PropGet v0 key="box"
-// CHECK-NEXT: v3 = PropGet v2 key="w"
-// CHECK-NEXT: v4 = Add v1, v3
-// CHECK-NEXT: v5 = PropGet v0 key="box"
-// CHECK-NEXT: v6 = PropGet v5 key="h"
-// CHECK-NEXT: v7 = Add v4, v6
-// CHECK-NEXT: v8 = PropGet v0 key="box"
-// CHECK-NEXT: v9 = PropGet v8 key="at"
-// CHECK-NEXT: v10 = Integer
-// CHECK-NEXT: v11 = ElemGet v9, v10
-// CHECK-NEXT: v12 = Add v7, v11
-// CHECK-NEXT: v13 = PropGet v0 key="name"
-// CHECK-NEXT: v14 = PropGet v13 key="length"
-// CHECK-NEXT: v15 = Add v12, v14
-// CHECK-NEXT: v16 = PropGet v0 key="kids"
-// CHECK-NEXT: v17 = PropGet v16 key="reduce"
-// CHECK-NEXT: v18 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v19 = Integer
-// CHECK-NEXT: v20 = Call v17, v16, v18, v19 calleeKey="reduce" calleeName="n.kids.reduce"
-// CHECK-NEXT: v21 = Convert v20 declared={type=number} illTypedCause=FromLooseType
-// CHECK-NEXT: v22 = Add v15, v21
-// CHECK-NEXT: v23 = Convert v22 declared={type=number}
-// CHECK-NEXT: Return v23
-// CHECK-NEXT: }

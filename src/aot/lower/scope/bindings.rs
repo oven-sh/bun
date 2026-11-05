@@ -38,6 +38,7 @@ pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Bi
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn get_environment(&mut self, scope: ScopeId) -> ValueId {
+        self.make_environment_put_off(scope);
         match self.scopes.find_environment(scope) {
             Some(variable) => self.builder.read_variable(variable),
             None => self

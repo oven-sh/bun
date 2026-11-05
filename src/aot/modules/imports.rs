@@ -16,7 +16,6 @@ use super::plan::Member;
 use super::requests::{FileScan, ScannedSite, Scans, import_call_type_kind, import_phase};
 use super::synthetic_exports::{KnownMembers, SyntheticExports};
 use super::test_replacements::SpiesOnUnknownObjects;
-use super::test_run_names_handed_on::find_what_statement_names;
 use super::unloadable::find_files_that_sites_name;
 use super::{BindInput, DeferredExports, ModuleRef};
 use crate::builtins::id::BuiltinId;
@@ -149,6 +148,7 @@ pub(super) fn bind_imports(
         mocked: find_mocked_modules(input, scans, modules),
         input,
         files_that_sites_name: OnceLock::new(),
+        variables_that_mocked_modules_hand_on: OnceLock::new(),
     };
     let compiled_files = modules.compiled_files.iter();
     let mut slots: Vec<(FileId, Option<FileImports>)> =
@@ -252,6 +252,8 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) input: &'a BindInput<'a, 's>,
     /// Asked where a link fails.
     files_that_sites_name: OnceLock<Vec<bool>>,
+    /// Asked where a file hands a name on: `find_variables_that_mocked_modules_hand_on`.
+    variables_that_mocked_modules_hand_on: OnceLock<FxHashSet<Sym>>,
 }
 
 #[derive(Default)]
@@ -343,6 +345,15 @@ pub(super) fn find_mocked_modules(
             }
         }
     }
+    // Code that a test holds as text mocks the file, or spies on its object under a name that the text does not spell.
+    if !input.run.modules_replaced_in_text.is_empty() {
+        for &file in &modules.compiled_files {
+            let path = input.files.module(file).file_name();
+            if input.run.is_replaced_in_text(&input.files.atoms, path) {
+                mocked.insert_with_forms(modules, ModuleRef::File(file));
+            }
+        }
+    }
     mocked
 }
 
@@ -422,6 +433,8 @@ pub(super) struct FileBinder<'a, 's> {
     pub(super) scan: &'a FileScan,
     pub(super) imports: FileImports,
     pub(super) required_name_set: FxHashSet<(ModuleRef, Atom)>,
+    /// The exports whose statement is listed.
+    exports_with_statement: FxHashSet<Atom>,
     /// For `imports.namespace_values` and `imports.exports_values`, which hold each module once. A file that mocks every module looks at all of them.
     pub(super) namespace_value_set: FxHashSet<ModuleRef>,
     pub(super) exports_value_set: FxHashSet<ModuleRef>,
@@ -442,6 +455,7 @@ impl<'a, 's> FileBinder<'a, 's> {
                 ..FileImports::default()
             },
             required_name_set: FxHashSet::default(),
+            exports_with_statement: FxHashSet::default(),
             namespace_value_set: FxHashSet::default(),
             exports_value_set: FxHashSet::default(),
         }
@@ -875,47 +889,33 @@ impl<'a, 's> FileBinder<'a, 's> {
     ) -> Option<RequiredName> {
         let (exporter, name) = self.find_name_that_an_export_statement_asks_for(position)?;
         let left_out = self.find_name_that_a_mock_of_an_es_module_may_leave_out(exporter, name);
-        // `export { v } from "./q"`, and "./q" has `v` by a statement of its own from a module that is mocked. The table names the variable, so the run time goes by the statements.
+        // `export { v } from "./q"`, and a module that is mocked hands `v` on too. The table names the variable, so the run time goes by the statements.
+        let resolved = self.context.tables.own_names(self.file)[position].1;
         left_out.or_else(|| {
-            let is_handed_on = self.is_handed_on_from_mocked_module(exporter, name);
-            is_handed_on.then(|| RequiredName {
+            let is_listed = self.context.modules.table_file(exporter).is_some()
+                && self.is_handed_on_by_mocked_module(resolved);
+            is_listed.then(|| RequiredName {
                 is_found_unless_mocked: true,
                 ..RequiredName::new(exporter, name)
             })
         })
     }
 
-    /// Statements that hand the name on, and `export *`, lead from the module to one that is mocked.
-    fn is_handed_on_from_mocked_module(&self, module: ModuleRef, name: Atom) -> bool {
+    /// A mocked module exports the variable, and another module declares it. The mock answers for whoever has the name through the mocked module, and for nobody else: every step of the way
+    /// of such a name is listed, whether or not it leads to the mock.
+    fn is_handed_on_by_mocked_module(&self, resolved: ResolvedName) -> bool {
         let context = self.context;
-        if context.mocked.is_empty() {
+        let Resolution::Variable(variable) = resolved.resolution else {
+            return false;
+        };
+        if context.mocked.is_empty() || variable.file == self.file {
             return false;
         }
-        let first = context.modules.table_file(module);
-        let mut asked: Vec<(FileId, Atom)> = first.map(|file| (file, name)).into_iter().collect();
-        let mut next = 0;
-        while let Some(&(file, name)) = asked.get(next) {
-            next += 1;
-            for holder in context.tables.files_searched_for(file, name) {
-                if context.mocked.contains(ModuleRef::File(holder)) {
-                    return true;
-                }
-                let mut own_names = context.tables.own_names(holder).iter();
-                let Some(position) = own_names.position(|&(own_name, _)| own_name == name) else {
-                    continue;
-                };
-                let named =
-                    find_what_statement_names(context.scans, context.tables, holder, position);
-                let named = named.and_then(|(named, name)| {
-                    let file = context.modules.table_file(named)?;
-                    Some((file, name))
-                });
-                if let Some(named) = named.filter(|named| !asked.contains(named)) {
-                    asked.push(named);
-                }
-            }
-        }
-        false
+        let find = || find_variables_that_mocked_modules_hand_on(context);
+        let handed_on = context
+            .variables_that_mocked_modules_hand_on
+            .get_or_init(find);
+        handed_on.contains(&variable)
     }
 
     fn bind_name(
@@ -1006,7 +1006,12 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     pub(super) fn add_required_name(&mut self, required_name: RequiredName) {
-        if (self.required_name_set).insert((required_name.module, required_name.name)) {
+        let is_first = (self.required_name_set).insert((required_name.module, required_name.name));
+        // `export { v, v as w } from "./m"` asks for `v` twice, and an import may have asked for it in front: each export has its own statement.
+        let statement = required_name.asked_by;
+        let is_first_of_export =
+            statement.is_some_and(|it| self.exports_with_statement.insert(it.export_name));
+        if is_first || is_first_of_export {
             self.imports.required_names.push(required_name);
         }
     }
@@ -1065,6 +1070,24 @@ impl<'a, 's> FileBinder<'a, 's> {
         })
     }
 
+    /// `export * from "specifier"`, for a name that it brings.
+    fn find_star_statement(&self, named: FileId, export_name: Atom) -> Option<ExportStatement> {
+        let mut sites = self.analysis.import_sites.iter().zip(&self.scan.sites);
+        sites.find_map(
+            |(site, scanned)| match (site.kind, scanned, site.specifier) {
+                (
+                    ImportSiteKind::ExportStar(_),
+                    &ScannedSite::Module(ModuleRef::File(file)),
+                    ImportSpecifier::Constant(specifier),
+                ) if file == named => Some(ExportStatement {
+                    export_name,
+                    specifier,
+                }),
+                _ => None,
+            },
+        )
+    }
+
     fn add_required_export_names(&mut self) {
         let own_names = self.context.tables.own_names(self.file).iter();
         for (position, &(export_name, resolved)) in own_names.enumerate() {
@@ -1106,6 +1129,26 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_name_required_by_export(position, export_name, required_name);
             }
         }
+        // The star that brings a name is the statement that hands it on.
+        let tables = self.context.tables;
+        let own_count = tables.own_names(self.file).len();
+        for &(export_name, resolved) in &tables.names(self.file)[own_count..] {
+            if !self.is_handed_on_by_mocked_module(resolved) {
+                continue;
+            }
+            let searched = tables.files_searched_for(self.file, export_name);
+            let star = searched.get(1).and_then(|&named| {
+                let asked_by = self.find_star_statement(named, export_name)?;
+                Some((named, asked_by))
+            });
+            if let Some((named, asked_by)) = star {
+                self.add_required_name(RequiredName {
+                    asked_by: Some(asked_by),
+                    is_found_unless_mocked: true,
+                    ..RequiredName::new(ModuleRef::File(named), export_name)
+                });
+            }
+        }
     }
 
     fn find_name_that_no_link_finds(
@@ -1140,6 +1183,24 @@ impl<'a, 's> FileBinder<'a, 's> {
             ..required_name
         });
     }
+}
+
+/// The variables that a mocked module exports and another module declares.
+fn find_variables_that_mocked_modules_hand_on(context: &BindContext<'_, '_>) -> FxHashSet<Sym> {
+    let mut handed_on = FxHashSet::default();
+    for &file in &context.modules.compiled_files {
+        if !context.mocked.contains(ModuleRef::File(file)) {
+            continue;
+        }
+        for &(_, resolved) in context.tables.names(file) {
+            if let Resolution::Variable(variable) = resolved.resolution
+                && variable.file != file
+            {
+                handed_on.insert(variable);
+            }
+        }
+    }
+    handed_on
 }
 
 fn is_filled_by_loader(binding: PendingBinding) -> bool {

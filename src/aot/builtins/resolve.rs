@@ -242,6 +242,7 @@ pub struct ResolvedBuiltins {
     hands_spy_on: bool,
     hands_mock_on: bool,
     resets_modules: bool,
+    stores_loader_functions: bool,
     unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
@@ -273,6 +274,20 @@ impl ResolvedBuiltins {
             path.mutability = path.mutability.min(Mutability::ConstantUnlessWritten);
         }
         path
+    }
+
+    /// Each built-in that an expression or a variable of the file stands for while its path is locked: what `BuiltinPath::locked_builtin` answers whoever asks. With repeats.
+    pub fn for_each_locked_builtin(&self, mut take: impl FnMut(BuiltinId)) {
+        let of_exprs = self.exprs.iter().filter_map(|entry| match entry.1 {
+            Resolved::Builtin(path) | Resolved::DynamicGlobal(path) => Some(path),
+            Resolved::Intrinsic(_) => None,
+        });
+        let of_symbols = self.symbols.iter().map(|entry| entry.1);
+        for path in of_exprs.chain(of_symbols) {
+            if let Some(builtin) = self.apply_unlocked_list(path).locked_builtin() {
+                take(builtin);
+            }
+        }
     }
 
     /// Whether the list given to `unlock` has the place, or what the place holds. No place has been unlocked before that call, or in an executable.
@@ -417,6 +432,11 @@ impl ResolvedBuiltins {
     /// Sorted by `call`. Empty unless the file is part of a test run.
     pub fn spy_calls(&self) -> &[SpyCall] {
         &self.spy_calls
+    }
+
+    /// In a test run: the file may store `Module._resolveFilename` or `Module.prototype.require`.
+    pub fn stores_loader_functions(&self) -> bool {
+        self.stores_loader_functions
     }
 
     /// In a test run: the file passes a `spyOn` function around as a value, so not all of its calls can be seen.

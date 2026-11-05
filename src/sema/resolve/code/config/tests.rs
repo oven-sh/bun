@@ -616,6 +616,7 @@ fn pragmas_override_one_member_each() {
         });
         let pragmas = JsxPragmas {
             classic,
+            is_development: None,
             factory,
             fragment_factory,
             import_source,
@@ -623,6 +624,33 @@ fn pragmas_override_one_member_each() {
         let once = base.with_pragmas(&pragmas, &atoms).unwrap();
         assert_eq!(render_jsx(&once), expected, "{classic:?} {texts:?}");
         assert_eq!(once.with_pragmas(&pragmas, &atoms).as_ref(), Some(&once));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn pragma_overrides_development() {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    for (written, expected) in [
+        (Some(true), [true, true]),
+        (Some(false), [false, false]),
+        (None, [false, true]),
+    ] {
+        let pragmas = JsxPragmas {
+            classic: Some(false),
+            is_development: written,
+            ..JsxPragmas::default()
+        };
+        let found = [false, true].map(|is_development| {
+            let base = JsxSettings {
+                is_development,
+                ..JsxSettings::default()
+            };
+            let settings = base.with_pragmas(&pragmas, &atoms).unwrap();
+            settings.is_development
+        });
+        assert_eq!(found, expected, "{written:?}");
     }
 }
 

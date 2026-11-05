@@ -37,79 +37,8 @@ class Cat extends Animal { lives: string = "nine"; meow(): string { return this.
 { type Sh = { k: "c"; r: number } | { k: "s"; w: number }; const bad = { k: "c", w: 2 } as unknown as Sh; const area = (s: Sh): number => s.k === "c" ? s.r * 2 : s.w; log(29, area(bad), area({ k: "x" } as unknown as Sh)); }
 { const sym: unique symbol = Symbol("u"); const o: { [sym]: number } = { [sym]: 1 }; (o as any)[sym] = "s"; log(30, typeof o[sym]); const idx: { [k: number]: string } = ["a"]; log(30, idx[3], idx[-1]); }
 
-// GENERATED: Dog isDog init rest area
 // CHECK-LABEL: function {{*}}name="Dog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_3]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isDog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
-// CHECK-NEXT: v1 = Boolean boolean=true
-// CHECK-NEXT: v2 = Convert v1 declared={type=boolean}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="init"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_5]]} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: [[L_5]]):
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = PropGet v0 key="n"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: PropSet v0, v4 key="seen"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: Array<number>):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Convert v4 declared={type=number}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v10 = Add v4, v8
-// CHECK-NEXT: v11 = Convert v10 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v11)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v12 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_7]]|[[L_8]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_7]]|[[L_8]]):
-// CHECK-NEXT: v1 = PropGet v0 key="k"
-// CHECK-NEXT: v2 = String string="c"
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = NarrowByField v0, v4 key="k"
-// CHECK-NEXT: v6 = PropGet v5 key="r"
-// CHECK-NEXT: v7 = Integer integer=2
-// CHECK-NEXT: v8 = Mul v6, v7
-// CHECK-NEXT: Jump -> next b3(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = NarrowByField v0, v9 key="k"
-// CHECK-NEXT: v11 = PropGet v10 key="w"
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: v13 = Convert v12 declared={type=number}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }

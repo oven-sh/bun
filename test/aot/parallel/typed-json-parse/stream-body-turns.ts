@@ -1,5 +1,4 @@
 // `(await body.json()) as Order` goes on in the turn in which `await body.json()` does, also where a stream of the program feeds the body.
-// STATISTIC: TypedResultsSelected >= 2
 interface Order {
   inner: { x: number };
 }

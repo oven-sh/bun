@@ -487,4 +487,11 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain("(fail) rejects with another message");
     expect(exitCode).toBe(1);
   });
+
+  test.concurrent("a build error", async () => {
+    using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
+    const { stderr, exitCode } = await runTests(String(dir), true, [], false);
+    expect(stderr).toContain("./does-not-exist");
+    expect(exitCode).toBe(1);
+  });
 });

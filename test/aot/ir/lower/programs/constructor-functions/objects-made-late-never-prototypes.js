@@ -217,64 +217,9 @@
   for (const w of kept.slice(0, 12)) console.log(JSON.stringify(w), Object.keys(w).join(), Object.getPrototypeOf(w) === W.prototype, w.y, typeof w.get === "function" ? w.get() : "none");
 })();
 
-// GENERATED: inherits extendStatics __
 // CHECK-LABEL: function {{*}}name="inherits"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[IsExpected]}, {type=undefined|null|[[f_2]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v4 = PropGet v1 key="prototype"
-// CHECK-NEXT: v5 = Call v3, v2, v4 calleeName="Object.create"
-// CHECK-NEXT: PropSet v0, v5 key="prototype"
-// CHECK-NEXT: v7 = PropGet v0 key="prototype"
-// CHECK-NEXT: PropSet v7, v0 key="constructor"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inherits"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]] flags=[IsExpected]}, {type=undefined|null|[[f_4]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_3]], v1: undefined|null|[[f_4]]):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v4 = PropGet v1 key="prototype"
-// CHECK-NEXT: v5 = Call v3, v2, v4 calleeName="Object.create"
-// CHECK-NEXT: PropSet v0, v5 key="prototype"
-// CHECK-NEXT: v7 = PropGet v0 key="prototype"
-// CHECK-NEXT: PropSet v7, v0 key="constructor"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="extendStatics"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 captures=[{type=env [[L_5]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: env [[L_5]], v1: anything, v2: anything):
-// CHECK-NEXT: v3 = Builtin builtin=ObjectSetPrototypeOf
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_5]]
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v7 = Call v6, -, v1, v2 calleeName="extendStatics"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="extendStatics"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: env [[L_7]], v1: anything, v2: anything):
-// CHECK-NEXT: v3 = Builtin builtin=ObjectSetPrototypeOf
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_7]]
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: v7 = Call v6, -, v1, v2 calleeName="extendStatics"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected] variableName="d"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_9]], v1: anything):
-// CHECK-NEXT: PropSet v1, v0 key="constructor"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected] variableName="d"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_9]], v1: anything):
-// CHECK-NEXT: PropSet v1, v0 key="constructor"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

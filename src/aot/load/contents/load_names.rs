@@ -13,7 +13,7 @@ use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, find_names_exported_for, find_parameter_named,
     find_values_of_parameter, is_name_read_by_transpiler, is_name_written_out,
 };
-use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTarget, ComputedTargets, FileId, Files};
 use bun_sema::resolve::{
     CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
 };
@@ -132,6 +132,14 @@ pub(crate) fn is_followed_further_than_bundler(
         || !is_name_read_by_transpiler(hir, bound, decisions, site.kind)
 }
 
+/// `kit-a`, `@scope/kit/sub`, `~/alias`: no path: a package.json or a tsconfig.json says which file it is, and an executable has that written down for its entry points.
+/// Not so `#inner`, which the `imports` of the importer's own package.json resolve.
+pub(crate) fn is_resolved_by_manifest(spelling: &[u8]) -> bool {
+    !spelling.starts_with(b".")
+        && !spelling.starts_with(b"#")
+        && !bun_paths::is_absolute_loose(spelling)
+}
+
 /// In the format of the checker.
 pub(crate) fn find_files_followed_further_than_bundler(files: &dyn CodeView<'_>) -> Vec<Vec<u8>> {
     let mut found: Vec<Vec<u8>> = Vec::new();
@@ -146,8 +154,23 @@ pub(crate) fn find_files_followed_further_than_bundler(files: &dyn CodeView<'_>)
             if !is_followed_further_than_bundler(files, file, site) {
                 continue;
             }
-            if let CodeAnswer::File(target) = *answer {
-                found.push(files.file_name(target).to_vec());
+            match *answer {
+                CodeAnswer::File(target) => found.push(files.file_name(target).to_vec()),
+                // The loader of an executable reads no package.json and no tsconfig.json: what those make of a name is written down for entry points.
+                CodeAnswer::Computed(ComputedTargets::Modules { spellings, .. }) => {
+                    let named = spellings
+                        .iter()
+                        .filter_map(|&(spelling, target)| match target {
+                            ComputedTarget::File(target)
+                                if is_resolved_by_manifest(files.atoms().bytes(spelling)) =>
+                            {
+                                Some(files.file_name(target).to_vec())
+                            }
+                            _ => None,
+                        });
+                    found.extend(named);
+                }
+                _ => {}
             }
         }
     }

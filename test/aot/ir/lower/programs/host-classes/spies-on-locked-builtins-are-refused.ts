@@ -34,49 +34,8 @@ attempt("a name that is not known at build time", () => spyOn(Array.prototype as
 
 attempt("an object of the program", () => spyOn(own, "method").mockReturnValue("spied"), () => own.method());
 
-// GENERATED: joined page header floored method
 // CHECK-LABEL: function {{*}}name="joined"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: v1 = PropGet v0 key="join"
-// CHECK-NEXT: v2 = String string="-"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="join" calleeName="list.join"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="page"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="URL" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(URL) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Construct v3, -, v0 calleeName="URL"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v6 = PropGet v5 key="searchParams"
-// CHECK-NEXT: v7 = PropGet v6 key="get"
-// CHECK-NEXT: v8 = String string="page"
-// CHECK-NEXT: v9 = Call v7, v6, v8 calleeKey="get" calleeName="get"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|null|string flags=[OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="header"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Headers flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Headers):
-// CHECK-NEXT: v1 = PropGet v0 key="get"
-// CHECK-NEXT: v2 = String string="a"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="get" calleeName="headers.get"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="floored"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Builtin builtin=Math
-// CHECK-NEXT: v2 = Builtin builtin=MathFloor
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Math.floor"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="real"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

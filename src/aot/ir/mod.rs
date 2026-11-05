@@ -42,7 +42,7 @@ mod tests;
 #[cfg(any(test, feature = "ir_text"))]
 pub use body::{BlockView, StreamError, TargetView, TerminatorView, ValueView};
 pub use body::{Body, FieldWord, Words};
-pub use builder::{BuilderScratch, Edge, FunctionBuilder, Handler, LocalVariable};
+pub use builder::{BuilderScratch, Edge, FunctionBuilder, Handler, LocalVariable, Place};
 pub use declared::{DeclaredType, Mapped, PositionFlags};
 pub use entry_parameters::EntryPosition;
 pub use generated::{ContentsSlot, Opcode};

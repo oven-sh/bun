@@ -11,7 +11,18 @@ const js = { capability: "js", throws: true } as const;
 /** The bytes of the view are written once the operation has ended, and then the callback is called. */
 const fillsLater = { buf: [...table.handedOver, table.writesContents()], callback: table.handedOver };
 /** The callback goes to `process.nextTick` with `undefined` and the number, and nowhere else. */
-const queuesCallback = { callback: [table.storedIn(table.nativeCell(randomIntCallbackCell))] };
+const queuesCallback = {
+  callback: [
+    table.storedIn(table.nativeCell(randomIntCallbackCell)),
+    table.called({
+      afterwards: "TouchesOnlyWhatRowNames",
+      times: "Later",
+      this: table.undefined,
+      args: [table.undefined, table.f64],
+      result: "Ignored",
+    }),
+  ],
+};
 
 const stringOrBufferNames = ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"];
 const passwordAndSaltNames = { password: stringOrBufferNames, salt: stringOrBufferNames };

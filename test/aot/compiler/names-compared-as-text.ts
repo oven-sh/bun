@@ -86,6 +86,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "a name that begins with % is the build's own: no program can write one",
   },
   {
+    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_text)\.rs$/,
+    lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\(b"%"\)/,
+    reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
+  },
+  {
     paths:
       /^src\/aot\/load\/(contents\/(entry_points|load_names|worker_entries)|data_modules|disk_delegation|externals|host|loaders|manual_mocks|module_paths|plugin_modules|project|runtime_\w+|source_provider|sources)(\.rs$|\/)|^src\/aot\/compile\/(load_stage|paths)\.rs$|^src\/aot\/(load\/contents|module_keys|modules\/requests)\.rs$/,
     reason: "Load: what a file extension or a module specifier loads is a question about a path",
@@ -101,6 +106,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /\.strip_prefix\(b"(?:\.|\/\.\.)"\)/,
     reason:
       'the path that the build has made of `path.join(__dirname, "..", "a.js")` begins with its steps up: they are pieces of a path, and a path is bound to nothing',
+  },
+  {
+    paths: /^src\/aot\/lower\/module\/loads\.rs$/,
+    lines: /!name\.starts_with\(b"node:"\)/,
+    reason:
+      "the scheme in the name of a built-in module, which the table of built-ins has found by then: how a transpiler prints that name is a question about a path",
   },
   {
     paths: /^src\/aot\/compile\/removable\.rs$/,
@@ -283,10 +294,72 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "an export of the test runner and a member of it: find_api() finds the object by the symbol of its import or as a free name, as plain Bun's hoist_test_mocks.rs does, and the specifier stands in the record of the import",
   },
   {
-    paths: /^src\/aot\/(load\/loader_aliases|lower\/commonjs\/exports|modules\/(referents|wrapped))\.rs$/,
+    paths:
+      /^src\/aot\/(builtins\/resolve\/module_objects|load\/loader_aliases|lower\/commonjs\/exports|modules\/(referents|wrapped))\.rs$/,
     lines: /known::(?:require|exports)\b/,
     reason:
       "`import.meta.require` and `module.exports`: `import.meta` is syntax, and the binder has said that the object is the parameter of the module",
+  },
+  {
+    paths: /^src\/aot\/load\/made_own_require\.rs$/,
+    lines: /known::(?:node_module|module|createRequire|resolve|main)\b/,
+    reason:
+      "the specifier in a call of the file's own `require`, `createRequire` of what that call answers, and `resolve` and `main` of that `require`: the binder has said that the callee or the object is the parameter of the module",
+  },
+  {
+    paths: /^src\/aot\/lower\/commonjs\/variables\.rs$/,
+    lines: /known::(?:meta_dir|meta_dirname|path|meta_filename|url)\b/,
+    reason: "a member of `import.meta`, which is syntax",
+  },
+  {
+    paths: /^src\/aot\/lower\/function\/text_replaced_by_bundling\.rs$/,
+    lines: /is_callee && name == known::eval\b/,
+    reason:
+      "the language makes a call a direct eval by the identifier `eval` as it is written, whatever it is bound to: a bundler that puts something else in its place would change what the call sees",
+  },
+  {
+    paths: /^src\/aot\/lower\/known_call\.rs$/,
+    lines: /atoms\.lookup\(b"key"\)/,
+    reason:
+      "a key of the descriptor that a helper of a compiler is handed: the helper, found by its definition, stands in front of it and reads that key off whatever it gets",
+  },
+  {
+    paths: /^src\/aot\/lower\/call\/written_operands\.rs$/,
+    lines: /== b"prototype"/,
+    reason:
+      "a read off `unknown` (section 8): `Object.create(x.prototype)`, whatever `x` is, is left to the form that every call has: the match only takes an answer away",
+  },
+  {
+    paths: /^src\/aot\/(modules\/imports|test_run_loads\/changed_on_disk|test_runs\/mod)\.rs$/,
+    lines: /\[b'\.' \| b'\/', \.\.\]|\[b'\/', \.\.\]|contains_char\(atoms\.bytes\(text\), b'\?'\)/,
+    reason: "whether a specifier is a relative path, an absolute one or has a query is a question about a path",
+  },
+  {
+    paths: /^src\/aot\/test_runs\/files_of_run\.rs$/,
+    lines: /^b"(?:main|dependencies)" \||\.starts_with\(b"[@.]"\)/,
+    reason:
+      "the keys of a package.json, the scope in the name of a package and the names of folders on the disk: data that a test run reads to find its files, no name of the program",
+  },
+  {
+    paths: /^src\/aot\/test_runs\/texts\.rs$/,
+    lines: /^b"@jest\/globals" \| b"vitest" =>/,
+    reason: "the specifier in the record of an import: which module it names is a question about a path",
+  },
+  {
+    paths: /^src\/aot\/test_runs\/texts\.rs$/,
+    lines: /tree\.text_of\(name\) == b"length"/,
+    reason: "a member behind a value: whoever follows a text has the text in hand where it reads the name of the member",
+  },
+  {
+    paths: /^src\/aot\/test_run_loads\/keys_of_cache\.rs$/,
+    lines: /atoms\.bytes\(method\) == b"startsWith"/,
+    reason:
+      "`if (key.startsWith(folder)) delete require.cache[key]`: a member behind the value that is the key of the table of loaded modules. A key that is no text and answers for itself makes the guess wrong, and a wrong guess is loud: to take out a file that the build has bound for good throws",
+  },
+  {
+    paths: /^src\/sema\/check\/aot\/inferred_from_use\.rs$/,
+    lines: /^b"__proto__" \| b"Infinity" \| b"NaN" \|/,
+    reason: "the class of a name, read off its text: which keys of a literal a layout lists",
   },
   {
     paths: /^src\/aot\/lower\/condition\.rs$/,
@@ -298,6 +371,18 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /known::(?:arguments|caller)\b/,
     reason:
       "`f.arguments` and `f.caller`: the checker is asked next whether the object is a function, and all that follows is a warning",
+  },
+  {
+    paths: /^aot\/facts\/AOTFactsRegExpTexts\.cpp$/,
+    lines: /name == "default"_s/,
+    reason:
+      "`default` in the record of what the loader fills out of a CommonJS module: the record stands in front of the name. The rehearsal only lists the texts for which a matcher is made ahead: a wrong guess costs code and never an answer",
+  },
+  {
+    paths: /^aot\/facts\/AOTLinkCalls\.cpp$/,
+    lines: /questions\.keys\.contains\(m_program\.keyOf\(BuiltinNames::toLocaleString\)\)/,
+    reason:
+      "a table of built-ins: what the functions of Object.prototype ask in turn (object.builtins.ts): toLocaleString() calls `toString`. The list holds what a built-in asks of its operand, and the built-in stands in front of it",
   },
   {
     paths: /^aot\/walk\/AOTWalkArguments\.cpp$/,

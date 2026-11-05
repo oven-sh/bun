@@ -16,7 +16,7 @@ pub use check::{
 };
 pub use load::{
     FileFinder, FileFinderTables, find_configuration_of_each_entry_point, load_program,
-    load_program_of_loaded_files, load_program_with_parsed_files, resolve_names_known_in_part,
+    resolve_names_known_in_part,
 };
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
@@ -44,6 +44,7 @@ use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 use std::cell::UnsafeCell;
 use std::num::NonZeroUsize;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Copy, Clone)]
@@ -83,10 +84,20 @@ pub struct LoadedProgram<'s> {
     origins: Vec<FileOrigin>,
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
-    pub has_bun_types_installed: bool,
-    pub brings_bun_types: bool,
-    without_bun_types: Option<WithoutBunTypes>,
+    bun_types: BunTypes,
     has_configuration_file: bool,
+    /// Ascending. `leave_files_to_loader`
+    files_left_to_loader: OnceLock<Box<[FileId]>>,
+}
+
+/// Which declarations of Bun's own API a load has read.
+pub(crate) enum BunTypes {
+    /// Those that the project has installed. Bun's own modules are taken so too: no diagnostic of theirs is put down to a lack.
+    Installed,
+    /// Those that the build brings along, where the load reads none that are installed.
+    Brought,
+    /// None.
+    Missing(WithoutBunTypes),
 }
 
 pub(crate) struct WithoutBunTypes {
@@ -113,6 +124,17 @@ impl<'s> LoadedProgram<'s> {
 
     pub fn origin(&self, file: FileId) -> FileOrigin {
         self.origins[file.idx()]
+    }
+
+    /// The files that `bun build` would put into no bundle, because only a computed name finds them. Whoever has the module graph says which, ahead of every check:
+    /// such a file is judged as the loader judges it where the program loads it.
+    pub fn leave_files_to_loader(&self, mut files: Vec<FileId>) {
+        files.sort_unstable();
+        let _ = self.files_left_to_loader.set(files.into_boxed_slice());
+    }
+
+    pub(crate) fn files_left_to_loader(&self) -> &[FileId] {
+        self.files_left_to_loader.get().map_or(&[], |files| files)
     }
 
     /// Frees most of the HIR and of the binder's tables of every file.
@@ -197,8 +219,7 @@ impl<'s> LoadedProgram<'s> {
             files: Some(self.files),
             origins: &self.origins,
             project_origin: self.project_origin,
-            without_bun_types: self.without_bun_types.as_ref(),
-            lacks_installed_bun_types: self.brings_bun_types || self.without_bun_types.is_some(),
+            bun_types: &self.bun_types,
             has_configuration_file: self.has_configuration_file,
         }
     }

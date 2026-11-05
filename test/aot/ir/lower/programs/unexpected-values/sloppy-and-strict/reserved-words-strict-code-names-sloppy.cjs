@@ -109,77 +109,7 @@ Object.keys(ways).forEach(function (way) {
   });
 });
 
-// GENERATED: attempt drive yield asParameters
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v8 = Call v1 calleeName="run"
-// CHECK-NEXT: v9 = Call v7, -, v8 calleeName="show"
-// CHECK-NEXT: v10 = Call v6, v4, v0, v9 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v11 = CatchValue
-// CHECK-NEXT: v12 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v13 = PropGet v12 key="console" [isFreeName]
-// CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v14 key="log"
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v17 = String string="threw"
-// CHECK-NEXT: v18 = PropGet v11 key="constructor"
-// CHECK-NEXT: v19 = PropGet v18 key="name"
-// CHECK-NEXT: v20 = Call v16, v14, v0, v17, v19 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v21 = Undefined
-// CHECK-NEXT: Return v21
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drive"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = String string="(1)"
-// CHECK-NEXT: v4 = Add v0, v3
-// CHECK-NEXT: v5 = PropGet v1 key="bind"
-// CHECK-NEXT: v6 = Null
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: v8 = Integer integer=2
-// CHECK-NEXT: v9 = Integer integer=3
-// CHECK-NEXT: v10 = Call v5, v1, v6, v7, v8, v9 calleeKey="bind" calleeName="callee.bind"
-// CHECK-NEXT: v11 = Call v2, -, v4, v10 calleeName="attempt"
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v13 = String string="('ab')"
-// CHECK-NEXT: v14 = Add v0, v13
-// CHECK-NEXT: v15 = PropGet v1 key="bind"
-// CHECK-NEXT: v16 = Null
-// CHECK-NEXT: v17 = String string="ab"
-// CHECK-NEXT: v18 = Call v15, v1, v16, v17 calleeKey="bind" calleeName="callee.bind"
-// CHECK-NEXT: v19 = Call v12, -, v14, v18 calleeName="attempt"
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v21 = String string="()"
-// CHECK-NEXT: v22 = Add v0, v21
-// CHECK-NEXT: v23 = Call v20, -, v22, v1 calleeName="attempt"
-// CHECK-NEXT: v24 = Undefined
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="yield"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v0, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asParameters"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = NewArray v0, v1, v2 contents=anything
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

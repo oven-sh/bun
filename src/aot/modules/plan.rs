@@ -183,6 +183,8 @@ pub(super) struct Plan {
     reaches_entries_of_cache: Option<bool>,
     /// `find_library_modules_stored_in_cache` of the files of the program.
     library_modules_stored_in_cache: Vec<RuntimeModule>,
+    /// `ProgramContents::stores_loader_functions`
+    asks_loader_functions: bool,
     /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
     runs_again: Vec<bool>,
     /// By `OrderParts::component_of`.
@@ -237,6 +239,7 @@ impl Plan {
             named_by_copies: NamedByCopies::default(),
             reaches_entries_of_cache: None,
             library_modules_stored_in_cache: Vec::new(),
+            asks_loader_functions: false,
             runs_again: vec![false; order.numbers.len()],
             has_es_module_that_runs_again: vec![false; order.numbers.len()],
             replaced_variables: Vec::new(),
@@ -772,7 +775,7 @@ impl ModuleGraph {
     /// `bun run` reads `require("fs")` as `require("node:fs")` in a CommonJS file that an import has loaded, and as it is written in one that `require` has loaded.
     /// Beside an entry under such a name the two differ, so the run time keeps track of how each CommonJS file of the program was first loaded.
     pub fn tracks_first_load(&self, file: FileId) -> bool {
-        !self.plan.library_modules_stored_in_cache.is_empty()
+        (!self.plan.library_modules_stored_in_cache.is_empty() || self.plan.asks_loader_functions)
             && self.kind(file) == ModuleKind::CommonJs
             && self.is_code_of_program(ModuleRef::File(file))
     }
@@ -1007,6 +1010,16 @@ impl ModuleGraph {
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
         self.plan
             .add(|plan| &mut plan.names_way_to_module_objects, module);
+    }
+
+    /// `Module._resolveFilename = ..`, `Module.prototype.require = ..`: from then on `bun test` asks the program at every `require` and `require.resolve`, also where the name is a constant
+    /// that the build has bound to a module.
+    pub fn asks_loader_functions(&self) -> bool {
+        self.plan.asks_loader_functions
+    }
+
+    pub fn set_asks_loader_functions(&mut self) {
+        self.plan.asks_loader_functions = true;
     }
 
     pub fn set_is_found_by_name(&mut self, module: ModuleRef) {

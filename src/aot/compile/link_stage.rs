@@ -200,10 +200,13 @@ impl Build<'_> {
                             // The system is asked about each file: thousands of calls, which wait for nothing but one another.
                             const ASKED_TOGETHER: usize = 256;
                             let records = program.modules.iter().enumerate();
-                            // Every file of the program: one that changes although the build saw nothing that writes it fails its load, where it would run as it was compiled.
+                            // In a test run every file of the program: one that changes although the build saw nothing that writes it fails its load, where it would run as it was compiled.
+                            // An executable that is built in place runs later, also where its project no longer lies: it asks about what may leave `require.cache`, as ever, and no other file.
                             let of_program: Vec<(usize, StringId)> = records
                                 .filter(|(_, module)| {
                                     !module.flags.contains(ModuleFlags::IS_LIBRARY)
+                                        && (runs_tests
+                                            || module.flags.contains(ModuleFlags::MAY_BE_EVICTED))
                                 })
                                 .map(|(index, module)| (index, module.path))
                                 .collect();
@@ -214,9 +217,17 @@ impl Build<'_> {
                                 map_each(lots, &in_parallel, &|lot: &[(usize, StringId)]| {
                                     let stamps = lot.iter().filter_map(|&(index, path)| {
                                         let path = strings.get(path);
-                                        let stat_at = |path: &[u8]| {
-                                            bun_sys::stat(&bun_core::ZBox::from_bytes(path)).ok()
-                                        };
+                                        // A name with a NUL in it is the path of no file: the system would read it up to there.
+                                        let stat_at =
+                                            |path: &[u8]| match bun_core::strings::contains_char(
+                                                path, 0,
+                                            ) {
+                                                true => None,
+                                                false => {
+                                                    bun_sys::stat(&bun_core::ZBox::from_bytes(path))
+                                                        .ok()
+                                                }
+                                            };
                                         // What an import attribute makes of a file is written when the file is. The host asks the same two: `Bun__AOT__stampOfFile`.
                                         let is_data =
                                             module_records[index].kind == ModuleKind::Data;

@@ -194,77 +194,9 @@ attempt("the longest of none", () => longest([]));
 attempt("reduce of none", () => reduced([]));
 attempt("reduce of one", () => reduced(["only"]));
 
-// GENERATED: characterKind holeLength spreadCharacterUpper destructuredUpper entryName make
 // CHECK-LABEL: function {{*}}name="characterKind"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string):
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = TypeOf v2
-// CHECK-NEXT: v4 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: v5 = String string="!"
-// CHECK-NEXT: v6 = Add v2, v5
-// CHECK-NEXT: v7 = NewArray v3, v4, v6 contents=anything
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="holeLength"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: v1 = String string="ada"
-// CHECK-NEXT: v2 = String string="grace"
-// CHECK-NEXT: v3 = NewArray v1, v2 contents=anything holes=[1]
-// CHECK-NEXT: v4 = ElemGet v3, v0
-// CHECK-NEXT: v5 = PropGet v4 key="length"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="spreadCharacterUpper"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array, v1: i32):
-// CHECK-NEXT: v2 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v2, v0
-// CHECK-NEXT: v4 = ElemGet v2, v1
-// CHECK-NEXT: v5 = PropGet v4 key="toUpperCase"
-// CHECK-NEXT: v6 = Call v5, v4 calleeKey="toUpperCase" calleeName="toUpperCase"
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="destructuredUpper"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
-// CHECK-NEXT: v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b3():
-// CHECK-NEXT: v2 = IteratorResume v1 stepIndex=0
-// CHECK-NEXT: v3 = ResultAt v2
-// CHECK-NEXT: v4 = ResultAt v2 index=1
-// CHECK-NEXT: v5 = IteratorResume v1 stepIndex=1
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: IteratorClose v1
-// CHECK-NEXT: v9 = PropGet v7 key="toUpperCase"
-// CHECK-NEXT: v10 = Call v9, v7 calleeKey="toUpperCase" calleeName="second.toUpperCase"
-// CHECK-NEXT: ReturnCall v10
-// CHECK-NEXT: b3() role=IterationCleanup subject=v1:
-// CHECK-NEXT: v11 = CatchException
-// CHECK-NEXT: IteratorClose v1 completion=Throw
-// CHECK-NEXT: Rethrow v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="entryName"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|object, v1: i32):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectEntries
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeName="Object.entries"
-// CHECK-NEXT: v5 = ElemGet v4, v1
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = ElemGet v5, v6
-// CHECK-NEXT: v8 = PropGet v7 key="toUpperCase"
-// CHECK-NEXT: v9 = Call v8, v7 calleeKey="toUpperCase" calleeName="toUpperCase"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="make"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }

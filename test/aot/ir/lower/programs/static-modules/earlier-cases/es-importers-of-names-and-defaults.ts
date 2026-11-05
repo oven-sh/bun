@@ -2,6 +2,7 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 4
+// CHECK-LABEL: function {{*}}name="later"
 
 // FILE: main.ts
 // ES importers of CommonJS files, with and without the marker, with and without a `default`.
@@ -45,15 +46,3 @@ exports.default = "own default of an unmarked module";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: later
-// CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

@@ -63,6 +63,11 @@ fn append_number(mut number: usize, text: &mut Vec<u8>) {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// Whether a function under a key that only the run knows is called after that key. An obfuscated executable shows no name of a function.
+    pub(in crate::lower) fn names_functions_by_keys(&self) -> bool {
+        !self.inputs.options.obfuscates
+    }
+
     fn find_shortened_symbol(&self, binding: Binding) -> Option<SymbolId> {
         let Binding::Symbol(symbol) = binding else {
             return None;

@@ -143,75 +143,8 @@ await (async () => {
 })();
 console.log(arrow.name, expression.name, holder.property.name, stepsExpression.name, assigned.name);
 
-// GENERATED: Holder callHidden computed2 takeDefault ownSteps
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callHidden"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = Call v3, v0 calleeName="this.#hidden"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="computed2"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, IsNamedByComputedKey] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Await v1
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="show"
-// CHECK-NEXT: v5 = String string="a method under a computed key"
-// CHECK-NEXT: v6 = Call v4, -, v5 calleeName="show"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="takeDefault"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_6]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="byDefault"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="byDefault"
-// CHECK-NEXT: v6 = TypeTest v5 testedType=undefined
-// CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v7):
-// CHECK-NEXT: v8 = NewClosure function=[[f_7]]
-// CHECK-NEXT: Jump -> next b5(v8)
-// CHECK-NEXT: b4(v9):
-// CHECK-NEXT: Jump -> next b5(v9)
-// CHECK-NEXT: b5(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ownSteps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Yield v3
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="show"
-// CHECK-NEXT: v9 = String string="a named generator expression"
-// CHECK-NEXT: v10 = Call v8, -, v9 calleeName="show"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

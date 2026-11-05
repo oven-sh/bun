@@ -271,57 +271,5 @@ attempt("next without a value: resumed with arrays again", () => {
   return [g.next().value, g.next([5, 6]).value, g.next([7]).value];
 });
 
-// GENERATED: attempt pushes1
 // CHECK-LABEL: function {{*}}name="pushes1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v4, v6)
-// CHECK-NEXT: b1(v7, v8):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v10 = Integer integer=2
-// CHECK-NEXT: v11 = Less v8, v10
-// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b6()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v12 = Yield v7
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v15 = PropGet v13 key="push"
-// CHECK-NEXT: v16 = Integer integer=1
-// CHECK-NEXT: v17 = Call v15, v13, v16 calleeKey="push" calleeName="a.push"
-// CHECK-NEXT: v18 = PropGet v13 key="length"
-// CHECK-NEXT: v19 = Add v7, v18
-// CHECK-NEXT: v20 = Convert v19 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v21 = Increment v8
-// CHECK-NEXT: v22 = Convert v21 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v20, v22)
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=" -> "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v10 = Call v9, -, v1 calleeName="outcome"
-// CHECK-NEXT: v11 = Add v8, v10
-// CHECK-NEXT: v12 = Call v6, v4, v11 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }

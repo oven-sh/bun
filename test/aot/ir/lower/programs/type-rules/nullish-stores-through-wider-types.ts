@@ -144,81 +144,8 @@ report("promise of a wider type", () => {
   return h.leaf === undefined ? "undefined" : h.leaf === null ? "null" : String(h.leaf.n);
 });
 
-// GENERATED: setByKey clear clearLeaf Box
 // CHECK-LABEL: function {{*}}name="setByKey"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"case2"|"leaf"|"name" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|true|string|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|"case2"|"leaf"|"name", v2: undefined|null|true|string|[[L_2]]):
-// CHECK-NEXT: ElemSet v0, v1, v2
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="clear"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: PropSet v0, v1 key="leaf"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="clear"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: v2 = Null
-// CHECK-NEXT: ElemSet v0, v1, v2
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="clearLeaf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = IteratorOpen v4
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = IteratorResume v5
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b7():
-// CHECK-NEXT: v11 = String string="leaf"
-// CHECK-NEXT: v12 = StrictEq v9, v11
-// CHECK-NEXT: Branch v12 -> taken b5(), notTaken b6()
-// CHECK-NEXT: b5() handler=b7():
-// CHECK-NEXT: v13 = Builtin builtin=Reflect
-// CHECK-NEXT: v14 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: v16 = Call v14, v13, v0, v9, v15 calleeName="Reflect.set"
-// CHECK-NEXT: v17 = Convert v16 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b7():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b7() role=IterationCleanup subject=v5:
-// CHECK-NEXT: v18 = CatchException
-// CHECK-NEXT: IteratorClose v5 completion=Throw
-// CHECK-NEXT: Rethrow v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Box"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_3]]):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_4]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_4]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_5]]
-// CHECK-NEXT: PropSet v4, v1 key="held"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

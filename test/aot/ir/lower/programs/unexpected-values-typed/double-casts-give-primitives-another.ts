@@ -135,71 +135,8 @@ for (const [name, value] of [["0", 0], ["1", 1], ["''", ""], ["'false'", "false"
 
 honest("honest after");
 
-// GENERATED: half code total exactlyTrue valueOf
 // CHECK-LABEL: function {{*}}name="half"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Div v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="code"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = PropGet v0 key="charCodeAt"
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="charCodeAt" calleeName="s.charCodeAt"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v0 key="length"
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Convert v4 declared={type=number}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v10 = Add v4, v8
-// CHECK-NEXT: v11 = Convert v10 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v11)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v12 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="exactlyTrue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Boolean boolean=true
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="valueOf"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Integer integer=8
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

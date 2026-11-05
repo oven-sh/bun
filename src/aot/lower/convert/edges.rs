@@ -5,7 +5,7 @@ use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ir::generated::IllTypedCause;
-use crate::ir::{DeclaredType, Primitives};
+use crate::ir::{DeclaredType, PositionFlags, Primitives};
 use crate::lower::{CheckerTypeId, FileLowering, expression};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -120,6 +120,8 @@ impl FileLowering<'_, '_, '_, '_> {
     // So what is only read out of such positions breaks no promise, whatever the engine finds to arrive there, and neither does a value with no number in its type. A cast proves nothing: its operand is asked.
     pub(in crate::lower) fn breaks_no_int32_promise(&mut self, source: ExprId) -> bool {
         let hir = self.hir;
+        // `let at = 0; take(at === 0 ? a.x : make().point.x)`: the test is decided and the other arm is never lowered: it hands nothing on, and nobody can say what its numbers are.
+        let decisions = self.decisions();
         let mut pending: SmallVec<[ExprId; 4]> = smallvec![source];
         while let Some(flowing) = pending.pop() {
             match expression::find_constant(self, flowing) {
@@ -134,7 +136,11 @@ impl FileLowering<'_, '_, '_, '_> {
             let is_read = match hir[flowing].kind {
                 ExprKind::Cond { branches, .. } => {
                     let Branches { yes, no } = hir.branches(branches);
-                    pending.extend([yes, no]);
+                    pending.extend(
+                        [yes, no]
+                            .into_iter()
+                            .filter(|&arm| !decisions.is_dead_expr(arm)),
+                    );
                     continue;
                 }
                 ExprKind::Binary {
@@ -142,7 +148,11 @@ impl FileLowering<'_, '_, '_, '_> {
                     left,
                     right,
                 } => {
-                    pending.extend([left, right]);
+                    pending.extend(
+                        [left, right]
+                            .into_iter()
+                            .filter(|&side| !decisions.is_dead_expr(side)),
+                    );
                     continue;
                 }
                 ExprKind::Binary {
@@ -169,6 +179,21 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
         true
+    }
+
+    /// The position out of which a read takes an `int32`: what the checker has for the expression. `None`: it has other numbers, or none, or only some of the `int32`s: a member of an enum, a literal.
+    pub(in crate::lower) fn position_of_int32_read(
+        &mut self,
+        read: ExprId,
+    ) -> Option<DeclaredType> {
+        if self.find_numbers(read) != Numbers::Int32s {
+            return None;
+        }
+        let ty = self.queries.expression_type(read).ok()?;
+        let mapped = self.map_type_at(ty);
+        let range = self.fragment.types.get(mapped.ty).integer_range();
+        (range == Some((i64::from(i32::MIN), i64::from(i32::MAX))))
+            .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
     }
 
     /// What `--explain` prints. It claims nothing: the engine tests the value whatever the cause is, `None` too.

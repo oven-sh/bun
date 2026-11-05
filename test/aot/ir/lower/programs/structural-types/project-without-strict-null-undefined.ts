@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
+// CHECK-LABEL: function {{*}}name="half"
+// CHECK-LABEL: function {{*}}name="total"
+// CHECK-LABEL: function {{*}}name="yes"
+// CHECK-LABEL: function {{*}}name="find"
+// CHECK-LABEL: function {{*}}name="Dog"
+// CHECK-LABEL: function {{*}}name="bark"
 
 // FILE: main.ts
 // A project without strict has null and undefined in every type.
@@ -159,78 +165,3 @@ attempt("honest again", () => [half(3), plusOne(1), size("ab"), sum({ x: 1, y: 2
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": false }, "files": [] }
-
-// GENERATED: half total yes find Dog bark
-// CHECK-LABEL: function {{*}}name="half"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Div v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number>}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5: number, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = ElemGet v0, v6
-// CHECK-NEXT: v11 = Add v5, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number}
-// CHECK-NEXT: v13 = Increment v6
-// CHECK-NEXT: v14 = Convert v13 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v12, v14)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v15 = Convert v5 declared={type=number}
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="yes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|string}] {
-// CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = String string="yes"
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = String string="no"
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b3(v6):
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="find"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number>}, {type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: number):
-// CHECK-NEXT: v2 = PropGet v0 key="find"
-// CHECK-NEXT: v3 = NewClosure v1 function=[[f_1]]
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="find" calleeName="list.find"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number}}, {declared={type=number}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Dog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="bark"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="legs"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

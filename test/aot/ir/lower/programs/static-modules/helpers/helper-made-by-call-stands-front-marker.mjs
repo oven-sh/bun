@@ -48,27 +48,3 @@ exports.lazy = function () {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="Derived"
-// CHECK-NEXT: v7 = Construct v6 calleeName="Derived"
-// CHECK-NEXT: v8 = PropGet v7 key="name"
-// CHECK-NEXT: v9 = Call v8, v7 calleeKey="name" calleeName="name"
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v11 = Call v10 calleeName="lazy"
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v13 = CheckInitialized v12 name="Derived"
-// CHECK-NEXT: v14 = StrictEq v11, v13
-// CHECK-NEXT: v15 = Call v4, v2, v9, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }

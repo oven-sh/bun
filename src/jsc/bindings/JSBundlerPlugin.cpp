@@ -27,7 +27,6 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
-#include "RemovableFeatures.h"
 #include "ErrorCode.h"
 #include "napi_external.h"
 #include "WebCoreJSBuiltins.h"
@@ -73,7 +72,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     }
 
     auto pattern = filter->pattern();
-    auto filter_regexp = FilterRegExp(vm, pattern, filter->flags());
+    auto filter_regexp = FilterRegExp(pattern, filter->flags());
     nsGroup->append(WTF::move(filter_regexp));
 }
 
@@ -282,7 +281,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
         }
 
         auto pattern = filter->pattern();
-        auto filter_regexp = FilterRegExp(vm, pattern, filter->flags());
+        auto filter_regexp = FilterRegExp(pattern, filter->flags());
         nsGroup->append(WTF::move(filter_regexp));
     }
 
@@ -300,50 +299,10 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
-BundlerPlugin::FilterRegExp::FilterRegExp(JSC::VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags)
-    // Ensure it's safe for cross-thread usage.
-    : m_pattern(pattern.isolatedCopy())
-    , m_allocator(WTF::makeUnique<WTF::BumpPointerAllocator>())
-{
-    Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
-    Yarr::YarrPattern yarrPattern(m_pattern, flags, errorCode);
-    if (Yarr::hasError(errorCode))
-        return;
-    m_bytecode = Yarr::byteCompile(yarrPattern, m_allocator.get(), errorCode);
-#if ENABLE(YARR_JIT)
-    // A build asks every filter about every file, and the interpreter takes thousands of instructions for a path.
-    if (!m_bytecode || !Options::useJIT() || !Options::useRegExpJIT() || JSC::isFeatureRemoved(JSC::RemovableFeature::JIT))
-        return;
-    Yarr::YarrPattern matchOnlyPattern(m_pattern, flags, errorCode, Yarr::ExecutionMode::MatchOnly);
-    if (Yarr::hasError(errorCode) || matchOnlyPattern.containsUnsignedLengthPattern())
-        return;
-#if !ENABLE(YARR_JIT_BACKREFERENCES)
-    if (matchOnlyPattern.m_containsBackreferences)
-        return;
-#endif
-    if (matchOnlyPattern.m_containsLookbehinds && !Options::useRegExpLookbehindJIT())
-        return;
-    auto code = makeUnique<Yarr::YarrCodeBlock>(nullptr);
-    JSC::callRemovable<JSC::RemovableFeature::JIT, JSC::RemovedFeatureStub::Abort, &Yarr::jitCompile>(matchOnlyPattern, StringView(m_pattern), Yarr::CharSize::Char8, std::optional<StringView> {}, &vm, *code, Yarr::ExecutionMode::MatchOnly);
-    if (!code->failureReason() && code->has8BitCodeMatchOnly())
-        m_matchOnlyCode = WTF::move(code);
-#else
-    UNUSED_PARAM(vm);
-#endif
-}
-
 bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     if (!m_bytecode || path.isNull())
         return false;
-#if ENABLE(YARR_JIT)
-    if (m_matchOnlyCode && path.is8Bit()) {
-        Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
-        auto result = m_matchOnlyCode->execute(path.span8(), 0, &regExpContext);
-        if (result.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
-            return !!result;
-    }
-#endif
     WTF::Locker locker { lock };
     Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
     Vector<unsigned, 32> offsets;

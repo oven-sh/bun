@@ -732,11 +732,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         };
                     left = self.finish_expr(kind, start);
                     // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
-                    // the `as T` could not be erased.
+                    // the `as T` could not be erased, and typescript-go reports the `*`. `bun run` reads
+                    // `(a + b) * c`, as TypeScript 6 does.
                     if self.token() == T::GreaterThan {
                         self.lx.rescan_greater_than();
                     }
-                    if self.token().binary_precedence() > last_precedence && !self.is_flow() {
+                    if self.token().binary_precedence() > last_precedence
+                        && !self.is_flow()
+                        && !self.options.compiles
+                    {
                         return left;
                     }
                 }

@@ -1,3 +1,4 @@
+// Reference: bun build --compile
 // The same with types written.
 let reads: number = 0;
 let made: number = 0;

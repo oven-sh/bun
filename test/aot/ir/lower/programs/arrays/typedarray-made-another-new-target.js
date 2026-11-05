@@ -95,64 +95,6 @@ for (const [Parent, element] of [
   });
 }
 
-// GENERATED: big Late WithConstructor
 // CHECK-LABEL: function {{*}}name="big"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|bigint):
-// CHECK-NEXT: v1 = Builtin builtin=BigInt
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="BigInt"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="WithConstructor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 captures=[{type=anything variableName="element"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: anything, v3: anything):
-// CHECK-NEXT: v4 = Absent
-// CHECK-NEXT: v5 = GetSuperBase v1
-// CHECK-NEXT: v6 = SuperConstruct v5, v2, v3 layout=[[L_5]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_5]]}
-// CHECK-NEXT: v8 = TypeTest v4 testedType=absent
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: v10 = TypeTest v7 testedType=absent
-// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: v12 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v12
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: v14 = Integer
-// CHECK-NEXT: v15 = Integer integer=5
-// CHECK-NEXT: v16 = Call v0, -, v15 calleeName="element"
-// CHECK-NEXT: ElemSet v13, v14, v16
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: v19 = TypeTest v18 testedType=object
-// CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v20):
-// CHECK-NEXT: Jump -> next b9(v20)
-// CHECK-NEXT: b5(v21):
-// CHECK-NEXT: v22 = TypeTest v21 testedType=undefined
-// CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v23):
-// CHECK-NEXT: v24 = TypeTest v13 testedType=absent
-// CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v25):
-// CHECK-NEXT: v26 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v26
-// CHECK-NEXT: b8(v27):
-// CHECK-NEXT: Jump -> next b9(v27)
-// CHECK-NEXT: b9(v28):
-// CHECK-NEXT: Return v28
-// CHECK-NEXT: b10(v29):
-// CHECK-NEXT: v30 = NewRuntimeError runtimeError=DerivedConstructorResult name="WithConstructor"
-// CHECK-NEXT: Throw v30
-// CHECK-NEXT: b11(v31):
-// CHECK-NEXT: v32 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v32
-// CHECK-NEXT: }

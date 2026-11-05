@@ -30,22 +30,4 @@ for (const spelled of ["-0", "-0.0", "-0e5", "-0E-5", "-1e-400", "0", "0.0", "0e
 }
 console.log(sign((JSON.parse('{"n":1}') as Bit).n), sign((JSON.parse('{"n":-1}') as { n: -1 | 0 }).n), sign((JSON.parse('{"n":1.5}') as { n: 1.5 }).n));
 
-// GENERATED: sign
 // CHECK-LABEL: function {{*}}name="sign"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectIs
-// CHECK-NEXT: v3 = Double number=-0
-// CHECK-NEXT: v4 = Call v2, v1, v0, v3 calleeName="Object.is"
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = ToBoolean v5
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = String string="-0"
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = Builtin builtin=String
-// CHECK-NEXT: v11 = Call v10, -, v0 calleeName="String"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

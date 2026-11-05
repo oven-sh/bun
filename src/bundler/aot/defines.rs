@@ -24,9 +24,14 @@ pub(crate) fn fold_options<'s>(
     log: &mut Log,
 ) -> FoldOptions<'s> {
     let table = &*options.define;
-    let defines = with_ast_scope(|scratch| convert_defines(table, scratch, arena, atoms, log));
+    // What the user defines comes last, and so it counts.
+    let mut defines = defines_without_hot_reloading(arena, atoms);
+    defines.extend(with_ast_scope(|scratch| {
+        convert_defines(table, scratch, arena, atoms, log)
+    }));
     let user_defined = paths_of_names(user_defined_names, arena, atoms);
-    let dropped_calls = paths_of_names(&options.drop, arena, atoms);
+    let mut dropped_calls = paths_of_names(&options.drop, arena, atoms);
+    dropped_calls.extend(HOT_RELOADING_CALLS.map(|name| path_below_hot(name, arena, atoms)));
     let features = feature_atoms(options, atoms);
     FoldOptions {
         defines: arena.alloc_slice_copy(&defines),
@@ -37,6 +42,39 @@ pub(crate) fn fold_options<'s>(
         minifies_syntax: options.minify_syntax && !options.is_library,
         ..FoldOptions::default()
     }
+}
+
+// Nothing reloads a module of a compiled program. Where hot reloading is off, the parser of `bun` takes each of these calls out, arguments and all, and leaves `undefined`
+// (js_parser/fold.rs, js_parser/visit/visit_expr.rs): `bun run`, `bun test` and `bun build` alike.
+const HOT_RELOADING_CALLS: [&[u8]; 8] = [
+    b"accept",
+    b"decline",
+    b"dispose",
+    b"prune",
+    b"invalidate",
+    b"on",
+    b"off",
+    b"send",
+];
+
+fn path_below_hot<'s>(name: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> DefinePath<'s> {
+    define_path(&[b"import", b"meta", b"hot", name], arena, atoms)
+}
+
+/// A method that is read and not called is `undefined`, and `import.meta.hot.data` is a new `{}` wherever it stands.
+fn defines_without_hot_reloading<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> Vec<Define<'s>> {
+    let mut defines: Vec<Define<'s>> = HOT_RELOADING_CALLS
+        .iter()
+        .map(|name| Define {
+            path: path_below_hot(name, arena, atoms),
+            value: DefineValue::Constant(Constant::Undefined),
+        })
+        .collect();
+    defines.push(Define {
+        path: path_below_hot(b"data", arena, atoms),
+        value: DefineValue::Data(arena.alloc(DataValue::Object(&[]))),
+    });
+    defines
 }
 
 fn collect_define_entries(table: &DefineTable) -> Vec<DefineEntry<'_>> {
@@ -360,10 +398,55 @@ mod tests {
             .dropped_calls
             .iter()
             .map(|path| path_parts(path, &atoms).join(&b'.'))
+            .filter(|path| !path.starts_with(b"import.meta.hot."))
             .collect();
         assert_eq!(
             dropped_calls,
             [&b"console"[..], b"debugger", b"tools.trace"]
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn hot_reloading_is_off() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let below_hot = |name: &[u8]| [atoms.intern(b"hot"), atoms.intern(name)];
+        let options = fold(&[], &[], session.arena(), &atoms);
+        for name in HOT_RELOADING_CALLS {
+            let members = below_hot(name);
+            let path = DefinePath {
+                root: DefineRoot::ImportMeta,
+                members: &members,
+            };
+            assert!(options.dropped_calls.contains(&path));
+            assert_eq!(
+                find_define(&options, DefineRoot::ImportMeta, &members),
+                Some(DefineValue::Constant(Constant::Undefined))
+            );
+        }
+        assert_eq!(
+            find_define(&options, DefineRoot::ImportMeta, &below_hot(b"data")),
+            Some(DefineValue::Data(&DataValue::Object(&[])))
+        );
+        assert_eq!(
+            find_define(&options, DefineRoot::ImportMeta, &[atoms.intern(b"hot")]),
+            None
+        );
+
+        // The last define of a path counts.
+        let given = [("import.meta.hot.data", "7")];
+        let options = fold(&given, &[], session.arena(), &atoms);
+        let members = below_hot(b"data");
+        let is_data = |define: &&Define<'_>| *define.path.members == members;
+        assert_eq!(
+            options
+                .defines
+                .iter()
+                .filter(is_data)
+                .next_back()
+                .map(|it| it.value),
+            Some(DefineValue::Constant(Constant::Number(7.0)))
         );
     }
 
@@ -377,6 +460,7 @@ mod tests {
             .defines
             .iter()
             .map(|define| path_parts(&define.path, &atoms))
+            .filter(|parts| !parts.join(&b'.').starts_with(b"import.meta.hot."))
             .collect();
         assert!(paths.is_sorted());
         for (key, _) in USER_DEFINES {

@@ -1,4 +1,4 @@
-What an error quotes and what a frame shows in a test file, which is an ES module whose functions keep no text: on one line, over several lines, with types; a stack taken while import() first loads node:util; a renamed static method.
+What an error quotes and what a frame shows in a test file, which is an ES module whose functions keep no text: on one line, over several lines, with types; a stack taken while import() first loads node:util.
 #### one-line.test.js
 const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE one line | " + line).join("\n"));
 // A TypeError quotes the read, the store or the call that failed as it is written. None of these functions is ever used as a value: each is only called.
@@ -153,23 +153,6 @@ await asynchronous(null).catch(error => say("async: " + error.message));
 ;(await import("bun:test")).test("one line", () => {});
 #### package.json
 { "name": "p", "type": "module" }
-#### renamed-static-method.test.js
-const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE renamed | " + line).join("\n"));
-// A method of a class that is made more than once and then renamed shows its new name in a frame.
-const rename = (f, name) => Object.defineProperty(f, "name", { value: name });
-const top = stack => stack.split("\n")[1].trim().split(" ").slice(0, 2).join(" ");
-function make() {
-  class Single {
-    m() { return new Error("x").stack; }
-    static s() { return new Error("x").stack; }
-  }
-  rename(Single.prototype.m, "renamedMethod");
-  rename(Single.s, "renamedStatic");
-  say(top(new Single().m()), "|", top(Single.s()), "|", Single.prototype.m.name, Single.s.name);
-}
-for (let turn = 0; turn < 3; turn++) make();
-
-;(await import("bun:test")).test("renamed", () => {});
 #### several-lines.test.js
 const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE several lines | " + line).join("\n"));
 // A TypeError quotes the read, the store or the test that failed on one line, however many lines it is written over, and of several reads of one name the one that failed.

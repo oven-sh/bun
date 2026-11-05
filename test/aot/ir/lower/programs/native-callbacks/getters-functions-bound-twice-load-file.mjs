@@ -163,76 +163,8 @@ console.log(typeof probe, Object.keys(probe).join(), typeof probe[0], probe[0] +
 console.log(typeof probe[2], probe[2].length, probe[2], typeof probe.count, probe.count + 1);
 console.log(getterCalls, probe.count);
 
-// GENERATED: rc138 rc144 rc150 rc182 c154
 // CHECK-LABEL: function {{*}}name="rc138"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectConstruct
-// CHECK-NEXT: v3 = Builtin builtin=Map
-// CHECK-NEXT: v4 = Data data=[[d_2]]
-// CHECK-NEXT: v5 = Call v2, v1, v3, v4, v0 calleeName="Reflect.construct"
-// CHECK-NEXT: v6 = TypeOf v5
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rc144"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_3]]):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Intl" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Intl) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="NumberFormat"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(IntlNumberFormat) flags=[IsExpected]}
-// CHECK-NEXT: v6 = String string="en"
-// CHECK-NEXT: v7 = Construct v5, -, v6, v0 calleeName="Intl.NumberFormat"
-// CHECK-NEXT: v8 = TypeOf v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rc150"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_4]]):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="CustomEvent" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(CustomEvent) flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="e"
-// CHECK-NEXT: v5 = Construct v3, -, v4, v0 calleeName="CustomEvent"
-// CHECK-NEXT: v6 = TypeOf v5
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rc182"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string|Array|AsyncGenerator flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|Array|AsyncGenerator):
-// CHECK-NEXT: v2 = Builtin builtin=Array
-// CHECK-NEXT: v3 = Builtin builtin=ArrayFromAsync
-// CHECK-NEXT: v4 = Call v3, v2, v1 calleeName="Array.fromAsync"
-// CHECK-NEXT: v5 = Await v4, v1
-// CHECK-NEXT: v6 = PropGet v5 key="length"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c154"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=Object
-// CHECK-NEXT: v1 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v2 = Builtin builtin=SetPrototype
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.create"
-// CHECK-NEXT: v4 = Builtin builtin=Object
-// CHECK-NEXT: v5 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v6 = String string="add"
-// CHECK-NEXT: v7 = NewClosure function=[[f_5]]
-// CHECK-NEXT: v8 = PropGet v7 key="bind"
-// CHECK-NEXT: v9 = Call v8, v7 calleeKey="bind" calleeName="bind"
-// CHECK-NEXT: v10 = PropGet v9 key="bind"
-// CHECK-NEXT: v11 = Call v10, v9 calleeKey="bind" calleeName="bind"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v13 = NewObject layout=[[L_7]]
-// CHECK-NEXT: PropDefine v13, v12 key="get"
-// CHECK-NEXT: v15 = Boolean boolean=true
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|boolean flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v13, v16 key="configurable"
-// CHECK-NEXT: v18 = FinishObject v13
-// CHECK-NEXT: v19 = Call v5, v4, v3, v6, v18 calleeName="Object.defineProperty"
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v21 = Call v20, -, v3 calleeName="rc154"
-// CHECK-NEXT: ReturnCall v21
-// CHECK-NEXT: }

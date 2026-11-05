@@ -146,6 +146,8 @@ pub struct LoweringInputs<'a> {
     pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
     // A file of an executable reads `__filename` or `__dirname` or asks `require.resolve`: a path of the machine that builds, which any file of the program may come to hold.
     pub reads_source_paths: bool,
+    /// The program names `Bun.plugin` and is no test run: a plugin may answer what `bun build` leaves to the run time.
+    pub may_have_plugins: bool,
     /// `ProgramContents::replaced_builtins`
     pub replaced_builtins: &'a [u32],
     /// `ProgramContents::fixed_builtins`

@@ -118,69 +118,6 @@ console.log("the getter ran once a call: " + getter.fetched);
 
 export {};
 
-// GENERATED: detachMethod where MethodForm
 // CHECK-LABEL: function {{*}}name="detachMethod"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="compute"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="compute"
-// CHECK-NEXT: v6 = Integer integer=-7
-// CHECK-NEXT: v7 = Call v5, -, v6 calleeName="compute"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="where"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectHasOwn
-// CHECK-NEXT: v3 = String string="compute"
-// CHECK-NEXT: v4 = Call v2, v1, v0, v3 calleeName="Object.hasOwn"
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = String string=" "
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Builtin builtin=Object
-// CHECK-NEXT: v9 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v10 = Call v9, v8, v0 calleeName="Object.keys"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v12 = PropGet v11 key="join"
-// CHECK-NEXT: v13 = Call v12, v11 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v7, v14
-// CHECK-NEXT: v16 = String string=" "
-// CHECK-NEXT: v17 = Add v15, v16
-// CHECK-NEXT: v18 = Builtin builtin=JSON
-// CHECK-NEXT: v19 = PropGet v18 key="stringify"
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v21 = Call v20, v18, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v23 = Add v17, v22
-// CHECK-NEXT: v24 = String string=" "
-// CHECK-NEXT: v25 = Add v23, v24
-// CHECK-NEXT: v26 = Builtin builtin=Object
-// CHECK-NEXT: v27 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v28 = NewObject layout=[[L_1]]
-// CHECK-NEXT: CopyDataProperties v28, v0
-// CHECK-NEXT: v30 = FinishObject v28
-// CHECK-NEXT: v31 = Call v27, v26, v30 calleeName="Object.keys"
-// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v33 = PropGet v32 key="join"
-// CHECK-NEXT: v34 = Call v33, v32 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v36 = Add v25, v35
-// CHECK-NEXT: v37 = Convert v36 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v37
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="MethodForm"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

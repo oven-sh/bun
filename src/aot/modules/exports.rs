@@ -720,10 +720,17 @@ fn find_absent_name(
         name,
     } = written.imported;
     let exporter = ModuleRef::File(exporter);
+    let mut resolved = tables.resolve_in(modules, exporter, name);
+    // An import statement finds a getter that a loop over the object passes over: it misses the name only where what the getter returns is missing.
+    if let Resolution::Synthetic { module, name } = resolved.resolution
+        && tables.commonjs.is_hidden(module, name)
+    {
+        resolved = tables.follow_getter(resolved);
+    }
     let Resolution::Synthetic {
         module: owner,
         name: owned_name,
-    } = tables.resolve_in(modules, exporter, name).resolution
+    } = resolved.resolution
     else {
         return None;
     };

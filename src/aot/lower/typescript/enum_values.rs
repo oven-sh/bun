@@ -61,7 +61,7 @@ impl FileLowering<'_, '_, '_, '_> {
     /// The value of the member is known. Evaluating `l` still runs the file, or throws where `l` holds nothing yet. A name that `import * as` binds does neither.
     pub(in crate::lower) fn find_member_of_loaded_module(&self, access: ExprId) -> Option<ExprId> {
         let (member, root) = self.find_member_and_root(access)?;
-        let is_imported = self.find_variable(root).is_some_and(|name| {
+        let is_imported = self.symbol_named_by(root).is_some_and(|name| {
             let binding = self.inputs.modules.import_binding(self.file, name);
             matches!(binding, ImportBinding::Namespace { .. })
         });
@@ -73,7 +73,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some((_, root)) = self.find_member_and_root(access) else {
             return true;
         };
-        self.find_variable(root)
+        self.symbol_named_by(root)
             .is_some_and(|name| self.bound.initial_state(name) != InitialState::Undefined)
     }
 
@@ -91,13 +91,6 @@ impl FileLowering<'_, '_, '_, '_> {
             root = self.skip_type_syntax(object);
         }
         Some((member, root))
-    }
-
-    fn find_variable(&self, expression: ExprId) -> Option<SymbolId> {
-        match (self.hir[expression].kind, self.bound.binding(expression)) {
-            (ExprKind::Ident(_), Binding::Symbol(name)) => Some(name),
-            _ => None,
-        }
     }
 
     /// Reach keeps neither the enum nor the object of a module for a read that this answers, so nothing may leave such a read to the run time.

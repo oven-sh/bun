@@ -203,6 +203,22 @@ fn computed_load_in_a_file_that_is_left_out_finds_no_module() {
     assert!(reaches("unused"));
 }
 
+// Only written names are handed to `load`, so it finds the modules of those names and leaves `node:punycode` read by name.
+#[test]
+fn load_whose_every_name_is_written_finds_the_modules_of_those_names_alone() {
+    let library =
+        format!("{DECODE}function encode() {{ return 1; }}\nexport default {{ encode, decode }};");
+    let reaches = |name: &str| {
+        let program = format!(
+            "import {{ encode }} from \"node:punycode\";\nconst load = name => import(name);\nconsole.log(encode, load({name}));"
+        );
+        reaches_node_dgram(&program, &[(LIBRARY, library.as_str())])
+    };
+    assert!(!reaches("\"node:os\""));
+    assert!(reaches("\"node:punycode\""));
+    assert!(reaches("process.argv[2]"));
+}
+
 fn count_lowered_files_of_bun(source: &str) -> usize {
     let mut project = TestProject::new(&[("a.js", source)], &default_settings());
     // Importing one of Bun's modules also brings in the code that native code loads at startup. A program that imports nothing must hold it too, so that the counts differ only by what an import adds.

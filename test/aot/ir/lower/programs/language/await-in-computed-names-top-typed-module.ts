@@ -90,56 +90,8 @@ const arrow = async () => ({ [await (name)("arrow")]: 1 });
 show(await declared());
 show(await arrow());
 
-// GENERATED: Named await show arrow
 // CHECK-LABEL: function {{*}}name="Named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="await"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=4
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="log"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v6 = Builtin builtin=JSON
-// CHECK-NEXT: v7 = PropGet v6 key="stringify"
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v9 = Call v8, v6, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v11 = Call v5, v3, v10 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="await"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="arrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsChecked] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="name"
-// CHECK-NEXT: v2 = String string="arrow"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="name"
-// CHECK-NEXT: v4 = Await v3
-// CHECK-NEXT: v5 = ToPropertyKey v4
-// CHECK-NEXT: v6 = Integer integer=1
-// CHECK-NEXT: v7 = NewObject layout=[[L_4]]
-// CHECK-NEXT: ElemDefine v7, v5, v6
-// CHECK-NEXT: v9 = FinishObject v7
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# all 252; ../parallel/objects-made-by-the-base-of-a-row-of-functions/ holds 1 of them.
+# all 252; ../parallel/objects-made-by-the-base-of-a-row-of-functions/ holds 0 of them.
 """Writes test/aot/parallel/objects-made-by-the-base-of-a-row-of-functions/: a constructor function with something linked below it, an object made by `new Base(..)`, and one thing done with that object.
 
 The compiler takes what `new Base(..)` makes for an object of Base's own layout, though `this` in the body of Base may be an object of whatever stands below.

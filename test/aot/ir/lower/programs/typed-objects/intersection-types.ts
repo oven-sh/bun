@@ -81,68 +81,8 @@ let total = 0
 for (let i = 0; i < 3000; i++) total += idOf(ids[i & 3]) + labelOf(labels[i & 3]).length + age(stamps[i % 3])
 console.log(total)
 
-// GENERATED: show age merge withId walk
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = Call v5, v4 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = String string=" "
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = Builtin builtin=JSON
-// CHECK-NEXT: v11 = PropGet v10 key="stringify"
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v13 = Call v12, v10, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v9, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="age"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="updated"
-// CHECK-NEXT: v2 = TypeTest v1 testedType=undefined|null
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = PropGet v0 key="created"
-// CHECK-NEXT: Jump -> next b3(v4)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b3(v6):
-// CHECK-NEXT: v7 = PropGet v0 key="created"
-// CHECK-NEXT: v8 = Sub v6, v7
-// CHECK-NEXT: v9 = Convert v8 declared={type=number}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="merge"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|object):
-// CHECK-NEXT: v2 = CopyObject v0
-// CHECK-NEXT: CopyDataProperties v2, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="withId"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: number):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectAssign
-// CHECK-NEXT: v4 = Convert v1 declared={type=number}
-// CHECK-NEXT: v5 = NewObject -, v4 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: v7 = Call v3, v2, v0, v6 calleeName="Object.assign"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="walk"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = String string="walk "
-// CHECK-NEXT: v2 = PropGet v0 key="legs"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

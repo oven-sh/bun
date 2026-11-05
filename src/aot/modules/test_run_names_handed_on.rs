@@ -80,7 +80,7 @@ impl<'a> NamesHandedOn<'a> {
 }
 
 /// `export { a as b } from "./c"`, or the import whose name the file exports, by the position of b among the own names of the file: c and a.
-pub(super) fn find_what_statement_names(
+fn find_what_statement_names(
     scans: &Scans,
     tables: &ExportTables,
     file: FileId,

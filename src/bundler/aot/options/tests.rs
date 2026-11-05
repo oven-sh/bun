@@ -99,14 +99,15 @@ fn options_about_what_can_be_removed_are_passed_on() {
             result.expect("options").removable
         })
     };
-    let plain = convert_removable(|_| {});
+    // The options of the harness are those of `bun run`, which minifies syntax.
+    let plain = convert_removable(|options| options.minify_syntax = false);
     assert_eq!(plain, RemovableOptions::default());
     let ignoring = convert_removable(|options| options.ignore_dce_annotations = true);
     assert!(ignoring.ignores_pure_annotations && !ignoring.jsx_has_side_effects);
     let with_side_effects = convert_removable(|options| options.jsx.side_effects = true);
     assert!(with_side_effects.jsx_has_side_effects && !with_side_effects.ignores_pure_annotations);
     let minifying = convert_removable(|options| options.minify_syntax = true);
-    assert_eq!(minifying, plain);
+    assert!(minifying.is_told_to_minify_syntax && !minifying.has_no_bundle);
 }
 
 #[test]

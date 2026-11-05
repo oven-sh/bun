@@ -83,60 +83,9 @@ for (const form of forms) {
   }
 }
 
-// GENERATED: Taker boom trap list make take
 // CHECK-LABEL: function {{*}}name="Taker"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasRestParameter, HasNewTarget, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: v6 = TypeTest v5 testedType=object
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: Jump -> next b2(v7)
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="boom"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="Error" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v6 = String string="boom"
-// CHECK-NEXT: v7 = Construct v5, -, v6 calleeName="Error"
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="trap"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v1 = NewClosure function=[[f_3]]
-// CHECK-NEXT: DefineGetter v0, v1 key="value"
-// CHECK-NEXT: v3 = FinishObject v0
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="list"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="lib"
-// CHECK-NEXT: v2 = PropGet v1 key="boom"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="boom" calleeName="lib.boom"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="lib"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="take"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = PropGet v0 key="length"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

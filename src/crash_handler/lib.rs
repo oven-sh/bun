@@ -40,7 +40,6 @@ mod compiled_frames;
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 mod fault_registers;
-pub mod report_file;
 mod stopped_builds;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
 pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
@@ -1248,11 +1247,6 @@ mod draft {
                             abort();
                         }
                     }
-                    crate::report_file::write(
-                        &reason,
-                        trace_str_buf.const_slice(),
-                        cli_state::is_main_thread(),
-                    );
                 }
 
                 // Be aware that this function only lets one thread return from it.
@@ -2057,11 +2051,6 @@ mod draft {
             } else {
                 let _ = writer.write_all(b"\n");
             }
-            crate::report_file::write(
-                &reason,
-                trace_str_buf.const_slice(),
-                cli_state::is_main_thread(),
-            );
         }
 
         report(trace_str_buf.const_slice());

@@ -580,6 +580,26 @@ fn program_that_mocks_no_file_has_no_station() {
 }
 
 /// `b0.js` to `lib.js`, each a star over the next.
+#[test]
+fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
+    let others = [
+        ("declares.js", "export const v = 'real';\n"),
+        ("mocked.js", "export { v } from './declares.js';\n"),
+        ("barrel.js", "export { v } from './mocked.js';\n"),
+    ];
+    let find = |rest: &str| find_stations(&["mocked.js"], rest, &others);
+    let by_import = find("import * as all from './barrel.js';\nconsole.log(all.v);\n");
+    assert_eq!(by_import, ["mocked.js seen by barrel.js"]);
+    for rest in [
+        "console.log(require('./barrel.js').v);\n",
+        "const all = require('./barrel.js');\nconsole.log(all.v);\n",
+        "const { v } = require('./barrel.js');\nconsole.log(v);\n",
+        "const { v: inner = 'none' } = require('./barrel.js');\nconsole.log(inner);\n",
+    ] {
+        assert_eq!(find(rest), by_import, "{rest}");
+    }
+}
+
 fn write_chain(count: usize) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = (0..count)
         .map(|index| {

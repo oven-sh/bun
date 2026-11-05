@@ -194,99 +194,9 @@ impl UntouchedPages {
     }
 }
 
-/// Lets `file` share `length` bytes with `source` without copying them. False where the file system cannot, or an offset is not a whole number of its blocks.
-#[cfg(target_os = "linux")]
-fn share_blocks(
-    file: &bun_sys::File,
-    position: u64,
-    source: &bun_sys::File,
-    source_position: u64,
-    length: u64,
-) -> bool {
-    #[repr(C)]
-    struct FileCloneRange {
-        source_fd: i64,
-        source_offset: u64,
-        source_length: u64,
-        destination_offset: u64,
-    }
-    // FICLONERANGE = _IOW(0x94, 13, struct file_clone_range).
-    const FICLONERANGE: libc::c_ulong = 0x4020_940D;
-    let range = FileCloneRange {
-        source_fd: i64::from(source.handle().native()),
-        source_offset: source_position,
-        source_length: length,
-        destination_offset: position,
-    };
-    // SAFETY: raw `ioctl(2)`, which reads `range` during the call.
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_ioctl,
-            libc::c_long::from(file.handle().native()),
-            FICLONERANGE,
-            &raw const range,
-        )
-    };
-    result == 0
-}
-
-#[cfg(not(target_os = "linux"))]
-fn share_blocks(
-    _file: &bun_sys::File,
-    _position: u64,
-    _source: &bun_sys::File,
-    _source_position: u64,
-    _length: u64,
-) -> bool {
-    false
-}
-
-/// Copies `length` bytes of `source` into `file` without bringing them into this process. False: it may have copied some of them.
-#[cfg(target_os = "linux")]
-fn copy_blocks(
-    file: &bun_sys::File,
-    position: u64,
-    source: &bun_sys::File,
-    source_position: u64,
-    length: u64,
-) -> bool {
-    let (to, from) = (file.handle().native(), source.handle().native());
-    let (mut read_at, mut write_at) = (source_position as i64, position as i64);
-    let end = (source_position + length) as i64;
-    while read_at < end {
-        let left = (end - read_at) as usize;
-        let offsets = (Some(&mut read_at), Some(&mut write_at));
-        if bun_sys::linux::copy_file_range(from, offsets.0, to, offsets.1, left, 0) <= 0 {
-            break;
-        }
-    }
-    // From one file system to another only sendfile() copies. It writes where the offset of `file` stands, which nothing else goes by.
-    if read_at < end && bun_sys::set_file_offset(file.handle(), write_at as u64).is_err() {
-        return false;
-    }
-    while read_at < end {
-        let left = (end - read_at) as usize;
-        if bun_sys::linux::sendfile(to, from, Some(&mut read_at), left) <= 0 {
-            return false;
-        }
-    }
-    true
-}
-
-#[cfg(not(target_os = "linux"))]
-fn copy_blocks(
-    _file: &bun_sys::File,
-    _position: u64,
-    _source: &bun_sys::File,
-    _source_position: u64,
-    _length: u64,
-) -> bool {
-    false
-}
-
 /// Writes `bytes`, which stand elsewhere in `original` or not in it at all.
-/// What nothing has written to is shared with `original` where the file system can do that, else copied from it in the kernel, else read from it a block at a time. Read through the mapping, every page of it
-/// would stay resident until the mapping goes, and the symbols and the debug information that a payload pushes back are tens or hundreds of megabytes.
+/// What nothing has written to is read from `original`, a block at a time. Read through the mapping, every page of it would stay resident until the mapping goes, and
+/// the symbols and the debug information that a payload pushes back are tens or hundreds of megabytes.
 fn write_moved_blocks(
     file: &bun_sys::File,
     position: u64,
@@ -295,41 +205,12 @@ fn write_moved_blocks(
     untouched: &UntouchedPages,
     block: &mut [u8],
 ) -> bun_sys::Maybe<()> {
-    const FEWEST_BYTES_SHARED: usize = 1 << 20;
     let Some(position_in_original) = untouched.position_of(bytes) else {
         return file.pwrite_all(bytes, position as i64);
     };
-    let page = untouched.page_size;
-    let first_shared = position_in_original.next_multiple_of(page as u64) - position_in_original;
-    let end_of_shared = (position_in_original + bytes.len() as u64) / page as u64 * page as u64;
-    let end_of_shared = end_of_shared.saturating_sub(position_in_original);
-    let (to, from) = (position + first_shared, position_in_original + first_shared);
-    let is_shared = end_of_shared >= first_shared + FEWEST_BYTES_SHARED as u64
-        && (share_blocks(file, to, original, from, end_of_shared - first_shared)
-            || copy_blocks(file, to, original, from, end_of_shared - first_shared));
-    let shared = match is_shared {
-        true => first_shared as usize..end_of_shared as usize,
-        false => 0..0,
-    };
-    // Of what is shared, only the pages that something has written to differ from the original.
-    for start in shared.clone().step_by(page) {
-        let touched = &bytes[start..start + page];
-        if !untouched.hold(touched) {
-            file.pwrite_all(touched, (position + start as u64) as i64)?;
-        }
-    }
     let mut start = 0;
     while start < bytes.len() {
-        if start == shared.start && !shared.is_empty() {
-            start = shared.end;
-            continue;
-        }
-        let limit = if start < shared.start {
-            shared.start
-        } else {
-            bytes.len()
-        };
-        let end = limit.min(start + block.len());
+        let end = bytes.len().min(start + block.len());
         let held = &mut block[..end - start];
         let is_read = untouched.hold(&bytes[start..end])
             && original.pread_all(held, position_in_original + start as u64)? == held.len();
@@ -399,9 +280,6 @@ fn let_go_of_written_pages(written: &mut [u8]) {
     }
 }
 
-#[cfg(target_os = "linux")]
-const FEWEST_BYTES_FILLED: usize = 32 << 20;
-
 /// Fills `bytes` in at the end of `file` through a mapping, whose pages several threads make side by side.
 /// Gives `bytes` back where `pwrite` has to write them.
 /// A thread lets go of each block that it has copied, so the process never has the whole of it resident, let alone twice.
@@ -411,8 +289,10 @@ fn fill_behind_end<'a>(
     bytes: ReadOnce<'a>,
     position: u64,
 ) -> Result<(), ReadOnce<'a>> {
+    const FEWEST_BYTES: usize = 32 << 20;
+    const MOST_THREADS: usize = 8;
     const BLOCK: usize = 1 << 20;
-    if bytes.len() < FEWEST_BYTES_FILLED {
+    if bytes.len() < FEWEST_BYTES {
         return Err(bytes);
     }
     let first_page = position - position % MappedFile::page_size() as u64;
@@ -444,8 +324,11 @@ fn fill_behind_end<'a>(
     };
     // SAFETY: the mapping holds `length` writable bytes until `munmap`, and nothing else refers to them.
     let target = unsafe { core::slice::from_raw_parts_mut(pointer.add(skipped), bytes.len()) };
-    let threads = usize::from(bun_core::get_thread_count());
-    let share = bytes.len().div_ceil(threads).next_multiple_of(BLOCK);
+    let threads = usize::from(bun_core::get_thread_count()).clamp(1, MOST_THREADS);
+    let share = bytes
+        .len()
+        .div_ceil(threads)
+        .next_multiple_of(MappedFile::page_size());
     let shares = target.chunks_mut(share).zip(bytes.blocks(share));
     bun_core::for_each_in_parallel(shares, |(target, bytes)| {
         for (target, bytes) in target.chunks_mut(BLOCK).zip(bytes.blocks(BLOCK)) {
@@ -466,47 +349,6 @@ fn fill_behind_end<'a>(
     Err(bytes)
 }
 
-/// `fill_behind_end()` for bytes that begin in front of the end of `file`. What stood in their place goes first, so that the blocks are the file's own and reserved.
-#[cfg(target_os = "linux")]
-fn fill_across_end<'a>(
-    file: &bun_sys::File,
-    bytes: ReadOnce<'a>,
-    position: u64,
-    previous_size: u64,
-) -> Result<(), ReadOnce<'a>> {
-    if bytes.len() < FEWEST_BYTES_FILLED {
-        return Err(bytes);
-    }
-    let replaced = previous_size
-        .saturating_sub(position)
-        .min(bytes.len() as u64);
-    if replaced > 0 {
-        // SAFETY: fallocate has no precondition but a valid file descriptor.
-        let removed = unsafe {
-            libc::fallocate(
-                file.handle().native(),
-                libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE,
-                position as i64,
-                replaced as i64,
-            )
-        };
-        if removed != 0 {
-            return Err(bytes);
-        }
-    }
-    fill_behind_end(file, bytes, position)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn fill_across_end<'a>(
-    _file: &bun_sys::File,
-    bytes: ReadOnce<'a>,
-    _position: u64,
-    _previous_size: u64,
-) -> Result<(), ReadOnce<'a>> {
-    Err(bytes)
-}
-
 fn write_behind_end(
     file: &bun_sys::File,
     bytes: ReadOnce<'_>,
@@ -518,7 +360,7 @@ fn write_behind_end(
     }
 }
 
-/// What `file` holds already, unless it is empty.
+/// What `file` holds already.
 #[derive(Copy, Clone)]
 pub(crate) struct Original<'a> {
     pub(crate) file: &'a bun_sys::File,
@@ -543,19 +385,7 @@ fn write_pieces<'a>(
     for piece in pieces {
         let piece_size = piece.len();
         match (piece, original) {
-            (Piece::Bytes(behind), Some(original)) => {
-                let is_part_of_original =
-                    (untouched.as_ref()).is_none_or(|pages| pages.position_of(&behind).is_some());
-                let mut behind = match is_part_of_original {
-                    true => behind,
-                    false => match fill_across_end(file, behind, size, previous_size) {
-                        Ok(()) => {
-                            size += piece_size;
-                            continue;
-                        }
-                        Err(behind) => behind,
-                    },
-                };
+            (Piece::Bytes(mut behind), Some(original)) => {
                 let inside = behind
                     .len()
                     .min(previous_size.saturating_sub(size) as usize);

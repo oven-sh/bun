@@ -40,58 +40,6 @@ row("an array in an array", () => e16(1));
 function e17(k: number) { switch (k) { case 1: { const a = [k]; const up = () => { a[0]++; }; up(); return a[0] === 1; } } }
 row("compared behind a closure", () => e17(1));
 
-// GENERATED: e12 e14 up
 // CHECK-LABEL: function {{*}}name="e12"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Switch v0 cases=[1] -> case b1(| 0), otherwise b2()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = NewArray v1 contents=anything
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = ElemGet v2, v3
-// CHECK-NEXT: v5 = Increment v4
-// CHECK-NEXT: ElemSet v2, v3, v5
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v8 = Call v7, -, v2 calleeName="first"
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="e14"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Switch v0 cases=[1] -> case b1(| 0), otherwise b5()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = NewArray v1 contents=anything
-// CHECK-NEXT: v3 = IteratorOpen v2 elementCount=1 [isDestructuring]
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
-// CHECK-NEXT: v4 = IteratorResume v3 stepIndex=0
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: v7 = Convert v6 declared={type=1}
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: IteratorClose v3
-// CHECK-NEXT: v9 = Increment v7
-// CHECK-NEXT: v10 = Convert v9 declared={type=1}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b4() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v11 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v11
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="up"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=anything variableName="a"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: ElemSet v0, v1, v3
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

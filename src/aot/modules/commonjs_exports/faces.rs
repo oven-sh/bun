@@ -304,7 +304,7 @@ impl DecisionInputs {
     }
 }
 
-// The text of the file does not say whether whoever lists the names of the object finds the name when the face runs.
+// The text of the file does not say whether an import statement finds the name when the face runs.
 fn is_known_only_at_run_time(exports: &CommonJsExports, owner: ModuleRef, name: Atom) -> bool {
     let Some(text) = exports.text_of(owner) else {
         return false;
@@ -318,7 +318,7 @@ fn is_known_only_at_run_time(exports: &CommonJsExports, owner: ModuleRef, name: 
                     exports.marker_for_imports(owner) != Some(false)
                         && !exports.has_default_of_its_own(owner)
                 }
-                false => !text.always_lists(name),
+                false => !text.is_always_found_by_statements(name),
             })
 }
 

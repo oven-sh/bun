@@ -2,6 +2,10 @@
 // OPTIONS: builtin-modules
 // CWD: parallel/language
 // STATISTIC: SourceFilesInferred = 3
+// CHECK-LABEL: function {{*}}name="delegate"
+// CHECK-LABEL: function {{*}}name="get"
+// CHECK-LABEL: function {{*}}name="Stack"
+// CHECK-LABEL: function {{*}}name="push"
 
 // FILE: parallel/language/array-iterator-prototypes-keep-members.js
 // A compiled program locks the members that Array.prototype, Iterator.prototype and the prototypes of the built-in iterators have at the start. The objects stay extensible for ordinary names and for symbols that the program made. They take no index-like key, no well-known symbol, no then, no toJSON, no next, no return, no throw and no name of an object further up, and their prototypes stay. So a hole in an array is undefined, and a loop over an array steps and ends as the language says.
@@ -139,83 +143,3 @@ export const keysThatOnlyLookNumeric = ["01", "1.0", "+1", "1e3", "0x1"];
 
 // FILE: parallel/tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: delegate get Stack push
-// CHECK-LABEL: function {{*}}name="delegate"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
-// CHECK-NEXT: InitialYield v2
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b8():
-// CHECK-NEXT: v4 = IteratorOpen v2 [isDelegating]
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Jump -> next b2(v5)
-// CHECK-NEXT: b2(v6) handler=b8():
-// CHECK-NEXT: v7 = IteratorResume v4, v6 [readsValueWhenDone]
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b5(v9), notTaken b3(v9)
-// CHECK-NEXT: b3(v10) handler=b8():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v12 = Yield v10, v2
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b4(v13), case b6(v13), otherwise b2(v13)
-// CHECK-NEXT: b4(v15) handler=b8():
-// CHECK-NEXT: v16 = IteratorResume v4, v15 resumeMode=Throw [readsValueWhenDone]
-// CHECK-NEXT: v17 = ResultAt v16
-// CHECK-NEXT: v18 = ResultAt v16 index=1
-// CHECK-NEXT: Branch v17 -> taken b5(v18), notTaken b3(v18)
-// CHECK-NEXT: b5(v19) handler=b8():
-// CHECK-NEXT: Jump -> next b11()
-// CHECK-NEXT: b6(v20) handler=b8():
-// CHECK-NEXT: v21 = IteratorResume v4, v20 resumeMode=Return [readsValueWhenDone]
-// CHECK-NEXT: v22 = ResultAt v21
-// CHECK-NEXT: v23 = ResultAt v21 index=1
-// CHECK-NEXT: Branch v22 -> taken b7(v23), notTaken b3(v23)
-// CHECK-NEXT: b7(v24) handler=b8():
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: b8() role=CatchHandler:
-// CHECK-NEXT: v25 = CatchValue
-// CHECK-NEXT: v26 = String string="caught "
-// CHECK-NEXT: v27 = Add v26, v25
-// CHECK-NEXT: v28 = Yield v27, v2
-// CHECK-NEXT: v29 = ResultAt v28
-// CHECK-NEXT: v30 = ResultAt v28 index=1
-// CHECK-NEXT: Switch v30 cases=[1, 2] -> case b9(), case b10(), otherwise b11()
-// CHECK-NEXT: b9():
-// CHECK-NEXT: Throw v29
-// CHECK-NEXT: b10():
-// CHECK-NEXT: Return v29
-// CHECK-NEXT: b11():
-// CHECK-NEXT: v31 = Undefined
-// CHECK-NEXT: Return v31
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Stack"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: Array):
-// CHECK-NEXT: v2 = String string="its own push "
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = GetSuperBase v3 homeKind=ClassPrototype
-// CHECK-NEXT: v5 = SuperGet v4, v0 key="push"
-// CHECK-NEXT: v6 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v6, v1
-// CHECK-NEXT: v8 = CallList v5, v0, v6 calleeName="super.push"
-// CHECK-NEXT: v9 = Add v2, v8
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

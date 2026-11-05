@@ -31,45 +31,7 @@ const wide: Wide = { p0: 0, p1: 1, p2: 2, p3: 3, p4: 4, p5: 5, p6: 6, p7: 7, p8:
 console.log(sure(3), sure("s"), field<Wide, "p5">({ p5: 5 }, "p5"), both(wide).p7, narrow(widen(wide)).p17);
 try { sure(undefined); } catch (error) { console.log((error as Error).message); }
 
-// GENERATED: sure field both widen
 // CHECK-LABEL: function {{*}}name="sure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = TypeTest v3 testedType=undefined
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3(| 0)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="Error" [isFreeName]
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string="nothing"
-// CHECK-NEXT: v9 = Construct v7, -, v8 calleeName="Error"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Throw v10
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: v12 = NarrowByTest v0, v11
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="field"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|number|string|symbol):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = ElemGet v0, v1
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="sure"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="both"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="widen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

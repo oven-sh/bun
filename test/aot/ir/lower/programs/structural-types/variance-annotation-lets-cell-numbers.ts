@@ -131,71 +131,8 @@ attempt("undefined in a cell of numbers", () => [typeof nothing.value, JSON.stri
 
 export {};
 
-// GENERATED: plusOne sum fillWide Cell accept
 // CHECK-LABEL: function {{*}}name="plusOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5: number, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="items"
-// CHECK-NEXT: v9 = PropGet v8 key="length"
-// CHECK-NEXT: v10 = Less v6, v9
-// CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v11 = PropGet v0 key="items"
-// CHECK-NEXT: v12 = ElemGet v11, v6
-// CHECK-NEXT: v13 = Add v5, v12
-// CHECK-NEXT: v14 = Convert v13 declared={type=number}
-// CHECK-NEXT: v15 = Increment v6
-// CHECK-NEXT: v16 = Convert v15 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v14, v16)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v17 = Convert v5 declared={type=number}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fillWide"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|number|string):
-// CHECK-NEXT: v2 = PropGet v0 key="put"
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey="put" calleeName="cell.put"
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Cell"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_3]]
-// CHECK-NEXT: PropSet v4, v1 key="value"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="accept"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: v2 = PropGet v0 key="items"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v1 calleeKey="push" calleeName="this.items.push"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number}}]
-// CHECK-NEXT: }

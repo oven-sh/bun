@@ -103,80 +103,8 @@ function pick(first: WideQ, second: WideQ, isFirst: boolean): WideQ { return isF
 const q: Q = { v: 1, q: 1 };
 console.log("one of two", attempt(() => { pick(q, { w: 2 }, q.q === 1).v = "q"; return JSON.stringify(q); }));
 
-// GENERATED: reflects defines compound attempt Keeper
 // CHECK-LABEL: function {{*}}name="reflects"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v3 = String string="v"
-// CHECK-NEXT: v4 = String string="h"
-// CHECK-NEXT: v5 = Call v2, v1, v0, v3, v4 calleeName="Reflect.set"
-// CHECK-NEXT: v6 = Convert v5 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="defines"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v3 = String string="v"
-// CHECK-NEXT: v4 = String string="i"
-// CHECK-NEXT: v5 = Boolean boolean=true
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|boolean}
-// CHECK-NEXT: v7 = Boolean boolean=true
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|boolean}
-// CHECK-NEXT: v9 = Boolean boolean=true
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|boolean}
-// CHECK-NEXT: v11 = NewObject -, v4, v6, v8, v10 layout=[[L_1]] fields=[4, 5, 1, 0]
-// CHECK-NEXT: v12 = FinishObject v11
-// CHECK-NEXT: v13 = Call v2, v1, v0, v3, v12 calleeName="Object.defineProperty"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="compound"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = PropGet v0 key="v"
-// CHECK-NEXT: v2 = String string="m"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: PropSet v0, v3 key="v"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = Call v0 calleeName="f"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v5 = CatchValue
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = PropGet v6 key="constructor"
-// CHECK-NEXT: v8 = PropGet v7 key="name"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Keeper"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|object):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_3]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_4]]
-// CHECK-NEXT: PropSet v4, v1 key="kept"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

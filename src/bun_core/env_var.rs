@@ -75,9 +75,6 @@ new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT",
 new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
-// An executable built with `--aot` writes a file for each crash into this directory, and repeats the tag in it.
-new!(pub BUN_CRASH_REPORT_DIR: string, "BUN_CRASH_REPORT_DIR", {});
-new!(pub BUN_CRASH_REPORT_TAG: string, "BUN_CRASH_REPORT_TAG", {});
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 // Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
 // build, in place of the first.

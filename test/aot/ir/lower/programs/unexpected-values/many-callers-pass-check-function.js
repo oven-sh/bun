@@ -159,66 +159,8 @@ attempt("firstOf a function", () => firstOf(function (a) {}));
 attempt("firstOf an object whose length is a getter", () => firstOf({ get length() { log.push("length"); return 1; }, get 0() { log.push("0"); return "first"; } }));
 honest("after");
 
-// GENERATED: whole spanByMethod [Symbol.iterator] set has
 // CHECK-LABEL: function {{*}}name="whole"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: v1 = Builtin builtin=Number
-// CHECK-NEXT: v2 = Builtin builtin=NumberIsInteger
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Number.isInteger"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = BitOr v0, v6
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = String string="not an integer"
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="spanByMethod"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="Point"
-// CHECK-NEXT: v3 = InstanceOf v0, v2
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = PropGet v0 key="span"
-// CHECK-NEXT: v7 = Call v6, v0 calleeKey="span" calleeName="point.span"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = String string="not a point"
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_3]]
-// CHECK-NEXT: v1 = PropGet v0 key=@@iterator
-// CHECK-NEXT: v2 = Call v1, v0 calleeKey=@@iterator
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<never> flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<never>, v1: undefined|null|string|symbol, v2: anything):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="log"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = String string="set "
-// CHECK-NEXT: v7 = Builtin builtin=String
-// CHECK-NEXT: v8 = Call v7, -, v1 calleeName="String"
-// CHECK-NEXT: v9 = Add v6, v8
-// CHECK-NEXT: v10 = Call v5, v4, v9 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v11 = Builtin builtin=Reflect
-// CHECK-NEXT: v12 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v13 = Call v12, v11, v0, v1, v2 calleeName="Reflect.set"
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -342,14 +342,12 @@ const aotTestsThatAskTheSystem = [
   "aot/exit-hooks-of-an-executable",
   "aot/time-zone-at-start",
   "aot/raw-mode-of-a-terminal",
-  "aot/perf/start",
   "aot/a-busy-caller-unbinds-no-child",
   "aot/programs-that-died-in-the-shell-on-one-platform",
   "aot/back-end-options-from-environment",
   "aot/program-handover",
   "aot/parallel/process/",
   "aot/parallel/globals/",
-  "aot/parallel/host-classes/process-env-read-fast-every-variable",
   // Workers and threads.
   "aot/workers-",
   "aot/a-program-that-starts-itself-as-a-worker-ends-every-time",
@@ -369,7 +367,6 @@ const aotTestsThatAskTheSystem = [
   "aot/the-folder-of-a-program-has-a-short-name",
   "aot/diagnostics-end-in-lf",
   "aot/absolute-path-missing-at-build",
-  "aot/parallel/modules/all-kinds-path-starts-folder-executable",
   // Native code: addons, sockets, the engine's own tests.
   "aot/native-addons",
   "aot/napi-addon",
@@ -396,7 +393,6 @@ const aotTestsThatAskTheSystem = [
   "aot/fault-inside-a-removed-range",
   "aot/crash-in-compiled-code",
   "aot/abort-is-reported",
-  "aot/uncaught-errors-show-the-frames-of-the-throw",
   "aot/memory-",
   "aot/small-program-memory",
   "aot/json-stringify-",
@@ -443,8 +439,6 @@ const aotTestsThatAskWindows = [
   "aot/process-env-opens-nothing",
   "aot/a-build-that-stops-says-where",
   "aot/parallel/closed-world/names-of-the-host-bring-little-of-the-library",
-  "aot/parallel/soundness/members-bun-taken-values-unknown-names",
-  "aot/parallel/type-rules/log-build-continues-after-mismatch",
 ];
 // Under a sanitizer the compiler itself is what is tested, and a sanitizer finds by which code runs over which input, never by a
 // verdict. There every test runs but those that feed it nothing new: they compile one text again and again with a line or a flag
@@ -452,12 +446,11 @@ const aotTestsThatAskWindows = [
 const aotTestsThatFeedNothingNew = [
   "aot/tools/same-code-",
   "aot/entry-points-begin-programs-of-their-own",
-  "aot/entry-points.",
-  "aot/audit-agrees-with-the-executable",
   "aot/transpiler-parity-",
   "aot/builtins/differential/",
   "aot/build-options",
   "aot/build-flags",
+  "aot/aot-harden",
   "aot/strict-flag-refuses-as-without-aot",
   "aot/same-program-however-the-threads-fall",
   "aot/two-builds-give-the-same-bytes",

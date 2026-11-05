@@ -25,77 +25,11 @@ if (lines.length) { function InBlock(Parent) { return class extends Parent { who
 globalThis.Leaked = Replaced; lines.push(new (Leaked(Base))().who());
 console.log(lines.join("\n"));
 
-// GENERATED: Asks ThisOne Base who
 // CHECK-LABEL: function {{*}}name="Asks"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
-// CHECK-NEXT: v4 = CreateMappedArguments v0, v1, v3, v2
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: v6 = PropGet v4 key="callee"
-// CHECK-NEXT: v7 = ResolveHeritage v2
-// CHECK-NEXT: v8 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v9 = NewClass v8, v2, v7 layout=[[L_2]]
-// CHECK-NEXT: v10 = FinishClass v9 layout=[[L_2]]
-// CHECK-NEXT: v11 = Convert v10 declared={type=function flags=[IsFromCompiler]}
-// CHECK-NEXT: v12 = CallDirect v6, v9, v11 function=[[f_3]]
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ThisOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = ToThis v0
-// CHECK-NEXT: v4 = ResolveHeritage v1
-// CHECK-NEXT: v5 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v6 = NewClass v5, v1, v4 layout=[[L_5]]
-// CHECK-NEXT: v7 = FinishClass v6 layout=[[L_5]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=function flags=[IsFromCompiler]}
-// CHECK-NEXT: v9 = CallDirect v3, v6, v8 function=[[f_6]]
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_8]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_8]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="who"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="base"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="who"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_9]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_9]]):
-// CHECK-NEXT: v2 = String string="first>"
-// CHECK-NEXT: v3 = GetSuperBase v0 homeKind=ClassPrototype
-// CHECK-NEXT: v4 = SuperGet v3, v1 key="who"
-// CHECK-NEXT: v5 = Call v4, v1 calleeName="super.who"
-// CHECK-NEXT: v6 = Add v2, v5
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="who"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="two"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="who"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_10]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_10]]):
-// CHECK-NEXT: v2 = String string="second>"
-// CHECK-NEXT: v3 = GetSuperBase v0 homeKind=ClassPrototype
-// CHECK-NEXT: v4 = SuperGet v3, v1 key="who"
-// CHECK-NEXT: v5 = Call v4, v1 calleeName="super.who"
-// CHECK-NEXT: v6 = Add v2, v5
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="who"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="block"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

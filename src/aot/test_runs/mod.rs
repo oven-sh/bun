@@ -30,7 +30,7 @@ use crate::builtins::table::{self, BuiltinFlags, BuiltinKind, MemberLookup, Muta
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::ir::InParallel;
 use crate::ir::generated::ModuleFlags;
-use crate::load::contents::ScanInput;
+use crate::load::contents::{FixedBuiltins, ScanInput};
 use crate::load::is_in_node_modules;
 use crate::load::sources::{ParsedSource, parsed_source};
 use crate::modules::{ModuleGraph, ModuleRef};
@@ -219,6 +219,8 @@ pub(crate) struct RunContents {
     pub names_added: Vec<(BuiltinId, Atom)>,
     /// Strictly ascending. What `ResolvedBuiltins::unlock` is handed. `ProgramContents::replaced_builtins` stays what the files spell.
     pub members_written_as_reads: Arc<[u32]>,
+    /// Strictly ascending. What Bun's own files are unlocked with: of `members_written_as_reads` what lies ON an object: `Object.keys`, not `Object`.
+    pub members_that_library_looks_up: Arc<[u32]>,
     pub loads: LoadsOfRun,
     pub counts: CountsOfScan,
 }
@@ -264,22 +266,24 @@ fn may_be_replaced_by_tests(place: BuiltinId) -> bool {
     entry.mutability == Mutability::AlwaysLocked
         && entry.scope == Scope::Realm
         && !entry.flags.contains(BuiltinFlags::IS_COMPILER_HELPER)
+        // The host makes `Bun` read-only and not configurable.
+        && table::canonical_id(place) != BuiltinId::Bun
         && match entry.kind {
             BuiltinKind::Function
             | BuiltinKind::Method
             | BuiltinKind::Accessor
             | BuiltinKind::DataProperty => entry.holder.is_some(),
-            BuiltinKind::Constructor | BuiltinKind::Namespace => {
-                entry.holder.is_some_and(is_global)
-            }
+            BuiltinKind::Constructor | BuiltinKind::Namespace => entry.holder.is_some_and(is_global),
             // `Map.prototype`: the engine unlocks it in no run.
             BuiltinKind::Prototype | BuiltinKind::Constant | BuiltinKind::NativeBinding => false,
         }
 }
 
-/// `replaced`: `ProgramContents::replaced_builtins`. A path names the object that a place holds, so with each place comes what it holds, and all that hangs below that:
-/// `ResolvedBuiltins::unlock` asks for the id of a path alone. Behind `root.Map = Fake`, `Map.prototype` is no object of the table, though nothing replaces `prototype` on the Map of the table.
-fn list_members_written_as_reads(replaced: &[u32]) -> Arc<[u32]> {
+/// `replaced`: `ProgramContents::replaced_builtins`. A path names the object that a place holds, so with each place comes what it holds.
+/// With a constructor comes its `prototype`. What else hangs below a place does not come: `Symbol.iterator` is a key of layouts, `Intl.DateTimeFormat` a constant, as in the executable,
+/// and `fix_places_on_the_way` keeps `Symbol` and `Intl` locked for it.
+/// `with_globals`: false for Bun's own code. It names `Object` and `Math` as the executable does, and looks up what lies on them: what it reads off the global object it reads as its modules load, under `bun test` too.
+fn list_members_written_as_reads(replaced: &[u32], with_globals: bool) -> Arc<[u32]> {
     let mut is_listed = vec![false; BuiltinId::COUNT as usize];
     for &number in replaced {
         if let Some(is_listed) = is_listed.get_mut(number as usize) {
@@ -287,30 +291,37 @@ fn list_members_written_as_reads(replaced: &[u32]) -> Arc<[u32]> {
         }
     }
     let places = (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
-    let mut pending: Vec<BuiltinId> = Vec::new();
     for place in places.filter(|&place| may_be_replaced_by_tests(place)) {
+        let kind = table::entry(place).kind;
+        if !with_globals && matches!(kind, BuiltinKind::Constructor | BuiltinKind::Namespace) {
+            continue;
+        }
         is_listed[place.to_wire() as usize] = true;
         is_listed[table::canonical_id(place).to_wire() as usize] = true;
-        // Below a name of the global object hang all the others.
-        if !table::has_flag(place, BuiltinFlags::IS_GLOBAL_OBJECT) {
-            pending.push(table::canonical_id(place));
-        }
-    }
-    while let Some(object) = pending.pop() {
-        for &member in table::members(object) {
-            let entry = table::entry(member);
-            if entry.scope != Scope::Realm || entry.mutability == Mutability::ChangesOnItsOwn {
-                continue;
-            }
-            for below in [member, table::canonical_id(member)] {
-                if !replace(&mut is_listed[below.to_wire() as usize], true) {
-                    pending.push(below);
-                }
+        // `Map.prototype` is come to by way of `Map` alone, and a value: the engine folds the read back where it lays the lock on `Map`, as it does the read of `Map`.
+        for &member in table::members(table::canonical_id(place)) {
+            if table::entry(member).kind == BuiltinKind::Prototype {
+                is_listed[member.to_wire() as usize] = true;
+                is_listed[table::canonical_id(member).to_wire() as usize] = true;
             }
         }
     }
     let numbers = (0..BuiltinId::COUNT).filter(|&number| is_listed[number as usize]);
     numbers.collect()
+}
+
+/// Behind `ResolvedBuiltins::unlock`. A path of the file that is still locked is the constant of the table for whoever lowers it, as in the executable: `Map.prototype`, `Symbol.iterator` as a key.
+/// It was come to by way of `Map`, which a test may replace: so that place stays locked in this run. A store to it that no file spells throws and says what to write.
+pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBuiltins) {
+    builtins.for_each_locked_builtin(|builtin| {
+        let mut place = builtin;
+        while let Some(holder) = table::entry(place).holder {
+            if may_be_replaced_by_tests(place) {
+                fixed.note(place);
+            }
+            place = table::canonical_id(holder);
+        }
+    });
 }
 
 /// It can run code that no build has seen: it loads by a path that nobody knows or a file that was not there, starts a Worker out of sight, or evaluates text.
@@ -414,10 +425,19 @@ fn sort_by_bytes(texts: &mut Vec<Atom>, atoms: &Interner<'_>) {
     texts.dedup();
 }
 
-/// `const put = object => { object.__mark = 1; }`, `put(Object.prototype)`: an object that takes no other name and that a file of the tests lets go may come to hold each name that
-/// the file itself, or a file that it imports, stores on an object from somewhere. A store farther off is refused when it runs. By holder, then by bytes, each once.
-fn list_names_added(files: &Files<'_>, let_go_by: &[FileId]) -> Vec<(BuiltinId, Atom)> {
-    let atoms = &files.atoms;
+/// `const put = object => { object.__mark = 1; }`, `put(Object.prototype)`: each name that the tests store on an object from somewhere may come to lie on each object that takes no
+/// other name and that they let go: nobody sees where such an object travels, and `globalThis` ties every file of the run to every other. By holder, then by bytes.
+fn list_names_added(
+    mut holders: Vec<BuiltinId>,
+    mut names: Vec<Atom>,
+    atoms: &Interner<'_>,
+) -> Vec<(BuiltinId, Atom)> {
+    holders.shared_sort_unstable();
+    holders.dedup();
+    if holders.is_empty() {
+        return Vec::new();
+    }
+    sort_by_bytes(&mut names, atoms);
     let is_new = |holder: BuiltinId, name: Atom| {
         let listed = table::find_name(atoms.bytes(name));
         !matches!(
@@ -425,24 +445,11 @@ fn list_names_added(files: &Files<'_>, let_go_by: &[FileId]) -> Vec<(BuiltinId, 
             Some(MemberLookup::Found(_))
         )
     };
-    let of_run = |file: FileId| parsed_source(files, file).map(|source| &source.of_run);
     let mut added = Vec::new();
-    for &file in let_go_by {
-        let holders = of_run(file).map_or(&[][..], |it| &it.closed_holders_out_of_sight);
-        let near = std::iter::once(file).chain(files.module(file).code_edges.iter().copied());
-        for name in near
-            .filter_map(of_run)
-            .flat_map(|it| &it.names_stored_on_unknown_objects)
-        {
-            let new = holders.iter().filter(|&&holder| is_new(holder, *name));
-            added.extend(new.map(|&holder| (holder, *name)));
-        }
+    for &holder in &holders {
+        let new = names.iter().filter(|&&name| is_new(holder, name));
+        added.extend(new.map(|&name| (holder, name)));
     }
-    added.shared_sort_unstable_by(|left, right| {
-        let by_name = || atoms.bytes(left.1).cmp(atoms.bytes(right.1));
-        left.0.cmp(&right.0).then_with(by_name)
-    });
-    added.dedup();
     added
 }
 
@@ -457,7 +464,11 @@ pub(crate) fn collect_run_contents(
     let mut run = RunContents {
         whose,
         loads_compiled_files_alone,
-        members_written_as_reads: list_members_written_as_reads(input.replaced_builtins),
+        members_written_as_reads: list_members_written_as_reads(input.replaced_builtins, true),
+        members_that_library_looks_up: list_members_written_as_reads(
+            input.replaced_builtins,
+            false,
+        ),
         loads: collect_loads_of_run(files, input.options),
         ..RunContents::default()
     };
@@ -473,7 +484,7 @@ pub(crate) fn collect_run_contents(
         runners_beside_all: texts_written.runners_beside_all,
         ..CountsOfScan::default()
     };
-    let (mut helpers, mut let_go_by) = (Vec::new(), Vec::new());
+    let (mut helpers, mut holders, mut names_stored) = (Vec::new(), Vec::new(), Vec::new());
     for &file in files.compiled_files() {
         let Some(source) = parsed_source(files, file) else {
             // Nobody has read the file, so it may do anything. `freeze_sources` stops the build at it.
@@ -538,9 +549,8 @@ pub(crate) fn collect_run_contents(
             true => run.take_what_texts_do(written),
             false => counts.texts_left_out += usize::from(holds_text),
         }
-        if !of_run.closed_holders_out_of_sight.is_empty() {
-            let_go_by.push(file);
-        }
+        holders.extend_from_slice(&of_run.closed_holders_out_of_sight);
+        names_stored.extend_from_slice(&of_run.names_stored_on_unknown_objects);
     }
     helpers.shared_sort_unstable();
     let of_helpers = settle_names_of_helpers(files, &helpers);
@@ -553,7 +563,7 @@ pub(crate) fn collect_run_contents(
     }
     sort_by_bytes(&mut run.names_spied, atoms);
     sort_by_bytes(&mut run.modules_replaced_in_text, atoms);
-    run.names_added = list_names_added(files, &let_go_by);
+    run.names_added = list_names_added(holders, names_stored, atoms);
     counts.names_added = run.names_added.len();
     counts.handed_on = run.names_spied.len();
     counts.mocks_any_module |= run.mocks_any_module;

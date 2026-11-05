@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ScopeId, ScopeKind, SymbolId};
-use bun_sema::hir::{self, Flags, ModuleName};
+use bun_sema::hir::{self, ModuleName};
 
 use crate::ir::ValueId;
 use crate::lower::{FunctionLowering, object, scope};
@@ -65,11 +65,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn produces_code(&self, declaration: Decl) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
-        match declaration {
-            Decl::Enum(it) => !hir[it].flags.contains(Flags::AMBIENT),
-            Decl::Module(it) => bound.makes_namespace_object(hir, it),
-            _ => false,
-        }
+        bound.makes_container_object(hir, declaration)
     }
 
     pub(super) fn has_single_declaration(&self, container: Container) -> bool {

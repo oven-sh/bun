@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll } from "../../harness/default-timeout";
 import { cellsOf, programOf, ways, type Way } from "../../harness/deferred-graphs";
+import { countingIn, expectHeldGraphsLetGo } from "../../harness/held-graphs";
 import { run } from "../../harness/run";
 import { describe, test } from "../../supported";
 
@@ -53,8 +54,8 @@ function agree(printed: string | undefined, expected: string | undefined) {
   return Bun.deepEquals(partsOf(ours), partsOf(plain));
 }
 
-async function printedBy(command: string[], dir: string) {
-  const { stdout, stderr, exitCode } = await run(command, dir);
+async function printedBy(command: string[], dir: string, env?: Record<string, string | undefined>) {
+  const { stdout, stderr, exitCode } = await run(command, dir, env);
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return linesOf(stdout);
 }
@@ -76,7 +77,8 @@ describe.concurrent.each(Object.keys(ways) as Way[])("graphs with import defer: 
       exitCode: 0,
     });
     const expected = await printedBy([bunExe(), "run", `./${entry}`], String(dir));
-    const printed = await printedBy([join(String(dir), "compiled.exe")], String(dir));
+    const printed = await printedBy([join(String(dir), "compiled.exe")], String(dir), countingIn(String(dir)));
+    expectHeldGraphsLetGo(String(dir));
     const differ = program.filter(cell => !agree(printed.get(cell.id), expected.get(cell.id)));
     found.push(...differ.map(cell => cell.id));
     if (updates) return;

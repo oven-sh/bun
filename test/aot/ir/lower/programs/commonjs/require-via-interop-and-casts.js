@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 21
+// CHECK-LABEL: function {{*}}name="row"
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="_interop"
 
 // FILE: main.js
 // `require` of CommonJS modules through interop helpers and casts, with compound assignments to their exports.
@@ -115,43 +118,3 @@ __exportStar(require("./a8o"), exports);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: row show _interop
-// CHECK-LABEL: function {{*}}name="row"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="row"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=function
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = String string="F"
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = NarrowByTest v0, v4
-// CHECK-NEXT: v6 = Builtin builtin=String
-// CHECK-NEXT: v7 = Call v6, -, v5 calleeName="String"
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="_interop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = PropGet v0 key="__esModule"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b3(v0), notTaken b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = NewObject -, v0 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b3(v7):
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

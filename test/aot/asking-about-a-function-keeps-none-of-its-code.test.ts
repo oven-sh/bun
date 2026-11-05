@@ -60,7 +60,7 @@ test("few functions that --trim can remove have members that the table does not 
       .filter(each => !listsAllMembers(each))
       .map(({ path }) => path)
       .sort(),
-  ).toEqual(["Bun.cron", "Bun.inspect", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
+  ).toEqual(["Bun.cron", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
 });
 
 // The table takes what it knows only as a property for something that a read may create, so `typeof URL.createObjectURL` would keep URL.

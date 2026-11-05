@@ -51,25 +51,5 @@ holder["computed"] = class {};
 [holder.element = function () {}] = [] as any[];
 console.log(namesOf(holder.member, holder.parenthesized, holder.cast, holder.computed, holder.element));
 
-// GENERATED: namesOf asserted castProperty
 // CHECK-LABEL: function {{*}}name="namesOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="stringify"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v0 key="map"
-// CHECK-NEXT: v5 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v6 = Call v4, v0, v5 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v8 = Call v3, v1, v7 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asserted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

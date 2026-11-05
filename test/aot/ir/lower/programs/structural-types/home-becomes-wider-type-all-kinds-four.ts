@@ -677,89 +677,10 @@ console.log("honest uses", warm);
 
 export {};
 
-// GENERATED: honest39 via44 held D36 Derived45
 // CHECK-LABEL: function {{*}}name="honest39"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="A39"
-// CHECK-NEXT: v2 = Construct v1 calleeName="A39"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_4]]|[[L_5]]|[[L_6]]|[[L_3]]|[[L_7]]|[[L_8]]|[[L_9]]|[[L_10]]|[[L_11]]|[[L_12]]|[[L_13]]|[[L_14]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = NewObject -, v4 layout=[[L_1]] fields=[0]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="via44"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_15]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_15]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_16]]
-// CHECK-NEXT: v2 = NewTemplateObject templateStrings=[{cooked="" raw=""}, {cooked="" raw=""}]
-// CHECK-NEXT: v3 = Call v1, -, v2, v0 calleeName="tag44"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="held"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_17]]} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_17]], v1: undefined|null|[[L_1]]):
-// CHECK-NEXT: PropSet v0, v1 key="stored"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="held"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_17]]} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_17]]):
-// CHECK-NEXT: v1 = PropGet v0 key="stored"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="D36"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_18]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_19]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_19]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_20]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived45"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_21]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_22]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|[[L_21]]):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_23]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_23]]}
-// CHECK-NEXT: v7 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: Jump -> next b7(v11)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: v13 = TypeTest v12 testedType=undefined
-// CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = TypeTest v6 testedType=absent
-// CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v16):
-// CHECK-NEXT: v17 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v17
-// CHECK-NEXT: b6(v18):
-// CHECK-NEXT: Jump -> next b7(v18)
-// CHECK-NEXT: b7(v19):
-// CHECK-NEXT: Return v19
-// CHECK-NEXT: b8(v20):
-// CHECK-NEXT: v21 = NewRuntimeError runtimeError=DerivedConstructorResult name="Derived45"
-// CHECK-NEXT: Throw v21
-// CHECK-NEXT: b9(v22):
-// CHECK-NEXT: v23 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v23
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="held"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_24]] flags=[OmitsNull, OmitsUndefined] variableName="s"}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_24]]):
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

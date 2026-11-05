@@ -44,10 +44,16 @@ const held = [
   "self: is an accessor, and the table says Namespace",
 ];
 const engine = [
-  // What the library adds when node:net, node:zlib and node:perf_hooks are loaded.
+  // What the library adds when node:net, node:zlib, node:perf_hooks and node:worker_threads are loaded.
   "%BlockList%.prototype[kBlockListHandle]: is not in the table",
   "%NativeZlib%.prototype.jsref: is not in the table",
   "%SocketAddress%.prototype[kSocketAddressHandle]: is not in the table",
+  // injectFakeEmitter() in src/js/node/worker_threads.ts lays an object with `on`, `emit` and their kin between the prototype object and EventTarget.prototype. Two paths lead to the class.
+  // The class comes to the library out of a native binding, so the compiler does not see whose prototype object that statement moves. It need not: BuiltinTable::hasLockedPrototypeLink() is false of this object,
+  // no lookup of Link or of the walk climbs past an object of which it is false, and the run time locks a link by the same question: in an executable the statement moves this one and throws at Map.prototype.
+  "MessagePort.prototype: inherits from another object than the table says",
+  "MessagePort.prototype[nodejs.util.inspect.custom]: is not in the table",
+  "MessagePort.prototype[nodejs.util.inspect.custom]: is not in the table",
   "Performance.prototype.eventLoopUtilization: is not in the table",
   "Performance.prototype.nodeTiming: is not in the table",
   "Performance.prototype.timerify: is not in the table",

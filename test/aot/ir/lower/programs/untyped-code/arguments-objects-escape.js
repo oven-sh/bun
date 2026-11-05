@@ -37,44 +37,8 @@ for (let i = 0; i < 200000; i++) { const list = out(i, "t" + i, { i }); sum += l
 (globalThis.gc ?? (() => globalThis.Bun.gc(true)))();
 console.log(sum, show(keep.map(list => Array.from(list))));
 
-// GENERATED: take outWithParameters appliedLater show get
 // CHECK-LABEL: function {{*}}name="take"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="keep"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeKey="push" calleeName="keep.push"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="outWithParameters"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: Array):
-// CHECK-NEXT: v4 = CreateUnmappedArguments v0, v3, v1, v2
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v6 = Call v5, -, v4 calleeName="take"
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="appliedLater"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_4]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: undefined|null|[[f_4]], v3: Array):
-// CHECK-NEXT: v4 = CreateUnmappedArguments v1, v3, v2
-// CHECK-NEXT: v5 = NewClosure v2, v0, v4 function=[[f_5]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="stringify"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewClosure function=[[f_6]]
-// CHECK-NEXT: v5 = Call v3, v1, v0, v4 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="got"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

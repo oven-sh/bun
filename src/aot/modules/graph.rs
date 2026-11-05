@@ -666,9 +666,13 @@ impl ModuleGraph {
         &forms[start..start + count]
     }
 
-    /// A file that loads again runs from disk, as code that the build has not seen, and links to whatever names its text imports.
+    /// A file that loads again runs from disk, as code that the build has not seen, and links to whatever names its text imports. So does the loader, for a statement that is left to it.
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
-        self.may_be_evicted(module) || self.is_named_by_copies(module)
+        let is_left_to_loader =
+            |file: FileId| self.find_row(file).is_some_and(|row| row.is_left_to_loader);
+        self.may_be_evicted(module)
+            || self.is_named_by_copies(module)
+            || matches!(module, ModuleRef::File(file) if is_left_to_loader(file))
     }
 
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {

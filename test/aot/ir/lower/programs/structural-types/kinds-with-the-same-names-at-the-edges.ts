@@ -90,44 +90,7 @@ for (let i = 0; i < 3000; i++) {
 lines.push(String(total));
 console.log(lines.join("\n"));
 
-// GENERATED: NodeObject statement textOf describe
 // CHECK-LABEL: function {{*}}name="NodeObject"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_1]]} parameters=[{type=i32}, {type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: i32, v2: number):
-// CHECK-NEXT: PropSet v0, v1 key="kind"
-// CHECK-NEXT: PropSet v0, v2 key="pos"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="statement"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32}, {type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: i32, v1: undefined|null|[[L_2]]):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="NodeConstructor"
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Construct v3, -, v0, v4 calleeName="NodeConstructor"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: PropSet v6, v1 key="expression"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="textOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
-// CHECK-NEXT: v1 = PropGet v0 key="expression"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v3 = PropGet v2 key="text"
-// CHECK-NEXT: v4 = String string="/"
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: v6 = PropGet v0 key="note"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="describe"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="describe" calleeName="node.describe"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }

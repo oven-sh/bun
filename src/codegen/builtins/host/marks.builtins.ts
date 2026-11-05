@@ -89,35 +89,11 @@ export default b.declarations(
     "setTimeout",
   ]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
-  marked("IsReplacedBySetter", ["self"]),
-  marked("AnswersNullAsItsPrototype", ["%ImportMeta%"]),
   marked("HoldsPathOfMainModule", ["Bun.main"]),
   // JSEnvironmentVariableMap.cpp puts another object under both when the thread starts a worker with `env: SHARE_ENV`.
   marked("IsReplacedByHostThatSaysSo", ["Bun.env", "process.env"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
   marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
-  // Not bun:jsc.deserialize or what a message holds: the bytes may come from another process, so no operand shows what is made of them.
-  // Of the classes that print themselves by a native method it copies CryptoKey alone. No row answers a key that is followed, so each key is noted where it is made.
-  // A row that did would have to note it too: the walk over the operand does not go into a Map or a Set.
-  marked("AnswersCopyOfOperand", ["structuredClone"]),
-  // console_print_runtime_object() in src/runtime/jsc_hooks.rs, and Buffer.prototype.inspect.
-  marked("InstancesArePrintedWithoutTheirGetters", [
-    "%BuildArtifact%.prototype",
-    "%BunRequest%.prototype",
-    "%Immediate%.prototype",
-    "%S3File%.prototype",
-    "%Timeout%.prototype",
-    "Blob.prototype",
-    "Buffer.prototype",
-    "BuildMessage.prototype",
-    "Bun.Archive.prototype",
-    "Bun.S3Client.prototype",
-    "File.prototype",
-    "Headers.prototype",
-    "Request.prototype",
-    "ResolveMessage.prototype",
-    "Response.prototype",
-  ]),
   // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
   marked("LoadsCodeWithoutJSAccess", [
     "%NativeFunctions%.FfiBindTsLinkLibrary",

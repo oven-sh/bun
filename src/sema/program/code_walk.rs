@@ -15,7 +15,6 @@ use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
-use crate::components::strongly_connected_components_of;
 use crate::file_analysis::{AnalyzedAgainFrom, FileAnalysis, FileInputs};
 use crate::fold::StoredByMocks;
 use crate::hir_from_data::{DataValue, HostValue};
@@ -45,7 +44,6 @@ struct WalkedFile<'s, 'r> {
     target: CodeTarget<'r>,
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
-    is_called_before_it_runs: bool,
     stored_by_mocks: StoredByMocks<'s>,
     loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
@@ -69,7 +67,6 @@ struct FileToRevisit<'s, 'r> {
 
 /// `LoadInputs`, copied out of the state of the walk.
 struct CopiedLoadInputs<'s> {
-    is_called_before_it_runs: bool,
     stored_by_mocks: StoredByMocks<'s>,
     is_only_imported: bool,
     imported_requires: Vec<ImportedRequire>,
@@ -82,7 +79,6 @@ struct CopiedLoadInputs<'s> {
 impl<'s> CopiedLoadInputs<'s> {
     fn as_load_inputs(&self) -> LoadInputs<'_, 's> {
         LoadInputs {
-            is_called_before_it_runs: self.is_called_before_it_runs,
             stored_by_mocks: self.stored_by_mocks,
             is_only_imported: self.is_only_imported,
             imported_requires: &self.imported_requires,
@@ -104,7 +100,6 @@ impl<'s, 'r> WalkedFile<'s, 'r> {
 
     fn copy_load_inputs(&self) -> CopiedLoadInputs<'s> {
         CopiedLoadInputs {
-            is_called_before_it_runs: self.is_called_before_it_runs,
             stored_by_mocks: self.stored_by_mocks,
             is_only_imported: self.loaded_by.is_import_alone(),
             imported_requires: self.imported_requires.clone(),
@@ -179,8 +174,6 @@ struct WalkState<'s, 'r> {
     names_looked_up: NamesLookedUp,
     /// The files that the host has yet to look at: `is_finished_later`.
     unfinished: Vec<u32>,
-    /// Every file that is folded with `FileAnalysis::relies_on_running_before_calls`, among others that were.
-    relying_on_order: Vec<u32>,
     /// Every file with `FileAnalysis::asked_of_data_files`, among others that had some.
     askers_of_data_files: Vec<u32>,
     /// Every file with `FileAnalysis::asked_of_other_files`, among others that had some.
@@ -381,7 +374,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
     }
 
-    pub(super) fn key_of_read_code<'k>(&self, key: LoadKey<'k>) -> LoadKey<'k> {
+    fn key_of_read_code<'k>(&self, key: LoadKey<'k>) -> LoadKey<'k> {
         if key.loader != HostLoader::default() {
             return key;
         }
@@ -413,28 +406,22 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return index;
         }
         let index = state.files.len() as u32;
-        let known = context.find_loaded_before(target.key);
         let mocks_any_file =
             context.inputs.code.mocks_any_file || state.names_looked_up.mocks_any_file();
         state.files.push(WalkedFile {
             target,
             parsed: None,
             targets: Vec::new(),
-            is_called_before_it_runs: known.is_some_and(|it| it.compiled.is_called_before_it_runs),
             stored_by_mocks: match mocks_any_file {
                 true => StoredByMocks::EveryExport,
-                false => known.map_or(StoredByMocks::Nothing, |it| it.compiled.stored_by_mocks),
+                false => StoredByMocks::Nothing,
             },
-            loaded_by: LoadedBy::as_loaded_before(
-                known.is_some_and(|it| it.compiled.is_only_imported),
-            ),
-            imported_requires: known.map_or(Vec::new(), |it| it.hir.imported_requires.to_vec()),
-            imported_constants: known.map_or(Vec::new(), |it| it.hir.imported_constants.to_vec()),
-            texts_of_data_files: known.map_or(Vec::new(), |it| it.hir.texts_of_data_files.to_vec()),
-            imported_file_changers: known
-                .map_or(Vec::new(), |it| it.hir.imported_file_changers.to_vec()),
-            texts_of_other_files: known
-                .map_or(Vec::new(), |it| it.hir.texts_of_other_files.to_vec()),
+            loaded_by: LoadedBy::Require,
+            imported_requires: Vec::new(),
+            imported_constants: Vec::new(),
+            texts_of_data_files: Vec::new(),
+            imported_file_changers: Vec::new(),
+            texts_of_other_files: Vec::new(),
             foldings_with_constants: 0,
             version: 0,
             depth,
@@ -469,9 +456,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.has_exported_requires |= !parsed.code.exported_requires.is_empty();
         let analysis = &parsed.code.analyzed.analysis;
         state.has_exported_file_changers |= !analysis.exported_file_changers.is_empty();
-        if analysis.relies_on_running_before_calls {
-            state.relying_on_order.push(index);
-        }
         if !analysis.asked_of_data_files.is_empty() {
             state.askers_of_data_files.push(index);
         }
@@ -695,7 +679,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     host.parallel(threads, &work);
                 }
             };
-            match self.context.io_pool() {
+            match host.io_pool() {
                 Some(io) => {
                     let _alone = WAITS_ACROSS_POOLS.lock();
                     io.each_while(
@@ -716,15 +700,12 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         debug_assert!(state.is_drained && state.in_progress == 0);
         loop {
-            let learns_from_other_files = context.inputs.loaded_before.is_none()
-                && (fold_files_that_import_constants_again(context, &mut state)
-                    || fold_files_called_before_they_run_again(&mut state)
-                    || scan_importers_of_requires_again(context, &mut state)
-                    || scan_askers_of_data_files_again(&context.atoms, &mut state)
-                    || scan_importers_of_file_changers_again(context, &mut state)
-                    || scan_askers_of_other_files_again(context, &mut state)
-                    || forget_files_that_another_loader_reads(context, &mut state));
-            let goes_on = learns_from_other_files
+            let goes_on = fold_files_that_import_constants_again(context, &mut state)
+                || scan_importers_of_requires_again(context, &mut state)
+                || scan_askers_of_data_files_again(&context.atoms, &mut state)
+                || scan_importers_of_file_changers_again(context, &mut state)
+                || scan_askers_of_other_files_again(context, &mut state)
+                || forget_files_that_another_loader_reads(context, &mut state)
                 || finish_files(&mut state)
                 || self.follow_chosen_imports(&mut state)
                 || self.begin_at_found_entry_points(&mut state)
@@ -1320,41 +1301,6 @@ fn take_noted_files<'s, 'r>(
     noted
 }
 
-/// By file: whether what it loads leads back to it.
-fn find_files_on_cycles(files: &[WalkedFile<'_, '_>]) -> Vec<bool> {
-    let (component_of, components) = strongly_connected_components_of(
-        files.len(),
-        |file| files[file].targets.as_slice(),
-        Some(NOT_LOADED),
-    );
-    let is_on_cycle = |(index, file): (u32, &WalkedFile<'_, '_>)| {
-        components[component_of[index as usize] as usize].len() > 1 || file.targets.contains(&index)
-    };
-    (0..).zip(files).map(is_on_cycle).collect()
-}
-
-fn fold_files_called_before_they_run_again(state: &mut WalkState<'_, '_>) -> bool {
-    let relies_on_order = |file: &WalkedFile<'_, '_>| {
-        let analysis = file.parsed.as_ref().map(|it| &it.code.analyzed.analysis);
-        !file.is_called_before_it_runs
-            && analysis.is_some_and(|analysis| analysis.relies_on_running_before_calls)
-    };
-    let relying = take_noted_files(&mut state.relying_on_order, &state.files, relies_on_order);
-    if relying.is_empty() {
-        return false;
-    }
-    let is_on_cycle = find_files_on_cycles(&state.files);
-    // The others may come to lie on one as files are folded and found.
-    let (called_early, others): (Vec<u32>, Vec<u32>) =
-        (relying.into_iter()).partition(|&file| is_on_cycle[file as usize]);
-    state.relying_on_order = others;
-    for &index in &called_early {
-        state.files[index as usize].is_called_before_it_runs = true;
-        fold_parsed_file_again(state, index);
-    }
-    !called_early.is_empty()
-}
-
 fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
     let file = &mut state.files[index as usize];
     file.parsed = None;
@@ -1368,7 +1314,7 @@ fn forget_files_folded_with_main_module(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &mut WalkState<'_, '_>,
 ) -> bool {
-    if context.inputs.loaded_before.is_some() || !context.host.may_any_file_become_main_module() {
+    if !context.host.may_any_file_become_main_module() {
         return false;
     }
     let is_decided = |file: &WalkedFile<'_, '_>| {
@@ -1853,14 +1799,44 @@ struct OrderedFiles<'s, 'r> {
 
 /// `CodeTarget::has_shared_type`: the statement that the loader comes to first decides for the later ones. It loads a graph level by level, each file in the
 /// order of its text, and what code asks for when it runs after that. Which thread read a file first has no say.
-fn share_modules_among_types(files: &mut [WalkedFile<'_, '_>], entry_points: VecDeque<u32>) {
-    let has_shared_type =
-        |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(|it| it.has_shared_type);
+/// An executable holds what `bun build` makes of the file: one module, of the type that its scan comes to first. The scan begins at all the entry points that it is given, the
+/// first `scanned` of them, and goes through an `import()` as through a statement. It parses the files of a level side by side, and either of two may be done first: there the
+/// statements go before the calls, as under `bun run`. A file that the load itself has found to begin a thread is no entry point of the scan: its thread has a loader of its own.
+fn share_modules_among_types<'r>(
+    files: &mut [WalkedFile<'_, 'r>],
+    mut entry_points: VecDeque<u32>,
+    scanned: usize,
+) {
+    let is_call_with_written_type = |target: &CodeTarget<'_>| {
+        !target.has_shared_type && target.has_type_of_shared_kind && target.has_loader_attribute
+    };
+    let is_shared = |target: &CodeTarget<'_>| {
+        target.has_shared_type || (scanned > 0 && is_call_with_written_type(target))
+    };
+    let has_shared_type = |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(is_shared);
     if !files.iter().any(has_shared_type) {
         return;
     }
-    let mut first_forms: FxHashMap<&[u8], u32> = FxHashMap::default();
+    let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
     let mut seen = vec![false; files.len()];
+    let mut scanned_level: Vec<u32> = entry_points.drain(..scanned).collect();
+    while !scanned_level.is_empty() {
+        scanned_level.retain(|&index| !std::mem::replace(&mut seen[index as usize], true));
+        for shares_statements in [true, false] {
+            for &index in &scanned_level {
+                for next in 0..files[index as usize].code_targets().len() {
+                    let target = files[index as usize].code_targets()[next];
+                    if is_shared(&target) && target.has_shared_type == shares_statements {
+                        share_form(files, &mut first_forms, index, next);
+                    }
+                }
+            }
+        }
+        let targets = scanned_level
+            .iter()
+            .flat_map(|&index| &files[index as usize].targets);
+        scanned_level = targets.copied().collect();
+    }
     let (mut level, mut later) = (VecDeque::new(), entry_points);
     while let Some(index) = level.pop_front().or_else(|| later.pop_front()) {
         if std::mem::replace(&mut seen[index as usize], true) {
@@ -1868,21 +1844,32 @@ fn share_modules_among_types(files: &mut [WalkedFile<'_, '_>], entry_points: Vec
         }
         for next in 0..files[index as usize].code_targets().len() {
             let target = files[index as usize].code_targets()[next];
-            let mut reached = files[index as usize].targets[next];
             if target.has_shared_type {
-                reached = *first_forms.entry(target.key.path).or_insert(reached);
-                let key = files[reached as usize].target.key;
-                let file = &mut files[index as usize];
-                file.targets[next] = reached;
-                if let Some(parsed) = &mut file.parsed {
-                    parsed.code.targets[next].key = key;
-                }
+                share_form(files, &mut first_forms, index, next);
             }
+            let reached = files[index as usize].targets[next];
             match target.is_loaded_with_importer {
                 true => level.push_back(reached),
                 false => later.push_back(reached),
             }
         }
+    }
+}
+
+fn share_form<'r>(
+    files: &mut [WalkedFile<'_, 'r>],
+    first_forms: &mut FxHashMap<&'r [u8], u32>,
+    index: u32,
+    next: usize,
+) {
+    let file = &files[index as usize];
+    let path = file.code_targets()[next].key.path;
+    let reached = *first_forms.entry(path).or_insert(file.targets[next]);
+    let key = files[reached as usize].target.key;
+    let file = &mut files[index as usize];
+    file.targets[next] = reached;
+    if let Some(parsed) = &mut file.parsed {
+        parsed.code.targets[next].key = key;
     }
 }
 
@@ -1894,7 +1881,11 @@ fn order_files<'s, 'r>(
     let entry_points = context.entry_points();
     let indexes = entry_points.iter();
     let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
-    share_modules_among_types(files, indexes.collect());
+    let scanned = match context.inputs.code.builds_executable {
+        true => context.written_entry_point_count(),
+        false => 0,
+    };
+    share_modules_among_types(files, indexes.collect(), scanned);
     let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];

@@ -128,6 +128,8 @@ pub struct BindInput<'a, 's> {
     pub entry_points_run_again: bool,
     /// `AotOptions::typescript_drops_absent_exports`
     pub typescript_drops_absent_exports: bool,
+    /// `AotOptions::runs_in_several_realms`: each test file begins with a loader that holds nothing.
+    pub runs_in_several_realms: bool,
     /// `Options::code_from_disk_names_files`
     pub code_from_disk_names_files: bool,
     /// `ProgramContents::run` for the application. For Bun's own modules `RunContents::default()`: its lists go by the files of the application.

@@ -340,8 +340,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                 }
                 T::Global => {
+                    // `bun run` reads a `global` that begins a statement of code that runs as a name, and the next line as a statement of its own.
+                    let is_name_at_end_of_line =
+                        *last == first && self.options.compiles && !self.has_context(ctx::AMBIENT);
                     self.next();
                     return !self.is_ecmascript
+                        && !(is_name_at_end_of_line && self.newline_before())
                         && matches!(self.token(), T::OpenBrace | T::Identifier | T::Export);
                 }
                 T::Import => {

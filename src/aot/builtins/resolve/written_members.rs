@@ -7,6 +7,7 @@
 use super::imports::has_source;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
+use super::module_cache::is_function_that_loader_calls;
 use super::resolver::{AliasSource, ExprState, ResolvedValue, Resolver};
 use super::{SourceDialect, SpyCall};
 use crate::builtins::table::{
@@ -279,6 +280,7 @@ struct WritesFound {
     hands_spy_on: bool,
     hands_mock_on: bool,
     resets_modules: bool,
+    stores_loader_functions: bool,
     /// Operands, without their type assertions, whose part in their call is known. They ascend once every call has been looked at.
     followed: Vec<ExprId>,
     runner_objects_out_of_sight: Vec<BuiltinId>,
@@ -296,6 +298,9 @@ impl WritesFound {
 
     /// Any member of `holder` may be written. Whoever unites the files lists them.
     fn open(&mut self, holder: BuiltinId) {
+        self.stores_loader_functions |= table::members(holder)
+            .iter()
+            .any(|&member| is_function_that_loader_calls(member));
         let mut members = table::members(holder).iter();
         if members.any(|&member| comes_with_holder(holder, member)) {
             self.opened.push(holder);
@@ -721,6 +726,7 @@ impl Resolver<'_, '_> {
         };
         let is_added = match name.map(|name| table::member(holder, name)) {
             Some(MemberLookup::Found(member)) => {
+                found.stores_loader_functions |= is_function_that_loader_calls(member);
                 if runs == WriteRuns::WhereNothingIsThere && is_there_and_not_falsy(member) {
                     return;
                 }
@@ -1216,6 +1222,7 @@ impl Resolver<'_, '_> {
         output.hands_spy_on = found.hands_spy_on;
         output.hands_mock_on = found.hands_mock_on;
         output.resets_modules = found.resets_modules;
+        output.stores_loader_functions = found.stores_loader_functions;
     }
 
     /// `Function.prototype.once = f` in an executable. What such a file replaces stays locked, and so does Object.prototype.

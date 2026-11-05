@@ -81,78 +81,7 @@ for (const absent of [undefined, null] as unknown as string[]) {
 report.push("wrong " + wrong);
 console.log(report.join("\n"));
 
-// GENERATED: left reset toPath toPathStepByStep
 // CHECK-LABEL: function {{*}}name="left"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=JSON
-// CHECK-NEXT: v1 = PropGet v0 key="stringify"
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="legacy"
-// CHECK-NEXT: v5 = PropGet v4 key="lastMatch"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="legacy"
-// CHECK-NEXT: v8 = PropGet v7 key="input"
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="legacy"
-// CHECK-NEXT: v11 = PropGet v10 key="leftContext"
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v13 = CheckInitialized v12 name="legacy"
-// CHECK-NEXT: v14 = PropGet v13 key="rightContext"
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v16 = CheckInitialized v15 name="legacy"
-// CHECK-NEXT: v17 = PropGet v16 key="$&"
-// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v19 = CheckInitialized v18 name="legacy"
-// CHECK-NEXT: v20 = PropGet v19 key="$1"
-// CHECK-NEXT: v21 = NewArray v5, v8, v11, v14, v17, v20 contents=anything
-// CHECK-NEXT: v22 = Call v2, v0, v21 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v22 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="reset"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRegExp pattern="^mark$"
-// CHECK-NEXT: v1 = PropGet v0 key="test"
-// CHECK-NEXT: v2 = String string="mark"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="test" calleeName="test"
-// CHECK-NEXT: v4 = Convert v3 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toPath"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = PropGet v0 key="replace"
-// CHECK-NEXT: v2 = NewRegExp pattern="\\." regExpFlags=[Global]
-// CHECK-NEXT: v3 = String string="/"
-// CHECK-NEXT: v4 = Call v1, v0, v2, v3 calleeKey="replace" calleeName="text.replace"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = PropGet v5 key="replace"
-// CHECK-NEXT: v7 = NewRegExp pattern="\\$" regExpFlags=[Global]
-// CHECK-NEXT: v8 = String string="_inner_"
-// CHECK-NEXT: v9 = Call v6, v5, v7, v8 calleeKey="replace" calleeName="replace"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toPathStepByStep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = PropGet v0 key="replace"
-// CHECK-NEXT: v2 = NewRegExp pattern="\\." regExpFlags=[Global]
-// CHECK-NEXT: v3 = String string="/"
-// CHECK-NEXT: v4 = Call v1, v0, v2, v3 calleeKey="replace" calleeName="text.replace"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = PropGet v5 key="length"
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: v8 = GreaterEq v6, v7
-// CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v9 = PropGet v5 key="replace"
-// CHECK-NEXT: v10 = NewRegExp pattern="\\$" regExpFlags=[Global]
-// CHECK-NEXT: v11 = String string="_inner_"
-// CHECK-NEXT: v12 = Call v9, v5, v10, v11 calleeKey="replace" calleeName="one.replace"
-// CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

@@ -1,6 +1,5 @@
 //! `path.posix` for 8-bit characters. What looks at all of them is a kernel of `bun_highway`.
 
-use bun_highway::PartOfPath;
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
@@ -31,27 +30,6 @@ pub fn is_ascii(text: &[u8]) -> bool {
             let first = start.cast::<u64>().read_unaligned();
             let last = start.add(len - 8).cast::<u64>().read_unaligned();
             return (first | last) & HIGHEST_BITS as u64 == 0;
-        }
-        if len >= 4 {
-            let first = start.cast::<u32>().read_unaligned();
-            let last = start.add(len - 4).cast::<u32>().read_unaligned();
-            return (first | last) & HIGHEST_BITS as u32 == 0;
-        }
-        len == 0 || (*start | *start.add(len / 2) | *start.add(len - 1)) < 0x80
-    }
-}
-
-#[inline(always)]
-pub fn is_ascii_of_few(text: &[u8]) -> bool {
-    const HIGHEST_BITS: u64 = u64::from_ne_bytes([0x80; 8]);
-    let (start, len) = (text.as_ptr(), text.len());
-    debug_assert!(len < 16);
-    // SAFETY: every read lies in `text`. One that ends with it may overlap the one before it.
-    unsafe {
-        if len >= 8 {
-            let first = start.cast::<u64>().read_unaligned();
-            let last = start.add(len - 8).cast::<u64>().read_unaligned();
-            return (first | last) & HIGHEST_BITS == 0;
         }
         if len >= 4 {
             let first = start.cast::<u32>().read_unaligned();
@@ -239,7 +217,7 @@ pub fn basename_without_suffix_posix_latin1(path: &[u8], suffix: &[u8]) -> Range
 
 /// [`crate::dirname_posix_t`]: that many of the first characters, or a literal.
 #[inline(always)]
-fn dirname_posix_latin1(path: &[u8]) -> Result<usize, &'static [u8]> {
+pub fn dirname_posix_latin1(path: &[u8]) -> Result<usize, &'static [u8]> {
     if path.is_empty() {
         return Err(b".");
     }
@@ -253,7 +231,7 @@ fn dirname_posix_latin1(path: &[u8]) -> Result<usize, &'static [u8]> {
 
 /// [`crate::extname_posix_t`]: from the last dot of the name, unless the name starts with it or is "..".
 #[inline(always)]
-fn extname_posix_latin1(path: &[u8]) -> Range<usize> {
+pub fn extname_posix_latin1(path: &[u8]) -> Range<usize> {
     let end = end_without_slashes(path, 0);
     let Some(dot) = last_slash_or_dot(path, end) else {
         return 0..0;
@@ -265,62 +243,6 @@ fn extname_posix_latin1(path: &[u8]) -> Range<usize> {
         return 0..0;
     }
     dot..end
-}
-
-#[inline(always)]
-fn part_of_path(path: &[u8], range: Range<usize>) -> PartOfPath {
-    if !is_ascii(&path[range.clone()]) {
-        PartOfPath::NOT_ASCII
-    } else if range.len() == path.len() {
-        PartOfPath::WHOLE
-    } else {
-        PartOfPath::part(range.start, range.end)
-    }
-}
-
-#[inline(always)]
-fn answered_at_once(
-    path: &[u8],
-    by_kernel: impl FnOnce(&[u8]) -> PartOfPath,
-    in_steps: impl FnOnce() -> PartOfPath,
-) -> PartOfPath {
-    if cfg!(miri) {
-        return in_steps();
-    }
-    let answer = by_kernel(path);
-    debug_assert_eq!(answer, in_steps());
-    answer
-}
-
-pub const BLOCK: usize = 16;
-
-#[inline(always)]
-pub fn basename_posix_ascii(path: &[u8]) -> PartOfPath {
-    debug_assert!(path.len() >= BLOCK);
-    answered_at_once(path, bun_highway::basename_posix, || {
-        part_of_path(path, basename_posix_latin1(path))
-    })
-}
-
-#[inline(always)]
-pub fn dirname_posix_ascii(path: &[u8]) -> PartOfPath {
-    answered_at_once(
-        path,
-        bun_highway::dirname_posix,
-        || match dirname_posix_latin1(path) {
-            Ok(end) => part_of_path(path, 0..end),
-            Err(b".") => PartOfPath::DOT,
-            Err(b"/") => PartOfPath::SLASH,
-            Err(_) => PartOfPath::TWO_SLASHES,
-        },
-    )
-}
-
-#[inline(always)]
-pub fn extname_posix_ascii(path: &[u8]) -> PartOfPath {
-    answered_at_once(path, bun_highway::extname_posix, || {
-        part_of_path(path, extname_posix_latin1(path))
-    })
 }
 
 /// [`crate::parse_posix_t`].

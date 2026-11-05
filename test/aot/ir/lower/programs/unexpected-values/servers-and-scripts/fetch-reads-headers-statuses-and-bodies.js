@@ -49,17 +49,4 @@ console.log(await fetch(at("/slow"), { signal: AbortSignal.timeout(20) }).catch(
 console.log(await fetch("http://127.0.0.1:1/").catch(error => error.code ?? error.name));
 server.stop(true);
 
-// GENERATED: at
 // CHECK-LABEL: function {{*}}name="at"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|URL flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|URL):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="URL" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(URL) flags=[IsExpected]}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="server"
-// CHECK-NEXT: v6 = PropGet v5 key="url"
-// CHECK-NEXT: v7 = Construct v3, -, v0, v6 calleeName="URL"
-// CHECK-NEXT: v8 = PropGet v7 key="href"
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

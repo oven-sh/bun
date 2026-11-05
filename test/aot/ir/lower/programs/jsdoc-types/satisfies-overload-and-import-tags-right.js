@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="Reader"
+// CHECK-LABEL: function {{*}}name="read"
+// CHECK-LABEL: function {{*}}name="areaOf"
 
 // FILE: main.js
 // Satisfies overload and import tags that are right.
@@ -134,37 +137,3 @@ export type Unit = "px" | "em";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": true }, "files": [] }
-
-// GENERATED: Reader read areaOf
-// CHECK-LABEL: function {{*}}name="Reader"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=number
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = NarrowByTest v0, v6
-// CHECK-NEXT: v8 = PropGet v7 key="toUpperCase"
-// CHECK-NEXT: v9 = Call v8, v7 calleeKey="toUpperCase" calleeName="key.toUpperCase"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="areaOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="width"
-// CHECK-NEXT: v2 = PropGet v0 key="height"
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

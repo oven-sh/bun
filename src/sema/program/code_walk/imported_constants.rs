@@ -112,6 +112,7 @@ struct Stars {
     /// In their order, each with whether the build fails to see every name behind it.
     statements: Vec<(StmtId, bool)>,
     /// For a name that a file behind a statement exports, twice the index of the first such statement, and one more where a later one may have it too.
+    /// Empty where there is one statement and so nothing to choose: in a row of files, each with a star over the one before, the lists are the square of the row.
     first_with_name: FxHashMap<Atom, u32>,
 }
 
@@ -284,23 +285,34 @@ impl<'s> Exports<'_, 's, '_> {
         }
     }
 
-    /// The names for which `resolve` finds something other than `Missing` in the file. `None`: any name may be one.
-    fn names_found_in(&mut self, file: u32) -> Option<Vec<Atom>> {
-        let files = self.files;
-        let parsed = files[file as usize].parsed.as_ref()?;
-        let (hir, bound) = (&parsed.parse.hir, &parsed.parse.bound);
+    /// The `export *` statements of a file for whose names `resolve` finds something other than `Missing`. `None`: any name may be one.
+    fn stars_of_file_with_known_names(&mut self, file: u32) -> Option<Arc<Stars>> {
+        let parsed = self.files[file as usize].parsed.as_ref()?;
         let is_module = parsed.code.analyzed.analysis.module_format == ModuleFormat::Esm;
-        if !is_module || hir.has_errors {
+        if !is_module || parsed.parse.hir.has_errors {
             return None;
         }
         // In a circle of `export *` a name that nobody exports is unknown.
-        let stars = self.stars_of(file)?;
-        if !stars.sees_every_name() {
-            return None;
+        self.stars_of(file).filter(|stars| stars.sees_every_name())
+    }
+
+    /// The names for which `resolve` finds something other than `Missing` in the file. `None`: any name may be one.
+    fn names_found_in(&mut self, mut file: u32) -> Option<Vec<Atom>> {
+        let files = self.files;
+        let mut names = Vec::new();
+        loop {
+            let stars = self.stars_of_file_with_known_names(file)?;
+            let bound = &files[file as usize].parsed.as_ref()?.parse.bound;
+            let own = bound.table(bound.symbol(bound.file_symbol).exports);
+            names.extend(own.iter().map(|entry| entry.0));
+            let [(only, _)] = stars.statements[..] else {
+                names.extend(stars.first_with_name.keys().copied());
+                return Some(names);
+            };
+            file = self
+                .target_of_site(file, ImportSiteKind::ExportStar(only))
+                .ok()?;
         }
-        let own = bound.table(bound.symbol(bound.file_symbol).exports);
-        let own = own.iter().map(|entry| entry.0);
-        Some(own.chain(stars.first_with_name.keys().copied()).collect())
     }
 
     /// `None`: the statements of the file are being looked at.
@@ -318,20 +330,17 @@ impl<'s> Exports<'_, 's, '_> {
         self.files_with_stars_in_progress.push(file);
         let hir = &parsed.parse.hir;
         let mut stars = Stars::default();
-        for statement in hir.ids(hir.body) {
-            let StmtKind::ExportStar {
-                alias,
-                type_only: false,
-                ..
-            } = hir[statement].kind
-            else {
-                continue;
-            };
-            if alias.is_some() {
-                continue;
-            }
-            let index = stars.statements.len() as u32;
+        let passes_names_on = |statement: &StmtId| matches!(hir[*statement].kind, StmtKind::ExportStar { alias, type_only: false, .. } if alias.is_none());
+        let statements: Vec<StmtId> = hir.ids(hir.body).filter(passes_names_on).collect();
+        for (index, &statement) in (0..).zip(&statements) {
             let target = self.target_of_site(file, ImportSiteKind::ExportStar(statement));
+            if statements.len() == 1 {
+                let behind = target
+                    .ok()
+                    .and_then(|it| self.stars_of_file_with_known_names(it));
+                stars.statements.push((statement, behind.is_none()));
+                break;
+            }
             let names = target.ok().and_then(|target| self.names_found_in(target));
             stars.statements.push((statement, names.is_none()));
             for name in names.unwrap_or_default() {
@@ -359,7 +368,7 @@ impl<'s> Exports<'_, 's, '_> {
         for (index, &(statement, has_any_name)) in (0..).zip(&stars.statements) {
             let has_name = first_with_name
                 .is_some_and(|first| index == first / 2 || first % 2 == 1 && index > first / 2);
-            if !has_any_name && !has_name {
+            if !has_any_name && !has_name && stars.statements.len() != 1 {
                 continue;
             }
             let site = ImportSiteKind::ExportStar(statement);

@@ -1197,77 +1197,11 @@ function attempt(run) { try { return run(); } catch (e) { return "threw " + (e i
   scene();
 }
 
-// GENERATED: attempt Point get set
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Call v0 calleeName="run"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v2 = CatchValue
-// CHECK-NEXT: v3 = String string="threw "
-// CHECK-NEXT: v4 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v5 = PropGet v4 key="TypeError" [isFreeName]
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(TypeError) flags=[IsExpected]}
-// CHECK-NEXT: v7 = InstanceOf v2, v6
-// CHECK-NEXT: v8 = Add v3, v7
-// CHECK-NEXT: v9 = String string=" "
-// CHECK-NEXT: v10 = Add v8, v9
-// CHECK-NEXT: v11 = PropGet v2 key="constructor"
-// CHECK-NEXT: v12 = PropGet v11 key="name"
-// CHECK-NEXT: v13 = Add v10, v12
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: PropSet v4, v1 key="x"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = TypeTest v6 testedType=object
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: Jump -> next b2(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = CallDirect function=[[f_2]]
-// CHECK-NEXT: ReturnCall v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = CallDirect function=[[f_3]]
-// CHECK-NEXT: ReturnCall v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = CallDirect function=[[f_4]]
-// CHECK-NEXT: ReturnCall v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

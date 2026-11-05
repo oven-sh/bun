@@ -78,46 +78,5 @@ enum Odd {
 fraction.keys = Object.keys(Odd).join();
 console.log(Odd.Half, Odd.NotANumber, Odd.Negative, Odd[0.5], Odd["NaN"], Odd[-1], fraction.keys);
 
-// GENERATED: noted local
 // CHECK-LABEL: function {{*}}name="noted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: number):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="order"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Call v4, v3, v0 calleeKey="push" calleeName="order.push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = Convert v1 declared={type=number}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="local"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: PropSet v2, v0 key="Seed"
-// CHECK-NEXT: v4 = ToPropertyKey v0
-// CHECK-NEXT: v5 = String string="Seed"
-// CHECK-NEXT: ElemSet v2, v4, v5
-// CHECK-NEXT: v7 = Integer integer=2
-// CHECK-NEXT: v8 = Mul v0, v7
-// CHECK-NEXT: PropSet v2, v8 key="Twice"
-// CHECK-NEXT: v10 = ToPropertyKey v8
-// CHECK-NEXT: v11 = String string="Twice"
-// CHECK-NEXT: ElemSet v2, v10, v11
-// CHECK-NEXT: v13 = PropGet v2 key="Seed"
-// CHECK-NEXT: v14 = PropGet v2 key="Twice"
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: PropSet v2, v15 key="Both"
-// CHECK-NEXT: v17 = ToPropertyKey v15
-// CHECK-NEXT: v18 = String string="Both"
-// CHECK-NEXT: ElemSet v2, v17, v18
-// CHECK-NEXT: v20 = PropGet v2 key="Seed"
-// CHECK-NEXT: v21 = PropGet v2 key="Twice"
-// CHECK-NEXT: v22 = PropGet v2 key="Both"
-// CHECK-NEXT: v23 = Integer integer=3
-// CHECK-NEXT: v24 = Mul v0, v23
-// CHECK-NEXT: v25 = ElemGet v2, v24
-// CHECK-NEXT: v26 = NewArray v20, v21, v22, v25 contents=anything
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: }

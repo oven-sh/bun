@@ -281,7 +281,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     /// Why the question that ends here has no answer. `enclosing`: the state of the question around it, which goes on.
     #[inline(never)]
-    fn end_question(&mut self, enclosing: CutState) -> Option<GaveUp> {
+    fn end_question(
+        &mut self,
+        enclosing: CutState,
+        limit_hits: u64,
+        stack_of_task: Option<usize>,
+    ) -> Option<GaveUp> {
+        self.depth -= 1;
+        if let Some(base) = stack_of_task {
+            self.c.end_stack_of_question(base);
+        }
+        if self.c.leaves_depth_limit_unreported && self.c.instantiation_limit_hits != limit_hits {
+            self.unstable_answers += 1;
+        }
         self.forget_what_a_question_leaves();
         let ran_out_of_stack = (self.c.ran_out_of_stack).replace(enclosing.ran_out_of_stack);
         let own = CutState {
@@ -315,14 +327,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let stack_of_task = is_outermost.then(|| self.c.begin_stack_of_question());
         self.depth += 1;
         let computed = compute(self);
-        self.depth -= 1;
-        if let Some(base) = stack_of_task {
-            self.c.end_stack_of_question(base);
-        }
-        if self.c.leaves_depth_limit_unreported && self.c.instantiation_limit_hits != limit_hits {
-            self.unstable_answers += 1;
-        }
-        let answer = match self.end_question(enclosing) {
+        let answer = match self.end_question(enclosing, limit_hits, stack_of_task) {
             Some(reason) => Err(reason),
             None => computed,
         };

@@ -20,11 +20,32 @@ use crate::cli::command::{Context, Tag};
 
 const MAX_SUGGESTION_DISTANCE: usize = 3;
 const CODE_GENERATION_FLAG: &[u8] = b"--disallow-code-generation-from-strings";
-pub(crate) const COMPILE_AOT_KEYS: &[&str] =
-    &["aot", "aotCheck", "aotExplain", "aotOut", "aotTesting"];
+pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
+    "aot",
+    "aotCheck",
+    "aotExplain",
+    "aotHarden",
+    "aotOut",
+    "aotTesting",
+];
 const EXPLAIN_ALLOWED: &str =
     "one of text, json, guards, guards-json, trim, allocations, forms, statistics";
 const LOCALES_ALLOWED: &str = "a list of locale tags, like en,de-AT";
+const HARDENING_ALLOWED: &str = "a list of these names: proof-checks, ignore-told-ranges";
+
+/// Each name that `--aot-harden` takes, and the words of the engine that it stands for. None is on by default.
+const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
+    // What the compiler has proven of a value is tested where the value arrives. That nobody keeps a cell is a proof that no test can repeat: every cell stays in the heap.
+    (
+        b"proof-checks",
+        &[
+            b"testing=CheckProofsAtRunTime",
+            b"testing=KeepsCellsOutOfFrames",
+        ],
+    ),
+    // Every access by position reads the length and tests the position where it stands, whatever an earlier test or the head of a loop has shown.
+    (b"ignore-told-ranges", &[b"testing=TestsEveryPosition"]),
+];
 /// The words of `BUN_DEBUG_TEST_AOT_WORDS` that start with `TestRun`. With any of them the runner says what the build hands over.
 /// `TestRunLayers:0` asks for one program, which every run is.
 const TEST_RUN_WORDS: &[&[u8]] = &[
@@ -64,6 +85,7 @@ macro_rules! developer_flag {
 
 const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("check", Form::Many),
+    developer_flag!("harden", Form::Many),
     developer_flag!("testing", Form::Many),
     developer_flag!("references", Form::One),
     developer_flag!("cpu", Form::One),
@@ -151,6 +173,8 @@ pub(crate) struct CompileFlags<'a> {
     pub has_external_source_map: bool,
     pub admits_inspector: bool,
     pub allows_code_from_disk: bool,
+    /// `--check`
+    pub checks_types: bool,
     pub trim: TrimFlags<'a>,
     pub developer_words: Vec<(&'static str, Option<&'a [u8]>)>,
     pub is_cross_compile: bool,
@@ -200,6 +224,7 @@ fn allowed_values(option: OptionName) -> &'static str {
     match option {
         OptionName::Explain => EXPLAIN_ALLOWED,
         OptionName::TrimLocales => LOCALES_ALLOWED,
+        OptionName::Developer("harden") => HARDENING_ALLOWED,
         OptionName::References => "one of narrow, wide",
         OptionName::Threads => "a whole number above zero",
         OptionName::CodeGenerationFromStrings => "\"strict\", or no value",
@@ -244,6 +269,7 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Threads, _) => "--aot-threads",
         (Name::References, _) => "--aot-references",
         (Name::Developer("check"), BuildApi) => "compile.aotCheck",
+        (Name::Developer("harden"), BuildApi) => "compile.aotHarden",
         (Name::Developer("testing"), BuildApi) => "compile.aotTesting",
         (Name::Developer("out"), BuildApi) => "compile.aotOut",
         (Name::Developer(key), _) => developer_flag_name(key),
@@ -408,6 +434,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         admits_inspector,
         loads_code_from_disk: flags.allows_code_from_disk,
         runs_in_place: flags.is_in_place,
+        looks_for_type_errors: flags.checks_types,
         ..Default::default()
     };
     for &(key, value) in &flags.developer_words {
@@ -622,21 +649,44 @@ pub(crate) fn apply_developer_word<'a>(
             }
             options.isolates_code_from_disk = true;
         }
-        _ => {
-            let word = option_word(key, value);
-            // The table of these words is part of the compiler. Without the compiler the build fails whatever the word is.
-            let rejected = bun_removable_features::removable_body!(AotCompiler, ReturnDefault, {
-                engine::check_option_word(&options.option_words, &word).err()
-            });
-            if let Some(RejectedOptionWord { word, sentence }) = rejected {
-                return Err(OptionError::DeveloperWord {
-                    key,
-                    word,
-                    sentence,
-                });
+        "harden" => {
+            for name in strings::split(text, b",") {
+                let known = HARDENING_NAMES.iter().find(|(known, _)| *known == name);
+                let Some(&(_, words)) = known else {
+                    return Err(OptionError::InvalidValue {
+                        option: OptionName::Developer(key),
+                        value: name,
+                    });
+                };
+                for word in words {
+                    add_engine_word(key, word.to_vec(), options)?;
+                }
             }
-            options.option_words.push(word.into_boxed_slice());
         }
+        _ => add_engine_word(key, option_word(key, value), options)?,
+    }
+    Ok(())
+}
+
+fn add_engine_word<'a>(
+    key: &'static str,
+    word: Vec<u8>,
+    options: &mut AotOptions,
+) -> Result<(), OptionError<'a>> {
+    // The table of these words is part of the compiler. Without the compiler the build fails whatever the word is.
+    let rejected = bun_removable_features::removable_body!(AotCompiler, ReturnDefault, {
+        engine::check_option_word(&options.option_words, &word).err()
+    });
+    if let Some(RejectedOptionWord { word, sentence }) = rejected {
+        return Err(OptionError::DeveloperWord {
+            key,
+            word,
+            sentence,
+        });
+    }
+    // A name that is written twice asks for nothing more.
+    if !options.option_words.iter().any(|listed| **listed == *word) {
+        options.option_words.push(word.into_boxed_slice());
     }
     Ok(())
 }
@@ -818,6 +868,7 @@ fn read_build_flags<'c>(
         has_external_source_map: args.option(b"--sourcemap") == Some(b"external"),
         admits_inspector: args.flag(b"--compile-inspector"),
         allows_code_from_disk: args.flag(b"--aot-allow-code-from-disk"),
+        checks_types: args.flag(b"--check"),
         trim: TrimFlags {
             removes_unused: args.flag(b"--trim"),
             remove_internal: split_at_commas(args.options(b"--trim-without"))
@@ -874,7 +925,6 @@ pub(crate) fn parse_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: 
         return;
     }
     let has_aot_flag = args.option(b"--aot-decode-crash-report").is_some()
-        || args.option(b"--aot-crash-report-dir").is_some()
         || args.flag(b"--aot-build-id")
         || args.option(b"--aot-graph-fd").is_some()
         || args.option(b"--aot-checked").is_some()
@@ -896,9 +946,6 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     }
     if let Some(report) = args.option(b"--aot-decode-crash-report") {
         run_compiled::set_crash_report(report);
-    }
-    if let Some(directory) = args.option(b"--aot-crash-report-dir") {
-        bun_crash_handler::report_file::set_directory_of_build(directory);
     }
     if let Some(descriptor) = args.option(b"--aot-graph-fd") {
         run_compiled::use_graph_descriptor(descriptor);

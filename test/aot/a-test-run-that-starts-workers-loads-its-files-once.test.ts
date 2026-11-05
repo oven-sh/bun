@@ -232,7 +232,7 @@ test("a text with a mistake in it fails where the Worker starts, beside a Worker
   });
 }, 120_000);
 
-// The program goes by the tsconfig.json that is nearest to the most entry points, so here it goes by another one once the Worker's file is known.
+// The Worker's file lies under a tsconfig.json of its own. The load takes it in as it goes on, as where there is one configuration.
 test.each(["ts", "js"])(
   "a Worker's .%s file under a tsconfig.json, started from a project without one",
   async ending => {
@@ -253,7 +253,7 @@ test.each(["ts", "js"])(
     expect(plain).toMatchObject({ results: ["pass a Worker answers"], exitCode: 0 });
     expect(await runTests(String(dir), ["./a.test.ts"], ["--aot"])).toEqual({
       ...plain,
-      loadedAgain: ["with 1 more files that Workers start from"],
+      goesOn: ["with 1 more files that Workers start from"],
     });
   },
   120_000,

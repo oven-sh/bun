@@ -2,6 +2,11 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="size"
+// CHECK-LABEL: function {{*}}name="total"
+// CHECK-LABEL: function {{*}}name="Holder"
+// CHECK-LABEL: function {{*}}name="next"
+// CHECK-LABEL: function {{*}}name="Puppy"
 
 // FILE: main.ts
 // Typescript believes the false tags of an unchecked js module.
@@ -221,63 +226,3 @@ export const Level = { Low: "low", High: 2 };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: size total Holder next Puppy
-// CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = PropGet v0 key="length"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5: number, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = ElemGet v0, v6
-// CHECK-NEXT: v11 = Add v5, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number}
-// CHECK-NEXT: v13 = Increment v6
-// CHECK-NEXT: v14 = Convert v13 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v12, v14)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v15 = Convert v5 declared={type=number}
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="n"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Puppy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_5]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

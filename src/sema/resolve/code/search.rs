@@ -190,6 +190,20 @@ impl<'h> Resolver<'h> {
         }
     }
 
+    /// What says what a file is where an `import` loads it and its text does not say: `bun run` asks the package alone, whatever the name of the file says.
+    /// In an executable a package that says CommonJS is not believed of a file that is an ES module by its name: nothing is declared of it, and its text says what it is.
+    /// One without a trace of CommonJS is an ES module, as in the bundle of `bun build --compile`. One that uses `require` is CommonJS, as in `bun run`.
+    pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
+        let of_package = self.package_module_type(path);
+        let is_contradicted = self.code_options().builds_executable
+            && of_package == DeclaredModuleType::CommonJs
+            && self.declared_module_type(path) == DeclaredModuleType::Esm;
+        match is_contradicted {
+            true => DeclaredModuleType::Unknown,
+            false => of_package,
+        }
+    }
+
     pub(super) fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
         if strings::basename_posix(directory) == b"node_modules" {
             return None;

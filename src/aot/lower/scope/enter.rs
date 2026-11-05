@@ -1,10 +1,10 @@
 use bun_sema::bind::{Binding, CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
-use bun_sema::hir::{FnId, FnKind, StmtId, StmtKind};
+use bun_sema::hir::{FnId, FnKind, IdList, StmtId, StmtKind};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::analysis::find_by_key;
-use super::state::EnteredScope;
+use super::state::{EnteredScope, EnvironmentPutOff};
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
 };
@@ -44,6 +44,8 @@ type EntryValues = SmallVec<[(BindingRef, Option<ValueId>); 8]>;
 /// Who makes what the scope of a file begins with: its environment, and the functions that it declares and somebody else can reach.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(in crate::lower) enum MakerOfScope {
+    /// Whoever enters the scope, and its cell where something first asks for it: `make_environment_put_off()`.
+    HereWhenAskedFor,
     /// Whoever enters the scope.
     Here,
     /// `FunctionKey::Instantiation`, which is being lowered.
@@ -60,6 +62,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn leave_scope(&mut self, scope: ScopeId) {
         let left = self.scopes.entered.pop();
+        let depth = self.scopes.entered.len();
+        self.scopes
+            .environments_put_off
+            .retain(|it| it.depth < depth);
         debug_assert!(
             left.is_some_and(|left| left.scope == scope),
             "scopes are left innermost first"
@@ -77,6 +83,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         initial: &[(BindingRef, ValueId)],
     ) {
         self.allocate_scope_made_by(scope, initial, MakerOfScope::Here);
+    }
+
+    pub(in crate::lower) fn allocate_scope_of_function(
+        &mut self,
+        scope: ScopeId,
+        initial: &[(BindingRef, ValueId)],
+    ) {
+        self.allocate_scope_made_by(scope, initial, MakerOfScope::HereWhenAskedFor);
     }
 
     pub(in crate::lower) fn enter_scope_made_by(&mut self, scope: ScopeId, maker: MakerOfScope) {
@@ -107,6 +121,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             "a scope lists its bindings in ascending order"
         );
         let environment = match maker {
+            MakerOfScope::HereWhenAskedFor => self.put_off_environment(&entry, &values),
             MakerOfScope::Here | MakerOfScope::Instantiation => {
                 self.allocate_environment(&entry, &values)
             }
@@ -156,7 +171,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let placement = self.file.scopes.placement(BindingRef::Symbol(symbol));
             let is_local = placement.is_none_or(|placement| placement.storage == Storage::Local);
             let is_made_here = match maker {
-                MakerOfScope::Here => true,
+                MakerOfScope::Here | MakerOfScope::HereWhenAskedFor => true,
                 MakerOfScope::Instantiation => !is_local,
                 MakerOfScope::AheadOfBody => is_local,
             };
@@ -315,6 +330,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         entry: &ScopeEntry,
         values: &EntryValues,
     ) -> Option<LocalVariable> {
+        let variable = self.put_off_environment(entry, values)?;
+        self.make_environment_put_off(entry.scope);
+        Some(variable)
+    }
+
+    fn put_off_environment(
+        &mut self,
+        entry: &ScopeEntry,
+        values: &EntryValues,
+    ) -> Option<LocalVariable> {
         if !self.file.scopes.has_environment(entry.scope) {
             return None;
         }
@@ -337,13 +362,51 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             fields.push(field);
             field_values.push(value);
         }
-        let object = self
-            .builder
-            .new_object(layout, &fields, None, &field_values);
         let ty = self.file.fragment.types.intern(Type::environment(layout));
         let variable = self.builder.create_variable(Some(ty));
-        self.builder.write_variable(variable, object);
+        self.scopes.environments_put_off.push(EnvironmentPutOff {
+            scope: entry.scope,
+            depth: self.scopes.entered.len(),
+            variable,
+            layout,
+            fields,
+            values: field_values,
+            place: self.builder.place(),
+            list: IdList::EMPTY,
+        });
         Some(variable)
+    }
+
+    /// In front of whatever reads the variable of the scope's cell.
+    pub(super) fn make_environment_put_off(&mut self, scope: ScopeId) {
+        let put_off = &mut self.scopes.environments_put_off;
+        let Some(index) = put_off.iter().rposition(|it| it.scope == scope) else {
+            return;
+        };
+        let it = put_off.remove(index);
+        let object = self.builder.build_at(it.place, |builder| {
+            builder.new_object(it.layout, &it.fields, None, &it.values)
+        });
+        self.builder
+            .write_variable_at(it.place, it.variable, object);
+    }
+
+    /// From its entry on the scope is these statements and nothing else.
+    pub(in crate::lower) fn give_list_to_scope(&mut self, scope: ScopeId, list: IdList<StmtId>) {
+        for it in &mut self.scopes.environments_put_off {
+            if it.scope == scope {
+                it.list = list;
+            }
+        }
+    }
+
+    /// The statement at `position` of the lists is about to be lowered. Its start stands above all that is left of a scope whose list holds it.
+    pub(in crate::lower) fn move_environments_put_off(&mut self, position: u32) {
+        for it in &mut self.scopes.environments_put_off {
+            if position.wrapping_sub(it.list.start) < it.list.len {
+                it.place = self.builder.place();
+            }
+        }
     }
 
     fn create_local(

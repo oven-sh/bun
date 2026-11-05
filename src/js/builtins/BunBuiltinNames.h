@@ -97,6 +97,7 @@ using namespace JSC;
     macro(handleEvent) \
     macro(hasWaitingResponses) \
     macro(headers) \
+    macro(heldChunk) \
     macro(highWaterMark) \
     macro(host) \
     macro(hostDefinedImportType) \
@@ -233,6 +234,7 @@ using namespace JSC;
     macro(armedTimeout) \
     macro(exchange) \
     macro(hasWaitingResponses) \
+    macro(heldChunk) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(ownReadableState) \

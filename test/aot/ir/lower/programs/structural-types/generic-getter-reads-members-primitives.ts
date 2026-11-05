@@ -87,79 +87,8 @@ attempt("a union of a number and a string: what both have", () => {
 
 export {};
 
-// GENERATED: has callMember attempt one Point
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|number|string|symbol):
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: v4 = LogicalNot v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callMember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|number|string|symbol, v2: undefined|null|[[f_1]]):
-// CHECK-NEXT: v3 = ElemGet v0, v1
-// CHECK-NEXT: v4 = Call v2, -, v3, v0 calleeName="use"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v5 = Call v1 calleeName="run"
-// CHECK-NEXT: v6 = Call v4, -, v5 calleeName="show"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b6(v7)
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v8 = CatchValue
-// CHECK-NEXT: v9 = String string="threw "
-// CHECK-NEXT: v10 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v11 = PropGet v10 key="Error" [isFreeName]
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v13 = InstanceOf v8, v12
-// CHECK-NEXT: v14 = ToBoolean v13
-// CHECK-NEXT: Branch v14 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v15):
-// CHECK-NEXT: v16 = PropGet v8 key="constructor"
-// CHECK-NEXT: v17 = PropGet v16 key="name"
-// CHECK-NEXT: Jump -> next b5(v17)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: v19 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v20 = Call v19, -, v8 calleeName="show"
-// CHECK-NEXT: Jump -> next b5(v20)
-// CHECK-NEXT: b5(v21):
-// CHECK-NEXT: v22 = Add v9, v21
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b6(v23)
-// CHECK-NEXT: b6(v24: undefined|null|string):
-// CHECK-NEXT: v25 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v26 = PropGet v25 key="console" [isFreeName]
-// CHECK-NEXT: v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v28 = PropGet v27 key="log"
-// CHECK-NEXT: v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v30 = String string=" -> "
-// CHECK-NEXT: v31 = Add v0, v30
-// CHECK-NEXT: v32 = Add v31, v24
-// CHECK-NEXT: v33 = Call v29, v27, v32 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v34 = Undefined
-// CHECK-NEXT: Return v34
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="one"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

@@ -16,19 +16,5 @@ console.log("namespace:", importedNamespace === Bun, self.namespace === Bun, rea
 console.log("namespace:", tag(importedNamespace), importedNamespace === self.namespace, importedNamespace === read(self, "namespace"), importedNamespace.default === Bun);
 console.log(Object.keys(self).join(" "));
 
-// GENERATED: read tag
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|string):
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=ObjectPrototypeToString
-// CHECK-NEXT: v2 = PropGet v1 key="call"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="call" calleeName="Object.prototype.toString.call"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }

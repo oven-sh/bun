@@ -11,10 +11,11 @@ mod test_run_tests;
 mod test_run_ways;
 mod throwing;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, StmtId};
-use bun_sema::program::Files;
+use bun_sema::program::{FileId, Files};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::commonjs::CommonJsState;
@@ -117,6 +118,16 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
     }
+}
+
+/// `asked`: the file that is asked for the name, and the name there.
+pub(crate) fn emit_import_binding_asked(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    imports::emit_import_binding_asked(lowering, binding, name, None, asked)
 }
 
 pub(crate) fn emit_import_binding(

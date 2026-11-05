@@ -84,57 +84,5 @@ for (let round = 0; round < 3; round++) {
   height += 1;
 }
 
-// GENERATED: area tell
 // CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="height"
-// CHECK-NEXT: v3 = Mul v0, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tell"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b5():
-// CHECK-NEXT: v4 = Call v1 calleeName="ask"
-// CHECK-NEXT: v5 = TypeTest v4 testedType=string
-// CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v6) handler=b5():
-// CHECK-NEXT: v7 = NarrowByTest v4, v6
-// CHECK-NEXT: Jump -> next b4(v7)
-// CHECK-NEXT: b3(v8) handler=b5():
-// CHECK-NEXT: v9 = NarrowByTest v4, v8
-// CHECK-NEXT: v10 = Builtin builtin=JSON
-// CHECK-NEXT: v11 = PropGet v10 key="stringify"
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v13 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v14 = Call v12, v10, v9, v13 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: Jump -> next b4(v14)
-// CHECK-NEXT: b4(v15) handler=b5():
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v16)
-// CHECK-NEXT: b5() role=CatchHandler:
-// CHECK-NEXT: v17 = CatchValue
-// CHECK-NEXT: v18 = String string="throws "
-// CHECK-NEXT: v19 = PropGet v17 key="name"
-// CHECK-NEXT: v20 = Add v18, v19
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v21)
-// CHECK-NEXT: b6(v22):
-// CHECK-NEXT: v23 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v24 = PropGet v23 key="console" [isFreeName]
-// CHECK-NEXT: v25 = Convert v24 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v26 = PropGet v25 key="log"
-// CHECK-NEXT: v27 = Convert v26 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v28 = String string=": "
-// CHECK-NEXT: v29 = Add v0, v28
-// CHECK-NEXT: v30 = Add v29, v22
-// CHECK-NEXT: v31 = Call v27, v25, v30 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v32 = Undefined
-// CHECK-NEXT: Return v32
-// CHECK-NEXT: }

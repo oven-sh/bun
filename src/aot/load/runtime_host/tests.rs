@@ -95,6 +95,7 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
         builtin_names: &builtin_names,
         platform: host_platform(),
         replaced_builtins: &[],
+        unlocked_builtins: &Arc::default(),
         messages: &messages,
         unreadable: Guarded::default(),
     };

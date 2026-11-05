@@ -82,8 +82,6 @@ impl BuiltinName {
 }
 
 impl RuntimeFunction {
-    pub const COUNT: u32 = RUNTIME_FUNCTION_LIMIT;
-
     pub const fn to_wire(self) -> u32 {
         self.0
     }

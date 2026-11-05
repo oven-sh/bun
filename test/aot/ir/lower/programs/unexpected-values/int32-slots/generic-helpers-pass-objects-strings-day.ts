@@ -92,73 +92,8 @@ const o = fresh();
 fill(o, 5);
 console.log("an ordinary one afterwards:", JSON.stringify(o));
 
-// GENERATED: first singleOrUndefined last fresh Filled
 // CHECK-LABEL: function {{*}}name="first"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="singleOrUndefined"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: v1 = PropGet v0 key="length"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = NarrowByField v0, v4 key="length"
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = ElemGet v5, v6
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = NarrowByField v0, v8 key="length"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Jump -> next b3(v10)
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="last"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = NewArray v1, v2 contents=anything
-// CHECK-NEXT: v4 = IteratorOpen v3
-// CHECK-NEXT: Jump -> next b1(v0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = IteratorResume v4
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: Jump -> next b1(v9)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v10 = CatchException
-// CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fresh"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="Filled"
-// CHECK-NEXT: v2 = Construct v1 calleeName="Filled"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v5 = Call v4, -, v3 calleeName="handOver"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Filled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_4]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

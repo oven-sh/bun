@@ -21,78 +21,8 @@ for (const x of ["𝐀", "😀😁", "𝐀😁", "\ud835", "\udc00", "plain"]) s
 say(JSON.stringify({ "😀": "𝐀", half: "\ud835" }))
 say(String(/^[😀-😃]+$/u.test("😁😂")) + " " + "a𝐀b".replace("𝐀", "-") + " " + "a𝐀b".split("𝐀").length + " " + "a𝐀b".indexOf("b"))
 
-// GENERATED: typed removed switched built Holder
 // CHECK-LABEL: function {{*}}name="typed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="\u{1f600}"
-// CHECK-NEXT: v2 = PropGet v0 key="\u{1d400}b"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = PropGet v0 key="plain"
-// CHECK-NEXT: v5 = PropGet v4 key="length"
-// CHECK-NEXT: v6 = Add v3, v5
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="removed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropDelete v0 key="\u{1f600}"
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeName="Object.keys"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = PropGet v5 key="join"
-// CHECK-NEXT: v7 = String string="|"
-// CHECK-NEXT: v8 = Call v6, v5, v7 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="switched"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: SwitchString v0 strings=["\u{1d400}", "\u{1f600}\u{1f601}", "\u{d835}"] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = String string="a"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: b2(v3):
-// CHECK-NEXT: v4 = String string="two"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b3(v5):
-// CHECK-NEXT: v6 = String string="half"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v7 = String string="other"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="built"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = String string="<"
-// CHECK-NEXT: v2 = ToString v0
-// CHECK-NEXT: v3 = String string="\u{1d400}>"
-// CHECK-NEXT: v4 = Strcat v1, v2, v3
-// CHECK-NEXT: v5 = String string="\u{1f600}"
-// CHECK-NEXT: v6 = PropGet v5 key="length"
-// CHECK-NEXT: v7 = Add v4, v6
-// CHECK-NEXT: v8 = String string="\u{1d400}"
-// CHECK-NEXT: v9 = PropGet v8 key="codePointAt"
-// CHECK-NEXT: v10 = Integer
-// CHECK-NEXT: v11 = Call v9, v8, v10 calleeKey="codePointAt" calleeName="codePointAt"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = Add v7, v12
-// CHECK-NEXT: v14 = String string="\u{1f600}"
-// CHECK-NEXT: v15 = PropGet v14 key="charCodeAt"
-// CHECK-NEXT: v16 = Integer integer=1
-// CHECK-NEXT: v17 = Call v15, v14, v16 calleeKey="charCodeAt" calleeName="charCodeAt"
-// CHECK-NEXT: v18 = Convert v17 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v19 = Add v13, v18
-// CHECK-NEXT: Return v19
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

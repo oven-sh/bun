@@ -3,7 +3,7 @@ use super::inputs::{
     StoredByMocks, TrieNode,
 };
 use super::{Constant, slice_in};
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
 use crate::session::Arena;
 
 impl<'s> FoldInputs<'s> {
@@ -33,26 +33,47 @@ impl<'s> FoldInputs<'s> {
             DefineRoot::Global(name) => filter | root_filter_bit(name),
             DefineRoot::ImportMeta => filter,
         });
+        let names_in_place: Vec<(Atom, Atom)> = (options.defines.iter())
+            .filter_map(|define| match (define.path.root, define.value) {
+                (DefineRoot::Global(name), DefineValue::GlobalPath(&[in_place]))
+                    if define.path.members.is_empty() =>
+                {
+                    Some((name, in_place))
+                }
+                _ => None,
+            })
+            .collect();
+        let names_in_place_in_bundle: Vec<(Atom, Atom)> = (names_in_place.iter().copied())
+            .filter(|it| it.1 != known::require)
+            .collect();
         FoldInputs {
             nodes: slice_in(&nodes, arena),
             roots: slice_in(&trie.roots, arena),
             root_filter,
+            names_in_place: slice_in(&names_in_place_in_bundle, arena),
+            names_in_place_for_bun_run: slice_in(&names_in_place, arena),
             features: options.features,
             features_are_unknown: options.features_are_unknown,
             preserves_unused_imports: options.preserves_unused_imports,
             minifies_syntax: options.minifies_syntax,
+            has_names_for_brackets: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
             max_pattern_bytes: options.max_pattern_bytes,
-            is_called_before_it_runs: false,
             stored_by_mocks: StoredByMocks::Nothing,
         }
     }
 
-    pub fn for_file_called_before_it_runs(self) -> FoldInputs<'s> {
+    /// A program that runs in place goes by `bun run` and `bun test`: they have `["name"]` as `.name` whatever a build is told, and each file has a `require` of its own.
+    pub fn for_program_that_runs_in_place(self) -> FoldInputs<'s> {
         FoldInputs {
-            is_called_before_it_runs: true,
+            has_names_for_brackets: true,
+            names_in_place: self.names_in_place_for_bun_run,
             ..self
         }
+    }
+
+    pub fn names_in_place(&self) -> &'s [(Atom, Atom)] {
+        self.names_in_place
     }
 
     pub fn for_file_stored_by_mocks(self, stored_by_mocks: StoredByMocks<'s>) -> FoldInputs<'s> {
@@ -91,7 +112,7 @@ impl<'s> FoldInputs<'s> {
         let parent = state.node;
         let node = parent.and_then(|parent| find_node(self.nodes[parent as usize].edges, name));
         let has_optional_link = state.has_optional_link || form.is_in_optional_chain;
-        let ends_with_index = form.is_index && !self.minifies_syntax;
+        let ends_with_index = form.is_index && !self.has_names_for_brackets;
         let ends_dropped_path = !has_optional_link
             && node.is_some_and(|node| self.nodes[node as usize].ends_dropped_path);
         let is_dropped = !ends_with_index && (state.is_dropped || ends_dropped_path);

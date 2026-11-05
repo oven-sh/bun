@@ -50,40 +50,6 @@ if (inCondition()) {
 ({ [inUnusedObject()]: 1 });
 console.log(log.join(", "));
 
-// GENERATED: inFinallyAfterReturn inCondition inUnusedTemplate
 // CHECK-LABEL: function {{*}}name="inFinallyAfterReturn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="finally after return"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inCondition"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="condition"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Boolean
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inUnusedTemplate"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="template"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = String string=""
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

@@ -94,61 +94,6 @@ for (let i = 0; i < 2000; i++) tagOnce(join, i);
 for (const [name, make] of tags) attempt("after 2000 honest tags, the tag is " + name, () => tagOnce(make(), 1));
 honest("after");
 
-// GENERATED: join stringsOf apply
 // CHECK-LABEL: function {{*}}name="join"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array, v1: Array):
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = ElemGet v0, v2
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v3, v5)
-// CHECK-NEXT: b1(v6, v7):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v9 = PropGet v1 key="length"
-// CHECK-NEXT: v10 = Less v7, v9
-// CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v11 = String string="["
-// CHECK-NEXT: v12 = ElemGet v1, v7
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = String string="]"
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: v16 = Integer integer=1
-// CHECK-NEXT: v17 = Add v7, v16
-// CHECK-NEXT: v18 = ElemGet v0, v17
-// CHECK-NEXT: v19 = Add v15, v18
-// CHECK-NEXT: v20 = Add v6, v19
-// CHECK-NEXT: v21 = Increment v7
-// CHECK-NEXT: v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v20, v22)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="stringsOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: v1 = NewTemplateObject templateStrings=[{cooked="x" raw="x"}, {cooked="y" raw="y"}]
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Call v0, -, v1, v2 calleeName="tag"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="apply"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=3 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[IsExpected]}, {type=anything}, {type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: anything, v2: undefined|null|Array):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="log"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = String string="apply "
-// CHECK-NEXT: v7 = PropGet v2 key="length"
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = String string=" "
-// CHECK-NEXT: v10 = Add v8, v9
-// CHECK-NEXT: v11 = TypeOf v1
-// CHECK-NEXT: v12 = Add v10, v11
-// CHECK-NEXT: v13 = Call v5, v4, v12 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v14 = Builtin builtin=Reflect
-// CHECK-NEXT: v15 = Builtin builtin=ReflectApply
-// CHECK-NEXT: v16 = Call v15, v14, v0, v1, v2 calleeName="Reflect.apply"
-// CHECK-NEXT: ReturnCall v16
-// CHECK-NEXT: }

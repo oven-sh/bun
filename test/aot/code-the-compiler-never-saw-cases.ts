@@ -328,23 +328,17 @@ const routes: Record<string, Record<string, Route>> = {
   },
 };
 
-// One build for each route would be a hundred builds. The routes are files of two programs, whose entry points import the file that ROUTE names, and the report says in which file each event lies.
-// In the first program are the routes for which the build finds an event: each opens the program to unseen code by itself. In the second are those for which it finds none, so that program stays
-// closed, and a route in it that runs the code fails.
+// A route for which the build finds an event is a program of its own: the report has a line for each kind of event and each API, with one place, so in company it would not tell whose an event is.
+// The routes for which the build finds none are files of one program, whose entry point imports the file that ROUTE names: that program stays closed, and a route in it that runs the code fails.
 const findsNoEvent = new Set([
-  "addon extension handler",
-  "addon extension handler under a computed name",
   "arguments callee caller",
   "be bun in environment",
   "call site get function",
   "call site get this",
   "eval argument",
-  "eval from a descriptor",
-  "eval under a computed name",
   "function arguments",
   "function caller",
   "function constructor under a computed member",
-  "function constructor under a computed name",
   "immediate with a string",
   "inspect argument",
   "inspect in environment",
@@ -355,11 +349,8 @@ const findsNoEvent = new Set([
   "loader provide fetch",
   "loader registry hands out modules",
   "loader request import",
-  "module compile through constructor",
-  "module extensions",
   "module prototype load",
   "module register",
-  "module run main",
   "preload argument",
   "preload in bun options",
   "preload in bunfig",
@@ -380,21 +371,7 @@ const findsNoEvent = new Set([
   "worker of a data url",
   "worker of a file",
   "worker threads eval",
-  "worker under a computed name",
   "worker with preload",
-]);
-
-// The event of these lies in a built-in module or nowhere, so only a program of their own tells whose it is.
-const builtAlone = new Set([
-  "eval as a callback of map",
-  "eval as a promise reaction",
-  "function constructor through reflect construct",
-  "function constructor bound",
-  "vm named",
-  "bun ffi named",
-  "bun ffi cc",
-  // It may call any member of Bun: in company the events of the routes that name one would lie here.
-  "plugin under a computed name",
 ]);
 
 /** `file`: as the build prints it. Undefined: the event lies nowhere in the program. */
@@ -474,51 +451,44 @@ async function judge(
 
 export function codeTheCompilerNeverSaw() {
   describe.concurrent("code the compiler never saw, in a program of its own", () => {
-    for (const { group, name, route, file } of all.filter(({ name }) => builtAlone.has(name))) {
+    for (const { group, name, route, file } of all.filter(({ name }) => !findsNoEvent.has(name))) {
       test(
         `${group}: ${name}`,
         () =>
           slot(async () => {
             using dir = tempDir("aot-unseen-code", { [file]: textOf(route), ...others });
             const { executable, events } = await build(String(dir), file);
-            await judge(String(dir), executable, events.length > 0, route);
+            expect({ sawAnEvent: events.length > 0 }).toEqual({ sawAnEvent: true });
+            await judge(String(dir), executable, true, route);
           }),
         600_000,
       );
     }
   });
 
-  for (const [title, routesOfProgram] of [
-    [
-      "in a program that the build finds open",
-      all.filter(({ name }) => !findsNoEvent.has(name) && !builtAlone.has(name)),
-    ],
-    ["in a program that the build finds closed", all.filter(({ name }) => findsNoEvent.has(name))],
-  ] as const) {
-    describe(`code the compiler never saw, ${title}`, () => {
-      const dir = tempDir("aot-unseen-code", {
-        "main.js":
-          `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
-          `routes[process.env.ROUTE]();\n`,
-        ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
-        ...others,
-      });
-      afterAll(() => dir[Symbol.dispose]());
-      let built: Awaited<ReturnType<typeof build>>;
-      beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
-      for (const { group, name, route, file } of routesOfProgram) {
-        test.concurrent(
-          `${group}: ${name}`,
-          () =>
-            slot(async () => {
-              using run = tempDir("aot-unseen-code-run", others);
-              const sawAnEvent = built.events.some(event => event.file?.replaceAll("\\", "/").endsWith(file));
-              expect({ sawAnEvent }).toEqual({ sawAnEvent: !findsNoEvent.has(name) });
-              await judge(String(run), built.executable, sawAnEvent, route, { ROUTE: file });
-            }),
-          600_000,
-        );
-      }
+  const routesOfProgram = all.filter(({ name }) => findsNoEvent.has(name));
+  describe("code the compiler never saw, in a program that the build finds closed", () => {
+    const dir = tempDir("aot-unseen-code", {
+      "main.js":
+        `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
+        `routes[process.env.ROUTE]();\n`,
+      ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
+      ...others,
     });
-  }
+    afterAll(() => dir[Symbol.dispose]());
+    let built: Awaited<ReturnType<typeof build>>;
+    beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
+    for (const { group, name, route, file } of routesOfProgram) {
+      test.concurrent(
+        `${group}: ${name}`,
+        () =>
+          slot(async () => {
+            using run = tempDir("aot-unseen-code-run", others);
+            expect(built.events).toEqual([]);
+            await judge(String(run), built.executable, false, route, { ROUTE: file });
+          }),
+        600_000,
+      );
+    }
+  });
 }

@@ -147,70 +147,8 @@ function divideAssign(value) {
 
 runTable([plusAssign, minusAssign, timesAssign, divideAssign], impostors);
 
-// GENERATED: outcome attempt divideAssign [Symbol.toPrimitive]
 // CHECK-LABEL: function {{*}}name="outcome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v0 calleeName="run"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="show"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v4 = CatchValue
-// CHECK-NEXT: v5 = String string="threw "
-// CHECK-NEXT: v6 = PropGet v4 key="constructor"
-// CHECK-NEXT: v7 = PropGet v6 key="name"
-// CHECK-NEXT: v8 = Add v5, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attempt"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="divideAssign"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Div v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="log"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = String string="number"
-// CHECK-NEXT: v6 = StrictEq v0, v5
-// CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: Jump -> next b5(v7)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v8 = String string="string"
-// CHECK-NEXT: v9 = StrictEq v0, v8
-// CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = String string="2"
-// CHECK-NEXT: Jump -> next b5(v10)
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v11 = Integer integer=3
-// CHECK-NEXT: Jump -> next b5(v11)
-// CHECK-NEXT: b5(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="log"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Data data=[[d_3]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

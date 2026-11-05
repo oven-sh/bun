@@ -140,25 +140,6 @@ static void setNativeEnvValue(JSGlobalObject* globalObject, const String& name, 
     Bun__setEnvValue(globalObject, &key, &val);
 }
 
-#if ENABLE(AOT) && !OS(WINDOWS)
-extern "C" void CrashHandler__setReportDirectory(const uint8_t*, size_t);
-extern "C" void CrashHandler__setReportTag(const uint8_t*, size_t);
-static bool shouldApplyTZSideEffect(JSGlobalObject*);
-
-static void applyCrashReportEnvValue(JSGlobalObject* globalObject, const StringImpl* name, JSC::JSString* value)
-{
-    bool isDirectory = WTF::equal(name, "BUN_CRASH_REPORT_DIR"_s);
-    if ((!isDirectory && !WTF::equal(name, "BUN_CRASH_REPORT_TAG"_s)) || !shouldApplyTZSideEffect(globalObject))
-        return;
-    auto view = value->view(globalObject);
-    if (view->isNull())
-        return;
-    auto utf8 = view->utf8();
-    auto bytes = byteCast<uint8_t>(utf8.span());
-    (isDirectory ? CrashHandler__setReportDirectory : CrashHandler__setReportTag)(bytes.data(), bytes.size());
-}
-#endif
-
 static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
@@ -245,12 +226,6 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
-#if ENABLE(AOT) && !OS(WINDOWS)
-    if (vm.hasCompiledCode() && uid && uid->length() == 20) [[unlikely]] {
-        applyCrashReportEnvValue(globalObject, uid, string);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-#endif
     // No write is cached, so skip the prototype chain walk when the variable is already a plain property.
     Structure* structure = cell->structure();
     unsigned attributes = 0;

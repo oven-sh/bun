@@ -9,8 +9,8 @@
 // ROOT: module {{*}}path="{{*}}/main.mjs"{{*}} requests=[{target=m{{*}} isHoisted=true}, {target=m{{*}} completes=true}, {target=m{{*}} completes=true}]
 
 // FILE: main.mjs
-import "./plain.cjs";
 import "./real.cjs";
+import "./plain.cjs";
 
 // FILE: real.cjs
 exports.load = () => require("./plain.cjs");

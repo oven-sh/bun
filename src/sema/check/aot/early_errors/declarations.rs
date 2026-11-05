@@ -81,14 +81,24 @@ impl Checker<'_, '_> {
     }
 
     // `bun build` refuses a file that assigns to a `const` or `using` binding or to an import, wherever the assignment stands.
+    // Where no bundle is made, the store to an import throws when it runs, and so does the store to a name that the host has put in the place of a written one.
     pub(super) fn check_constant_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_bundled = self.p.files.options.builds_executable && !self.is_left_to_loader(file);
+        let is_in_text = |decl: &Decl| match *decl {
+            Decl::Var(pat) | Decl::Require(pat) => hir[pat].pos != hir[pat].end,
+            _ => true,
+        };
         for store in bound.runtime.stores() {
             let ExprKind::Ident(name) = hir[store.target].kind else {
                 continue;
             };
             let code = match bound.binding_kind(store.symbol) {
+                BindingKind::Const if !bound.symbol(store.symbol).decls.iter().any(is_in_text) => {
+                    continue;
+                }
                 BindingKind::Const => 2588,
+                BindingKind::Import if !is_bundled => continue,
                 BindingKind::Import => 2632,
                 _ => continue,
             };
@@ -102,6 +112,7 @@ impl Checker<'_, '_> {
     pub(super) fn check_namespace_member_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if self.p.files.options.allows_es_module_mark
+            || self.is_left_to_loader(file)
             || !hir.imports.iter().any(|import| import.namespace.is_some())
         {
             return;

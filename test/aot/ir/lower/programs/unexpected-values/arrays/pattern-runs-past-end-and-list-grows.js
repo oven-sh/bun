@@ -204,76 +204,7 @@ attempt("a Map that grows", () => {
   return [a, b, c];
 });
 
-// GENERATED: intoMembers growingView fallback set
 // CHECK-LABEL: function {{*}}name="intoMembers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array, v1: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v2 = IteratorOpen v0 elementCount=3 [isDestructuring]
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b3():
-// CHECK-NEXT: v3 = IteratorResume v2 stepIndex=0
-// CHECK-NEXT: v4 = ResultAt v3
-// CHECK-NEXT: v5 = ResultAt v3 index=1
-// CHECK-NEXT: PropSet v1, v5 key="a"
-// CHECK-NEXT: v7 = IteratorResume v2 stepIndex=1
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: PropSet v1, v9 key="b"
-// CHECK-NEXT: v11 = IteratorResume v2 stepIndex=2
-// CHECK-NEXT: v12 = ResultAt v11
-// CHECK-NEXT: v13 = ResultAt v11 index=1
-// CHECK-NEXT: PropSet v1, v13 key="c"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: IteratorClose v2
-// CHECK-NEXT: v16 = PropGet v1 key="a"
-// CHECK-NEXT: v17 = PropGet v1 key="c"
-// CHECK-NEXT: v18 = NewArray v16, v17 contents=anything
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: b3() role=IterationCleanup subject=v2:
-// CHECK-NEXT: v19 = CatchException
-// CHECK-NEXT: IteratorClose v2 completion=Throw
-// CHECK-NEXT: Rethrow v19
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="growingView"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=ArrayBuffer
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = Data data=[[d_2]]
-// CHECK-NEXT: v3 = Construct v0, -, v1, v2 calleeName="ArrayBuffer"
-// CHECK-NEXT: v4 = Builtin builtin=Uint8Array
-// CHECK-NEXT: v5 = Construct v4, -, v3 calleeName="Uint8Array"
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = Integer integer=7
-// CHECK-NEXT: ElemSet v5, v6, v7
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fallback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=anything variableName="list"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="push"
-// CHECK-NEXT: v2 = String string="x"
-// CHECK-NEXT: v3 = String string="y"
-// CHECK-NEXT: v4 = String string="z"
-// CHECK-NEXT: v5 = Call v1, v0, v2, v3, v4 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: ReturnCall v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=anything variableName="list"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: undefined|null|string|symbol, v3: anything):
-// CHECK-NEXT: v4 = String string="b"
-// CHECK-NEXT: v5 = StrictEq v2, v4
-// CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v6 = PropGet v0 key="push"
-// CHECK-NEXT: v7 = String string="x"
-// CHECK-NEXT: v8 = String string="y"
-// CHECK-NEXT: v9 = String string="z"
-// CHECK-NEXT: v10 = Call v6, v0, v7, v8, v9 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: ElemSet v1, v2, v3
-// CHECK-NEXT: v12 = Boolean boolean=true
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

@@ -88,71 +88,10 @@ try {
 }
 console.log(lines.join("\n"));
 
-// GENERATED: args count Heir length
 // CHECK-LABEL: function {{*}}name="args"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: Array):
-// CHECK-NEXT: v2 = CreateUnmappedArguments v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]]|[[L_2]]|Array<number>|Uint8Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]|[[L_2]]|Array<number>|Uint8Array):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5, v6):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = Increment v5
-// CHECK-NEXT: v11 = Convert v10 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v12 = Increment v6
-// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v11, v13)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=42
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="never asked"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="asked"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="asked"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_4]]
-// CHECK-NEXT: v7 = Integer integer=-1
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

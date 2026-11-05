@@ -260,8 +260,11 @@ for (const dress of Object.keys(extensions) as Dress[]) {
         const units = [...inside.units].flatMap(([key, unit]) => (fileOf(key) === feature ? [unit.name] : []));
         expect(units).not.toEqual([]);
         const { lines, stderr, exitCode } = await runOn("same-bytes-alone", inside.file, ...units);
-        // A folded unit has no code of its own to compare.
-        const notTheSame = lines.filter(line => !/^f\d+:\S+ (same: |has the code of f\d+:\S+$)/.test(line));
+        // A folded unit has no code of its own to compare. Nor has an entry of the method table under a name that no call goes through the table for:
+        // the plan lists it from the calls as they are written, `testaot bytes` compiles what the plan lists, and a build compiles what some code mentions.
+        const notTheSame = lines.filter(
+          line => !/^f\d+:\S+ (same: |has the code of f\d+:\S+$|has no code in the whole program$)/.test(line),
+        );
         expect({ notTheSame, stderr, exitCode }).toEqual({ notTheSame: [], stderr: expect.any(String), exitCode: 0 });
         expect(lines.some(line => / same: /.test(line))).toBe(true);
       },

@@ -832,6 +832,19 @@ fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
     task.writes_immediately() && !value.is_bound(&task.own)
 }
 
+/// `stamp`: of an entry that the task of `view` has found.
+#[inline(never)]
+fn note_found_under(view: &View, stamp: &AtomicU32) {
+    let commit = stamp.load(Ordering::Relaxed);
+    if commit != 0
+        && commit & FOUND == 0
+        && !view.is_own(commit)
+        && stamp.fetch_or(FOUND, Ordering::Relaxed) & FOUND == 0
+    {
+        view.note_found();
+    }
+}
+
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V, Buffered<W>, A> {
     #[inline]
     fn own_slot(&self) -> u32 {
@@ -884,16 +897,8 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     /// See `Program::count_entries_found`. The task of `view` has found the entry of the key at `at`.
     #[cold]
     fn note_found(&self, view: &View, at: usize) {
-        let Some(stamp) = self.stamps.existing_acquire(at as u32) else {
-            return;
-        };
-        let commit = stamp.load(Ordering::Relaxed);
-        if commit != 0
-            && commit & FOUND == 0
-            && !view.is_own(commit)
-            && stamp.fetch_or(FOUND, Ordering::Relaxed) & FOUND == 0
-        {
-            view.note_found();
+        if let Some(stamp) = self.stamps.existing_acquire(at as u32) {
+            note_found_under(view, stamp);
         }
     }
 

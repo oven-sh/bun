@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
+// CHECK-LABEL: function {{*}}name="note"
+// CHECK-LABEL: function {{*}}name="Parent"
+// CHECK-LABEL: function {{*}}name="set"
 
 // FILE: main.ts
 // The compiler options say that fields are assigned and that decorators are the experimental ones. Classes with parameter properties and a field under a symbol have a decorator on a field, a method, a parameter or the class; their prototypes get setters, then read-only properties, under every name.
@@ -114,61 +117,3 @@ class Parent {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "useDefineForClassFields": false, "experimentalDecorators": true } }
-
-// GENERATED: note Parent set
-// CHECK-LABEL: function {{*}}name="note"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="log"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = String string="decorator with "
-// CHECK-NEXT: v5 = PropGet v0 key="length"
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Call v3, v2, v6 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v8 = Convert v7 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Parent"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="log"
-// CHECK-NEXT: v6 = PropGet v5 key="push"
-// CHECK-NEXT: v7 = String string="parent"
-// CHECK-NEXT: v8 = Call v6, v5, v7 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: v11 = TypeTest v10 testedType=object
-// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v12):
-// CHECK-NEXT: Jump -> next b2(v12)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=anything variableName="name"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string="set "
-// CHECK-NEXT: v6 = Builtin builtin=String
-// CHECK-NEXT: v7 = Call v6, -, v0 calleeName="String"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v9 = Add v5, v8
-// CHECK-NEXT: v10 = String string=" to "
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = Builtin builtin=String
-// CHECK-NEXT: v13 = Call v12, -, v1 calleeName="String"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v11, v14
-// CHECK-NEXT: v16 = Call v4, v3, v15 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }

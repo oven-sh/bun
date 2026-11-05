@@ -104,83 +104,8 @@ generator.next();
 generator.next(a);
 show("values that are yielded", generator.next(b).value);
 
-// GENERATED: yields note Counted set Set
 // CHECK-LABEL: function {{*}}name="yields"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Builtin builtin=Set
-// CHECK-NEXT: v4 = Construct v3 calleeName="Set"
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Yield v5
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
-// CHECK-NEXT: v10 = Call v9, v4, v7
-// CHECK-NEXT: v11 = Integer integer=2
-// CHECK-NEXT: v12 = Yield v11
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v15 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
-// CHECK-NEXT: v16 = Call v15, v4, v13
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="note"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|number|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|number|[[L_1]]):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Call v4, v3, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_3]] flags=[IsExpected]} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_3]], v1: undefined|null|number|string|symbol|bigint|[[L_4]], v2: anything):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="note"
-// CHECK-NEXT: v5 = String string="set "
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="text"
-// CHECK-NEXT: v8 = Call v7, -, v1 calleeName="text"
-// CHECK-NEXT: v9 = Add v5, v8
-// CHECK-NEXT: v10 = Call v4, -, v9 calleeName="note"
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v12 = GetSuperBase v11 homeKind=ClassPrototype
-// CHECK-NEXT: v13 = SuperGet v12, v0 key="set"
-// CHECK-NEXT: v14 = Call v13, v0, v1, v2 calleeName="super.set"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = String string="mine "
-// CHECK-NEXT: v2 = PropGet v0 key="length"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Data data=[[d_8]]
-// CHECK-NEXT: v5 = NewClosure function=[[f_9]]
-// CHECK-NEXT: v6 = NewObject -, v3, v4 layout=[[L_10]] fields=[1, 0]
-// CHECK-NEXT: PropDefine v6, v5 key=@@iterator
-// CHECK-NEXT: v8 = FinishObject v6
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

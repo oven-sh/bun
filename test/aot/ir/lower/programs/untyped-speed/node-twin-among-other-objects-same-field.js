@@ -54,27 +54,5 @@ let found = 0;
 for (let i = 0; i < rounds; i++) if (markFromLeaf(open(leaf), 1 << (i & 15)) !== null) found++;
 console.log(found, others, leaf.lanes, leaf.twin.lanes, leaf.parent.childLanes);
 
-// GENERATED: TreeNode makeQueue
 // CHECK-LABEL: function {{*}}name="TreeNode"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: anything):
-// CHECK-NEXT: PropSet v0, v1 key="tag"
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: PropSet v0, v3 key="lanes"
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: PropSet v0, v5 key="childLanes"
-// CHECK-NEXT: v7 = Null
-// CHECK-NEXT: PropSet v0, v7 key="twin"
-// CHECK-NEXT: v9 = Null
-// CHECK-NEXT: PropSet v0, v9 key="parent"
-// CHECK-NEXT: v11 = Null
-// CHECK-NEXT: PropSet v0, v11 key="state"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeQueue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_2]]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

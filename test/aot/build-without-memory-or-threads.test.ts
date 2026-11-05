@@ -145,10 +145,10 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
   });
   const cwd = String(folder);
 
-  async function run(cmd: string[], env: Record<string, string | undefined>) {
+  async function run(cmd: string[], env: Record<string, string | undefined>, dir = cwd) {
     await using proc = Bun.spawn({
       cmd,
-      cwd,
+      cwd: dir,
       env,
       stdout: "pipe",
       stderr: "pipe",
@@ -207,18 +207,23 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
   }
 
   async function listThreadsOfBuild(program: string, ...flags: string[]) {
-    const list = join(cwd, "threads");
     const executable = join(cwd, "listed");
+    const threads = await listThreadsOf([...buildOf(program), executable, ...flags]);
+    await Bun.file(executable).delete();
+    return threads;
+  }
+
+  async function listThreadsOf(cmd: string[], dir = cwd) {
+    const list = join(cwd, "threads");
     await Bun.file(list)
       .delete()
       .catch(() => {});
-    expect(await run([...buildOf(program), executable, ...flags], { ...shimEnv, THREADS: list })).toEqual({
+    expect(await run(cmd, { ...shimEnv, THREADS: list }, dir)).toEqual({
       stdout: expect.any(String),
       errors: [],
       exitCode: 0,
       signal: null,
     });
-    await Bun.file(executable).delete();
     const threads = new Map<string, { count: number; names: Set<string> }>();
     for (const line of (await Bun.file(list).text()).trimEnd().split("\n")) {
       const [call, name] = line.split(/ (.*)/);
@@ -296,8 +301,7 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
     });
     expect(endsByThread).toEqual([
       { name: "AOT build", first: noCompilerThread, later: ["it runs\n"] },
-      // Where the system has plenty of blocks of 2 MB free, a thread watches how many are left: src/threading/huge_pages.rs. Refused, the build asks for no huge pages.
-      { name: expect.stringMatching(/^(AOT huge pages, )?AOT memory$/), first: "it runs\n", later: ["it runs\n"] },
+      { name: "AOT memory", first: "it runs\n", later: ["it runs\n"] },
       { name: "Bun Compile", first: noPoolThread, later: ["it runs\n"] },
       { name: "mi-scavenger", first: "it runs\n", later: ["it runs\n"] },
     ]);
@@ -309,5 +313,62 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
 
   test("a build that runs code of the program starts no thread for it", async () => {
     await expectEndsOfBuildsRefusedThread("pattern.ts");
+  }, 300_000);
+
+  // Each machine of a sharded run deals all the test files for itself, on threads. One that deals otherwise than the others leaves
+  // files out, or runs them twice, and none of them can tell.
+  test("a test run that is refused threads deals the shards as every other does", async () => {
+    const names = Array.from({ length: 12 }, (_, index) => `tests/t${String(index).padStart(2, "0")}.test.ts`);
+    const libraries = ["l0", "l1", "l2", "l3"];
+    // Unlike reach, unlike sizes, unlike times, all by rule.
+    const reachOf = (index: number) => libraries.filter((_, at) => at === index % 4 || at === index % 3);
+    using project = tempDir("aot-shards-refused", {
+      "package.json": `{ "name": "shards" }`,
+      "timings.json": JSON.stringify({
+        version: 1,
+        workers: 2,
+        files: Object.fromEntries(names.map((name, index) => [name, [5, 20, 60, 150, 400][index % 5]])),
+      }),
+      // A comment weighs as code does where the files are dealt, and takes no time to compile.
+      ...Object.fromEntries(
+        libraries.map((name, index) => [
+          `lib/${name}.ts`,
+          `// ${Buffer.alloc(10_000 * (index + 1) ** 2, "x")}\nexport const name = "${name}";\n`,
+        ]),
+      ),
+      ...Object.fromEntries(
+        names.map((name, index) => [
+          name,
+          `import { expect, test } from "bun:test";
+${reachOf(index)
+  .map(library => `import { name as ${library} } from "../lib/${library}";`)
+  .join("\n")}
+test("reads what it imports", () => {
+  console.log("ran ${name}");
+  expect([${reachOf(index).join(", ")}]).toEqual(${JSON.stringify(reachOf(index))});
+});
+`,
+        ]),
+      ),
+    });
+    const dir = String(project);
+    const shard = (index: number) => [bunExe(), "test", "--aot", "--timings=timings.json", `--shard=${index + 1}/2`];
+    const kind = (await listThreadsOf(shard(0), dir)).find(({ name }) => name.includes("AOT shards"));
+    expect(kind).toBeDefined();
+
+    /** The test files that each shard runs. */
+    async function filesOfShards(refused?: string) {
+      const shards = [0, 1].map(async index => {
+        const { stdout, ...end } = await run(shard(index), { ...shimEnv, REFUSE: refused }, dir);
+        expect({ refused, index, ...end }).toEqual({ refused, index, errors: [], exitCode: 0, signal: null });
+        return [...stdout.matchAll(/^ran (.+)$/gm)].map(match => match[1]).sort();
+      });
+      return await Promise.all(shards);
+    }
+    // No thread refused, every one, one.
+    const requests = [undefined, `${kind!.call}:1+`, `${kind!.call}:2`];
+    const [dealt, ...dealtWithFewerThreads] = await Promise.all(requests.map(refused => filesOfShards(refused)));
+    expect(dealt.flat().sort()).toEqual(names);
+    expect(dealtWithFewerThreads).toEqual([dealt, dealt]);
   }, 300_000);
 });

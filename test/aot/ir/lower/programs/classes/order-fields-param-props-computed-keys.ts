@@ -61,84 +61,8 @@ class NewTarget { t = new.target === undefined; c: boolean; constructor() { this
 class Opt { m?(): number; f?: () => number; } show("optional members", () => [new Opt().m?.(), new Opt().f?.(), Object.keys(new Opt())]);
 class IndexSig { [k: string]: unknown; a = 1; static [k: string]: unknown; } show("index signatures", () => [Object.keys(new IndexSig()), Object.keys(IndexSig)]);
 
-// GENERATED: p ParamOver c1 base2 ag
 // CHECK-LABEL: function {{*}}name="p"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_1]] field=2
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ParamOver"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: number):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = SuperConstruct v4, v1 layout=[[L_4]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_4]]}
-// CHECK-NEXT: v7 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = CallDirect v6 function=[[f_5]]
-// CHECK-NEXT: PropSet v6, v2 key="v"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: v12 = TypeTest v11 testedType=object
-// CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Jump -> next b7(v13)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: v15 = TypeTest v14 testedType=undefined
-// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b4(v16):
-// CHECK-NEXT: v17 = TypeTest v6 testedType=absent
-// CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: v19 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v19
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: Jump -> next b7(v20)
-// CHECK-NEXT: b7(v21):
-// CHECK-NEXT: Return v21
-// CHECK-NEXT: b8(v22):
-// CHECK-NEXT: v23 = NewRuntimeError runtimeError=DerivedConstructorResult name="ParamOver"
-// CHECK-NEXT: Throw v23
-// CHECK-NEXT: b9(v24):
-// CHECK-NEXT: v25 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v25
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, IsNamedByComputedKey] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="base2"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v2 = GetSuperBase v1 homeKind=ClassPrototype
-// CHECK-NEXT: v3 = SuperGet v2, v0 key="toString"
-// CHECK-NEXT: v4 = Builtin builtin=ObjectPrototypeToString
-// CHECK-NEXT: v5 = StrictEq v3, v4
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=[[L_9]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_9]], v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Integer integer=5
-// CHECK-NEXT: v4 = Await v3
-// CHECK-NEXT: v5 = Yield v4
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v6
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

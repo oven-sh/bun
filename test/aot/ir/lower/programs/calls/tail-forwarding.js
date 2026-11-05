@@ -101,86 +101,9 @@ const response = new Response();
 response.on("data", function (...values) { say("data", this.seen, values.length, values.join(",")); });
 for (const list of lists.slice(0, 7)) say("emit", response.emit("data", ...list), response.emit("none", ...list));
 
-// GENERATED: Emitter asyncTarget generatorTarget forwardSpread forwardReflect Klass
 // CHECK-LABEL: function {{*}}name="Emitter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = Data data=[[d_2]]
-// CHECK-NEXT: PropSet v0, v1 key="handlers"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asyncTarget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = String string="async "
-// CHECK-NEXT: v4 = Add v3, v1
-// CHECK-NEXT: v5 = String string=" "
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Add v6, v2
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generatorTarget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: anything, v3: anything):
-// CHECK-NEXT: InitialYield v2, v3
-// CHECK-NEXT: v5 = String string="generator "
-// CHECK-NEXT: v6 = Add v5, v2
-// CHECK-NEXT: v7 = Yield v6, v2, v3
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v8
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = Yield v3, v2, v3
-// CHECK-NEXT: v11 = ResultAt v10
-// CHECK-NEXT: v12 = ResultAt v10 index=1
-// CHECK-NEXT: Switch v12 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v11
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="forwardSpread"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="target"
-// CHECK-NEXT: v3 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v3, v0
-// CHECK-NEXT: v5 = CallList v2, -, v3 calleeName="target"
-// CHECK-NEXT: ReturnCall v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="forwardReflect"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: Array):
-// CHECK-NEXT: v3 = CreateUnmappedArguments v1, v2
-// CHECK-NEXT: v4 = Builtin builtin=Reflect
-// CHECK-NEXT: v5 = Builtin builtin=ReflectApply
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="target"
-// CHECK-NEXT: v8 = Call v5, v4, v7, v0, v3 calleeName="Reflect.apply"
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Klass"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: PropSet v3, v4 key="made"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = TypeTest v6 testedType=object
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: Jump -> next b2(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

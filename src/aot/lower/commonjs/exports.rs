@@ -14,8 +14,8 @@ use crate::lower::member::{Holder, PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
 use crate::lower::{FileLowering, FunctionLowering, member, module};
 use crate::modules::{
-    DescribedPart, Member, ModuleRef, Shape, Site, SyntheticExportId, View, WrittenDescriptor,
-    find_literal_exported_under_name,
+    DescribedPart, ImportBinding, Member, ModuleRef, Shape, Site, SyntheticExportId, View,
+    WrittenDescriptor, find_literal_exported_under_name,
 };
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -238,11 +238,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules = self.file.inputs.modules;
         let member = match modules.member_named(module, name) {
             Some(Member::Undefined) => return None,
+            // A mock may stand on the way of the name: it is read as an import of it is.
+            Some(Member::Binding(symbol))
+                if symbol.file != self.file.file
+                    && matches!(module, ModuleRef::File(file) if modules.reaches_mock(file)) =>
+            {
+                let files = self.file.queries.files();
+                let declared = files.bound(symbol.file).symbol(symbol.id).name;
+                let declared = self.file.intern_atom(declared);
+                let asked = match module {
+                    ModuleRef::File(file) => Some((file, name)),
+                    _ => None,
+                };
+                let binding = ImportBinding::Variable(symbol);
+                return Some(module::emit_import_binding_asked(
+                    self, binding, declared, asked,
+                ));
+            }
             Some(member) => member,
             None => {
                 let binding = modules.binding_of_member_named(module, name)?;
+                let asked = match module {
+                    ModuleRef::File(file) => Some((file, name)),
+                    _ => None,
+                };
                 let name = self.file.intern_atom(name);
-                return Some(module::emit_import_binding(self, binding, name));
+                return Some(module::emit_import_binding_asked(
+                    self, binding, name, asked,
+                ));
             }
         };
         if let Some(value) = emit_member_read(self, member) {
@@ -728,7 +751,9 @@ fn find_plain_store(
     }
 }
 
-/// The statement has no code: the module graph already holds everything it says, or its file never runs.
+/// The statement has no code: the module graph already holds everything it says, its file never runs, or the statement behind it evaluates it.
 pub(in crate::lower) fn is_erased(file: &FileLowering<'_, '_, '_, '_>, statement: StmtId) -> bool {
-    file.inputs.modules.erased(file.file, statement)
+    let modules = file.inputs.modules;
+    modules.erased(file.file, statement)
+        || (modules.commonjs()).is_evaluated_at_store(file.file, statement)
 }

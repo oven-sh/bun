@@ -14,6 +14,17 @@ use bun_sema::hir::FnId;
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::SharedSort;
 
+/// The copy that an ES importer has of a name.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ImporterCopy {
+    /// It has none: it is bound to what the name stands for, or to the variable that the name has in its own module.
+    None,
+    /// It can tell the copy from what the name stands for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
+    OfAnswer,
+    /// The copy differs from what the name stands for only where something stores under that name of the other module once its body has ended.
+    OfName,
+}
+
 /// What the tables keep of one name of a module.
 #[derive(Copy, Clone)]
 struct NameRow {
@@ -26,10 +37,7 @@ struct NameRow {
     is_always_listed: bool,
     /// Whoever lists the names of the object may pass over it.
     is_hidden: bool,
-    /// An ES importer can tell the name from what it stands for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
-    is_copied: bool,
-    /// The copy differs from what the name stands for only where something stores under that name of the other module once its body has ended.
-    is_copy_of_name: bool,
+    copy: ImporterCopy,
     /// What the name stands for. `None`: it has a variable in its own module, or the module keeps its object.
     target: Option<Resolution>,
 }
@@ -37,14 +45,19 @@ struct NameRow {
 fn is_listed(module: &ModuleEntries, entry: &NameEntry) -> bool {
     is_listed_for_importers(
         entry.is_enumerable,
-        entry.target.is_some(),
+        entry.getter.is_some(),
         module.lists_only_enumerable_names,
     )
 }
 
 impl NameRow {
     fn new(number: u32, module: &ModuleEntries, entry: &NameEntry) -> NameRow {
-        let is_listed = is_listed(module, entry);
+        // As `ModuleText::is_always_found_by_statements`: the bundle finds a value whatever its flag.
+        let is_listed = is_listed_for_importers(
+            entry.is_enumerable,
+            entry.getter.is_some(),
+            module.lists_only_enumerable_names && module.runs_in_place,
+        );
         let is_always_created = entry.created_at != u32::MAX;
         NameRow {
             module: number,
@@ -52,8 +65,7 @@ impl NameRow {
             is_always_created,
             is_always_listed: is_listed && is_always_created,
             is_hidden: !is_listed,
-            is_copied: false,
-            is_copy_of_name: false,
+            copy: ImporterCopy::None,
             target: None,
         }
     }
@@ -138,15 +150,19 @@ impl CommonJsNames {
         self.row(module, name)?.target
     }
 
+    fn copy_of(&self, module: ModuleRef, name: Atom) -> ImporterCopy {
+        let row = self.row(module, name);
+        row.map_or(ImporterCopy::None, |row| row.copy)
+    }
+
     /// An ES importer has a copy of the name itself, not of what the name stands for.
     pub(in crate::modules) fn is_copied(&self, module: ModuleRef, name: Atom) -> bool {
-        self.row(module, name).is_some_and(|row| row.is_copied)
+        self.copy_of(module, name) != ImporterCopy::None
     }
 
     /// Nobody can tell the copy from the name of the other module that the getter returns, as long as nothing stores under that name once the body of that module has ended.
     pub(in crate::modules) fn is_copy_of_name(&self, module: ModuleRef, name: Atom) -> bool {
-        self.row(module, name)
-            .is_some_and(|row| row.is_copy_of_name)
+        self.copy_of(module, name) == ImporterCopy::OfName
     }
 
     /// The namespace object may lack the name. An import statement is still bound to what a getter stands for.
@@ -225,8 +241,7 @@ impl CommonJsNames {
         let rows = self.rows[first..].iter_mut();
         for row in rows.take_while(|row| row.module as usize == number) {
             row.target = None;
-            row.is_copied = false;
-            row.is_copy_of_name = false;
+            row.copy = ImporterCopy::None;
         }
     }
 }
@@ -312,7 +327,7 @@ impl Resolver<'_, '_> {
             return Vec::new();
         }
         let names = entries.names.iter();
-        let asked = names.filter_map(|entry| match self.find_source(entry.target?) {
+        let asked = names.filter_map(|entry| match self.find_source(entry.getter?.target) {
             Source::Name { number, .. } => Some(number as u32),
             Source::Binding(_) | Source::Unknown => None,
         });
@@ -336,7 +351,7 @@ impl Resolver<'_, '_> {
                 name,
                 is_handed_on_by_es_module: true,
                 ..
-            } if (names.is_copied(module, name) && !names.is_copy_of_name(module, name))
+            } if names.copy_of(module, name) == ImporterCopy::OfAnswer
                 || !names.shows_member(module, name) =>
             {
                 Resolution::NotFound
@@ -376,10 +391,10 @@ impl Resolver<'_, '_> {
         let (module, name_count) = (entries.module, entries.names.len());
         for position in 0..name_count {
             let entry = self.names.entries[number].names[position];
-            let Some(written) = entry.target else {
+            let Some(getter) = entry.getter else {
                 continue;
             };
-            let target = self.resolve(self.find_source(written));
+            let target = self.resolve(self.find_source(getter.target));
             if target == Resolution::NotFound {
                 return false;
             }
@@ -388,16 +403,24 @@ impl Resolver<'_, '_> {
             if !entry.is_enumerable && (!is_found_by_import || entry.name == known::default) {
                 return false;
             }
-            let is_told_from_copy =
-                !is_found_by_import || entry.is_seen_unfilled || self.can_be_told_from_copy(target);
+            let is_told_from_copy = !is_found_by_import
+                || getter.is_seen_unfilled
+                || self.can_be_told_from_copy(target);
             // Whoever holds the object of the other module may store under the name at any time. Who does shows once the files are bound.
             let is_copy_of_name =
                 !is_told_from_copy && matches!(target, Resolution::Synthetic { .. });
             let row = self.names.find_row(number, entry.name);
             let row = &mut self.names.rows[row.expect("every name has a row")];
             row.target = Some(target);
-            row.is_copied = entry.is_enumerable && (is_told_from_copy || is_copy_of_name);
-            row.is_copy_of_name = entry.is_enumerable && is_copy_of_name;
+            // A getter that a loop over the object passes over is read live where it returns a binding, as in a bundle. Over a name of another module it has a copy of its own:
+            // bound to the name itself, the file would take the copy of that name anew, under whoever holds it already.
+            row.copy = if is_copy_of_name {
+                ImporterCopy::OfName
+            } else if entry.is_enumerable && is_told_from_copy {
+                ImporterCopy::OfAnswer
+            } else {
+                ImporterCopy::None
+            };
         }
         true
     }
@@ -441,6 +464,7 @@ mod tests {
     use super::*;
     use crate::compile::testing::{default_settings, with_bind_input};
     use crate::modules::BindInput;
+    use crate::modules::commonjs_exports::Getter;
     use crate::modules::module_set::collect_modules;
     use crate::modules::requests::scan_files;
     use crate::modules::testing::{file_named, symbol_named};
@@ -495,16 +519,18 @@ mod tests {
     fn variable(name: Atom) -> NameEntry {
         NameEntry {
             name,
-            target: None,
+            getter: None,
             created_at: 0,
             is_enumerable: true,
-            is_seen_unfilled: false,
         }
     }
 
     fn getter(name: Atom, target: AliasTarget) -> NameEntry {
         NameEntry {
-            target: Some(target),
+            getter: Some(Getter {
+                target,
+                is_seen_unfilled: false,
+            }),
             ..variable(name)
         }
     }
@@ -519,6 +545,7 @@ mod tests {
             has_names: true,
             knows_all_names: true,
             lists_only_enumerable_names: false,
+            runs_in_place: false,
             is_half: false,
             is_replaced_late: false,
             exports_ordinary_object: true,
@@ -624,12 +651,16 @@ mod tests {
             let all = vec![high, unseen, low, known::default];
             assert_eq!(names.names_of(a), Some(all));
             assert!(!names.may_lack(a, unseen) && !names.is_hidden(a, unseen));
-            let names = fixture.resolve(vec![ModuleEntries {
-                lists_only_enumerable_names: true,
-                ..entries_of(a, written)
-            }]);
-            assert_eq!(names.names_of(a), Some(vec![high, low, known::default]));
-            assert!(names.may_lack(a, unseen) && names.is_hidden(a, unseen));
+            for runs_in_place in [false, true] {
+                let names = fixture.resolve(vec![ModuleEntries {
+                    lists_only_enumerable_names: true,
+                    runs_in_place,
+                    ..entries_of(a, written.clone())
+                }]);
+                assert_eq!(names.names_of(a), Some(vec![high, low, known::default]));
+                assert_eq!(names.may_lack(a, unseen), runs_in_place);
+                assert_eq!(names.is_hidden(a, unseen), runs_in_place);
+            }
             let names = fixture.resolve(vec![ModuleEntries {
                 knows_all_names: false,
                 ..entries_of(a, vec![variable(low)])
@@ -657,6 +688,36 @@ mod tests {
             assert_eq!(names.find(a, changed), variable_of(changed_binding));
             assert!(!names.is_copied(a, fixed));
             assert!(names.is_copied(a, changed) && !names.is_copy_of_name(a, changed));
+        });
+    }
+
+    #[test]
+    fn a_getter_that_no_loop_sees_has_a_copy_over_a_name_and_none_over_a_binding() {
+        with_fixture(|fixture| {
+            let [a, b] = ["a.cjs", "b.cjs"].map(|name| fixture.module(name));
+            let [x, y, changed] = ["x", "y", "changed"].map(|name| fixture.atom(name));
+            let changed_binding = fixture.binding("a.cjs", "changed");
+            let unseen = |entry: NameEntry| NameEntry {
+                is_enumerable: false,
+                ..entry
+            };
+            let names = fixture.resolve(vec![
+                entries_of(
+                    a,
+                    vec![
+                        unseen(getter(x, member(b, y))),
+                        unseen(getter(changed, AliasTarget::Binding(changed_binding))),
+                    ],
+                ),
+                entries_of(b, vec![variable(y)]),
+            ]);
+            assert_eq!(
+                names.find(a, x),
+                Some(Resolution::Synthetic { module: b, name: y })
+            );
+            assert!(names.is_hidden(a, x) && names.is_copied(a, x) && names.is_copy_of_name(a, x));
+            // As in a bundle, an import statement reads the binding itself.
+            assert!(names.is_hidden(a, changed) && !names.is_copied(a, changed));
         });
     }
 }

@@ -1,4 +1,4 @@
-use super::{BuildDiagnostic, WithoutBunTypes};
+use super::{BuildDiagnostic, BunTypes, WithoutBunTypes};
 use crate::{Category, Diagnostic, MessageChain};
 use bun_sema::atom::{Atom, known};
 use bun_sema::check::Requested;
@@ -75,8 +75,7 @@ pub(super) struct ProgramOrigins<'a, 's> {
     pub files: Option<&'a Files<'s>>,
     pub origins: &'a [FileOrigin],
     pub project_origin: FileOrigin,
-    pub without_bun_types: Option<&'a WithoutBunTypes>,
-    pub lacks_installed_bun_types: bool,
+    pub bun_types: &'a BunTypes,
     pub has_configuration_file: bool,
 }
 
@@ -137,14 +136,15 @@ impl ProgramOrigins<'_, '_> {
 
     /// The declarations that a build brings along hold no program to what its project has not installed.
     fn is_for_lack_of_bun_types(&self, origin: FileOrigin, diagnostic: &Diagnostic) -> bool {
-        if !self.lacks_installed_bun_types {
-            return false;
-        }
+        let missing = match self.bun_types {
+            BunTypes::Installed => return false,
+            BunTypes::Brought => None,
+            BunTypes::Missing(missing) => Some(missing),
+        };
         let code = diagnostic.code;
         if origin != FileOrigin::ProgramSource && origin != FileOrigin::TestedSource {
             return false;
         }
-        let missing = self.without_bun_types;
         if missing.is_some_and(|missing| had_declaration_with_bun_types(missing, diagnostic)) {
             return true;
         }
@@ -261,8 +261,8 @@ impl ProgramOrigins<'_, '_> {
                 diagnostic.category = Category::Error;
             }
             let is_for_lack_of_bun_types = self.is_for_lack_of_bun_types(origin, &diagnostic);
-            let names_missing_type_library =
-                self.lacks_installed_bun_types && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
+            let names_missing_type_library = !matches!(self.bun_types, BunTypes::Installed)
+                && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
             let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
                 Effect::Dropped => return None,
                 Effect::StopsBuild if self.is_in_jsdoc_comment(&diagnostic) => return None,
@@ -377,8 +377,7 @@ mod tests {
                 files: None,
                 origins: &[origin],
                 project_origin: FileOrigin::NoFile,
-                without_bun_types: None,
-                lacks_installed_bun_types: false,
+                bun_types: &BunTypes::Installed,
                 has_configuration_file: true,
             };
             let diagnostic = Diagnostic {
@@ -396,8 +395,7 @@ mod tests {
             files: None,
             origins: &[],
             project_origin: FileOrigin::NoFile,
-            without_bun_types: None,
-            lacks_installed_bun_types: false,
+            bun_types: &BunTypes::Installed,
             has_configuration_file: true,
         };
         let error = crate::global(5083, &["a"]);
@@ -425,11 +423,12 @@ mod tests {
             None,
             Some(node_namespace),
         ];
-        let missing = WithoutBunTypes {
+        let missing = BunTypes::Missing(WithoutBunTypes {
             incomplete_containers,
             errors_with_bun_types: None,
-        };
-        let stops_build = |without_bun_types: Option<&WithoutBunTypes>,
+        });
+        let installed = BunTypes::Installed;
+        let stops_build = |bun_types: &BunTypes,
                            has_configuration_file: bool,
                            code: u32,
                            args: &[&str],
@@ -438,8 +437,7 @@ mod tests {
                 files: None,
                 origins: &[FileOrigin::ProgramSource],
                 project_origin: FileOrigin::NoFile,
-                without_bun_types,
-                lacks_installed_bun_types: without_bun_types.is_some(),
+                bun_types,
                 has_configuration_file,
             };
             let diagnostic = Diagnostic {
@@ -487,12 +485,12 @@ mod tests {
         for (code, args, subject, still_stops) in cases {
             for has_configuration_file in [false, true] {
                 assert_eq!(
-                    stops_build(Some(&missing), has_configuration_file, code, args, subject),
+                    stops_build(&missing, has_configuration_file, code, args, subject),
                     still_stops,
                     "{code} {args:?}"
                 );
                 assert!(
-                    stops_build(None, has_configuration_file, code, args, subject),
+                    stops_build(&installed, has_configuration_file, code, args, subject),
                     "{code} {args:?}"
                 );
             }
@@ -501,7 +499,7 @@ mod tests {
         for has_configuration_file in [false, true] {
             assert_eq!(
                 stops_build(
-                    Some(&missing),
+                    &missing,
                     has_configuration_file,
                     implicit_any.0,
                     implicit_any.1,
@@ -519,8 +517,10 @@ mod tests {
                 files: None,
                 origins: &[FileOrigin::ProgramSource],
                 project_origin: FileOrigin::NoFile,
-                without_bun_types: None,
-                lacks_installed_bun_types: !is_installed,
+                bun_types: match is_installed {
+                    true => &BunTypes::Installed,
+                    false => &BunTypes::Brought,
+                },
                 has_configuration_file,
             };
             let diagnostic = Diagnostic {
@@ -553,17 +553,16 @@ mod tests {
 
     #[test]
     fn what_had_a_declaration_with_bun_types_stops_no_build_without_them() {
-        let missing = WithoutBunTypes {
+        let missing = BunTypes::Missing(WithoutBunTypes {
             incomplete_containers: [None; 4],
             errors_with_bun_types: Some(vec![(b"/a.ts".to_vec(), 7), (b"/b.ts".to_vec(), 3)]),
-        };
+        });
         let stops_build = |code: u32, path: &[u8], start: u32| {
             let origins = ProgramOrigins {
                 files: None,
                 origins: &[FileOrigin::ProgramSource],
                 project_origin: FileOrigin::NoFile,
-                without_bun_types: Some(&missing),
-                lacks_installed_bun_types: true,
+                bun_types: &missing,
                 has_configuration_file: true,
             };
             let diagnostic = Diagnostic {
@@ -603,8 +602,7 @@ mod tests {
                 files: None,
                 origins: &[],
                 project_origin,
-                without_bun_types: None,
-                lacks_installed_bun_types: false,
+                bun_types: &BunTypes::Installed,
                 has_configuration_file: true,
             };
             let diagnostic = Diagnostic {
@@ -628,8 +626,7 @@ mod tests {
             files: None,
             origins: &[],
             project_origin: FileOrigin::Runtime,
-            without_bun_types: None,
-            lacks_installed_bun_types: false,
+            bun_types: &BunTypes::Installed,
             has_configuration_file: true,
         };
         let reported = origins.apply_effects(vec![crate::global(5083, &["a"])]);

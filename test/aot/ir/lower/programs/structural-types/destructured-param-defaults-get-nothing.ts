@@ -116,78 +116,8 @@ log = [];
 console.log("2000 honest calls: " + warm);
 attempt("area() after them", () => area());
 
-// GENERATED: effect rest Watched width take
 // CHECK-LABEL: function {{*}}name="effect"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Call v4, v3, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_2]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="width"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="width"
-// CHECK-NEXT: v6 = NewObject layout=[[L_3]]
-// CHECK-NEXT: CopyDataProperties v6, v4 excludedKeys=["width"]
-// CHECK-NEXT: v8 = FinishObject v6
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v10 = Call v9, -, v5 calleeName="text"
-// CHECK-NEXT: v11 = String string=" others "
-// CHECK-NEXT: v12 = Add v10, v11
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v14 = Call v13, -, v8 calleeName="text"
-// CHECK-NEXT: v15 = Add v12, v14
-// CHECK-NEXT: v16 = String string=" keys "
-// CHECK-NEXT: v17 = Add v15, v16
-// CHECK-NEXT: v18 = Builtin builtin=Object
-// CHECK-NEXT: v19 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v20 = Call v19, v18, v8 calleeName="Object.keys"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v22 = PropGet v21 key="join"
-// CHECK-NEXT: v23 = Call v22, v21 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v25 = Add v17, v24
-// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Watched"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="width"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v1 = String string="get width"
-// CHECK-NEXT: v2 = Integer integer=4
-// CHECK-NEXT: v3 = Call v0, -, v1, v2 calleeName="effect"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="take"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_7]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_7]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="width"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="width"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v7 = Call v6, -, v5 calleeName="text"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

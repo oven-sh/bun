@@ -266,6 +266,8 @@ impl Build<'_> {
                 && self.options.aot.entry_points_run_again,
             typescript_drops_absent_exports: project == ProjectId::Application
                 && self.options.aot.typescript_drops_absent_exports,
+            runs_in_several_realms: project == ProjectId::Application
+                && self.options.aot.runs_in_several_realms,
             code_from_disk_names_files: self.options.code_from_disk_names_files()
                 && !self.stays_in_compiled_files,
             run: match project {
@@ -275,6 +277,9 @@ impl Build<'_> {
             in_parallel: &in_parallel,
             beside: &beside,
         });
+        if project == ProjectId::Application && contents.stores_loader_functions {
+            graph.set_asks_loader_functions();
+        }
         steps.end_with(|| format!("{project_name}: bind modules"));
         self.diagnostics.add_module_failures(view, &graph);
         // A file that throws what folding refuses where it is loaded stops no build.

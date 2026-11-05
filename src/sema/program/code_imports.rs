@@ -20,14 +20,9 @@ pub(super) fn resolve_code_imports<'s, 'r>(
 ) -> LoadedCode<'s, 'r> {
     let atoms = &context.atoms;
     let sites = analyzed.analysis.import_sites;
-    let erased_before = find_sites_erased_before(context, key, sites);
     let mut resolutions = Vec::with_capacity(sites.len());
     let mut targets = Vec::new();
     for (index, site) in sites.iter().enumerate() {
-        if erased_before.is_some_and(|answers| answers[index] == CodeAnswer::Erased) {
-            resolutions.push(SiteResolution::Constant(CodeResolution::Erased));
-            continue;
-        }
         let key = match analyzed.analysis.path_to_resolve_from(index) {
             Some(ResolvedFrom::File(path)) => LoadKey {
                 path: context.resolver.keep(atoms.bytes(path)),
@@ -94,20 +89,6 @@ pub(super) fn resolve_code_imports<'s, 'r>(
     };
     code.index_targets_by_specifier();
     code
-}
-
-/// The answers of `CompileInputs::loaded_before` for the sites of the file. Nobody asked for what is behind a site that it erased.
-fn find_sites_erased_before<'s>(
-    context: &CodeLoadContext<'_, 's, '_>,
-    key: LoadKey<'_>,
-    sites: &[ImportSite],
-) -> Option<&'s [CodeAnswer<'s>]> {
-    let known = context.find_loaded_before(key)?.compiled;
-    let sites_before = known.analysis.import_sites;
-    let has_same_sites = sites.len() == sites_before.len()
-        && (sites.iter().zip(sites_before)).all(|(site, before)| site.kind == before.kind);
-    debug_assert!(has_same_sites);
-    has_same_sites.then_some(known.code_answers)
 }
 
 impl<'s, 'r> LoadedCode<'s, 'r> {
@@ -644,7 +625,7 @@ fn add_target<'r>(
     let has_type_of_shared_kind =
         may_have_unread_type || type_attribute.is_some_and(|it| it != b"json");
     targets.push(CodeTarget {
-        key: find_file_required_before(context, key).unwrap_or(key),
+        key,
         host_module: file.host_module,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
@@ -653,22 +634,6 @@ fn add_target<'r>(
         has_type_of_shared_kind,
     });
     index
-}
-
-/// `import_what_is_required`, as `CompileInputs::loaded_before` has decided it: the file that is required may be one that this load does not reach.
-fn find_file_required_before<'r>(
-    context: &CodeLoadContext<'_, '_, 'r>,
-    key: LoadKey<'r>,
-) -> Option<LoadKey<'r>> {
-    context.inputs.loaded_before?;
-    if key.loader != HostLoader::default() {
-        return None;
-    }
-    let required = LoadKey {
-        path: context.resolver.file_required_in_place_of(key.path)?,
-        ..key
-    };
-    context.find_loaded_before(required).map(|_| required)
 }
 
 pub(super) fn files_of(resolution: SiteResolution<'_>) -> impl Iterator<Item = CodeFile<'_>> {

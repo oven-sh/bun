@@ -30,6 +30,17 @@ pub struct RemovableOptions {
     pub ignores_pure_annotations: bool,
     // --jsx-side-effects
     pub jsx_has_side_effects: bool,
+    // `bun test`, `bun run`: no bundler leaves out the declarations that nothing uses.
+    pub has_no_bundle: bool,
+    // --minify-syntax
+    pub is_told_to_minify_syntax: bool,
+}
+
+impl RemovableOptions {
+    // `bun run` minifies syntax whatever it is told.
+    pub fn minifies_syntax(self) -> bool {
+        self.has_no_bundle || self.is_told_to_minify_syntax
+    }
 }
 
 #[derive(Clone, Copy)]

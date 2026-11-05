@@ -121,7 +121,6 @@ pub(crate) fn write_frames_on_stack(addresses: &[usize], write: &mut dyn FnMut(&
     let mut frames = [0u8; 4096];
     let length = describe_or_end_process(addresses, &mut frames);
     if length > 0 {
-        crate::report_file::add_compiled_frames(&frames[..length]);
         write(b"Compiled JavaScript on the stack:\n");
         write(&frames[..length]);
         write(b"\n");

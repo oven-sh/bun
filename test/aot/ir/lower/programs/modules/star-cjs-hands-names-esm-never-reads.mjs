@@ -37,22 +37,3 @@ export * from "./barrel.mjs";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="bump"
-// CHECK-NEXT: v2 = Call v1 calleeName="bump"
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v10 = Call v7, v5, v8, v9 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

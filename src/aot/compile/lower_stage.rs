@@ -324,6 +324,10 @@ impl Build<'_> {
                 .with_files(left_out.files.iter().copied());
             let roles = match id {
                 ProjectId::Application => {
+                    let graph = &bound.projects.get(id).graph;
+                    let files = all_compiled_files.iter().copied();
+                    let of_loader = files.filter(|&it| graph.is_found_by_computed_names_alone(it));
+                    project.loaded.leave_files_to_loader(of_loader.collect());
                     let request = &CompileRequest {
                         left_out_bodies: Some(&left_out_bodies),
                         ..*project.request
@@ -668,6 +672,9 @@ impl Build<'_> {
                 }));
         let reads_source_paths =
             project == ProjectId::Application && reads_source_paths(files, sources);
+        let may_have_plugins = project == ProjectId::Application
+            && !self.options.load.runs_tests
+            && crate::load::contents::load_names::names_plugin(files);
         if reads_source_paths {
             sources.note_source_paths_at_run_time();
         }
@@ -694,6 +701,7 @@ impl Build<'_> {
             makes_registries,
             page_manifests: &page_manifests,
             reads_source_paths,
+            may_have_plugins,
             replaced_builtins: &loaded.contents.replaced_builtins,
             fixed_builtins: &loaded.contents.fixed_builtins,
             names_added_to_builtins: &loaded.contents.names_added_to_builtins,

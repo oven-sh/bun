@@ -1,6 +1,6 @@
 use core::mem::replace;
 
-use bun_sema::bind::{ClassOwner, CodeUnit, Decl, ScopeId, SymbolId};
+use bun_sema::bind::{ClassOwner, CodeUnit, ScopeId, SymbolId};
 use bun_sema::check::Checker;
 use bun_sema::hir::{ClassId, Flags, FnBody, FnId};
 use bun_sema::program::{FileId, Sym};
@@ -222,11 +222,7 @@ fn define_variables_that_other_files_read(file: &mut FileLowering<'_, '_, '_, '_
 fn makes_container(file: &FileLowering<'_, '_, '_, '_>, symbol: SymbolId) -> bool {
     let (hir, bound) = (file.hir, file.bound);
     let mut declarations = bound.symbol(symbol).decls.iter();
-    declarations.any(|&declaration| match declaration {
-        Decl::Enum(it) => !hir[it].flags.contains(Flags::AMBIENT),
-        Decl::Module(it) => bound.makes_namespace_object(hir, it),
-        _ => false,
-    })
+    declarations.any(|&declaration| bound.makes_container_object(hir, declaration))
 }
 
 // `define_remaining_layouts` defines each class, each constructor function, and each container that the file has named.

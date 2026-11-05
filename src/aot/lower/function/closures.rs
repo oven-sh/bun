@@ -127,7 +127,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let id = super::declare_source_function(self.file, function, text_name);
         let closure = self.emit_closure(id, home);
-        if let (Some(given), None) = (inferred_name, text_name) {
+        if let (Some(given), None) = (inferred_name, text_name)
+            && self.file.names_functions_by_keys()
+        {
             let key = self.emit_name_value(given.name);
             let kind = match func.kind {
                 FnKind::Getter => MethodKind::Getter,

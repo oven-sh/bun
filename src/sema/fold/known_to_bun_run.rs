@@ -112,7 +112,7 @@ impl<'s> Folder<'_, 's> {
     }
 
     /// An executable is held to `bun build --compile` with the same options. Under `--minify-syntax` its transpiler computes with constants everywhere, as
-    /// `bun run` does. Without it, in the initializer of a member of an enum and in the operands of `import()`, `require()` and `require.resolve()`.
+    /// `bun run` does. Without it, in the initializer of a member of an enum, in the operands of `import()`, `require()` and `require.resolve()`, and behind an `import()`.
     pub(super) fn computes_with_constants(&self, e: ExprId) -> bool {
         self.minifies_syntax() || self.find_places_always_computed().contains(e.idx())
     }
@@ -135,8 +135,35 @@ impl<'s> Folder<'_, 's> {
                     places.insert(index);
                 }
             }
+            self.add_places_behind_imports(&mut places);
             places
         })
+    }
+
+    /// `e_import` switches `should_fold_typescript_constant_expressions` on and leaves it on. `e_call` puts it back behind its arguments to what it was in front of them,
+    /// and an enum behind its members. The transpiler is through with the expressions in the order of their numbers: that of the text, a parent behind its parts.
+    fn add_places_behind_imports(&self, places: &mut PositionSet) {
+        let (hir, bound) = (self.hir, self.bound);
+        // The first `import()` of those that have switched it on.
+        let mut switched_on_by: Option<usize> = None;
+        for (index, expr) in hir.exprs.iter().enumerate() {
+            let parent = || bound.parent_of_expr(ExprId(index as u32));
+            let Some(import) = switched_on_by else {
+                if matches!(expr.kind, ExprKind::ImportCall { .. }) && parent() != Parent::None {
+                    switched_on_by = Some(index);
+                }
+                continue;
+            };
+            places.insert(index);
+            let holds_import_in_arguments =
+                matches!(expr.kind, ExprKind::Call(call) if hir[call].callee.idx() < import);
+            let holds_import = expr.pos <= hir.exprs[import].pos;
+            if holds_import_in_arguments
+                || (holds_import && matches!(parent(), Parent::EnumInit(_)))
+            {
+                switched_on_by = None;
+            }
+        }
     }
 
     fn is_operand_of_loader(&self, call: ExprId, operand: ExprId) -> bool {

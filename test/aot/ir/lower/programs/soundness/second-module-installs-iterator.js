@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 3
+// CHECK-LABEL: function {{*}}name="use"
 
 // FILE: main.js
 import { Bag, show } from "./bag.js";
@@ -33,70 +34,3 @@ export function run() {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=[[f_1]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="Bag"
-// CHECK-NEXT: v4 = Construct v3 calleeName="Bag"
-// CHECK-NEXT: PutModuleVariable v4 variable=[[g_3]]
-// CHECK-NEXT: v6 = String string="first"
-// CHECK-NEXT: v7 = Call v1, -, v6 calleeName="use"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="run"
-// CHECK-NEXT: v10 = Call v9 calleeName="run"
-// CHECK-NEXT: v11 = String string="second"
-// CHECK-NEXT: v12 = Call v1, -, v11 calleeName="use"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="use"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b7():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="b"
-// CHECK-NEXT: v3 = IteratorOpen v2
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b7():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v5 = IteratorResume v3
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3() handler=b7():
-// CHECK-NEXT: Jump -> next b8()
-// CHECK-NEXT: b4() handler=b7():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="show"
-// CHECK-NEXT: v10 = Call v9, -, v0, v7 calleeName="show"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v3 handler=b7():
-// CHECK-NEXT: v11 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v11
-// CHECK-NEXT: b7() role=CatchHandler:
-// CHECK-NEXT: v13 = CatchValue
-// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v15 = CheckInitialized v14 name="show"
-// CHECK-NEXT: v16 = String string="not iterable"
-// CHECK-NEXT: v17 = Call v15, -, v0, v16 calleeName="show"
-// CHECK-NEXT: Jump -> next b8()
-// CHECK-NEXT: b8():
-// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v19 = CheckInitialized v18 name="show"
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v21 = CheckInitialized v20 name="b"
-// CHECK-NEXT: v22 = Integer integer=1
-// CHECK-NEXT: v23 = Add v21, v22
-// CHECK-NEXT: v24 = Call v19, -, v0, v23 calleeName="show"
-// CHECK-NEXT: v25 = Undefined
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: }

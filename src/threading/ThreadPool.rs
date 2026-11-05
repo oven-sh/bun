@@ -922,43 +922,25 @@ mod allocator {
     }
 }
 
-#[cfg(target_os = "linux")]
-use crate::huge_pages;
-
-#[cfg(not(target_os = "linux"))]
-mod huge_pages {
-    pub(super) struct Watch;
-
-    impl Watch {
-        pub(super) fn end(self) {}
-    }
-
-    pub(super) fn begin() -> Option<Watch> {
-        None
-    }
-}
-
 /// How many ahead-of-time builds run in this process. It changes under the lock of `BUILDS`.
 static BUILDS_UNDER_WAY: AtomicU32 = AtomicU32::new(0);
 
 struct Builds {
     /// The allocator's, from before the first build began.
     former_settings: Option<allocator::PurgeSettings>,
-    huge_pages: Option<huge_pages::Watch>,
     /// Each has a thread that went idle during a build and sleeps with its free memory.
     pools_asleep: Vec<bun_ptr::BackRef<ThreadPool>>,
 }
 
 static BUILDS: Guarded<Builds> = Guarded::new(Builds {
     former_settings: None,
-    huge_pages: None,
     pools_asleep: Vec::new(),
 });
 
 /// Until it's dropped, an ahead-of-time build runs in this process, and what is freed stays with the process: the next
 /// stage takes it. Memory that goes back to the system interrupts every thread, and whoever takes it again faults it in
-/// page by page. What the process takes for the first time comes in huge pages while the system has them free. When the
-/// last one is dropped, the idle threads hand their heaps to the allocator as ever, and the freed pages go back at once.
+/// page by page. When the last one is dropped, the idle threads hand their heaps to the allocator as ever, and the freed
+/// pages go back at once.
 #[must_use]
 pub struct BuildUnderWay(());
 
@@ -967,7 +949,6 @@ impl BuildUnderWay {
         let mut builds = BUILDS.lock();
         if BUILDS_UNDER_WAY.fetch_add(1, Ordering::Relaxed) == 0 {
             builds.former_settings = Some(allocator::PurgeSettings::put_off());
-            builds.huge_pages = huge_pages::begin();
         }
         BuildUnderWay(())
     }
@@ -978,9 +959,6 @@ impl Drop for BuildUnderWay {
         let mut builds = BUILDS.lock();
         if BUILDS_UNDER_WAY.fetch_sub(1, Ordering::Relaxed) != 1 {
             return;
-        }
-        if let Some(huge_pages) = builds.huge_pages.take() {
-            huge_pages.end();
         }
         if let Some(former) = builds.former_settings.take() {
             former.restore();

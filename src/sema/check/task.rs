@@ -79,6 +79,18 @@ impl RangesInProgress {
         self.add(from..frames.len(), kept, innermost, add);
     }
 
+    /// Forgets the positions of the queries that have left the stack since `ranges` last changed. `kept`, `innermost`: see `add`.
+    fn forget_popped(&mut self, kept: usize, innermost: u64) {
+        while let Some(last) = self.ranges.last_mut() {
+            if last.start < kept {
+                last.end = last.end.min(kept);
+                break;
+            }
+            self.ranges.pop();
+        }
+        self.innermost = innermost;
+    }
+
     /// Adds `positions`, which end at the top of the stack. Calls `add` with each part of them that's new.
     ///
     /// `kept`: how many queries at the bottom of the stack have a serial number up to `self.innermost`. The rest were
@@ -90,14 +102,7 @@ impl RangesInProgress {
         innermost: u64,
         mut add: impl FnMut(Range<usize>),
     ) {
-        while let Some(last) = self.ranges.last_mut() {
-            if last.start < kept {
-                last.end = last.end.min(kept);
-                break;
-            }
-            self.ranges.pop();
-        }
-        self.innermost = innermost;
+        self.forget_popped(kept, innermost);
         if positions.is_empty() {
             return;
         }

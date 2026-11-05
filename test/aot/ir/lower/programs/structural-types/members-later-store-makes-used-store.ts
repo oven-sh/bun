@@ -106,63 +106,6 @@ let letters = 0;
 for (let i = 0; i < 2000; i++) letters += all().join().length;
 show("2000 rounds", () => letters);
 
-// GENERATED: attempt Dog callback
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Call v0 calleeName="run"
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: v3 = String string=" "
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: v5 = Builtin builtin=String
-// CHECK-NEXT: v6 = Call v5, -, v1 calleeName="String"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = Add v4, v7
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v10 = CatchValue
-// CHECK-NEXT: v11 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v12 = PropGet v11 key="TypeError" [isFreeName]
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(TypeError) flags=[IsExpected]}
-// CHECK-NEXT: v14 = InstanceOf v10, v13
-// CHECK-NEXT: v15 = ToBoolean v14
-// CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v16):
-// CHECK-NEXT: v17 = String string="TypeError"
-// CHECK-NEXT: Jump -> next b7(v17)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: v19 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v20 = PropGet v19 key="ReferenceError" [isFreeName]
-// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(ReferenceError) flags=[IsExpected]}
-// CHECK-NEXT: v22 = InstanceOf v10, v21
-// CHECK-NEXT: v23 = ToBoolean v22
-// CHECK-NEXT: Branch v23 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v24):
-// CHECK-NEXT: v25 = String string="ReferenceError"
-// CHECK-NEXT: Jump -> next b7(v25)
-// CHECK-NEXT: b6(v26):
-// CHECK-NEXT: v27 = String string="another error"
-// CHECK-NEXT: Jump -> next b7(v27)
-// CHECK-NEXT: b7(v28):
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v29
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Dog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=100
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

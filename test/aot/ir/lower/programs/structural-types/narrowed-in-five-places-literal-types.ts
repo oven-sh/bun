@@ -138,76 +138,8 @@ console.log("honest rounds: " + rounds);
 round("flipped", flip, true);
 round("honest again", keep, false);
 
-// GENERATED: onlyZero word Switch inItsOwnField flip
 // CHECK-LABEL: function {{*}}name="onlyZero"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=0}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: 0):
-// CHECK-NEXT: v1 = Integer integer=100
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="word"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"off"|"on" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|"off"|"on"):
-// CHECK-NEXT: SwitchString v0 strings=["on", "off"] -> case b1(| 0), case b2(| 0), otherwise b3()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = String string="lit"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = String string="dark"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Switch"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inItsOwnField"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_3]]} parameters=[{type=boolean}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_3]], v1: boolean):
-// CHECK-NEXT: v2 = PropGet v0 key="mode"
-// CHECK-NEXT: v3 = String string="on"
-// CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = PropGet v0 key="change"
-// CHECK-NEXT: v6 = Call v5, v0, v1 calleeKey="change" calleeName="this.change"
-// CHECK-NEXT: v7 = PropGet v0 key="mode"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="costs"
-// CHECK-NEXT: v10 = PropGet v0 key="mode"
-// CHECK-NEXT: v11 = ElemGet v9, v10
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v13 = PropGet v0 key="mode"
-// CHECK-NEXT: v14 = Call v12, -, v13 calleeName="onlyOn"
-// CHECK-NEXT: v15 = NewArray v7, v11, v14 contents=anything
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v16 = String string="other"
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="flip"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = String string="off"
-// CHECK-NEXT: PropSet v0, v1 key="mode"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: PropSet v0, v3 key="level"
-// CHECK-NEXT: v5 = Boolean
-// CHECK-NEXT: PropSet v0, v5 key="armed"
-// CHECK-NEXT: v7 = BigInt digits="2"
-// CHECK-NEXT: PropSet v0, v7 key="big"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

@@ -25,7 +25,7 @@ pub(super) fn lower_delete(
         return lowering.delete_identifier(target);
     }
     let Some((object, key)) = hir.member_key(target) else {
-        lowering.lower_expression_for_effect(target);
+        lowering.lower_taken_value_for_effect(target);
         return lowering.builder.boolean(true);
     };
     if matches!(hir[object].kind, ExprKind::Super) {

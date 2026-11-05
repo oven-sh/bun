@@ -50,10 +50,8 @@ async function measure(numberOfStretches: number) {
   return { swept: walk.touches.OperationsSwept, built: walk.touches.OperationsBuilt, instructions: walk.instructions };
 }
 
-const skipped = isWindows ? "a build is measured through /bin/sh" : undefined;
-if (skipped) console.error(`SKIPPED: test/aot/compiler/long-async-function.test.ts: ${skipped}`);
-
-describe.skipIf(!!skipped)("compile/aot/long async function", () => {
+// A build is measured through /bin/sh.
+describe.skipIf(isWindows)("compile/aot/long async function", () => {
   test("twice the awaits cost walk and sweep at most 2.1 times as much", async () => {
     const [large, small, empty] = await Promise.all([2 * stretches, stretches, 0].map(measure));
     const growthOf = (cost: (measured: typeof large) => number) =>

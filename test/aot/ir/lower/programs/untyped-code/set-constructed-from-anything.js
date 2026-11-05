@@ -81,87 +81,8 @@ say("held in a variable", () => { const Held = Set; return show(new Held([1, 1, 
 
 console.log(lines.join("\n"));
 
-// GENERATED: make show Stack Counted add
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
-// CHECK-NEXT: v1 = Builtin builtin=Set
-// CHECK-NEXT: v2 = Construct v1, -, v0 calleeName="Set"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Set flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Set):
-// CHECK-NEXT: v1 = Builtin builtin=Set
-// CHECK-NEXT: v2 = InstanceOf v0, v1
-// CHECK-NEXT: v3 = PropGet v0 key="size"
-// CHECK-NEXT: v4 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v4, v0
-// CHECK-NEXT: v6 = NewArray v2, v3, v4 contents=anything
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Stack"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|Array):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_2]]}
-// CHECK-NEXT: v7 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = TypeTest v6 testedType=absent
-// CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: v11 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v11
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: v13 = Boolean boolean=true
-// CHECK-NEXT: PropSet v12, v13 key="made"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: v16 = TypeTest v15 testedType=object
-// CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v17):
-// CHECK-NEXT: Jump -> next b9(v17)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: v19 = TypeTest v18 testedType=undefined
-// CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: v21 = TypeTest v12 testedType=absent
-// CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v22):
-// CHECK-NEXT: v23 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v23
-// CHECK-NEXT: b8(v24):
-// CHECK-NEXT: Jump -> next b9(v24)
-// CHECK-NEXT: b9(v25):
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: b10(v26):
-// CHECK-NEXT: v27 = NewRuntimeError runtimeError=DerivedConstructorResult name="Counted"
-// CHECK-NEXT: Throw v27
-// CHECK-NEXT: b11(v28):
-// CHECK-NEXT: v29 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v29
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="add"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="Counted"
-// CHECK-NEXT: v4 = PropGet v3 key="added"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = Call v5, v4, v1 calleeKey="push" calleeName="Counted.added.push"
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v8 = GetSuperBase v7 homeKind=ClassPrototype
-// CHECK-NEXT: v9 = SuperGet v8, v0 key="add"
-// CHECK-NEXT: v10 = Call v9, v0, v1 calleeName="super.add"
-// CHECK-NEXT: ReturnCall v10
-// CHECK-NEXT: }

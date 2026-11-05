@@ -11,7 +11,6 @@ use core::mem::MaybeUninit;
 pub trait SortByNumber<T> {
     fn sort_by_u32(&mut self, number: impl FnMut(&T) -> u32);
     fn sort_by_u64(&mut self, number: impl FnMut(&T) -> u64);
-    fn sort_by_u128(&mut self, number: impl FnMut(&T) -> u128);
 }
 
 /// A list of up to this many elements is sorted where it lies: most lists are that short, and a call would cost more than the sort.
@@ -54,7 +53,6 @@ macro_rules! pair_is_numbered {
     };
 }
 pair_is_numbered!(u64);
-pair_is_numbered!(u128);
 
 macro_rules! sort {
     ($list:ident, $number:ident, $numbered:ty, $join:expr, $sort_and_move:ident) => {{
@@ -99,28 +97,12 @@ impl<T> SortByNumber<T> for [T] {
             sort_and_move_by_u64
         )
     }
-
-    fn sort_by_u128(&mut self, mut number: impl FnMut(&T) -> u128) {
-        sort!(
-            self,
-            number,
-            (u128, u32),
-            |number, index| (number, index),
-            sort_and_move_by_u128
-        )
-    }
 }
 
 /// The number by which `(high, low)` is ordered.
 #[inline]
 pub const fn number_of_pair(high: u32, low: u32) -> u64 {
     (high as u64) << 32 | low as u64
-}
-
-/// The number by which `(high, low)` is ordered.
-#[inline]
-pub const fn wide_number_of_pair(high: u64, low: u64) -> u128 {
-    (high as u128) << 64 | low as u128
 }
 
 /// The unsigned number that is ordered as `value` is.
@@ -144,7 +126,6 @@ macro_rules! sort_and_move {
 }
 sort_and_move!(sort_and_move_by_u32, u64);
 sort_and_move!(sort_and_move_by_u64, (u64, u32));
-sort_and_move!(sort_and_move_by_u128, (u128, u32));
 
 /// At each place `order` has the index of the element that belongs there.
 ///
@@ -216,12 +197,9 @@ mod tests {
             let mut by_u32 = list.clone();
             by_u32.sort_by_u32(&number);
             assert_eq!(by_u32, expected);
-            let mut by_u64 = list.clone();
+            let mut by_u64 = list;
             by_u64.sort_by_u64(|element| u64::from(number(element)) << 20);
             assert_eq!(by_u64, expected);
-            let mut by_u128 = list;
-            by_u128.sort_by_u128(|element| u128::from(number(element)) << 70);
-            assert_eq!(by_u128, expected);
         }
     }
 
@@ -276,7 +254,6 @@ mod tests {
         [(); 20].sort_by_u32(|()| 0);
         assert!(number_of_pair(1, 0) > number_of_pair(0, u32::MAX));
         assert!(number_of_pair(7, 2) > number_of_pair(7, 1));
-        assert!(wide_number_of_pair(1, 0) > wide_number_of_pair(0, u64::MAX));
         assert!(number_of_signed(i64::MIN) < number_of_signed(-1));
         assert!(number_of_signed(-1) < number_of_signed(0));
         assert!(number_of_signed(0) < number_of_signed(i64::MAX));

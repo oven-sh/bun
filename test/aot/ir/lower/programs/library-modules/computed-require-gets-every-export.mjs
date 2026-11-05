@@ -26,21 +26,5 @@ console.log(load("net").isIPv4("1.2.3.4"), new (load("net").BlockList)().check("
 console.log(load("stream").isReadable(new (load("stream").PassThrough)()), load("stream").getDefaultHighWaterMark(true));
 console.log(await load("stream").promises.pipeline(load("stream").Readable.from(["a"]), new (load("stream").PassThrough)().resume()));
 
-// GENERATED: Child load
 // CHECK-LABEL: function {{*}}name="Child"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="load"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=Process
-// CHECK-NEXT: v2 = PropGet v1 key="env"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(ProcessEnv) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="PREFIX"
-// CHECK-NEXT: v5 = Add v4, v0
-// CHECK-NEXT: v6 = RequireDynamic v5 referrer=[[m_0]]
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

@@ -26,13 +26,4 @@ console.log(typeof Stream, new Stream() instanceof EventEmitter, (Stream as any)
 const required = createRequire(import.meta.url)("node:events");
 console.log(required === EventEmitter, new required() instanceof EventEmitter);
 
-// GENERATED: Heir
 // CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_2]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

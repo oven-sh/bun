@@ -97,10 +97,10 @@ fn code_of_workers(contents: &ProgramContents) -> CodeOfWorkers {
 }
 
 // An executable for Windows knows its modules as `B:\~BUN\root\a.js`, and an alias is written with forward slashes.
-fn is_path_of_module(public_path: &[u8], alias: &[u8]) -> bool {
+fn is_path_of_module(module_path: &[u8], alias: &[u8]) -> bool {
     let is_same_byte =
         |(&held, &written): (&u8, &u8)| held == written || (held == b'\\' && written == b'/');
-    public_path.len() == alias.len() && public_path.iter().zip(alias).all(is_same_byte)
+    module_path.len() == alias.len() && module_path.iter().zip(alias).all(is_same_byte)
 }
 
 /// `StartedWorkers::names`. `names_written`: `EntryPointFinder::take_names_written`.
@@ -548,7 +548,7 @@ impl<'a> Build<'a> {
                             && (options.aot.only_tests_load_code_from_disk
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
-                    can_replace_builtins: !contents.builtins_written_as_reads().is_empty(),
+                    can_replace_builtins: !contents.replaced_builtins.is_empty(),
                 },
             ),
             code: CodeOptions {
@@ -560,7 +560,8 @@ impl<'a> Build<'a> {
                 runtime_modules: shared.runtime_modules,
                 builtin_names: shared.builtin_names,
                 platform: self.platform,
-                replaced_builtins: contents.builtins_written_as_reads(),
+                replaced_builtins: &contents.replaced_builtins,
+                unlocked_builtins: &contents.run.members_that_library_looks_up,
                 messages: shared.messages,
                 unreadable: Default::default(),
             },
@@ -949,27 +950,6 @@ mod tests {
             });
             assert_eq!(found, code, "{text}");
         }
-    }
-
-    #[test]
-    fn function_of_a_file_on_a_circle_may_be_called_before_the_file_has_run() {
-        // Behind its own first line `isOn` holds true. Whoever the file imports may call `load` in front of that.
-        const ON_CIRCLE: &str = "import './back';\nvar isOn = true;\nexport function load() { if (!isOn) return import('./other'); }";
-        let compiles_other_file = |back: &str| {
-            let files = [
-                ("main.ts", "import './cycle';"),
-                ("cycle.ts", ON_CIRCLE),
-                ("back.ts", back),
-                ("other.ts", "export {};"),
-            ];
-            with_loaded_build(&files, &default_settings(), |_, loaded| {
-                let files = loaded.project(ProjectId::Application).loaded.files();
-                let other = files.by_path.get(b"/project/other.ts");
-                other.is_some_and(|file| files.is_compiled(file))
-            })
-        };
-        assert!(compiles_other_file("import './cycle';"));
-        assert!(!compiles_other_file("export {};"));
     }
 
     #[test]

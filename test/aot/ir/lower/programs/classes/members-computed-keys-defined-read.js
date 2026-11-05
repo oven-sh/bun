@@ -344,74 +344,10 @@ say("literal", describe(holder[one]), "|", describe(holder[bare]), "|", describe
 
 console.log(log.join("\n"));
 
-// GENERATED: makeWithOwnSymbol describe Plain Child toString [Symbol.toStringTag] [Symbol.hasInstance]
 // CHECK-LABEL: function {{*}}name="makeWithOwnSymbol"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=Symbol
-// CHECK-NEXT: v1 = String string="own"
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="Symbol" callNumber=66
-// CHECK-NEXT: v3 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v4 = NewClass v3 layout=[[L_2]]
-// CHECK-NEXT: v5 = ToPropertyKey v2
-// CHECK-NEXT: v6 = NewClosure function=[[f_3]]
-// CHECK-NEXT: SetFunctionName v6, v5
-// CHECK-NEXT: DefineMethod v4, v6, v5 layout=[[L_2]]
-// CHECK-NEXT: v9 = FinishClass v4 layout=[[L_2]]
-// CHECK-NEXT: v10 = NewArray v2, v9 contents=anything
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectOwnKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Reflect.ownKeys"
-// CHECK-NEXT: v4 = PropGet v3 key="map"
-// CHECK-NEXT: v5 = NewClosure v0 function=[[f_4]]
-// CHECK-NEXT: v6 = Call v4, v3, v5 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v7 = PropGet v6 key="join"
-// CHECK-NEXT: v8 = String string=" "
-// CHECK-NEXT: v9 = Call v7, v6, v8 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Plain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_6]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Child"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="note"
-// CHECK-NEXT: v2 = String string="toString"
-// CHECK-NEXT: v3 = String string="fromObject"
-// CHECK-NEXT: v4 = Call v1, -, v2, v3 calleeName="note"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toStringTag]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="Tagged"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.hasInstance]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=5
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

@@ -986,7 +986,7 @@ fn asks_nothing_of_library(application: &Files<'_>, graph: &ModuleGraph, file: F
         })
 }
 
-// A load under a name that is put together at run time finds every module that the program holds, whole.
+// A load under a name that is put together at run time finds every module that the program holds, whole. One whose every name the build has read finds the modules of those names.
 pub(super) fn loads_modules_by_computed_names(
     application: &Files<'_>,
     graph: &ModuleGraph,
@@ -994,12 +994,14 @@ pub(super) fn loads_modules_by_computed_names(
     let files = application.compiled_files().iter();
     let mut files = files.filter(|&&file| !never_runs(graph, file));
     files.any(|&file| {
+        let analysis = application.analysis(file);
         !graph.has_record(file)
             || parsed_source(application, file).is_none_or(|it| it.builtins.loads_unknown_modules())
-            || application.analysis(file).import_sites.iter().any(|site| {
+            || analysis.import_sites.iter().any(|site| {
                 matches!(
                     graph.find_site_answer(file, site.kind),
-                    Some(SiteAnswer::Computed(_))
+                    Some(SiteAnswer::Computed(candidates))
+                        if !candidates.hold_every_name(analysis, &site.specifier)
                 )
             })
     })

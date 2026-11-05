@@ -575,16 +575,22 @@ impl Encoder<'_> {
         self.words.extend_from_slice(proofs);
     }
 
+    /// Appends the words of `range` as they are. Returns `numbers`, and the words that it has appended.
+    fn append_pending_words(&mut self, range: &Range<u32>) -> (&[u32], &[Cell<u32>]) {
+        let start = self.words.len();
+        let copied = words_in(self.pending_words, range);
+        self.words.extend_from_slice(copied);
+        let cells = Cell::from_mut(&mut self.words[start..]).as_slice_of_cells();
+        (&*self.numbers, cells)
+    }
+
     fn encode_fields(
         &mut self,
         range: &Range<u32>,
         visit_fields: impl FnOnce(&[Cell<u32>], &mut dyn FnMut(FieldWord, usize)) -> Option<usize>,
     ) {
-        let (numbers, value_count) = (&*self.numbers, self.value_count);
-        let start = self.words.len();
-        let copied = words_in(self.pending_words, range);
-        self.words.extend_from_slice(copied);
-        let cells = Cell::from_mut(&mut self.words[start..]).as_slice_of_cells();
+        let value_count = self.value_count;
+        let (numbers, cells) = self.append_pending_words(range);
         let end = visit_fields(cells, &mut |field: FieldWord, at: usize| match field {
             FieldWord::Operand => {
                 let pending = ValueId::from_word(cells[at].get());

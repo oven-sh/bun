@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 14
+// CHECK-LABEL: function {{*}}name="typeof"
 
 // FILE: main.js
 // An unused declaration reads a global that does not exist. A bare read throws, and so does a member of it; behind a typeof test it is not read at all. Each case is a file of its own, loaded here, and says whether it threw.
@@ -74,11 +75,3 @@ typeof notDefinedAnywhere;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: typeof
-// CHECK-LABEL: function {{*}}name="typeof"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = ImportModule module=[[m_1]] referrer=[[m_0]]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

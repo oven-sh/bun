@@ -371,6 +371,36 @@ fn reading_an_inherited_object_prototype_member_opens_the_holder() {
 }
 
 #[test]
+fn store_of_a_function_that_the_loader_calls_is_told() {
+    let stores = [
+        "Module._resolveFilename = f;",
+        "Module['_resolveFilename'] = f;",
+        "Module.prototype.require = f;",
+        "const p = Module.prototype; p.require = f;",
+        "Object.assign(Module, { _resolveFilename: f });",
+        "Object.assign(Module, patches);",
+    ];
+    let others = [
+        "const original = Module._resolveFilename; original.call(Module, name);",
+        "Module.prototype.load = f;",
+        "Date.now = f;",
+    ];
+    let tells = |setup: Setup, source: &str| {
+        let source = format!("import Module from 'node:module'; {source}");
+        with_case(setup, &source, |case| {
+            case.resolved.stores_loader_functions()
+        })
+    };
+    for source in stores {
+        assert!(tells(TEST_RUN, source), "{source}");
+        assert!(!tells(PROGRAM, source), "{source}");
+    }
+    for source in others {
+        assert!(!tells(TEST_RUN, source), "{source}");
+    }
+}
+
+#[test]
 fn nothing_is_found_outside_a_test_run() {
     let replaced = REPLACED.iter().map(|row| row.0);
     let opened = UNKNOWN_KEY.iter().chain(OBJECT_OUT_OF_SIGHT);

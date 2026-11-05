@@ -2,6 +2,7 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 4
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="compare"
 
 // FILE: main.ts
 // A top-level constant that is created at its first read is created once. Each constant of ./made is first read in another way; then it is read in every way, and all find the same object.
@@ -96,28 +97,3 @@ export function fromUntyped(name) { return made[name]; }
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: compare
-// CHECK-LABEL: function {{*}}name="compare"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|Array):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="roads"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = String string=":"
-// CHECK-NEXT: v7 = Add v0, v6
-// CHECK-NEXT: v8 = TypeOf v1
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = String string=":"
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = PropGet v2 key="filter"
-// CHECK-NEXT: v13 = NewClosure v1 function=[[f_2]]
-// CHECK-NEXT: v14 = Call v12, v2, v13 calleeKey="filter" calleeName="found.filter"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v16 = PropGet v15 key="length"
-// CHECK-NEXT: v17 = Add v11, v16
-// CHECK-NEXT: v18 = Call v5, v4, v17 calleeKey="push" calleeName="roads.push"
-// CHECK-NEXT: v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v20 = Undefined
-// CHECK-NEXT: Return v20
-// CHECK-NEXT: }

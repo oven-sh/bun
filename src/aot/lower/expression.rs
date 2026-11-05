@@ -4,6 +4,8 @@ mod builtin_path;
 mod chain;
 mod global_path;
 mod logical;
+#[cfg(test)]
+mod tests;
 mod unused;
 
 use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
@@ -74,7 +76,9 @@ impl<'t> Evaluation<'t> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum ResultUsage {
     Value,
-    /// Nothing takes the value, in `bun run` either.
+    /// Nothing takes the value, in `bun run` either: it hands the expression to `simplify_unused_expr`, which leaves out a name in its dead zone.
+    /// It does so with an expression statement, with the test of an `if` or of a conditional whose answer it knows, with the left of a comma where it minifies, and with the parts that the function itself goes into.
+    /// Nowhere else: what opens the head of a `for` and the operands of `delete` and of a `void` whose value is taken stay as they are written.
     Effect,
     /// The build has no use for the value, and `bun run` takes it.
     EffectOfTakenValue,
@@ -92,6 +96,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// `bun run` takes the value, so it reads a member that it leaves out where nothing takes the value.
     pub(in crate::lower) fn lower_taken_value_for_effect(&mut self, expression: ExprId) {
         self.lower_for_effect(expression, ResultUsage::EffectOfTakenValue);
+    }
+
+    /// `void x` whose value `bun run` takes: it writes `undefined` where it could leave all of `x` out, and otherwise leaves `x` as it is written.
+    pub(in crate::lower) fn lower_operand_of_taken_void(&mut self, operand: ExprId) {
+        if !(self.file).reads_only_what_bun_run_leaves_out(operand, true) {
+            self.lower_taken_value_for_effect(operand);
+        }
     }
 
     fn lower_for_effect(&mut self, expression: ExprId, usage: ResultUsage) {
@@ -277,6 +288,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(position);
         let counted = self.enter_counted_expression(expression);
         let value = self.lower_by_decision(expression, evaluation);
+        // In a file without a promise nobody is asked.
+        let is_read = matches!(
+            self.file.hir[expression].kind,
+            ExprKind::Dot { .. } | ExprKind::Index { .. }
+        );
+        let value = match is_read
+            && super::positions::has_int32_promise(self.file)
+            && matches!(evaluation.tail, Tail::No)
+            && !self.file.is_statically_resolved(expression)
+        {
+            true => self.state_int32_of_read(expression, value),
+            false => value,
+        };
         self.leave_counted_expression(counted);
         self.leave_nesting();
         value
@@ -586,7 +610,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                     assignment::lower_update(self, expression, ResultUsage::Effect);
                 }
-                UnOp::Void => self.lower_expression_for_effect(operand),
+                UnOp::Void if usage == ResultUsage::Effect => {
+                    self.lower_expression_for_effect(operand);
+                }
+                UnOp::Void => self.lower_operand_of_taken_void(operand),
                 UnOp::Not => self.lower_for_effect(operand, usage),
                 UnOp::Typeof
                     if usage == ResultUsage::Effect && !self.file.is_name_below_typeof(operand) =>
@@ -635,7 +662,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     /// The expression reads members of built-in objects, and `bun run` leaves nothing of it where nothing takes its value: `simplify_unused_expr`.
     /// `false` where the build has something to do for it.
-    /// `names_below_top_level`: whether a name that is declared below the top level of the file counts among what is left out.
+    /// `names_below_top_level`: whether a name counts among what is left out that `bun build` reads left of a comma: one that is declared below the top level of the file, or a global one.
     pub(in crate::lower) fn reads_only_what_bun_run_leaves_out(
         &self,
         expression: ExprId,
@@ -727,7 +754,8 @@ impl FileLowering<'_, '_, '_, '_> {
                             .bound
                             .dynamic_lookup_scope(bun_sema::hir::NodeData::Expr(part))
                             .is_none()
-                        && is_name_left_out_by_bun_run(self.queries.atom_bytes(name)) =>
+                        && is_name_left_out_by_bun_run(self.queries.atom_bytes(name))
+                        && names_below_top_level =>
                 {
                     reads_member = true
                 }

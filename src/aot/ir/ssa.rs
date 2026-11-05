@@ -7,7 +7,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::builder::{
-    ENTRY_BLOCK, Edge, FunctionBuilder, LocalVariable, PendingBlock, PendingTarget, recycle_vector,
+    ENTRY_BLOCK, Edge, FunctionBuilder, LocalVariable, PendingBlock, PendingTarget, Place,
+    recycle_vector,
 };
 use super::generated::{BlockRole, Opcode, TerminatorKind};
 use super::ids::{BlockId, Id, TypeId, ValueId};
@@ -445,6 +446,20 @@ impl FunctionBuilder {
             }
             StoreCount::Once(..) | StoreCount::Many => StoreCount::Many,
         };
+    }
+
+    /// The first store of the variable, which nothing has read yet.
+    pub fn write_variable_at(&mut self, place: Place, variable: LocalVariable, value: ValueId) {
+        let covering = self.blocks[place.block.index()].covering;
+        assert!(
+            covering.is_none_or(|covering| variable.0 >= covering.visible_variable_count),
+            "a store that a handler sees begins a block"
+        );
+        let state = &mut self.ssa.variables[variable.0 as usize];
+        debug_assert!(matches!(state.stores, StoreCount::Never));
+        state.stores = StoreCount::Once(value, place.block);
+        self.ssa.definitions.insert(place.block, variable, value);
+        self.ssa.record_definition_block(variable, place.block);
     }
 
     /// The value itself, whatever names tests have given it.

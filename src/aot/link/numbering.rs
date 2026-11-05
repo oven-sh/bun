@@ -15,7 +15,6 @@ use crate::ir::{
     ABSENT_WORD, DataId, EvalScopeId, FunctionId, Id, LayoutId, ModuleFailureId, ModuleId,
     PropertyKeyId, StringId, TypeId, TypeSiteId, VariableId, for_each_mut,
 };
-#[cfg(debug_assertions)]
 use crate::load::ProgramFile;
 use crate::load::{PerProject, ProjectId};
 use crate::modules;
@@ -314,7 +313,6 @@ fn number_records_of_units(
     table_ids
 }
 
-#[cfg(debug_assertions)]
 fn find_first_file_that_names(
     units: &[LinkUnit],
     local_to_merged: &[Vec<u32>],
@@ -326,13 +324,11 @@ fn find_first_file_that_names(
     Some(unit.file)
 }
 
-#[cfg(debug_assertions)]
 fn has_unit(units: &[LinkUnit], file: ProgramFile) -> bool {
     units.binary_search_by_key(&file, |unit| unit.file).is_ok()
 }
 
 // A file that maps an overload names what runs behind it, lowered or not. Only the edge reads that name.
-#[cfg(debug_assertions)]
 fn mark_sources_of_function_type_edges(merged: &Merged<'_>) -> Vec<bool> {
     let mut is_source = vec![false; merged.functions.keys.len()];
     for unit in merged.units {
@@ -343,7 +339,6 @@ fn mark_sources_of_function_type_edges(merged: &Merged<'_>) -> Vec<bool> {
     is_source
 }
 
-#[cfg(debug_assertions)]
 fn find_function_without_definition(merged: &Merged<'_>, definitions: &Definitions) -> Option<u32> {
     let is_source_of_edge = mark_sources_of_function_type_edges(merged);
     let mut functions = (0u32..).zip(&merged.functions.keys);
@@ -360,7 +355,6 @@ fn find_function_without_definition(merged: &Merged<'_>, definitions: &Definitio
 }
 
 // A file that was lowered defines whatever another file may name of it.
-#[cfg(debug_assertions)]
 fn stop_at_key_without_definition(merged: &Merged<'_>, definitions: &Definitions) {
     let units = merged.units;
     if let Some(function) = find_function_without_definition(merged, definitions) {
@@ -397,12 +391,11 @@ pub(super) fn number_program(
     shown_by_export_tables: &[ProgramVariableKey],
     beside: Beside<'_>,
 ) -> Numbering {
-    #[cfg(debug_assertions)]
-    stop_at_key_without_definition(merged, definitions);
-
     let (units, tables, modules) = (merged.units, merged.tables, merged.modules);
     let mut counts = ProgramCounts::default();
     let mut steps = StepClock::new(Stage::LinkAndEmit);
+    stop_at_key_without_definition(merged, definitions);
+    steps.end("number: what is named is defined");
 
     // None of these asks for a number of the others.
     let (function_ids, (table_ids, (variable_ids, (layout_keys, layout_ids)))) = run_steps_beside(
@@ -571,18 +564,14 @@ fn keys_by_id<K: Copy, I: Id>(keys: &[K], ids: &[Option<I>], count: usize) -> Ve
 #[cfg(test)]
 mod tests {
     use super::super::state::ExportWriter;
-    #[cfg(debug_assertions)]
     use super::super::testing::{
         define_test_function, forward, in_application, prepare, test_function_key, units_in_tasks,
         with_test_files,
     };
     use super::*;
-    #[cfg(debug_assertions)]
     use crate::ir::FunctionKey;
     use crate::modules::ModuleFailureId as Failure;
-    #[cfg(debug_assertions)]
     use bun_sema::check::aot::FunctionRef;
-    #[cfg(debug_assertions)]
     use bun_sema::hir::FnId;
 
     fn order_by_edges(roots: &[u32], edges: &[(u32, u32)]) -> Vec<u32> {
@@ -696,7 +685,6 @@ mod tests {
         assert_eq!(count, 5);
     }
 
-    #[cfg(debug_assertions)]
     #[test]
     fn function_behind_an_overload_needs_no_definition() {
         with_test_files(|projects, [main, home, _]| {

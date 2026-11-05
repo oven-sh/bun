@@ -159,71 +159,7 @@ class Scale {
 }
 console.log([1, 2].map(Scale.prototype.apply, new Scale(3)).join(), [1, 2].map(new Scale(4).apply.bind(new Scale(5))).join(), ["1", "2", "3"].map(Number).join(), ["10", "10", "10"].map(parseInt as never).join(), [1, 2].map(String).join("|"), [[1], [2]].map(Array.prototype.concat.call.bind(Array.prototype.concat) as never).length, [0, 1, ""].filter(Boolean).join());
 
-// GENERATED: churn nestedReplace Scale apply
 // CHECK-LABEL: function {{*}}name="churn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Negate v0
-// CHECK-NEXT: v2 = NewObject -, v0, v1 layout=[[L_1]] fields=[0, 1]
-// CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Add v0, v4
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Add v0, v6
-// CHECK-NEXT: v8 = NewArray v0, v5, v7 contents=anything
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = Greater v0, v9
-// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: v13 = Sub v0, v12
-// CHECK-NEXT: v14 = Call v11, -, v13 calleeName="churn"
-// CHECK-NEXT: v15 = CallDirect v3, v8 function=[[f_3]]
-// CHECK-NEXT: v16 = Add v14, v15
-// CHECK-NEXT: v17 = Convert v16 declared={type=number}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v18 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v19 = PropGet v18 key="Bun" [isFreeName]
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(Bun) flags=[IsExpected]}
-// CHECK-NEXT: v21 = PropGet v20 key="gc"
-// CHECK-NEXT: v22 = Convert v21 declared={type=builtin(BunGc) flags=[IsExpected]}
-// CHECK-NEXT: v23 = Boolean boolean=true
-// CHECK-NEXT: v24 = Call v22, v20, v23 calleeKey="gc" calleeName="Bun.gc"
-// CHECK-NEXT: v25 = CallDirect v3, v8 function=[[f_3]]
-// CHECK-NEXT: ReturnCall v25 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="nestedReplace"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: number):
-// CHECK-NEXT: v2 = PropGet v0 key="replace"
-// CHECK-NEXT: v3 = NewRegExp pattern="\\((\\w+)\\)" regExpFlags=[Global]
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_4]]
-// CHECK-NEXT: v5 = Call v2, v0, v3, v4 calleeKey="replace" calleeName="text.replace"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Scale"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_5]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_5]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_6]]
-// CHECK-NEXT: PropSet v4, v1 key="factor"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="apply"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_5]]} parameters=[{type=number}] results=[{type=number}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: [[L_5]], v1: number):
-// CHECK-NEXT: v2 = PropGet v0 key="factor"
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

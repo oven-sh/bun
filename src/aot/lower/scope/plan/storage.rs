@@ -41,10 +41,7 @@ pub(super) fn place_bindings(
             BindingRef::Symbol(symbol) => find_by_key(&initial_functions, symbol).is_some(),
             BindingRef::Slot(..) => false,
         };
-        let is_made_ahead = match binding {
-            BindingRef::Symbol(symbol) => made_ahead.binary_search(&symbol).is_ok(),
-            BindingRef::Slot(..) => false,
-        };
+        let is_made_ahead = binding.is_listed_in(&made_ahead);
         let is_immutable = is_immutable(context, binding);
         let has_local = match storage {
             Storage::Local => true,

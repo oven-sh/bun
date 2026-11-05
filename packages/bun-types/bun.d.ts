@@ -3859,7 +3859,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations";
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations" | "forms";
 
   interface TrimOptions {
     /**
@@ -4056,10 +4056,30 @@ declare module "bun" {
      * - `"guards-json"`: the same, one JSON object per line
      * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
      * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     * - `"forms"`: how many operations of each kind compiled to inline code, to a call of shared code, or to a call into the runtime
      *
      * Equivalent CLI flag: `--explain`
      */
     aotExplain?: AotReport | AotReport[];
+    /**
+     * With `aot`: make a bug in the compiler harder to turn into a memory bug. Each name costs speed,
+     * and none is on unless it is listed here.
+     *
+     * - `"proof-checks"`: test at run time what the compiler has proven about the type of a value,
+     *   where the value arrives: at parameters, results of calls, fields, variables, captured
+     *   variables and elements. A test that fails stops the process. Objects and closures that the
+     *   compiler would have kept on the stack, or reused once it found them dead, stay on the heap.
+     * - `"ignore-told-ranges"`: test every index where it is used, against the length that the
+     *   array, typed array or string has at that moment, whatever an earlier test or the head of a
+     *   loop has shown. An index that the compiler took to be in range and that is not stops the
+     *   process.
+     *
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws on a
+     * name that it doesn't know.
+     *
+     * Equivalent CLI flag: `--aot-harden`
+     */
+    aotHarden?: string | string[];
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *

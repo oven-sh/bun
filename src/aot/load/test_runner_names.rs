@@ -137,6 +137,9 @@ enum Reads {
 }
 
 fn find_how_use_reads(request: &TransformRequest<'_, '_>, expression: ExprId) -> Option<Reads> {
+    if request.bound.is_stored_to(request.hir, expression) {
+        return None;
+    }
     let Parent::Expr(user) = request.bound.parent_of_expr(expression) else {
         return Some(Reads::Value);
     };
@@ -145,10 +148,8 @@ fn find_how_use_reads(request: &TransformRequest<'_, '_>, expression: ExprId) ->
             op: UnOp::Typeof, ..
         } => Some(Reads::Type(user)),
         ExprKind::Unary {
-            op: UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-            ..
+            op: UnOp::Delete, ..
         } => None,
-        ExprKind::Assign { target, .. } if target == expression => None,
         _ => Some(Reads::Value),
     }
 }
@@ -1484,6 +1485,8 @@ mod tests {
             ("expect(1); typeof jest; describe;", 3),
             // Nothing can be chosen where the name is stored to.
             ("expect = 1; delete jest;", 0),
+            ("[expect] = []; ({ jest, a: vi = 1, ...test } = {});", 0),
+            ("for (describe of []); for (it in {});", 0),
             ("const expect = 1; expect; (jest => jest)(2);", 0),
             ("console.log(1);", 0),
         ];

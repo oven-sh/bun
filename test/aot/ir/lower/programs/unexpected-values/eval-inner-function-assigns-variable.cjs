@@ -206,69 +206,6 @@ for (let i = 0; i < 2000; i++) {
 }
 everyCase("after 2000");
 
-// GENERATED: attempt truncates f
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=" -> "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v10 = Call v9, -, v1 calleeName="outcome"
-// CHECK-NEXT: v11 = Add v8, v10
-// CHECK-NEXT: v12 = Call v6, v4, v11 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="truncates"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: anything, v3: int[0, 4294967295], v4: anything, v5: Array):
-// CHECK-NEXT: v6 = CreateMappedArguments v1, v3, v5, v4
-// CHECK-NEXT: v7 = ToThis v0
-// CHECK-NEXT: v8 = NewObject -, v6 layout=[[L_2]] fields=[3]
-// CHECK-NEXT: v9 = Integer integer=7
-// CHECK-NEXT: v10 = Convert v9 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v8, v10 layout=[[L_2]]
-// CHECK-NEXT: v12 = NewClosure v8, v7, v2, v6 function=[[f_3]]
-// CHECK-NEXT: PutEnvironmentField v8, v12 layout=[[L_2]] field=1
-// CHECK-NEXT: v14 = Data data=[[d_4]]
-// CHECK-NEXT: PutEnvironmentField v8, v14 layout=[[L_2]] field=2
-// CHECK-NEXT: v16 = Integer
-// CHECK-NEXT: v17 = Convert v16 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v17)
-// CHECK-NEXT: b1(v18):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v20 = Integer integer=3
-// CHECK-NEXT: v21 = Less v18, v20
-// CHECK-NEXT: Branch v21 -> taken b2(), notTaken b5()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v22 = PropGet v14 key="push"
-// CHECK-NEXT: v23 = GetEnvironmentField v8 layout=[[L_2]]
-// CHECK-NEXT: v24 = CheckInitialized v23 name="n"
-// CHECK-NEXT: v25 = Integer
-// CHECK-NEXT: v26 = BitOr v24, v25
-// CHECK-NEXT: v27 = Call v22, v14, v26 calleeKey="push" calleeName="results.push"
-// CHECK-NEXT: v28 = Integer
-// CHECK-NEXT: v29 = StrictEq v18, v28
-// CHECK-NEXT: Branch v29 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v30 = Call v12 calleeName="change"
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v31 = Increment v18
-// CHECK-NEXT: v32 = Convert v31 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v32)
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

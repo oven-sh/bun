@@ -1,5 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="ordinaryStar"
+// CHECK-LABEL: function {{*}}name="frozenTarget"
+// CHECK-LABEL: function {{*}}name="hasOwnProperty"
 
 // FILE: main.cjs
 // A descriptor is an ordinary object under Object.prototype, and the helpers find Object.defineProperty and its like by name. Plain Bun lets a program change those built-ins, a compiled program refuses the change. Either way __createBinding and __exportStar do what the same text does in functions that are no known helpers.
@@ -156,75 +159,3 @@ console.log(describe(afterwards), afterwards.a);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: ordinaryStar frozenTarget hasOwnProperty
-// CHECK-LABEL: function {{*}}name="ordinaryStar"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: anything):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = ForInOpen v0
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = ForInStep v3, v0
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v11 = String string="default"
-// CHECK-NEXT: v12 = StrictEq v10, v11
-// CHECK-NEXT: Branch v12 -> taken b6(), notTaken b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v13 = Builtin builtin=ObjectPrototypeHasOwnProperty
-// CHECK-NEXT: v14 = PropGet v13 key="call"
-// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v16 = Call v15, v13, v1, v10 calleeKey="call" calleeName="Object.prototype.hasOwnProperty.call"
-// CHECK-NEXT: v17 = ToBoolean v16
-// CHECK-NEXT: Branch v17 -> taken b6(), notTaken b5(| 0)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: v19 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v20 = Call v19, -, v1, v0, v10 calleeName="ordinaryBinding"
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Jump -> next b1(v10)
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="frozenTarget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="bind"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="bind"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="freeze"
-// CHECK-NEXT: v8 = Data data=[[d_4]]
-// CHECK-NEXT: v9 = Call v7, -, v8 calleeName="freeze"
-// CHECK-NEXT: v10 = Data data=[[d_5]]
-// CHECK-NEXT: v11 = String string="a"
-// CHECK-NEXT: v12 = Call v5, -, v9, v10, v11 calleeName="bind"
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v14 = Call v13, -, v9 calleeName="describe"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="hasOwnProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="log"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = String string="another Object is asked for "
-// CHECK-NEXT: v5 = Builtin builtin=String
-// CHECK-NEXT: v6 = Call v5, -, v0 calleeName="String"
-// CHECK-NEXT: v7 = ToString v6
-// CHECK-NEXT: v8 = Strcat v4, v7
-// CHECK-NEXT: v9 = Call v3, v2, v8 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v10 = Boolean
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

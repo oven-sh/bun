@@ -68,19 +68,19 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 // CHECK-LABEL: function {{*}}name="s7"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewObject layout=[[L_1]]
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectFreeze
-// CHECK-NEXT: v3 = Data data=[[d_2]]
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeName="Object.freeze"
+// CHECK-NEXT: v0 = Builtin builtin=Object
+// CHECK-NEXT: v1 = Builtin builtin=ObjectFreeze
+// CHECK-NEXT: v2 = Data data=[[d_1]]
+// CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.freeze"
+// CHECK-NEXT: v4 = NewObject layout=[[L_2]]
 // CHECK-NEXT: v5 = Builtin builtin=Proxy
 // CHECK-NEXT: v6 = Builtin builtin=ProxyRevocable
-// CHECK-NEXT: v7 = NewClosure v0 function=[[f_3]]
+// CHECK-NEXT: v7 = NewClosure v4 function=[[f_3]]
 // CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
 // CHECK-NEXT: v9 = NewObject layout=[[L_5]]
 // CHECK-NEXT: PropDefine v9, v8 key="get"
 // CHECK-NEXT: v11 = FinishObject v9
-// CHECK-NEXT: v12 = Call v6, v5, v4, v11 calleeName="Proxy.revocable"
+// CHECK-NEXT: v12 = Call v6, v5, v3, v11 calleeName="Proxy.revocable"
 // CHECK-NEXT: v13 = TypeTest v12 testedType=undefined|null
 // CHECK-NEXT: Branch v13 -> taken b1(| 0), notTaken b2(| 0)
 // CHECK-NEXT: b1(v14):
@@ -89,7 +89,7 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 // CHECK-NEXT: b2(v16):
 // CHECK-NEXT: v17 = PropGet v16 key="proxy"
 // CHECK-NEXT: v18 = PropGet v16 key="revoke"
-// CHECK-NEXT: PutEnvironmentField v0, v18 layout=[[L_1]]
+// CHECK-NEXT: PutEnvironmentField v4, v18 layout=[[L_2]]
 // CHECK-NEXT: v20 = PropGet v17 key="k"
 // CHECK-NEXT: Return v20
 // CHECK-NEXT: }

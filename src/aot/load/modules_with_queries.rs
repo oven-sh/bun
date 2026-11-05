@@ -5,6 +5,7 @@
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_sema::util::ShardedMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// How the `?` that every query begins with is written in the path of a module.
 const START_OF_QUERY: &[u8] = b"%3f";
@@ -18,6 +19,8 @@ pub(crate) struct ModuleWithQuery {
 #[derive(Default)]
 pub(crate) struct ModulesWithQueries {
     modules: ShardedMap<Vec<u8>, ModuleWithQuery>,
+    /// `add_text` has made a module. Most programs have none, and then no import looks for one.
+    holds_texts: AtomicBool,
 }
 
 impl ModulesWithQueries {
@@ -41,18 +44,27 @@ impl ModulesWithQueries {
     }
 
     /// One more module of `file`: an ES module, whatever the file is, with a text that the build has written.
-    pub(crate) fn add_text(&self, file: &[u8], query: &[u8], text: Vec<u8>) -> Vec<u8> {
-        debug_assert!(query.starts_with(b"?"));
-        let path = [&create_path(file, query)[..], b".mjs"].concat();
+    /// An ES module of the build's making beside the file, which `find_text` finds from there under the specifier.
+    pub(crate) fn add_text(&self, file: &[u8], specifier: &[u8], text: Vec<u8>) {
+        let (query, path) = create_path_of_text(file, specifier);
         if self.modules.get_ref(path.as_slice()).is_none() {
             let module = ModuleWithQuery {
                 file: file.to_vec(),
-                query: query.to_vec(),
+                query,
                 wrapper: Some(text),
             };
-            self.modules.insert_ref(path.clone(), module);
+            self.modules.insert_ref(path, module);
+            self.holds_texts.store(true, Ordering::Relaxed);
         }
-        path
+    }
+
+    pub(crate) fn find_text(&self, file: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        if !self.holds_texts.load(Ordering::Relaxed) {
+            return None;
+        }
+        let (_, path) = create_path_of_text(file, specifier);
+        let is_made = self.modules.get_ref(path.as_slice()).is_some();
+        is_made.then_some(path)
     }
 
     pub(crate) fn find(&self, path: &[u8]) -> Option<&ModuleWithQuery> {
@@ -109,6 +121,13 @@ fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
         "export default function WorkerWrapper(options) {{\n  return new {constructor}({named}, {{ type: \"module\", name: options?.name }});\n}}\n"
     )
     .into_bytes()
+}
+
+// The query and the path.
+fn create_path_of_text(file: &[u8], specifier: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let query = [b"?", specifier].concat();
+    let path = [&create_path(file, &query)[..], b".mjs"].concat();
+    (query, path)
 }
 
 fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {

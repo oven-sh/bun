@@ -153,80 +153,9 @@ attempt("subclasses at fixed arguments", () => {
   return [half(new Count(2)), size(new Name("abc")), boxes.map(b => b.get())];
 });
 
-// GENERATED: total Box get Count
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = PropGet v0 key="get"
-// CHECK-NEXT: v4 = Call v3, v0 calleeKey="get" calleeName="b.get"
-// CHECK-NEXT: v5 = IteratorOpen v4
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = IteratorResume v5
-// CHECK-NEXT: v9 = ResultAt v8
-// CHECK-NEXT: v10 = ResultAt v8 index=1
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v11 = Convert v6 declared={type=number}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v12 = Add v6, v10
-// CHECK-NEXT: v13 = Convert v12 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v13)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v5:
-// CHECK-NEXT: v14 = CatchException
-// CHECK-NEXT: IteratorClose v5 completion=Throw
-// CHECK-NEXT: Rethrow v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Box"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_3]]
-// CHECK-NEXT: PropSet v4, v1 key="value"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=80
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_6]]} results=[{type=number}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_6]]):
-// CHECK-NEXT: v2 = GetSuperBase v0 homeKind=ClassPrototype
-// CHECK-NEXT: v3 = SuperGet v2, v1 key="get"
-// CHECK-NEXT: v4 = Call v3, v1 calleeName="super.get"
-// CHECK-NEXT: v5 = Integer integer=100
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

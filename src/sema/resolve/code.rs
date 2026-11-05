@@ -223,12 +223,13 @@ impl<'h> Resolver<'h> {
     }
 
     /// `Some` if an import of a package found `path` where `require` finds another file.
-    pub fn file_required_in_place_of(&self, path: &[u8]) -> Option<&'h [u8]> {
+    #[cfg(test)]
+    fn file_required_in_place_of(&self, path: &[u8]) -> Option<&'h [u8]> {
         let required_files = self.code_state().required_files.lock();
         required_files.get(path).copied()
     }
 
-    /// Each file for which `file_required_in_place_of` answers, with the answer. In no order.
+    /// Each file that an import of a package found where `require` finds another file, with that other file. In no order.
     pub fn files_required_in_place_of_others(&self) -> Vec<(&'h [u8], &'h [u8])> {
         let required_files = self.code_state().required_files.lock();
         let entries = required_files.iter();

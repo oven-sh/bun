@@ -114,70 +114,7 @@ console.log("again:", show(valueTwice()), "/", show(valueThenGetter()), "/", sho
 
 export {};
 
-// GENERATED: noted getterThenSetter spreadBetween computedOverNamed
 // CHECK-LABEL: function {{*}}name="noted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="trail"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Builtin builtin=String
-// CHECK-NEXT: v5 = Call v4, -, v0 calleeName="String"
-// CHECK-NEXT: v6 = Call v3, v2, v5 calleeKey="push" calleeName="trail.push"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="getterThenSetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v1 = NewClosure function=[[f_3]]
-// CHECK-NEXT: DefineGetter v0, v1 key="a"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: PropDefine v0, v3 key="b"
-// CHECK-NEXT: v5 = NewClosure function=[[f_4]]
-// CHECK-NEXT: DefineSetter v0, v5 key="a"
-// CHECK-NEXT: v7 = FinishObject v0
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="spreadBetween"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="noted"
-// CHECK-NEXT: v4 = NewObject layout=[[L_6]]
-// CHECK-NEXT: PropDefine v4, v3 key="a"
-// CHECK-NEXT: CopyDataProperties v4, v0
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v8 = Integer integer=2
-// CHECK-NEXT: v9 = Call v7, -, v8 calleeName="noted"
-// CHECK-NEXT: PropDefine v4, v9 key="a"
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v12 = Integer integer=3
-// CHECK-NEXT: v13 = Call v11, -, v12 calleeName="noted"
-// CHECK-NEXT: PropDefine v4, v13 key="b"
-// CHECK-NEXT: v15 = FinishObject v4
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="computedOverNamed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="noted"
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v5 = Integer integer=2
-// CHECK-NEXT: v6 = Call v4, -, v5 calleeName="noted"
-// CHECK-NEXT: v7 = ToPropertyKey v0
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v9 = Integer integer=3
-// CHECK-NEXT: v10 = Call v8, -, v9 calleeName="noted"
-// CHECK-NEXT: v11 = NewObject -, v3, v6 layout=[[L_7]] fields=[0, 1]
-// CHECK-NEXT: ElemDefine v11, v7, v10
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v14 = Integer integer=4
-// CHECK-NEXT: v15 = Call v13, -, v14 calleeName="noted"
-// CHECK-NEXT: PropDefine v11, v15 key="a"
-// CHECK-NEXT: v17 = FinishObject v11
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }

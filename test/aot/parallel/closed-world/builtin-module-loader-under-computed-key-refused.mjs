@@ -1,5 +1,5 @@
 // A getter on EventEmitter.prototype catches `process` when the library reads process.noDeprecation. The program then calls process.getBuiltinModule under a computed key.
-// It names no module loader, so the call is refused, and the error says what to write. Plain Bun loads node:vm.
+// Nothing names node:vm, so the executable does not hold it, and the error says what to write. Plain Bun loads node:vm.
 // Env: NODE_NO_WARNINGS=1
 import { EventEmitter } from "node:events";
 import util from "node:util";
@@ -20,5 +20,5 @@ try {
 /* Output:
 true
 true function
-MODULE_NOT_FOUND Cannot load 'node:vm': this executable can't load a module from a dynamic path. The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly.
+MODULE_NOT_FOUND Cannot load 'node:vm': it isn't in this executable. Import it by name somewhere in your program to keep it.
 */

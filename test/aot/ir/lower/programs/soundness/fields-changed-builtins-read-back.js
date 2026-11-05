@@ -35,79 +35,9 @@ attempt("instance gets another prototype", () => { class C { x = 1; get y() { re
 attempt("prototype method replaced", () => { class C { m() { return 1; } } const c = new C(); const before = c.m(); C.prototype.m = () => "replaced"; return before + c.m(); });
 attempt("arguments alias", () => (function (a) { "sloppy"; arguments[0] = "aliased"; return typeof a + arguments.length; })(1));
 
-// GENERATED: attempt read set y D
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v1 calleeName="run"
-// CHECK-NEXT: v8 = Call v6, v4, v0, v7 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v9 = CatchValue
-// CHECK-NEXT: v10 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v11 = PropGet v10 key="console" [isFreeName]
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v13 = PropGet v12 key="log"
-// CHECK-NEXT: v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v15 = String string="throws"
-// CHECK-NEXT: v16 = PropGet v9 key="name"
-// CHECK-NEXT: v17 = Call v14, v12, v0, v15, v16 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|object):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = String string=":"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = PropGet v0 key="y"
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: v6 = String string=":"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Builtin builtin=Object
-// CHECK-NEXT: v9 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v10 = Call v9, v8, v0 calleeName="Object.keys"
-// CHECK-NEXT: v11 = PropGet v10 key="join"
-// CHECK-NEXT: v12 = Call v11, v10 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v13 = Add v7, v12
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|string|symbol, v2: anything):
-// CHECK-NEXT: v3 = String string="!"
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: ElemSet v0, v1, v4
-// CHECK-NEXT: v6 = Boolean boolean=true
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="from C"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="D"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="from D"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

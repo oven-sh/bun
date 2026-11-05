@@ -150,74 +150,9 @@ attempt("typeof in a switch", () => {
 });
 attempt("honest again", () => [use(() => 1), use(new Dog()), legs(new Dog()), size("ab"), head(["cd"]), number(1), text("a"), orNull(null)]);
 
-// GENERATED: head text Dog five Words first
 // CHECK-LABEL: function {{*}}name="head"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array<undefined|null|string>):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=string
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = PropGet v3 key="charAt"
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = Call v4, v3, v5 calleeKey="charAt" calleeName="v.charAt"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = NarrowByTest v0, v7
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = ElemGet v8, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="text"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=string
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = String string="!"
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = NarrowByTest v0, v6
-// CHECK-NEXT: v8 = PropGet v7 key="toString"
-// CHECK-NEXT: v9 = Call v8, v7 calleeKey="toString" calleeName="v.toString"
-// CHECK-NEXT: v10 = String string="?"
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Dog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="five"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=5
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Words"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="first"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

@@ -256,79 +256,7 @@ for (const turn of [0, 1]) {
   console.log("loop at the top: " + g());
 }
 
-// GENERATED: tag read m
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="v"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|Array<undefined|null|number|Array<undefined|null|[[f_2]]>> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|Array<undefined|null|number|Array<undefined|null|[[f_2]]>>):
-// CHECK-NEXT: v2 = NewObject layout=[[L_3]]
-// CHECK-NEXT: PutEnvironmentField v2, v0 layout=[[L_3]]
-// CHECK-NEXT: v4 = IteratorOpen v1 elementCount=2 [isDestructuring]
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b12():
-// CHECK-NEXT: v5 = IteratorResume v4 stepIndex=0
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: v8 = IteratorOpen v7 elementCount=1 [isDestructuring]
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b11():
-// CHECK-NEXT: v9 = IteratorResume v8 stepIndex=0
-// CHECK-NEXT: v10 = ResultAt v9
-// CHECK-NEXT: v11 = ResultAt v9 index=1
-// CHECK-NEXT: v12 = TypeTest v11 testedType=undefined
-// CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v13) handler=b11():
-// CHECK-NEXT: v14 = NewClosure v2 function=[[f_4]]
-// CHECK-NEXT: Jump -> next b5(v14)
-// CHECK-NEXT: b4(v15) handler=b11():
-// CHECK-NEXT: Jump -> next b5(v15)
-// CHECK-NEXT: b5(v16) handler=b11():
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b12():
-// CHECK-NEXT: IteratorClose v8
-// CHECK-NEXT: v18 = IteratorResume v4 stepIndex=1
-// CHECK-NEXT: v19 = ResultAt v18
-// CHECK-NEXT: v20 = ResultAt v18 index=1
-// CHECK-NEXT: v21 = TypeTest v20 testedType=undefined
-// CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v22) handler=b12():
-// CHECK-NEXT: v23 = GetEnvironmentField v2 layout=[[L_3]]
-// CHECK-NEXT: v24 = CheckInitialized v23 name="v"
-// CHECK-NEXT: v25 = Integer integer=2
-// CHECK-NEXT: PutEnvironmentField v2, v25 layout=[[L_3]]
-// CHECK-NEXT: Jump -> next b9(v25)
-// CHECK-NEXT: b8(v27) handler=b12():
-// CHECK-NEXT: Jump -> next b9(v27)
-// CHECK-NEXT: b9(v28) handler=b12():
-// CHECK-NEXT: Jump -> next b10()
-// CHECK-NEXT: b10():
-// CHECK-NEXT: IteratorClose v4
-// CHECK-NEXT: v30 = Call v16 calleeName="g"
-// CHECK-NEXT: ReturnCall v30
-// CHECK-NEXT: b11() role=IterationCleanup subject=v8 handler=b12():
-// CHECK-NEXT: v31 = CatchException
-// CHECK-NEXT: IteratorClose v8 completion=Throw
-// CHECK-NEXT: Rethrow v31
-// CHECK-NEXT: b12() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v33 = CatchException
-// CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v33
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_5]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="v"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

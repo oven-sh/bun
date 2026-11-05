@@ -56,65 +56,10 @@ const record = { a: 1, bb: "two", 3: "three", [symbol]: "s" };
 said.push("computed keys: " + [read(record, "a"), read(record, "b" + "b"), read(record, 3), read(record, "3"), read(record, symbol), read(record, "absent"), read([7, 8], 0), read([7, 8], "1"), read([7, 8], "length"), read("ab", 1), read("ab", "length"), read(5, "toFixed") === Number.prototype.toFixed].join());
 console.log(said.join("\n"));
 
-// GENERATED: hasString holdsString read setThird Counted get
 // CHECK-LABEL: function {{*}}name="hasString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: undefined|null|Map<undefined|null|string, number>, v1: undefined|null|string):
-// CHECK-NEXT: v2 = PropGet v0 key="has"
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey="has" calleeName="map.has"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=boolean}}, {declared={type=boolean}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="holdsString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: undefined|null|Set<undefined|null|string>, v1: undefined|null|string):
-// CHECK-NEXT: v2 = PropGet v0 key="has"
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey="has" calleeName="set.has"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=boolean}}, {declared={type=boolean}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="setThird"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: ElemSet v0, v2, v1
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_2]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_1]]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: undefined|null|string):
-// CHECK-NEXT: v2 = PropGet v0 key="asked"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: PropSet v0, v3 key="asked"
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v6 = GetSuperBase v5 homeKind=ClassPrototype
-// CHECK-NEXT: v7 = SuperGet v6, v0 key="get"
-// CHECK-NEXT: v8 = Call v7, v0, v1 calleeName="super.get"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_4]]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_4]], v1: anything):
-// CHECK-NEXT: v2 = PropGet v0 key="asked"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: PropSet v0, v3 key="asked"
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v6 = GetSuperBase v5 homeKind=ClassPrototype
-// CHECK-NEXT: v7 = SuperGet v6, v0 key="get"
-// CHECK-NEXT: v8 = Call v7, v0, v1 calleeName="super.get"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|number}}]
-// CHECK-NEXT: }

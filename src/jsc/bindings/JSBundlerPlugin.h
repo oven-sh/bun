@@ -5,7 +5,6 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/YarrInterpreter.h>
-#include <JavaScriptCore/YarrJIT.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
 #include <wtf/BumpPointerAllocator.h>
@@ -32,23 +31,26 @@ public:
         // The bytecode points to its allocator, so the allocator can't move when a Vector grows.
         std::unique_ptr<WTF::BumpPointerAllocator> m_allocator;
         std::unique_ptr<Yarr::BytecodePattern> m_bytecode;
-#if ENABLE(YARR_JIT)
-        // For a path of 8-bit characters. It keeps what it backtracks over on the stack of the thread that runs it, so it needs no lock.
-        std::unique_ptr<Yarr::YarrCodeBlock> m_matchOnlyCode;
-#endif
         WTF::Lock lock {};
 
         FilterRegExp(FilterRegExp&& other)
             : m_pattern(WTF::move(other.m_pattern))
             , m_allocator(WTF::move(other.m_allocator))
             , m_bytecode(WTF::move(other.m_bytecode))
-#if ENABLE(YARR_JIT)
-            , m_matchOnlyCode(WTF::move(other.m_matchOnlyCode))
-#endif
         {
         }
 
-        FilterRegExp(JSC::VM&, const String& pattern, OptionSet<Yarr::Flags>);
+        FilterRegExp(const String& pattern, OptionSet<Yarr::Flags> flags)
+            // Ensure it's safe for cross-thread usage.
+            : m_pattern(pattern.isolatedCopy())
+            , m_allocator(WTF::makeUnique<WTF::BumpPointerAllocator>())
+        {
+            Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
+            Yarr::YarrPattern yarrPattern(m_pattern, flags, errorCode);
+            if (Yarr::hasError(errorCode))
+                return;
+            m_bytecode = Yarr::byteCompile(yarrPattern, m_allocator.get(), errorCode);
+        }
 
         bool match(JSC::VM& vm, const String& path);
     };

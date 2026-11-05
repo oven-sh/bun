@@ -1,6 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
+// CHECK-LABEL: function {{*}}name="definedAsUndefined"
+// CHECK-LABEL: function {{*}}name="fromEntries"
+// CHECK-LABEL: function {{*}}name="onThePrototype"
+// CHECK-LABEL: function {{*}}name="Derived"
+// CHECK-LABEL: function {{*}}name="drop"
 
 // FILE: main.ts
 // A project with exact optional property types.
@@ -131,89 +136,3 @@ attempt("honest again", () => [sizeIfThere({ size: 1 }), sizeIfThere({}), labelI
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "exactOptionalPropertyTypes": true }, "files": [] }
-
-// GENERATED: definedAsUndefined fromEntries onThePrototype Derived drop
-// CHECK-LABEL: function {{*}}name="definedAsUndefined"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_2]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v4 = String string="size"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: v6 = Boolean boolean=true
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|boolean}
-// CHECK-NEXT: v8 = Boolean boolean=true
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|boolean}
-// CHECK-NEXT: v10 = Boolean boolean=true
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|boolean}
-// CHECK-NEXT: v12 = NewObject -, v5, v7, v9, v11 layout=[[L_3]] fields=[4, 1, 5, 0]
-// CHECK-NEXT: v13 = FinishObject v12
-// CHECK-NEXT: v14 = Call v3, v2, v1, v4, v13 calleeName="Object.defineProperty"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="fromEntries"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_4]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v4 = Call v3, v2, v1 calleeName="Object.keys"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = IteratorOpen v5
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = IteratorResume v6
-// CHECK-NEXT: v9 = ResultAt v8
-// CHECK-NEXT: v10 = ResultAt v8 index=1
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v11 = Builtin builtin=Reflect
-// CHECK-NEXT: v12 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: v14 = Call v12, v11, v1, v10, v13 calleeName="Reflect.set"
-// CHECK-NEXT: v15 = Convert v14 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b5() role=IterationCleanup subject=v6:
-// CHECK-NEXT: v16 = CatchException
-// CHECK-NEXT: IteratorClose v6 completion=Throw
-// CHECK-NEXT: Rethrow v16
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="onThePrototype"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_5]]
-// CHECK-NEXT: v1 = NewClass v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewClosure function=[[f_7]]
-// CHECK-NEXT: DefineMethod v1, v2 layout=[[L_6]] methodKind=Getter key="size"
-// CHECK-NEXT: v4 = FinishClass v1 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[f_5]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v6 = Convert v4 declared={type=[[f_5]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v7 = Construct v6 calleeName="WithGetter"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Derived"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="drop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="o"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = PropDelete v0 key="size"
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

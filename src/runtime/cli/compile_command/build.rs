@@ -251,7 +251,7 @@ fn write_product(
         && !options.obfuscates
         && !options.emits_symbols;
     if asks_for_this_bun_as_it_is && crate::cli::run_compiled::writes_program_alone() {
-        let place = crate::cli::run_compiled::place_of_program_alone();
+        let place = crate::cli::run_compiled::place_of_program_being_built();
         let bytes = to_graph_bytes(&graph, place.as_ref()).map_err(CompileFailure::Graph)?;
         log_part_outside_stages("behind the engine: the payload");
         let (directory, path) = executable_location(settings.root_dir, outfile);

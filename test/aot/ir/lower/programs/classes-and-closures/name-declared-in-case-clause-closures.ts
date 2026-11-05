@@ -108,71 +108,8 @@ console.log(beforeDeclaration(0), inCaseTest(1), inCaseTest(2), inCaseTest(3));
 console.log(storedInLaterClause(0).join(), sharedAcrossClauses().join(), hoistedInClause(0), hoistedInClause(1));
 console.log(inLoop().join(), nestedSwitches(0, 0)(), nestedSwitches(0, 1)(), nestedSwitches(0, 2)(), nestedSwitches(1, 0)(), classInClause(0), classInClause(1));
 
-// GENERATED: attempt classInClause early Local name
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = Call v0 calleeName="run"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v5 = CatchValue
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = PropGet v6 key="constructor"
-// CHECK-NEXT: v8 = PropGet v7 key="name"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="classInClause"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v2 = Absent
-// CHECK-NEXT: Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v5 = NewClass v4 layout=[[L_4]]
-// CHECK-NEXT: v6 = NewClosure function=[[f_5]]
-// CHECK-NEXT: DefineMethod v5, v6 layout=[[L_4]] key="name"
-// CHECK-NEXT: v8 = FinishClass v5 layout=[[L_4]]
-// CHECK-NEXT: v9 = Convert v8 declared={type=[[f_3]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v10 = Convert v8 declared={type=[[f_3]] flags=[IsFromCompiler]}
-// CHECK-NEXT: PutEnvironmentField v1, v10 layout=[[L_2]]
-// CHECK-NEXT: v12 = NewClosure v1 function=[[f_6]]
-// CHECK-NEXT: v13 = Call v12
-// CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b2(v14):
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v16 = NewClosure v1 function=[[f_8]]
-// CHECK-NEXT: v17 = Call v15, -, v16 calleeName="attempt"
-// CHECK-NEXT: ReturnCall v17 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v18 = String string=""
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v19
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="early"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_9]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_9]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="a"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Local"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="local"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

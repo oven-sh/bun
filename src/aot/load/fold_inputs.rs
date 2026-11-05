@@ -44,7 +44,11 @@ pub(crate) fn create_application_fold_inputs<'s>(
         max_pattern_bytes: MAX_FOLDED_PATTERN_BYTES,
         ..*provided
     };
-    FoldInputs::new(options, arena)
+    let inputs = FoldInputs::new(options, arena);
+    match runs_in_place {
+        true => inputs.for_program_that_runs_in_place(),
+        false => inputs,
+    }
 }
 
 pub(crate) fn create_runtime_fold_inputs<'s>(
@@ -564,21 +568,35 @@ mod tests {
         }
     }
 
-    const READS_BEHIND_INITIALIZER: [&str; 8] = [
-        "var isBun = typeof Bun === 'object'; if (!isBun) import('./other');",
-        "var isBun = typeof Bun === 'object', other = isBun || import('./other'); export { other };",
-        "let isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
-        "var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } export { load };",
-        "var isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
-        "var isBun = typeof Bun === 'object'; const load = () => isBun || import('./other'); load();",
-        "var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } } new Loader().load();",
-        "function outer() { return load(); } var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } outer();",
-    ];
-
     #[test]
     fn variable_initialized_once_is_its_value_behind_the_initializer() {
-        for source in READS_BEHIND_INITIALIZER {
+        for source in [
+            "var isBun = typeof Bun === 'object'; if (!isBun) import('./other');",
+            "var isBun = typeof Bun === 'object', other = isBun || import('./other'); export { other };",
+            "var isBun = typeof Bun === 'object'; class Loader { static other = isBun || import('./other'); }",
+            "var isBun = typeof Bun === 'object'; namespace late { export const other = isBun || import('./other'); }",
+            "let isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
+        ] {
             assert_eq!(count_import_sites(source), 0, "{source}");
+        }
+    }
+
+    // Who calls it, and when, the text of one file does not say.
+    #[test]
+    fn variable_is_read_in_what_runs_when_somebody_calls_it() {
+        for source in [
+            "var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } export { load };",
+            "var isBun = typeof Bun === 'object'; const load = () => isBun || import('./other'); load();",
+            "var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } } new Loader().load();",
+            "function outer() { return load(); } var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } outer();",
+            // The class is evaluated at the start of the file.
+            "new Loader().load(); var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } }",
+            // A file that imports this one in a cycle constructs it.
+            "var isBun = typeof Bun === 'object'; export class Loader { other = isBun || import('./other'); }",
+            // The hook asks for this file and calls what it exports.
+            "globalThis.hook(); var isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
+        ] {
+            assert_eq!(count_import_sites(source), 1, "{source}");
         }
     }
 
@@ -595,33 +613,9 @@ mod tests {
             "var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); } eval('load()');",
             "var isBun = typeof Bun === 'object', loaded = (function () { if (!isBun) return import('./other'); })(); export { loaded };",
             "function load() { if (!isBun) import('./other'); } var isBun = typeof Bun === 'object'; load();",
-            "namespace early { export function load() { if (!isBun) import('./other'); } } early.load(); var isBun = typeof Bun === 'object'; namespace late { export function load() { if (!isBun) import('./other'); } }",
+            "namespace early { export function load() { if (!isBun) import('./other'); } } early.load(); var isBun = typeof Bun === 'object';",
         ] {
             assert_eq!(count_import_sites(source), 1, "{source}");
-        }
-    }
-
-    #[test]
-    fn file_on_cycle_of_imports_reads_variables_in_its_functions() {
-        let sessions = create_sessions();
-        let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_facts(&sessions, &atoms, NO_FACTS);
-        let arena = sessions.application.arena();
-        let on_cycle = fold.application.for_file_called_before_it_runs();
-        for (index, source) in (0..).zip(READS_BEHIND_INITIALIZER) {
-            let is_variable_read_in_function = index >= 3;
-            let alone = analyze(source, &fold.application, arena, &atoms);
-            assert_eq!(
-                alone.relies_on_running_before_calls, is_variable_read_in_function,
-                "{source}"
-            );
-            let analysis = analyze(source, &on_cycle, arena, &atoms);
-            assert!(!analysis.relies_on_running_before_calls, "{source}");
-            assert_eq!(
-                analysis.import_sites.len(),
-                usize::from(is_variable_read_in_function),
-                "{source}"
-            );
         }
     }
 
@@ -788,6 +782,51 @@ mod tests {
             count_import_sites("if (!process.isBun) import('./other');"),
             1
         );
+    }
+
+    #[test]
+    fn define_and_drop_hold_behind_brackets_in_program_that_runs_in_place() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let provided = FoldOptions {
+            defines: arena.alloc_slice_copy(&[Define {
+                path: global_path(&[b"config", b"flat"], arena, &atoms),
+                value: DefineValue::Constant(Constant::Boolean(false)),
+            }]),
+            dropped_calls: arena.alloc_slice_copy(&[global_path(
+                &[b"tools", b"trace"],
+                arena,
+                &atoms,
+            )]),
+            ..FoldOptions::default()
+        };
+        for (runs_in_place, sites_behind_brackets) in [(true, 0), (false, 1)] {
+            let fold = create_application_fold_inputs(
+                &provided,
+                arena,
+                &atoms,
+                Platforms::LINUX,
+                runs_in_place,
+            );
+            let count_import_sites =
+                |source| analyze(source, &fold, arena, &atoms).import_sites.len();
+            for (source, sites) in [
+                ("if (config.flat) import('./other');", 0),
+                ("tools.trace(import('./other'));", 0),
+                (
+                    "if (config['flat']) import('./other');",
+                    sites_behind_brackets,
+                ),
+                ("tools['trace'](import('./other'));", sites_behind_brackets),
+                ("if (config?.flat) import('./other');", 1),
+            ] {
+                assert_eq!(
+                    count_import_sites(source),
+                    sites,
+                    "{runs_in_place} {source}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -6,15 +6,12 @@
 // need not have one: this test holds all of them wherever Bun has the compiler.
 import { expect } from "bun:test";
 import { join } from "path";
-import { unsupported } from "./harness/commands";
+import { without } from "./harness/capabilities";
 import { run } from "./harness/run";
 import { test } from "./measures";
-import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
+import { python, scriptEnvironment } from "./shell/tools";
 
-if (scriptSkipReason && !unsupported)
-  console.error(`SKIPPED: test/aot/counts-pinned-by-programs.test.ts: ${scriptSkipReason}`);
-
-test.skipIf(!!scriptSkipReason)(
+test.skipIf(!!without("the scripts of the shell"))(
   "the counts hold in the shell",
   async () => {
     const { stdout, stderr, exitCode } = await run(

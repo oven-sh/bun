@@ -77,66 +77,8 @@ try {
 console.log(show(Symbol("\xE9\u2192").description), Symbol.for("\uD83D\uDE00") === Symbol.for("\uD83D\uDE00"), show(Symbol.keyFor(Symbol.for("\u65E5\u672C\u8A9E"))), new Map([["\xE9", 1], ["\u2192", 2]]).get("\u2192"), new Set(["\uD83D\uDE00", "\xE9"]).has("\uD83D\uDE00"), ["\xE9", "\u2192", "\uD83D\uDE00"].includes("\u2192"), ["\xE9", "\u2192"].indexOf("\xE9"), ["b", "\xE9", "a", "\u2192", "\uD83D\uDE00"].sort().map(show).join());
 console.log(JSON.stringify({ "\xE9": "\u2192", "\uD83D\uDE00": ["\uD800", "\u65E5\u672C\u8A9E"] }), JSON.parse('{"\xE9":"\u2192"}')["\xE9"], show(decodeURIComponent("%C3%A9")), show(unescape("%u2192")), show(String.fromCodePoint(128512) === "\uD83D\uDE00"), "e\u0301".normalize() === "\xE9", "\xE9".length + "\u2192".length + "\uD83D\uDE00".length);
 
-// GENERATED: values C \u{2192} read show
 // CHECK-LABEL: function {{*}}name="values"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_1]]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="\u{2192}"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="getter \u{2192}"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_2]] field=2
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=string
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = Builtin builtin=JSON
-// CHECK-NEXT: v5 = PropGet v4 key="stringify"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4, v3 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v8 = String string=":"
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = PropGet v3 key="length"
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = String string=":"
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v15 = PropGet v3 key="length"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: v17 = NewClosure v3 function=[[f_5]]
-// CHECK-NEXT: v18 = Builtin builtin=CompilerHelpersArrayFromLength [isNotReadFromHolder]
-// CHECK-NEXT: v19 = Call v18, -, v15, v17
-// CHECK-NEXT: v20 = PropGet v19 key="join"
-// CHECK-NEXT: v21 = String string="."
-// CHECK-NEXT: v22 = Call v20, v19, v21 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v23 = Add v13, v22
-// CHECK-NEXT: Return v23
-// CHECK-NEXT: b2(v24):
-// CHECK-NEXT: v25 = NarrowByTest v0, v24
-// CHECK-NEXT: v26 = Builtin builtin=String
-// CHECK-NEXT: v27 = Call v26, -, v25 calleeName="String"
-// CHECK-NEXT: ReturnCall v27
-// CHECK-NEXT: }

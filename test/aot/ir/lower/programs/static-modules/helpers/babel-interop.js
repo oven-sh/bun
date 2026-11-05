@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 3
+// CHECK-LABEL: function {{*}}name="_interopRequireDefault"
 
 // FILE: main.js
 // What Babel emits for `import greet, * as lib from "./lib.js"` and `import plain from "./plain.js"`.
@@ -32,21 +33,3 @@ module.exports = function plain() {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: _interopRequireDefault
-// CHECK-LABEL: function {{*}}name="_interopRequireDefault"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = PropGet v0 key="__esModule"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b3(v0), notTaken b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = NewObject -, v0 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b3(v7):
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

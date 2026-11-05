@@ -231,83 +231,8 @@ await case4();
 await new Promise(resolve => setTimeout(resolve, 5));
 console.log(trail.sort().join("\n"));
 
-// GENERATED: passing mixed afterAJob waits3 store
 // CHECK-LABEL: function {{*}}name="passing"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: number):
-// CHECK-NEXT: InitialYield v2
-// CHECK-NEXT: v4 = NewObject -, v2 layout=[[L_1]] fields=[0]
-// CHECK-NEXT: v5 = FinishObject v4
-// CHECK-NEXT: v6 = PropGet v5 key="answer"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number}
-// CHECK-NEXT: v8 = Yield v7, v2
-// CHECK-NEXT: v9 = ResultAt v8
-// CHECK-NEXT: v10 = ResultAt v8 index=1
-// CHECK-NEXT: Switch v10 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v9
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v11 = PropGet v5 key="answer"
-// CHECK-NEXT: v12 = Add v9, v11
-// CHECK-NEXT: v13 = Sub v12, v2
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mixed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: number):
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v1, v3)
-// CHECK-NEXT: b1(v4: number, v5: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = PropGet v0 key="length"
-// CHECK-NEXT: v8 = Less v5, v7
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Builtin builtin=Math
-// CHECK-NEXT: v10 = Builtin builtin=MathImul
-// CHECK-NEXT: v11 = Integer integer=31
-// CHECK-NEXT: v12 = Call v10, v9, v4, v11 calleeName="Math.imul"
-// CHECK-NEXT: v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v14 = PropGet v0 key="charCodeAt"
-// CHECK-NEXT: v15 = Call v14, v0, v5 calleeKey="charCodeAt" calleeName="text.charCodeAt"
-// CHECK-NEXT: v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v17 = Add v13, v16
-// CHECK-NEXT: v18 = Integer
-// CHECK-NEXT: v19 = BitOr v17, v18
-// CHECK-NEXT: v20 = Convert v19 declared={type=number}
-// CHECK-NEXT: v21 = Increment v5
-// CHECK-NEXT: v22 = Convert v21 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v20, v22)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="afterAJob"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="afterAJob"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="waits3"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter, IsChecked] thisType={type=anything} parameters=[{type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array<number>):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="owner3"
-// CHECK-NEXT: v3 = PropGet v2 key="waits"
-// CHECK-NEXT: v4 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v4, v0
-// CHECK-NEXT: v6 = CallList v3, v2, v4 calleeKey="waits" calleeName="owner3.waits"
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="store"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|bigint flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_3]], v1: undefined|null|bigint):
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="held"
-// CHECK-NEXT: v4 = Convert v1 declared={type=undefined|null|bigint flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_3]]
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

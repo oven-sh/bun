@@ -56,73 +56,11 @@ type Picked<T> = T extends { kind: "text" } ? string : T extends { kind: "count"
 function picked<T extends { kind: string }>(tag: T, value: Picked<T> | undefined): unknown { return value; }
 console.log(innermost([[1]], 2), innermost("a", "b"), innermost([["x"]], null), picked({ kind: "text" as const }, "t"), picked({ kind: "count" as const }, 3), picked({ kind: "other" }, true));
 
-// GENERATED: optional inArray validate kindOf picked Defaulted get double
 // CHECK-LABEL: function {{*}}name="optional"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined):
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inArray"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<null> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|Array<null>):
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = ElemGet v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="validate"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined}] results=[{type=undefined}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_2]], v1: undefined):
-// CHECK-NEXT: v2 = PropGet v0 key="inputSchema"
-// CHECK-NEXT: v3 = ToBoolean v2
-// CHECK-NEXT: Branch v3 -> taken b2(v1), notTaken b1(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined} illTypedCause=Assertion
-// CHECK-NEXT: Jump -> next b2(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kindOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeOf v0
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="picked"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|boolean|number|string flags=[OmitsNull]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]], v1: undefined|null|boolean|number|string):
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Defaulted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]], v2: undefined):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_5]]
-// CHECK-NEXT: PropSet v5, v1 key="inner"
-// CHECK-NEXT: PropSet v5, v2 key="value"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=undefined}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="double"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Mul v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

@@ -19,12 +19,12 @@ tell("an arrow with statements among the arguments", () => {
 });
 tell("a function with statements among the arguments", () => list.forEech(function (item) { total += item; }));
 tell("an arrow with an expression among the arguments", () => list.forEech(item => total + item));
-tell("a function expression is called on", () => (function named() {}).nope());
+tell("a function expression is called on", () => (function named() { return 1; }).nope());
 tell("an arrow with a statement is called on", () => ((x) => { return x; }).nope());
 tell("a class is called on", () => (class Named { m() {} }).nope());
 tell("a literal with a method is called on", () => ({ m() {} }).nope());
 tell("a literal with a getter is called on", () => ({ get g() { return 1; } }).nope());
-tell("a function expression is read from", () => (function () {}).a.b);
+tell("a function expression is read from", () => (function () { return 1; }).a.b);
 tell("a list on several lines among the arguments", () =>
   list.nope([
     1,

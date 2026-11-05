@@ -1293,7 +1293,7 @@ fn page_not_named_as_one_fails_where_a_test_run_loads_it() {
 }
 
 #[test]
-#[should_panic(expected = "does not support a query string in an import path")]
+#[should_panic(expected = "a query string works on an import of code")]
 fn query_string_require_in_executable_stops_build() {
     let files = [
         ("main.cjs", "require(\"./lib.cjs?again\");"),

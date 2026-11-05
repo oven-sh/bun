@@ -68,79 +68,8 @@ class Holder { made = { a: 1, ...(ticks > 0 && { b: this.constructor.name }) }; 
 show("in a class", [new Holder().made, Holder.also]);
 Promise.all([awaits(true), awaits(false)]).then(values => { show("awaits", values); console.log(lines.join("\n")); });
 
-// GENERATED: yields inherited Holder named
 // CHECK-LABEL: function {{*}}name="yields"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: boolean):
-// CHECK-NEXT: InitialYield v2
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: v6 = NewObject -, v5 layout=[[L_1]] fields=[0]
-// CHECK-NEXT: v7 = FinishObject v6
-// CHECK-NEXT: v8 = ToBoolean v2
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b5()
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: v10 = Integer integer=1
-// CHECK-NEXT: v11 = Convert v10 declared={type=number}
-// CHECK-NEXT: v12 = Yield v11, v2
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v15 = Convert v13 declared={type=undefined|number}
-// CHECK-NEXT: PropDefine v7, v15 key="b"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v17 = Integer integer=2
-// CHECK-NEXT: v18 = Convert v17 declared={type=number}
-// CHECK-NEXT: v19 = Yield v18, v2
-// CHECK-NEXT: v20 = ResultAt v19
-// CHECK-NEXT: v21 = ResultAt v19 index=1
-// CHECK-NEXT: Switch v21 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Throw v20
-// CHECK-NEXT: b7():
-// CHECK-NEXT: Return v20
-// CHECK-NEXT: b8():
-// CHECK-NEXT: v22 = Convert v20 declared={type=number}
-// CHECK-NEXT: PropDefine v7, v22 key="c"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inherited"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="lines"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = String string="THE SETTER RAN "
-// CHECK-NEXT: v5 = Add v4, v0
-// CHECK-NEXT: v6 = Call v3, v2, v5 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inherited"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="from above"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_4]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

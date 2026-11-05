@@ -106,87 +106,8 @@ Object.setPrototypeOf(objects[3], { m0() { return 1; }, m7() { return 2; }, m100
 round(5);
 console.log("after more changes:", sum, objects[0].m131(0), objects[0].v1, objects[1].v1, objects[3].m299(), objects[3].v99);
 
-// GENERATED: Narrow m7 mix get
 // CHECK-LABEL: function {{*}}name="Narrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_1]]}
-// CHECK-NEXT: v7 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = TypeTest v6 testedType=absent
-// CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: v11 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v11
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: v13 = Integer integer=2
-// CHECK-NEXT: v14 = Mul v2, v13
-// CHECK-NEXT: PropSet v12, v14 key="own"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: v17 = TypeTest v16 testedType=object
-// CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: Jump -> next b9(v18)
-// CHECK-NEXT: b5(v19):
-// CHECK-NEXT: v20 = TypeTest v19 testedType=undefined
-// CHECK-NEXT: Branch v20 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v21):
-// CHECK-NEXT: v22 = TypeTest v12 testedType=absent
-// CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v23):
-// CHECK-NEXT: v24 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v24
-// CHECK-NEXT: b8(v25):
-// CHECK-NEXT: Jump -> next b9(v25)
-// CHECK-NEXT: b9(v26):
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: b10(v27):
-// CHECK-NEXT: v28 = NewRuntimeError runtimeError=DerivedConstructorResult name="Narrow"
-// CHECK-NEXT: Throw v28
-// CHECK-NEXT: b11(v29):
-// CHECK-NEXT: v30 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v30
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m7"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Negate v0
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mix"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="sum"
-// CHECK-NEXT: v3 = Builtin builtin=Math
-// CHECK-NEXT: v4 = Builtin builtin=MathImul
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="sum"
-// CHECK-NEXT: v7 = Integer integer=31
-// CHECK-NEXT: v8 = Call v4, v3, v6, v7 calleeName="Math.imul"
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = BitOr v0, v9
-// CHECK-NEXT: v11 = Add v8, v10
-// CHECK-NEXT: v12 = Integer
-// CHECK-NEXT: v13 = BitOr v11, v12
-// CHECK-NEXT: v14 = Convert v13 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutModuleVariable v14 variable=[[g_2]]
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="base"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m7"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=2
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -784,6 +784,7 @@ const bundlerOptionNames = [
   "aot",
   "aotCheck",
   "aotExplain",
+  "aotHarden",
   "aotOut",
   "aotTesting",
   "aotTypeErrors",
@@ -1327,6 +1328,8 @@ export default b.declarations(
   resultOfSpawnSync,
   b.membersFrom("globalThis", b.staticTable("src/jsc/bindings/ZigGlobalObject.lut.txt", "bunGlobalObjectTable")),
   plainObjects.flatMap(path => b.inherits(path, "Object.prototype")),
+  // ZigGlobalObject.lut.txt: DontDelete|ReadOnly. No store replaces it, so nobody has to ask whether one has.
+  b.extend("Bun", { mutability: "AlwaysLocked" }),
   computedOnce.flatMap(name => b.extend(`Bun.${name}`, { mutability: "ConstantUnlessWritten" })),
   // A function of the library's JavaScript, which `new` may be used on as on any such function.
   b.constructionOfFunction("Bun.$", shellCommand),

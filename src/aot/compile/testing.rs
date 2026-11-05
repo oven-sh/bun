@@ -524,6 +524,7 @@ fn with_loaded_bind_input<R>(
             written_entry_point_count: build.options.entry_points.len(),
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
+            runs_in_several_realms: false,
             code_from_disk_names_files: false,
             run: &contents.run,
             in_parallel: &in_parallel,
@@ -659,6 +660,7 @@ pub(crate) struct TestProject {
     pub(crate) preload_count: usize,
     /// `run_build` sets `Build::keeps_library_code_without_names` from it. No option carries it, so `link_program` never sees it.
     pub(crate) keeps_library_code_without_names: bool,
+    pub(crate) builds_executable: bool,
 }
 
 impl TestProject {
@@ -718,6 +720,7 @@ impl TestProject {
             entry_point_imports_vitest: false,
             preload_count: 0,
             keeps_library_code_without_names: false,
+            builds_executable: false,
         }
     }
 
@@ -775,7 +778,10 @@ impl TestProject {
             executable_identity: ExecutableIdentity([0; 16]),
             image_form: None,
             entry_points: self.entry_points.clone(),
-            code: CodeOptions::bun_run(&from_native(&self.directory)),
+            code: CodeOptions {
+                builds_executable: self.builds_executable,
+                ..CodeOptions::bun_run(&from_native(&self.directory))
+            },
             typescript_libs: libs,
             load: LoadOptions {
                 react_compiler: self.react_compiler,

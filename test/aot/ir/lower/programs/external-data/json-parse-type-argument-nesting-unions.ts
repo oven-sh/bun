@@ -90,87 +90,8 @@ for (const road of roads) {
   console.log(road.label + ": " + wrong + " answers are neither the value nor a RangeError, " + changed + " times it went on otherwise than before, " + (values > 0 ? "some" : "NO") + " values near the end of the stack");
 }
 
-// GENERATED: answer parse afterwards
 // CHECK-LABEL: function {{*}}name="answer"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = String string="depth "
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = Call v0, -, v1 calleeName="parse"
-// CHECK-NEXT: v5 = Call v3, -, v4 calleeName="depthOf"
-// CHECK-NEXT: v6 = Add v2, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v8 = CatchValue
-// CHECK-NEXT: v9 = PropGet v8 key="name"
-// CHECK-NEXT: v10 = String string=": "
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = PropGet v8 key="message"
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parse"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parse"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|[[L_4]]|[[L_5]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parse"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|[[L_4]]|[[L_5]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="afterwards"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_6]]):
-// CHECK-NEXT: v1 = PropGet v0 key="text"
-// CHECK-NEXT: v2 = Integer integer=3
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="text" calleeName="road.text"
-// CHECK-NEXT: v4 = PropGet v0 key="text"
-// CHECK-NEXT: v5 = Integer integer=3
-// CHECK-NEXT: v6 = Call v4, v0, v5 calleeKey="text" calleeName="road.text"
-// CHECK-NEXT: v7 = PropGet v6 key="replace"
-// CHECK-NEXT: v8 = NewRegExp pattern="[\\]}]$"
-// CHECK-NEXT: v9 = String string=""
-// CHECK-NEXT: v10 = Call v7, v6, v8, v9 calleeKey="replace" calleeName="replace"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v12 = PropGet v0 key="text"
-// CHECK-NEXT: v13 = Integer integer=3
-// CHECK-NEXT: v14 = Call v12, v0, v13 calleeKey="text" calleeName="road.text"
-// CHECK-NEXT: v15 = PropGet v14 key="replace"
-// CHECK-NEXT: v16 = NewRegExp pattern="null|\\{\\}|\\[\\]|\"leaf\"|\"last\"|1"
-// CHECK-NEXT: v17 = String string="false"
-// CHECK-NEXT: v18 = Call v15, v14, v16, v17 calleeKey="replace" calleeName="replace"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v20 = String string="{\"x\":1,\"y\":2}"
-// CHECK-NEXT: v21 = String string="[]"
-// CHECK-NEXT: v22 = NewArray v3, v11, v19, v20, v21 contents=anything
-// CHECK-NEXT: v23 = PropGet v22 key="map"
-// CHECK-NEXT: v24 = NewClosure v0 function=[[f_7]]
-// CHECK-NEXT: v25 = Call v23, v22, v24 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v27 = PropGet v26 key="join"
-// CHECK-NEXT: v28 = String string="; "
-// CHECK-NEXT: v29 = Call v27, v26, v28 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v29 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

@@ -84,50 +84,6 @@ function make(first: unknown): unknown[] { return [first]; }
 const madeWithInteger = make(1), madeWithString = make("s");
 console.log("one literal, two contents:", madeWithInteger[0], madeWithString[0], madeWithInteger.length + madeWithString.length);
 
-// GENERATED: chase integers make
 // CHECK-LABEL: function {{*}}name="chase"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: number):
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: v4 = ElemGet v0, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: v6 = ElemGet v0, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="integers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Data data=[[d_1]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v4)
-// CHECK-NEXT: b1(v5: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = Less v5, v0
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v8 = PropGet v2 key="push"
-// CHECK-NEXT: v9 = Integer integer=7
-// CHECK-NEXT: v10 = Mul v5, v9
-// CHECK-NEXT: v11 = Integer integer=1
-// CHECK-NEXT: v12 = Add v10, v11
-// CHECK-NEXT: v13 = Integer integer=7
-// CHECK-NEXT: v14 = BitAnd v12, v13
-// CHECK-NEXT: v15 = Call v8, v2, v14 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v17 = Increment v5
-// CHECK-NEXT: v18 = Convert v17 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v18)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewArray v0 contents=anything
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

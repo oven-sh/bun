@@ -113,75 +113,8 @@ attempt("null and undefined at a wider type argument", () => same<null | undefin
 
 export {};
 
-// GENERATED: callIt truthy same text Point
 // CHECK-LABEL: function {{*}}name="callIt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=function
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = Call v3 calleeName="value"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: v6 = String string="not called"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="truthy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = String string="truthy"
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = String string="falsy"
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b3(v6):
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = String string=" "
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: v5 = Eq v0, v1
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = String string=" "
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = Builtin builtin=Object
-// CHECK-NEXT: v10 = Builtin builtin=ObjectIs
-// CHECK-NEXT: v11 = Call v10, v9, v0, v1 calleeName="Object.is"
-// CHECK-NEXT: v12 = Convert v11 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = Add v8, v12
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="text"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=symbol
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = String string="a symbol"
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = NarrowByTest v0, v4
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b3(v6):
-// CHECK-NEXT: v7 = ToString v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

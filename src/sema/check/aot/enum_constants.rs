@@ -120,7 +120,7 @@ fn follow_member_path(
     path: ExprId,
     resolve_first_name: impl FnOnce(ExprId) -> Option<Sym>,
 ) -> Option<PathMember> {
-    let (hir, bound) = (files.hir(file), files.bound(file));
+    let hir = files.hir(file);
     let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
     let mut first = path;
     while hir.member_key(first).is_some() {
@@ -133,6 +133,18 @@ fn follow_member_path(
         return None;
     }
     let root = resolve_first_name(first)?;
+    follow_names_below(files, file, first, root, &names)
+}
+
+/// `names`: what stands behind `first`, the last name first.
+fn follow_names_below(
+    files: &Files<'_>,
+    file: FileId,
+    first: ExprId,
+    root: Sym,
+    names: &[Atom],
+) -> Option<PathMember> {
+    let (hir, bound) = (files.hir(file), files.bound(file));
     let mut end = PathMember {
         holder: root,
         member: root,

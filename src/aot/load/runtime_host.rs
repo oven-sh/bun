@@ -2,6 +2,7 @@
 mod tests;
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use bstr::BStr;
 use bun_sema::atom::Interner;
@@ -31,8 +32,10 @@ pub(crate) struct RuntimeHost<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
-    /// `ProgramContents::builtins_written_as_reads()`.
+    /// `ProgramContents::replaced_builtins`.
     pub replaced_builtins: &'a [u32],
+    /// `RunContents::members_that_library_looks_up`. Empty: no test run.
+    pub unlocked_builtins: &'a Arc<[u32]>,
     pub messages: &'a LoadMessages,
     pub unreadable: Guarded<Vec<Vec<u8>>>,
 }
@@ -209,6 +212,12 @@ impl CodeHost for RuntimeHost<'_> {
             runs_tests: false,
         };
         let source = parsed_source_mut(payload);
-        builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)
+        let answers =
+            builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source);
+        // No more than a file of the application does Bun's own code take for a constant what a test may replace.
+        if !self.unlocked_builtins.is_empty() {
+            source.builtins.unlock(Arc::clone(self.unlocked_builtins));
+        }
+        answers
     }
 }

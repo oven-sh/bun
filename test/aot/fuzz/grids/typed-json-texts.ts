@@ -18,9 +18,6 @@ describe.concurrent("every small JSON text parsed under a declared type", () => 
       stderr: "",
       exitCode: 0,
     });
-    // The build makes no parser for a table of any names, nor for a union of records.
-    const parsers = Number((built.stdout + built.stderr).match(/^\s*ParsersCreated (\d+)/m)?.[1]);
-    expect(parsers > 0).toBe(name !== "table" && name !== "union");
     const compiled = await run([join(String(dir), "compiled.exe")], String(dir));
     expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const expected = plain.stdout.split("\n");

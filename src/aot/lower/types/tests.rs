@@ -661,14 +661,54 @@ fn receiver_that_nobody_wrote_is_untyped() {
 }
 
 #[test]
-fn field_without_an_annotation_is_untyped() {
-    let source = "export class C { box = { a: 1 }; count: number = 1; }\n";
+fn field_without_an_annotation_takes_the_type_of_the_checker() {
+    let source =
+        "export class C { box = { a: 1 }; label = \"\"; open = false; count: number = 1; }\n";
     let lowered = lower(source, None);
     let untyped = DeclaredType::untyped();
-    assert_eq!(declared_types_of_fields(&lowered, "box"), [untyped]);
-    let counts = declared_types_of_fields(&lowered, "count");
-    let counts: Vec<TypeId> = counts.iter().map(|count| count.ty).collect();
-    assert_eq!(counts, [TypeTable::NUMBER]);
+    for name in ["box", "label"] {
+        let [field] = declared_types_of_fields(&lowered, name)[..] else {
+            panic!("{name}");
+        };
+        assert_ne!(field, untyped, "{name}");
+        assert!(!field.is_expected(), "{name}");
+    }
+    for (name, ty) in [("open", TypeTable::BOOLEAN), ("count", TypeTable::NUMBER)] {
+        let fields = declared_types_of_fields(&lowered, name);
+        let fields: Vec<TypeId> = fields.iter().map(|field| field.ty).collect();
+        assert_eq!(fields, [ty], "{name}");
+    }
+}
+
+#[test]
+fn field_without_a_useful_inferred_type_is_untyped() {
+    let checked = "export class C {
+  socket = null;
+  later = undefined;
+  constructor() { (this as any).found = 1; }
+}
+";
+    let files = [
+        ("main.ts", checked, &["socket", "later", "found"][..]),
+        (
+            "main.js",
+            "export class C { open = false; }\n",
+            &["open"][..],
+        ),
+    ];
+    let mut typed = Vec::new();
+    for (path, source, names) in files {
+        let lowered = lower_file(path, source, None);
+        let is_typed =
+            |name: &&&str| declared_types_of_fields(&lowered, name) != [DeclaredType::untyped()];
+        typed.extend(
+            names
+                .iter()
+                .filter(is_typed)
+                .map(|name| format!("{path}: {name}")),
+        );
+    }
+    assert_eq!(typed, Vec::<String>::new());
 }
 
 #[test]

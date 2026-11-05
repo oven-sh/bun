@@ -649,6 +649,8 @@ pub struct ParseOptions {
 pub struct Options {
     /// `bun test --aot` and `bun check`, which go by what `bun test` allows and not by what `bun build` refuses.
     pub allows_es_module_mark: bool,
+    /// `CodeOptions::builds_executable`
+    pub builds_executable: bool,
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
     pub base_dir: Vec<u8>,
     /// `compilerOptions.paths`: a pattern with at most one `*`, and the substitutions to try for

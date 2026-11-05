@@ -184,6 +184,7 @@ pub(super) struct ResolverOutput {
     pub(super) hands_spy_on: bool,
     pub(super) hands_mock_on: bool,
     pub(super) resets_modules: bool,
+    pub(super) stores_loader_functions: bool,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
@@ -739,6 +740,7 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_spy_on: output.hands_spy_on,
             hands_mock_on: output.hands_mock_on,
             resets_modules: output.resets_modules,
+            stores_loader_functions: output.stores_loader_functions,
             unlocked: OnceLock::new(),
             mentioned,
             #[cfg(test)]

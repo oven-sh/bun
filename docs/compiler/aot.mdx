@@ -101,6 +101,21 @@ A few options can't change from one file to the next, because a build has one ty
 
 During development, [`bun run --aot`](/compiler/debugging#run-under-the-compilers-rules) runs the same checks and then runs your program from its source. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) compiles your tests and runs the compiled code.
 
+### Harden the compiled code
+
+The compiler leaves out every test that it can prove is not needed. If such a proof were wrong, which would be a bug in Bun, the program could read or write memory that it shouldn't. `--aot-harden` puts tests back, for programs that handle input from people you don't trust and can spare some speed.
+
+```bash terminal icon="terminal"
+bun compile ./server.ts --outfile server --aot-harden=proof-checks,ignore-told-ranges
+```
+
+| Name                 | What it does                                                                                                                                                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proof-checks`       | Tests what the compiler has proven about the type of a value where the value arrives: at parameters, results of calls, fields, variables, captured variables and elements. Objects and closures that would have lived on the stack, or been reused once dead, stay on the heap. |
+| `ignore-told-ranges` | Tests every index where it is used, against the length that the array, typed array or string has at that moment, whatever an earlier test or the head of a loop has shown.                                                                                                      |
+
+A test that fails prints a line that starts with `AOT:` and stops the process. Neither name is on by default, and neither changes what a correct program does. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks", "ignore-told-ranges"] }`. A name that Bun doesn't know is an error.
+
 ## Read next
 
 - [Types](/compiler/types): how your types change the compiled program.

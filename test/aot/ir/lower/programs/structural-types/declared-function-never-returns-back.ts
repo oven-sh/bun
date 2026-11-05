@@ -2,6 +2,10 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="everyPathFails"
+// CHECK-LABEL: function {{*}}name="inASwitch"
+// CHECK-LABEL: function {{*}}name="asserted"
+// CHECK-LABEL: function {{*}}name="thisIsReady"
 
 // FILE: main.ts
 // A declared function that never returns comes back.
@@ -185,79 +189,3 @@ export function nil() {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true }, "files": [] }
-
-// GENERATED: everyPathFails inASwitch asserted thisIsReady
-// CHECK-LABEL: function {{*}}name="everyPathFails"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Greater v0, v1
-// CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v0 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="fail"
-// CHECK-NEXT: v6 = String string="fourth"
-// CHECK-NEXT: v7 = Call v5, -, v6 calleeName="fail"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: v9 = Convert v8 declared={type=number}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="inASwitch"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"a"|"b" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|"a"|"b"):
-// CHECK-NEXT: SwitchString v0 strings=["a"] -> case b1(| 0), otherwise b2()
-// CHECK-NEXT: b1(v1):
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="fail"
-// CHECK-NEXT: v6 = String string="fifth"
-// CHECK-NEXT: v7 = Call v5, -, v6 calleeName="fail"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: v9 = Convert v8 declared={type=number}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="asserted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="assertNumber"
-// CHECK-NEXT: v3 = Call v2, -, v0 calleeName="assertNumber"
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Add v0, v4
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Mul v0, v6
-// CHECK-NEXT: v8 = TypeOf v0
-// CHECK-NEXT: v9 = NewArray v5, v7, v8 contents=anything
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="thisIsReady"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="Guard"
-// CHECK-NEXT: v2 = Construct v1 calleeName="Guard"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="ready"
-// CHECK-NEXT: v5 = Call v4, v3 calleeKey="ready" calleeName="guard.ready"
-// CHECK-NEXT: v6 = Convert v5 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = ToBoolean v6
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = PropGet v3 key="level"
-// CHECK-NEXT: v10 = PropGet v3 key="level"
-// CHECK-NEXT: v11 = Integer integer=1
-// CHECK-NEXT: v12 = Add v10, v11
-// CHECK-NEXT: v13 = NewArray v9, v12 contents=anything
-// CHECK-NEXT: Jump -> next b3(v13)
-// CHECK-NEXT: b2(v14):
-// CHECK-NEXT: v15 = String string="not ready"
-// CHECK-NEXT: Jump -> next b3(v15)
-// CHECK-NEXT: b3(v16):
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }

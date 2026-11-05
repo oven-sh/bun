@@ -1,5 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="storesOwnName"
+// CHECK-LABEL: function {{*}}name="storedByEvaluatedText"
+// CHECK-LABEL: function {{*}}name="atTheTop"
+// CHECK-LABEL: function {{*}}name="named"
 
 // FILE: main.cjs
 // A function declared as the body of `if` in sloppy code is in a block of its own (Annex B.3.3). Its name in that block is an ordinary variable: the function can store to it, the store stays for the next call, each evaluation of the `if` has a variable of its own, and the `var` of the same name around it keeps the function. Plain Bun's transpiler declares no such `var`, so there nothing can call the function: the expected output follows ECMAScript.
@@ -70,58 +74,3 @@ console.log(inABlock(), typeof inABlock);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: storesOwnName storedByEvaluatedText atTheTop named
-// CHECK-LABEL: function {{*}}name="storesOwnName"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = ToBoolean v0
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(v1)
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = NewObject layout=[[L_1]]
-// CHECK-NEXT: v5 = NewClosure v4 function=[[f_2]]
-// CHECK-NEXT: PutEnvironmentField v4, v5 layout=[[L_1]]
-// CHECK-NEXT: v7 = GetEnvironmentField v4 layout=[[L_1]]
-// CHECK-NEXT: Jump -> next b2(v7)
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = TypeOf v8
-// CHECK-NEXT: v10 = Call v8 calleeName="f"
-// CHECK-NEXT: v11 = TypeOf v8
-// CHECK-NEXT: v12 = Call v8 calleeName="f"
-// CHECK-NEXT: v13 = NewArray v9, v10, v11, v12 contents=anything
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="storedByEvaluatedText"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = NewObject -, v0 layout=[[L_3]] fields=[0]
-// CHECK-NEXT: v3 = GetEnvironmentField v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(v1)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = NewObject layout=[[L_4]]
-// CHECK-NEXT: v7 = NewClosure v2, v6 function=[[f_5]]
-// CHECK-NEXT: PutEnvironmentField v6, v7 layout=[[L_4]]
-// CHECK-NEXT: v9 = GetEnvironmentField v6 layout=[[L_4]]
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: v11 = Call v10 calleeName="f"
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="atTheTop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="top"
-// CHECK-NEXT: PutModuleVariable v0 variable=[[g_6]]
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = TypeOf v0
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

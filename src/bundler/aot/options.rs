@@ -69,6 +69,9 @@ pub(crate) fn options_from_bundler<'r>(
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
             jsx_has_side_effects: input.bundle_options.jsx.side_effects,
+            has_no_bundle: input.aot.runs_tests || input.aot.runs_in_place,
+            is_told_to_minify_syntax: input.bundle_options.minify_syntax
+                && !input.bundle_options.is_library,
         },
         lists_modules: input.bundle_options.metafile,
         // An obfuscated executable shows no name, and its source map has the names as they are written.

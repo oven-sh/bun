@@ -1023,6 +1023,36 @@ fn specifier_node_is_first_argument() {
 }
 
 #[test]
+fn alias_by_require_in_a_namespace_is_a_site() {
+    for (text, count) in [
+        (
+            r#"namespace N { import r = require("s"); export const a = r; }"#,
+            1,
+        ),
+        (r#"namespace N { export import r = require("s"); }"#, 1),
+        (
+            r#"namespace N { namespace M { import r = require("s"); export const a = r; } }"#,
+            1,
+        ),
+        (
+            r#"import r = require("s"); namespace N { export const a = r; }"#,
+            1,
+        ),
+        (
+            r#"namespace N { import type r = require("s"); export const a = 1; }"#,
+            0,
+        ),
+        (r#"declare namespace N { import r = require("s"); }"#, 0),
+    ] {
+        analyzed("a.ts", text, |s| {
+            let sites = s.analysis.import_sites.iter();
+            let aliases = sites.filter(|site| matches!(site.kind, ImportSiteKind::ImportEquals(_)));
+            assert_eq!(aliases.count(), count, "{text}");
+        });
+    }
+}
+
+#[test]
 fn import_meta_resolve_without_resolver() {
     for &(text, consults_resolver) in RESOLVER_USES {
         analyzed("a.mts", text, |s| {

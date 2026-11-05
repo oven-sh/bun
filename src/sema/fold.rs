@@ -382,7 +382,6 @@ pub(crate) struct FoldResult<'s> {
     pub decisions: Decisions<'s>,
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
-    pub relies_on_running_before_calls: bool,
     pub asks_for_main_module: bool,
     pub imported_names: &'s [ImportedName],
 }

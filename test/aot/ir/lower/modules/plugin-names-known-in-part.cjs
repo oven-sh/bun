@@ -1,6 +1,6 @@
 // A program that names Bun.plugin. `bun build` leaves a name that is not written out in the call to the run time, where a plugin answers first.
 // So does this build where it knows every file that the name may lead to: the call asks the loader, which finds each of them by its name where no plugin answers.
-// A choice that is written out in the call is linked, as `bun build` links it. So is a name that only a package.json resolves: the loader of an executable reads none.
+// A choice that is written out in the call is linked, as `bun build` links it. So is a folder whose package.json names its main file: the loader of an executable reads none.
 
 // RUN(CHOSEN): lower
 // CHOSEN-LABEL: function {{*}}name="chosen"

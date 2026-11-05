@@ -12,7 +12,6 @@ an-object-of-an-earlier-test-file-is-an-instance-of-no-class-of-this-realm.test.
 analysis-scaling/analysis-scaling.test.ts
 backend-packages/each-program.ts
 backend/backend.test.ts
-backend/memory.test.ts
 build-id.test.ts
 build-scaling/build-scaling-cases.ts
 build-without-memory-or-threads.test.ts
@@ -55,7 +54,6 @@ loader/numbering.test.ts
 long-generated-functions.test.ts
 memory-deny-write-execute-is-inherited.test.ts
 memory-deny-write-execute.test.ts
-missing-bun-types.test.ts
 names-of-unreached-code-in-executables.test.ts
 names-that-only-types-spell-in-executables.test.ts
 napi-addon.test.ts
@@ -64,22 +62,14 @@ no-thread-can-be-started.test.ts
 packed-relocations.test.ts
 pages-64k.test.ts
 perf/a-file-compared-with-the-disk.test.ts
-perf/a-store-is-read-for-about-what-a-walk-along-three-nodes-costs.test.ts
-perf/apply-arguments-cost.test.ts
 perf/compare-builds.measure.ts
-perf/copies-in-cold-code.test.ts
 perf/copies-of-ordinary-objects-in-cold-code.measure.ts
 perf/counted-idioms.ts
 perf/definitions-that-run-once.measure.ts
-perf/equivalent-forms.test.ts
-perf/evaluated-text-reads-names-above-functions.test.ts
 perf/first-executions-against-plain-bun.measure.ts
 perf/first-executions.measure.ts
-perf/generator-first-question.test.ts
 perf/idioms-against-the-jit.measure.ts
 perf/idioms-in-a-very-large-program.measure.ts
-perf/lone-reads-in-cold-code.test.ts
-perf/names-given-by-key.test.ts
 perf/operations.measure.ts
 perf/options-spread-over-what-a-literal-already-holds.measure.ts
 perf/pinned-applications.ts
@@ -87,7 +77,6 @@ perf/pinned-everyday-idioms.ts
 perf/pinned-idioms.ts
 perf/plain-bun-costs.measure.ts
 perf/small-benchmarks.measure.ts
-perf/start.test.ts
 perf/stay-calls.ts
 perf/stepped-idioms.ts
 perf/stepped-operations.ts
@@ -97,7 +86,6 @@ programs-by-use.ts
 programs-that-died-in-the-shell-on-one-platform.test.ts
 reading-a-property-of-null-throws-whatever-signal-actions-a-library-sets.test.ts
 resolver/resolution-cases.ts
-run-parallel-full-disk-message.test.ts
 run-parallel-time-limit-message.test.ts
 same-program-however-the-threads-fall.ts
 servers/each-framework.ts

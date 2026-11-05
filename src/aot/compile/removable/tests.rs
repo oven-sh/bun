@@ -222,31 +222,34 @@ fn annotations_can_be_ignored() {
 }
 
 #[test]
-fn global_names_that_are_not_locked_are_read_where_something_takes_them() {
-    let plain = RemovableOptions::default();
-    let removable = [
-        "const MARK = Map;",
-        "const MARK = process;",
-        "const MARK = { table: Map };",
-        "Date, \"MARK\";",
-        "Promise, URL, \"MARK\";",
-        "process, \"MARK\";",
+fn global_names_that_are_not_locked_are_left_out_as_whoever_runs_the_program_leaves_them_out() {
+    let bundled = RemovableOptions::default();
+    let minified = RemovableOptions {
+        is_told_to_minify_syntax: true,
+        ..bundled
+    };
+    let in_place = RemovableOptions {
+        has_no_bundle: true,
+        ..bundled
+    };
+    // The statement, and who leaves it out: `bun build --compile`, the same with --minify-syntax, `bun run`.
+    let rows = [
+        ("const MARK = Map;", [true, true, true]),
+        ("const MARK = process;", [true, true, true]),
+        ("const MARK = { table: Map };", [true, true, true]),
+        ("Date, \"MARK\";", [true, true, true]),
+        ("const MARK = Date;", [true, true, false]),
+        ("const MARK = { when: Date };", [true, true, false]),
+        ("export default [URL, \"MARK\"];", [true, true, false]),
+        ("const MARK = structuredClone;", [false, false, false]),
+        ("structuredClone, \"MARK\";", [false, false, false]),
+        ("const MARK = new WeakMap();", [false, true, false]),
+        ("new WeakMap(), \"MARK\";", [false, true, true]),
+        ("new Date(0), \"MARK\";", [false, true, true]),
     ];
-    for source in removable {
-        assert!(ask_one(source, "ts", plain), "{source}");
-    }
-    let kept = [
-        "const MARK = Date;",
-        "const MARK = structuredClone;",
-        "const MARK = { when: Date };",
-        "const MARK = [URL];",
-        "export default [URL, \"MARK\"];",
-        "class MARK { static when = Date; }",
-        "structuredClone, \"MARK\";",
-        "Buffer, \"MARK\";",
-    ];
-    for source in kept {
-        assert!(!ask_one(source, "ts", plain), "{source}");
+    for (source, expected) in rows {
+        let answers = [bundled, minified, in_place].map(|options| ask_one(source, "ts", options));
+        assert_eq!(answers, expected, "{source}");
     }
 }
 
@@ -261,10 +264,7 @@ fn constructions_of_known_globals_are_left_out() {
         "const MARK = new Set();",
         "const MARK = new Set([\"a\", \"b\"]);",
         "const MARK = new Set(undefined);",
-        "new WeakMap(), \"MARK\";",
         "const MARK = new WeakSet([]);",
-        "new Date(), \"MARK\";",
-        "new Date(0), \"MARK\";",
         "const MARK = [...[\"a\"]];",
         "class MARK { static a = new Map([[\"a\", 1]]); }",
     ];

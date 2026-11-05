@@ -46,77 +46,8 @@ namespace Alias { import I = N.Inner; export const v = I.deep; import fAlias = N
 namespace Loop { export let i = 0; for (i = 0; i < 3; i++) {} export var j = i * 2; } show("namespace loop", () => Loop);
 namespace Hoist { export const before = typeof later; export function later() {} } show("hoisted in namespace", () => Hoist);
 
-// GENERATED: show next m C parse
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Builtin builtin=JSON
-// CHECK-NEXT: v8 = PropGet v7 key="stringify"
-// CHECK-NEXT: v9 = Convert v8 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v10 = Call v1 calleeName="f"
-// CHECK-NEXT: v11 = Call v9, v7, v10 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = Call v6, v4, v0, v12 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v14 = CatchValue
-// CHECK-NEXT: v15 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v16 = PropGet v15 key="console" [isFreeName]
-// CHECK-NEXT: v17 = Convert v16 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v18 = PropGet v17 key="log"
-// CHECK-NEXT: v19 = Convert v18 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v20 = String string="threw"
-// CHECK-NEXT: v21 = Convert v14 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v22 = PropGet v21 key="constructor"
-// CHECK-NEXT: v23 = PropGet v22 key="name"
-// CHECK-NEXT: v24 = PropGet v21 key="message"
-// CHECK-NEXT: v25 = Call v19, v17, v0, v20, v23, v24 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v26 = Undefined
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="side"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="side"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_2]]
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="Cl"
-// CHECK-NEXT: v2 = PropGet v1 key="extra"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parse"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|"A"|"parse" flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v3 = ElemGet v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

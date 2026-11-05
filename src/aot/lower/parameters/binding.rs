@@ -42,9 +42,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             initial.reverse();
             initial.shared_sort_by_key(|entry| entry.0);
             initial.dedup_by_key(|entry| entry.0);
-            self.allocate_scope(top, &initial);
+            self.allocate_scope_of_function(top, &initial);
         } else {
-            self.allocate_scope(top, &initial);
+            self.allocate_scope_of_function(top, &initial);
             for (index, parameter) in parameters.iter().enumerate() {
                 let node = hir[parameter];
                 self.set_position(node.pos);

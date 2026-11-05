@@ -1,4 +1,4 @@
-// "node:" + name, a template and concat(): the constant start names no library module, so it brings none in.
+// "node:" + name, a template and concat(): the module is found under a name with a constant start, whether or not the program names it, as in `bun <file>`.
 // Flags: --aot-refuse-code-from-disk
 // Env: NAMES=path,dgram
 import "node:path";
@@ -20,16 +20,3 @@ for (const name of process.env.NAMES.split(",")) {
   }
 }
 console.log("went on");
-/* Output:
-path plus object
-path template object
-path concat object
-path import object
-path import template object
-dgram plus MODULE_NOT_FOUND
-dgram template MODULE_NOT_FOUND
-dgram concat MODULE_NOT_FOUND
-dgram import ERR_MODULE_NOT_FOUND
-dgram import template ERR_MODULE_NOT_FOUND
-went on
-*/

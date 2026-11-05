@@ -575,8 +575,7 @@ pub(super) fn summarize_requests<'s>(
     let may_be_barrel = code.analyzed.side_effects == DeclaredSideEffects::None
         && analysis.module_format == ModuleFormat::Esm
         && key.loader == HostLoader::default()
-        && !context.is_entry_point(key)
-        && context.inputs.loaded_before.is_none();
+        && !context.is_entry_point(key);
     let mut summary = Summary {
         hir,
         bound,

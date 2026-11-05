@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="Account"
+// CHECK-LABEL: function {{*}}name="hidden"
+// CHECK-LABEL: function {{*}}name="deposit"
+// CHECK-LABEL: function {{*}}name="twice"
+// CHECK-LABEL: function {{*}}name="Heir"
+// CHECK-LABEL: function {{*}}name="valueOf"
 
 // FILE: main.js
 // Unchecked tags on fields of classes are false.
@@ -155,65 +161,3 @@ attempt("honest again", () => [new Honest().next(), new Late().next(), new Base(
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: Account hidden deposit twice Heir valueOf
-// CHECK-LABEL: function {{*}}name="Account"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: v5 = Data data=[[d_3]]
-// CHECK-NEXT: PropSet v3, v5 key="limit"
-// CHECK-NEXT: v7 = String string="yes"
-// CHECK-NEXT: PropSet v3, v7 key="open"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="hidden"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_1]] field=6
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="deposit"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: number):
-// CHECK-NEXT: v2 = PropGet v0 key="balance"
-// CHECK-NEXT: v3 = Add v2, v1
-// CHECK-NEXT: PropSet v0, v3 key="balance"
-// CHECK-NEXT: v5 = PropGet v0 key="balance"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_5]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_5]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_7]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_8]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

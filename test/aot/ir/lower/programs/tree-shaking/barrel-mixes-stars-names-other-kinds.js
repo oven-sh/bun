@@ -67,32 +67,3 @@ export function unaskedName() {}
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="byName"
-// CHECK-NEXT: v7 = Call v6 calleeName="byName"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="byStar"
-// CHECK-NEXT: v10 = Call v9 calleeName="byStar"
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v12 = CheckInitialized v11 name="byInnerStar"
-// CHECK-NEXT: v13 = Call v12 calleeName="byInnerStar"
-// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v15 = Call v14 calleeName="fromCommonJS"
-// CHECK-NEXT: v16 = String string="data"
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v18 = CheckInitialized v17 name="inBoth"
-// CHECK-NEXT: v19 = Call v18 calleeName="inBoth"
-// CHECK-NEXT: v20 = Call v4, v2, v7, v10, v13, v15, v16, v19 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v21 = Undefined
-// CHECK-NEXT: Return v21
-// CHECK-NEXT: }

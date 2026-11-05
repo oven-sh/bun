@@ -994,7 +994,6 @@ class Exchange {
   value3: number | string;
   value4: number | string;
   value5: number | string;
-  heldChunk: $Node.HttpHeldChunk | null;
   statusCode: number;
   statusMessage: string;
   bytesBuffered: number;
@@ -1039,7 +1038,6 @@ class Exchange {
     this.value3 = 0;
     this.value4 = 0;
     this.value5 = 0;
-    this.heldChunk = null;
     this.statusCode = 0;
     this.statusMessage = "";
     this.bytesBuffered = 0;
@@ -1256,24 +1254,32 @@ function removeShapedHeader(exchange: Exchange, name: string, key: string): void
   if (last === 0) exchange.wasEmptied = true;
 }
 
-function headerEntriesOf(exchange: Exchange | undefined, message: $Node.OutgoingMessage): unknown[] | undefined {
-  const entries: unknown[] = [];
-  const shape = exchange === undefined ? spilledHeadersShape : exchange.shape;
-  if (shape !== spilledHeadersShape) {
-    const names = namesOf(shape);
-    const keys = shape.keys!;
-    for (let index = 0; index < names.length; index++)
-      entries.push(keys[index], names[index], shapedValue(exchange!, index));
-    return entries;
-  }
-  const headers = message[kOutHeaders];
-  if (headers === undefined) return undefined;
-  if (headers !== null) {
-    for (const key in headers) {
-      const entry = headers[key];
-      entries.push(key, entry[0], entry[1]);
+// A text, a number and a list of those are written without any code of the program. Anything else is turned to text by a toString(), which may set and remove headers.
+function runsCodeWhenWritten(exchange: Exchange): boolean {
+  const odd = exchange.oddValues!;
+  for (let index = 0, mask = exchange.oddMask; mask !== 0; index++, mask >>>= 1) {
+    if ((mask & 1) === 0) continue;
+    const value = odd[index];
+    if (!$isArray(value)) return true;
+    for (let i = 0; i < value.length; i++) {
+      const kind = typeof value[i];
+      if (kind !== "string" && kind !== "number") return true;
     }
   }
+  return false;
+}
+
+// Key, name and value of each header in the compact form. `null`: the headers lie in the map, where whoever writes them finds them as they are at each step.
+function headerEntriesOf(exchange: Exchange | undefined): unknown[] | null {
+  if (exchange === undefined) return null;
+  if (exchange.oddMask !== 0 && runsCodeWhenWritten(exchange)) spillHeaders(exchange);
+  const shape = exchange.shape;
+  if (shape === spilledHeadersShape) return null;
+  const entries: unknown[] = [];
+  const names = namesOf(shape);
+  const keys = shape.keys!;
+  for (let index = 0; index < names.length; index++)
+    entries.push(keys[index], names[index], shapedValue(exchange, index));
   return entries;
 }
 
@@ -1555,12 +1561,13 @@ function pushRenderedHeader(
   }
 }
 
-function flatHeadersWithCare(exchange: Exchange): unknown[] {
+function flatHeadersWithCare(exchange: Exchange): unknown[] | null {
   const shape = exchange.shape;
   const names = namesOf(shape);
   const keys = shape.keys!;
   const flat: unknown[] = [];
   const oddMask = exchange.oddMask;
+  if (oddMask !== 0 && runsCodeWhenWritten(exchange)) return null;
   let length = 0;
   for (let index = 0; index < names.length; index++) {
     if (oddMask !== 0 && (oddMask & (1 << index)) !== 0) {
@@ -1576,7 +1583,8 @@ function flatHeadersWithCare(exchange: Exchange): unknown[] {
   return flat;
 }
 
-function flatHeadersOf(exchange: Exchange): unknown[] {
+// `null`: writing a value runs code of the program, so the headers are walked in their map.
+function flatHeadersOf(exchange: Exchange): unknown[] | null {
   const shape = exchange.shape;
   if (exchange.holdsNumber || shape.count > kInlineHeaderValues) return flatHeadersWithCare(exchange);
   switch (shape.count) {

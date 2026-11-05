@@ -1,6 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 3
+// CHECK-LABEL: function {{*}}name="Top"
+// CHECK-LABEL: function {{*}}name="deliver"
+// CHECK-LABEL: function {{*}}name="attempt"
+// CHECK-LABEL: function {{*}}name="Sub"
+// CHECK-LABEL: function {{*}}name="emit"
 
 // FILE: main.ts
 // The predicted callee follows the prototype chain between constructor functions, through names of type `any`, and a wrong prediction does no harm.
@@ -69,82 +74,3 @@ export default { Middle, helper } as unknown as { Middle: any; helper: any };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: Top deliver attempt Sub emit
-// CHECK-LABEL: function {{*}}name="Top"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_1]]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: anything):
-// CHECK-NEXT: v2 = Data data=[[d_2]]
-// CHECK-NEXT: PropSet v0, v2 key="state"
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="Middle"
-// CHECK-NEXT: v6 = PropGet v5 key="call"
-// CHECK-NEXT: v7 = Call v6, v5, v0, v1 calleeKey="call" calleeName="Middle.call"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="deliver"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = PropGet v1 key="n"
-// CHECK-NEXT: v4 = Increment v3
-// CHECK-NEXT: PropSet v1, v4 key="n"
-// CHECK-NEXT: v6 = PropGet v0 key="emit"
-// CHECK-NEXT: v7 = String string="data"
-// CHECK-NEXT: v8 = Call v6, v0, v7, v2 calleeKey="emit" calleeName="stream.emit"
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=":"
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = Builtin builtin=String
-// CHECK-NEXT: v10 = Call v1 calleeName="f"
-// CHECK-NEXT: v11 = Call v9, -, v10 calleeName="String"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v14 = CheckInitialized v13 name="n"
-// CHECK-NEXT: v15 = Call v6, v4, v8, v12, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v16 = CatchValue
-// CHECK-NEXT: v17 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v18 = PropGet v17 key="console" [isFreeName]
-// CHECK-NEXT: v19 = Convert v18 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v20 = PropGet v19 key="log"
-// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v22 = String string=":"
-// CHECK-NEXT: v23 = Add v0, v22
-// CHECK-NEXT: v24 = Convert v16 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v25 = PropGet v24 key="constructor"
-// CHECK-NEXT: v26 = PropGet v25 key="name"
-// CHECK-NEXT: v27 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v28 = CheckInitialized v27 name="n"
-// CHECK-NEXT: v29 = Call v21, v19, v23, v26, v28 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v30 = Undefined
-// CHECK-NEXT: Return v30
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Sub"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="emit"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="overridden"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -180,7 +180,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.set_position(self.file.hir[class].start);
         let closure = self.emit_closure(constructor, None);
-        if let (Some(given), None) = (name, static_name) {
+        if let (Some(given), None) = (name, static_name)
+            && self.file.names_functions_by_keys()
+        {
             let key = self.emit_name_value(given.name);
             self.builder
                 .set_function_name(closure, key, MethodKind::Method);

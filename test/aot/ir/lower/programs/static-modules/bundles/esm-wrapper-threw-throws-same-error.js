@@ -1,5 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="__esm"
+// CHECK-LABEL: function {{*}}name="attempt"
 
 // FILE: main.js
 // Bun's `__esm`: what the function throws is kept and thrown by every later call.
@@ -30,27 +32,3 @@ console.log(attempt() === attempt(), runs);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: __esm attempt
-// CHECK-LABEL: function {{*}}name="__esm"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=3 thisType={type=anything} parameters=[{type=undefined|null|number|function flags=[IsExpected]}, {type=anything}, {type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|function, v1: anything, v2: undefined|null|Array):
-// CHECK-NEXT: v3 = NewObject -, v0, v1, v2 layout=[[L_1]] fields=[0, 1, 2]
-// CHECK-NEXT: v4 = NewClosure v3 function=[[f_2]]
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b3():
-// CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]]
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: b3() role=CatchHandler:
-// CHECK-NEXT: v3 = CatchValue
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

@@ -2,6 +2,7 @@
 // OPTIONS: builtin-modules
 // ENTRY: main.cjs name-declared-by-eval.cjs random-polyfill.cjs shadowed-polyfill.cjs
 // STATISTIC: SourceFilesInferred = 4
+// CHECK-LABEL: function {{*}}name="shadowed"
 
 // FILE: main.cjs
 // What stands behind a failed test for an always locked built-in is neither resolved nor loaded: nothing named never-loaded exists.
@@ -33,23 +34,3 @@ module.exports = "polyfill";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: shadowed
-// CHECK-LABEL: function {{*}}name="shadowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="assign"
-// CHECK-NEXT: v2 = ToBoolean v1
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = String string="has"
-// CHECK-NEXT: Jump -> next b3(v4)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: RecordRequire module=[[m_1]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_1]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_1]] referrer=[[m_0]]
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

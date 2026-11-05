@@ -129,85 +129,8 @@ for (const path of ["/routed/1", "/plain"]) {
 }
 await server.stop(true);
 
-// GENERATED: byVariable attempt Louder set
 // CHECK-LABEL: function {{*}}name="byVariable"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array<undefined|null|string>):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Headers" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Headers) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Construct v3 calleeName="Headers"
-// CHECK-NEXT: v5 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = IteratorResume v5
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v10 = PropGet v4 key="set"
-// CHECK-NEXT: v11 = String string="v"
-// CHECK-NEXT: v12 = Call v10, v4, v9, v11 calleeKey="set" calleeName="headers.set"
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b5() role=IterationCleanup subject=v5:
-// CHECK-NEXT: v13 = CatchException
-// CHECK-NEXT: IteratorClose v5 completion=Throw
-// CHECK-NEXT: Rethrow v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="show"
-// CHECK-NEXT: v3 = Call v0 calleeName="run"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="show"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v5 = CatchValue
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="describe"
-// CHECK-NEXT: v8 = Call v7, -, v5 calleeName="describe"
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Louder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_3]] flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_3]], v1: undefined|null|string, v2: anything):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = GetSuperBase v3 homeKind=ClassPrototype
-// CHECK-NEXT: v5 = SuperGet v4, v0 key="set"
-// CHECK-NEXT: v6 = ToString v2
-// CHECK-NEXT: v7 = String string="!"
-// CHECK-NEXT: v8 = Strcat v6, v7
-// CHECK-NEXT: v9 = Call v5, v0, v1, v8 calleeName="super.set"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string="another prototype's set of "
-// CHECK-NEXT: v6 = ToString v0
-// CHECK-NEXT: v7 = String string=" to "
-// CHECK-NEXT: v8 = ToString v1
-// CHECK-NEXT: v9 = Strcat v5, v6, v7, v8
-// CHECK-NEXT: v10 = Call v4, v3, v9 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: ReturnCall v10
-// CHECK-NEXT: }

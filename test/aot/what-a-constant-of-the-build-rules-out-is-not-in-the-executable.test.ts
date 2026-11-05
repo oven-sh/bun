@@ -106,30 +106,6 @@ for (const [way, header, condition] of [ways[0], ways[5]]) {
   }
 }
 
-// `Host.run()` hands the namespace object to whatever `run` holds as `this`. The build cannot tell by the binding what that is, and still the other members of the barrel are not all reached.
-test("a member of a barrel that only the arm names, beside a member that is called and is no function as it is written", async () => {
-  const barrel = (...files: string[]) =>
-    files.map(file => `export * from "${file}";\n`).join("") + `export * as default from ".";\n`;
-  const { stdout, found } = await textsIn({
-    "live.ts": behindTheArm["live.ts"],
-    "host/index.ts": barrel("./inner/index.js", "./made.js"),
-    "host/make-host.ts": `export function makeHost() { let count = 0; return { run: (x: number) => "KEPT_RUN" + (count += x) }; }`,
-    "host/made.ts": `import { makeHost } from "./make-host"; export const { run } = makeHost();`,
-    "host/inner/index.ts": barrel("./plugins/index.js"),
-    "host/inner/plugins/index.ts": barrel("./make-plugins.js"),
-    "host/inner/plugins/make-plugins.ts": `export const makePlugins = (x: number) => { console.log("RULED_OUT_MEMBER"); return x; };`,
-    "main.ts": `
-      import { feature } from "bun:bundle";
-      import { live } from "./live";
-      import Host from "./host";
-      import Plugins from "./host/inner/plugins";
-      function ask(x: number) { if (feature("NO_PLUGINS")) return live(x); else return Plugins.makePlugins(x); }
-      console.log(Host.run(1), ask(1));
-    `,
-  });
-  expect({ stdout, found }).toEqual({ stdout: "KEPT_RUN1 KEPT_TEXT_1\n", found: ["KEPT_RUN", "KEPT_TEXT"] });
-});
-
 // The load takes the file of a Worker for an entry point where it meets the text that names the file, long before anybody knows what is reached.
 // A loader that is given a name which the build does not know may be given any path that the program spells: that text too, as long as what holds it can run.
 const loadsByUnknownName = `

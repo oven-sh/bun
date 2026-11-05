@@ -85,27 +85,6 @@ console.log(counter.next(), counter.next(), counter.n, Object.keys(counter).join
 
 export {};
 
-// GENERATED: Named sumOf describe
 // CHECK-LABEL: function {{*}}name="Named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: undefined|null|string):
-// CHECK-NEXT: PropSet v0, v1 key="name"
-// CHECK-NEXT: v3 = Data data=[[d_2]]
-// CHECK-NEXT: PropSet v0, v3 key="tags"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="named"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

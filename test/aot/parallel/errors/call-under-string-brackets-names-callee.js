@@ -1,5 +1,3 @@
-// Reference: bun build --compile
-// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // A member is called under a string in brackets. The message names the callee as `bun run` does, which prints `o["b"]` as `o.b` before it runs the file and leaves `o["e-f"]` as it is.
 const o = JSON.parse('{ "b": {}, "c": { "d": 5 }, "e-f": 1, "class": 2 }');
 const say = f => {

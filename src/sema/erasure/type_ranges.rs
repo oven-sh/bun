@@ -1,9 +1,9 @@
 use crate::atom::known;
 use crate::hir::{
-    Class, ClassId, Comment, Expr, ExprId, ExprKind, File, Fixed, Flags, Func, IdList, Member,
-    MemberKind, ModifierKind, Param, PatId, PatKind, Span, StmtId, TypeNodeId, TypeParamId,
+    BinOp, Class, ClassId, Comment, Expr, ExprId, ExprKind, File, Fixed, Flags, Func, IdList,
+    Member, MemberKind, ModifierKind, Param, PatId, PatKind, Span, StmtId, TypeNodeId, TypeParamId,
     end_of_expr, find_runtime_constructor, find_super_call_statement, has_body,
-    is_nested_namespace, modifier_text, parameter_properties, start_of,
+    is_nested_namespace, is_parenthesized, modifier_text, parameter_properties, start_of,
 };
 use crate::session::Arena;
 use std::cell::RefCell;
@@ -773,13 +773,59 @@ impl<'a, 's> Finder<'a, 's> {
         self.add_angle_brackets(self.file[first].start, self.file[last].end);
     }
 
+    // What a cast that ends at `end` holds, through the casts in it: a binary expression without parentheses whose operator binds looser than the one behind the cast.
+    fn find_operand_that_binds_looser(&self, mut operand: ExprId, end: usize) -> Option<ExprId> {
+        let behind = match self.text.get(self.skip_trivia(end)..).unwrap_or_default() {
+            [b'*', b'*', ..] => 5,
+            [b'*' | b'/' | b'%', ..] => 4,
+            [b'+' | b'-', ..] => 3,
+            [b'<', b'<', ..] | [b'>', b'>', ..] => 2,
+            _ => return None,
+        };
+        while !is_parenthesized(self.file, operand)
+            && let ExprKind::As { expr, .. }
+            | ExprKind::Satisfies { expr, .. }
+            | ExprKind::AsConst(expr) = self.file[operand].kind
+        {
+            operand = expr;
+        }
+        let ExprKind::Binary { op, .. } = self.file[operand].kind else {
+            return None;
+        };
+        let own = match op {
+            // `a ** b ** c` is `a ** (b ** c)`.
+            BinOp::Pow => 4,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => 4,
+            BinOp::Add | BinOp::Sub => 3,
+            BinOp::Shl | BinOp::Shr | BinOp::UShr => 2,
+            _ => 1,
+        };
+        (own < behind && !is_parenthesized(self.file, operand)).then_some(operand)
+    }
+
     fn add_around_operand(&mut self, expression: &Expr, operand: ExprId) {
         let operand_start = start_of(self.file, operand);
         let is_prefix =
             self.byte(expression.pos as usize) == b'<' && expression.pos < operand_start;
         if !is_prefix {
             let start = end_of_expr(self.file, operand);
-            self.add(start, expression.end);
+            // `a + b as T * c` is `(a + b) * c`.
+            match self.find_operand_that_binds_looser(operand, expression.end as usize) {
+                Some(looser) => {
+                    let open = start_of(self.file, looser);
+                    self.replaced.push(ReplacedText {
+                        start: open,
+                        end: open,
+                        text: Box::new(*b"("),
+                    });
+                    self.replaced.push(ReplacedText {
+                        start,
+                        end: expression.end,
+                        text: Box::new(*b")"),
+                    });
+                }
+                None => self.add(start, expression.end),
+            }
             // `a as T` and a line break end a statement. `a` and a line break go on with `(b)`.
             if self.is_followed_by_one_of(expression.end as usize, b"([`") {
                 self.ends_of_statements.push(start);

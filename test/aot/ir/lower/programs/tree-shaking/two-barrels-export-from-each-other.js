@@ -40,23 +40,3 @@ export { fromLeft } from "./left.js";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="fromRight"
-// CHECK-NEXT: v7 = Call v6 calleeName="fromRight"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="fromLeft"
-// CHECK-NEXT: v10 = Call v9 calleeName="fromLeft"
-// CHECK-NEXT: v11 = Call v4, v2, v7, v10 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

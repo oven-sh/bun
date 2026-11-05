@@ -4,6 +4,7 @@ use super::support::{
     from_bun_check_without_configuration, load, load_with_host, load_with_tsconfig_override,
     project_disk, with_host, with_program, with_runtime_project,
 };
+use crate::compile::BunTypes;
 use crate::{EntryPointFailure, Locator, global};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{bind, specifiers_of_closed_module};
@@ -747,7 +748,8 @@ fn libraries_match_bun_check() {
 
         let configured = with_program(&files, &["./main.ts"], 1, |program| {
             assert!(!program.files().options.config_path.is_empty());
-            assert_eq!(program.loaded.has_bun_types_installed, has_bun_types);
+            let is_installed = matches!(program.loaded.bun_types, BunTypes::Installed);
+            assert_eq!(is_installed, has_bun_types);
             libraries_of(program.files().options)
         });
         let checked = from_bun_check(&files, |files| libraries_of(files.options));
@@ -758,7 +760,8 @@ fn libraries_match_bun_check() {
         let tool = "node_modules/tool/main.ts";
         let unconfigured = with_program(&files, &["./node_modules/tool/main.ts"], 1, |program| {
             assert!(program.files().options.config_path.is_empty());
-            assert_eq!(program.loaded.has_bun_types_installed, has_bun_types);
+            let is_installed = matches!(program.loaded.bun_types, BunTypes::Installed);
+            assert_eq!(is_installed, has_bun_types);
             libraries_of(program.files().options)
         });
         let checked = from_bun_check_without_configuration(&files, &[tool], |files| {
@@ -790,14 +793,13 @@ fn locator_names_file() {
     });
 }
 
+// The text of first.cjs does not say what it is. It is read as its name says, and read again as the package says once it shows that imports alone load it.
 #[test]
 fn file_queued_again_is_read_and_parsed_again() {
-    const FILES: [(&str, &str); 2] = [
-        (
-            "main.ts",
-            "import \"./first\";\nvar flag = true;\nexport function which() { return flag ? 1 : 2; }\n",
-        ),
-        ("first.ts", "import { which } from \"./main\";\nwhich();\n"),
+    const FILES: [(&str, &str); 3] = [
+        ("package.json", r#"{ "name": "project", "type": "module" }"#),
+        ("main.ts", "import \"./first.cjs\";\n"),
+        ("first.cjs", "globalThis.seen = 1;\n"),
     ];
     for reads_on_other_threads in [false, true] {
         let (ended, has_ended) = std::sync::mpsc::channel();
@@ -808,10 +810,10 @@ fn file_queued_again_is_read_and_parsed_again() {
             };
             let host = SlowToQueueAgain(&disk, Default::default());
             let is_loaded = load_with_host(&host, &["./main.ts"]).is_ok();
-            let times_queued = ["main.ts", "first.ts"].map(|path| host.times_queued(path));
+            let times_queued = ["main.ts", "first.cjs"].map(|path| host.times_queued(path));
             let _ = ended.send((is_loaded, times_queued));
         });
         let outcome = has_ended.recv_timeout(std::time::Duration::from_secs(120));
-        assert_eq!(outcome, Ok((true, [2, 1])), "{reads_on_other_threads}");
+        assert_eq!(outcome, Ok((true, [1, 2])), "{reads_on_other_threads}");
     }
 }

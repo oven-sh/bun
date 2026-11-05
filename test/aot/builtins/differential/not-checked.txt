@@ -22,6 +22,40 @@ BunFFIReadU8/0: it is not called: it dereferences an arbitrary pointer
 BunFFIToArrayBuffer/0: it is not called: it dereferences an arbitrary pointer
 BunFFIToBuffer/0: it is not called: it dereferences an arbitrary pointer
 BunGenerateHeapSnapshot/0: it is not called: it blocks, starts a process or opens a socket
+BunJscBytecodeOrderStats/0: it is not called: it reaches outside JavaScript
+BunJscCallerSourceOrigin/0: it is not called: it reaches outside JavaScript
+BunJscDescribe/0: it is not called: it reaches outside JavaScript
+BunJscDescribeArray/0: it is not called: it reaches outside JavaScript
+BunJscDeserialize/0: it is not called: it reaches outside JavaScript
+BunJscDrainMicrotasks/0: it is not called: it reaches outside JavaScript
+BunJscEdenGC/0: it is not called: it reaches outside JavaScript
+BunJscEstimateShallowMemoryUsageOf/0: it is not called: it reaches outside JavaScript
+BunJscFullGC/0: it is not called: it reaches outside JavaScript
+BunJscGcAndSweep/0: it is not called: it reaches outside JavaScript
+BunJscGenerateHeapSnapshotForDebugging/0: it is not called: it reaches outside JavaScript
+BunJscGetRandomSeed/0: it is not called: it reaches outside JavaScript
+BunJscHeapSize/0: it is not called: it reaches outside JavaScript
+BunJscHeapStats/0: it is not called: it reaches outside JavaScript
+BunJscIsRope/0: it is not called: it reaches outside JavaScript
+BunJscJscDescribe/0: it is not called: it reaches outside JavaScript
+BunJscJscDescribeArray/0: it is not called: it reaches outside JavaScript
+BunJscMemoryUsage/0: it is not called: it reaches outside JavaScript
+BunJscNoFTL/0: it is not called: it reaches outside JavaScript
+BunJscNoInline/0: it is not called: it reaches outside JavaScript
+BunJscNoOSRExitFuzzing/0: it is not called: it reaches outside JavaScript
+BunJscNumberOfDFGCompiles/0: it is not called: it reaches outside JavaScript
+BunJscOptimizeNextInvocation/0: it is not called: it reaches outside JavaScript
+BunJscPercentAvailableMemoryInUse/0: it is not called: it reaches outside JavaScript
+BunJscReleaseWeakRefs/0: it is not called: it reaches outside JavaScript
+BunJscReoptimizationRetryCount/0: it is not called: it reaches outside JavaScript
+BunJscSamplingProfilerStackTraces/0: it is not called: it reaches outside JavaScript
+BunJscSerialize/0: it is not called: it reaches outside JavaScript
+BunJscSetRandomSeed/0: it is not called: it reaches outside JavaScript
+BunJscSetTimeZone/0: it is not called: it reaches outside JavaScript
+BunJscSetTimezone/0: it is not called: it reaches outside JavaScript
+BunJscStartRemoteDebugger/0: it is not called: it reaches outside JavaScript
+BunJscStartSamplingProfiler/0: it is not called: it reaches outside JavaScript
+BunJscTotalCompileTime/0: it is not called: it reaches outside JavaScript
 BunListen/0: it is not called: it blocks, starts a process or opens a socket
 BunOpenInEditor/0: it is not called: it blocks, starts a process or opens a socket
 BunServe/0: it is not called: it blocks, starts a process or opens a socket
@@ -31,26 +65,52 @@ BunSpawn/0: it is not called: it blocks, starts a process or opens a socket
 BunSpawn/1: it is not called: it blocks, starts a process or opens a socket
 BunSpawnSync/0: it is not called: it blocks, starts a process or opens a socket
 BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
+BunTestAfterAll/0: it is not called: it reaches outside JavaScript
+BunTestAfterEach/0: it is not called: it reaches outside JavaScript
+BunTestAroundAll/0: it is not called: it reaches outside JavaScript
+BunTestAroundEach/0: it is not called: it reaches outside JavaScript
+BunTestBeforeAll/0: it is not called: it reaches outside JavaScript
+BunTestBeforeEach/0: it is not called: it reaches outside JavaScript
+BunTestDescribe/0: it is not called: it reaches outside JavaScript
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestOnTestFinished/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestTest/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViStubGlobal/0: it is not called: it reaches outside JavaScript
-BunTestVitestJestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestAfterAll/0: it is not called: it reaches outside JavaScript
+BunTestVitestAfterEach/0: it is not called: it reaches outside JavaScript
+BunTestVitestAroundAll/0: it is not called: it reaches outside JavaScript
+BunTestVitestAroundEach/0: it is not called: it reaches outside JavaScript
+BunTestVitestBeforeAll/0: it is not called: it reaches outside JavaScript
+BunTestVitestBeforeEach/0: it is not called: it reaches outside JavaScript
+BunTestVitestDescribe/0: it is not called: it reaches outside JavaScript
+BunTestVitestOnTestFinished/0: it is not called: it reaches outside JavaScript
 BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestTest/0: it is not called: it reaches outside JavaScript
 BunTestVitestViSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestViStubGlobal/0: it is not called: it reaches outside JavaScript
+BunTestVitestXdescribe/0: it is not called: it reaches outside JavaScript
+BunTestVitestXtest/0: it is not called: it reaches outside JavaScript
+BunTestXdescribe/0: it is not called: it reaches outside JavaScript
+BunTestXtest/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
+CompilerHelpersAppendIterable/0: it is not called: it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersImportRejectedByLoader/0: it is not called: it is written with the intrinsics that make and settle promises, and only compiled code has those
+CompilerHelpersLastPieceOfSplit/0: it is not called: the compiler hands it a separator that it has seen not to be empty, and takes that on trust
+CompilerHelpersNumberOfPiecesOfSplit/0: it is not called: the compiler hands it a separator that it has seen not to be empty, and takes that on trust
 CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
+CompilerHelpersPairsOfFlatEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersSortByDifference/0: it is not called: this realm does not have it
 CompilerHelpersSortByReversedDifference/0: it is not called: this realm does not have it
 CompilerHelpersSortWhereNobodySeesTheComparator/0: it is not called: this realm does not have it
+CompilerHelpersTakeFromIterable/0: it is not called: it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those
 CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0: it is not called: the compiler hands it bounds that it has clamped itself, and takes them on trust
 CrashHandlerJscCrashHandlerAbort/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerFastfail/0: the process ended or did not come back
@@ -75,10 +135,13 @@ FrameworkFileSystemRouterPrototypeToJSON/0: no set of operands selects it
 HTMLBundlePrototypeIndex/0: no set of operands selects it
 ImportMetaResolve/0: it is not called: this realm does not have it
 ImportMetaResolveSync/0: it is not called: this realm does not have it
+MessagePortPrototypeClose/0: it is not called: node:worker_threads lays a function of its own over it, and this realm has that one
 MysqlBindingCreateConnection/0: it differs in parameters
 NativeBindgenBake_pluginsBindTsRestartProcess/0: the process ended or did not come back
 NativeBindgenBake_pluginsBindTsSetPages/0: it is not called: it changes how modules are loaded
 NativeBindgenBake_pluginsBindTsSetPages/1: it is not called: it changes how modules are loaded
+NativeBindgenDeclared_results_testingBindTsDeclaredAsString/0: it is not called: a helper of Bun's own tests that answers outside the type it declares, on purpose
+NativeBindgenDeclared_results_testingBindTsDeclaredAsString/1: it is not called: a helper of Bun's own tests that answers outside the type it declares, on purpose
 NativeBindgenFrameworkRouterBindTsParseRoutePattern/0: the process ended or did not come back
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -122,6 +185,7 @@ NativeFunctionsBunProcessCppProcess_functionWriteToStandardSink/0: it is not cal
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsChecker_queries_testingBindTsDescribeCheckerQueries/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
 NativeFunctionsCode_resolver_testingBindTsDescribeCodeGraph/0: it is not called: a helper of Bun's own tests that does not come back for some operands
+NativeFunctionsDeclared_results_testingBindTsDeclaredAsString/0: it is not called: a helper of Bun's own tests that answers outside the type it declares, on purpose
 NativeFunctionsDns_internalsBindTsNewResolver/0: no set of operands selects it
 NativeFunctionsDns_internalsBindTsSeedCacheForTesting/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
@@ -228,6 +292,7 @@ PrivateGlobalsMakeErrorWithCode/3: it is not called: a call spells out a number,
 PrivateGlobalsMakeErrorWithCode/4: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
 PrivateGlobalsMakeErrorWithCode/5: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
 PrivateGlobalsMakeErrorWithCode/6: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
+PrivateGlobalsRequireCommonJS/0: it is not called: only `require` of the library calls it, with a module object that it has just made, and native code takes that on trust
 ProcessAbort/0: it is not called: it ends, replaces or signals a process
 ProcessDlopen/0: it is not called: it ends, replaces or signals a process
 ProcessExecve/0: it is not called: it ends, replaces or signals a process

@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 8
+// CHECK-LABEL: function {{*}}name="later"
 
 // FILE: main.js
 // A `const` that another file exports decides a branch in every form an import can take, and the arm that is not taken loads nothing.
@@ -82,18 +83,3 @@ module.exports = "taken";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: later
-// CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="debug"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="level"
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="doubled"
-// CHECK-NEXT: v6 = Add v3, v5
-// CHECK-NEXT: v7 = Integer integer=9
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

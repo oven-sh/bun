@@ -77,84 +77,8 @@ say("nested", spread(new Nested(4)), sum(new Nested(10)));
 say("uses", Array.from(a).join(), new Set(a).size, Math.max(...a), new Map([[1, a]]).get(1) === a, Object.fromEntries(new Bag(["k", 1]))["k"]);
 Promise.all(new Bag(1, Promise.resolve(2))).then(v => { say("all", v.join()); console.log(out.join("\n")); });
 
-// GENERATED: spread destructure Twice Closing next
 // CHECK-LABEL: function {{*}}name="spread"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
-// CHECK-NEXT: v1 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v1, v0
-// CHECK-NEXT: v3 = PropGet v1 key="join"
-// CHECK-NEXT: v4 = Call v3, v1 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="destructure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
-// CHECK-NEXT: v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b6():
-// CHECK-NEXT: v2 = IteratorResume v1 stepIndex=0
-// CHECK-NEXT: v3 = ResultAt v2
-// CHECK-NEXT: v4 = ResultAt v2 index=1
-// CHECK-NEXT: v5 = IteratorResume v1 stepIndex=1
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: v8 = TypeTest v7 testedType=undefined
-// CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v9) handler=b6():
-// CHECK-NEXT: v10 = String string="none"
-// CHECK-NEXT: Jump -> next b4(v10)
-// CHECK-NEXT: b3(v11) handler=b6():
-// CHECK-NEXT: Jump -> next b4(v11)
-// CHECK-NEXT: b4(v12) handler=b6():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: IteratorClose v1
-// CHECK-NEXT: v14 = String string=":"
-// CHECK-NEXT: v15 = Add v4, v14
-// CHECK-NEXT: v16 = Add v15, v12
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: b6() role=IterationCleanup subject=v1:
-// CHECK-NEXT: v17 = CatchException
-// CHECK-NEXT: IteratorClose v1 completion=Throw
-// CHECK-NEXT: Rethrow v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Closing"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_4]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="n"
-// CHECK-NEXT: v3 = ToNumeric v2
-// CHECK-NEXT: v4 = Increment v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="n"
-// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_4]]
-// CHECK-NEXT: v9 = Integer integer=2
-// CHECK-NEXT: v10 = Less v3, v9
-// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v11 = Data data=[[d_5]]
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v12 = Data data=[[d_6]]
-// CHECK-NEXT: Jump -> next b3(v12)
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }

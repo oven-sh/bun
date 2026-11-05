@@ -17,8 +17,7 @@ pub use compile::{
     EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PassCount,
     Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
     check_whole_files, decide_roles, drop_thread_caches, find_configuration_of_each_entry_point,
-    keep_verified_roles, load_program, load_program_of_loaded_files,
-    load_program_with_parsed_files, log_message, resolve_names_known_in_part,
+    keep_verified_roles, load_program, log_message, resolve_names_known_in_part,
     run_on_one_thread_while, run_on_region_thread, run_on_threads_while, wake_idle_region_threads,
 };
 
@@ -4583,6 +4582,7 @@ fn check_named_files(
         always_reported,
         checking,
         file_work: None,
+        files_left_to_loader: &[],
     });
     root.release();
     report
@@ -4605,6 +4605,7 @@ struct LoadedFiles<'a, 's> {
     always_reported: usize,
     checking: Instant,
     file_work: Option<&'a compile::FileWork<'a, 's>>,
+    files_left_to_loader: &'a [FileId],
 }
 
 fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
@@ -4625,6 +4626,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         always_reported,
         checking,
         file_work,
+        files_left_to_loader,
     } = loaded;
     let session = program.session;
     let first_round = file_work.map_or(0, |work| work.first_round);
@@ -4768,6 +4770,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         let mut checker = boxed_checker(spare);
         checker.set_requested(expected);
         checker.set_left_out_bodies(file_work.and_then(|work| work.left_out_bodies));
+        checker.set_files_left_to_loader(files_left_to_loader);
         checker.begin_stack_budget();
         checker
     };

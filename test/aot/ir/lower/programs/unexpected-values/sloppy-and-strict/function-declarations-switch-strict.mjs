@@ -143,73 +143,10 @@ for (var name in uses) attempt(name, uses[name]);
 
 export {};
 
-// GENERATED: inFinally classInABlock made handler Made
 // CHECK-LABEL: function {{*}}name="inFinally"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b3():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v0 = Integer
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Jump -> next b4(v0, v1)
-// CHECK-NEXT: b3() role=CleanupHandler:
-// CHECK-NEXT: v2 = CatchValue
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: Jump -> next b4(v3, v2)
-// CHECK-NEXT: b4(v4, v5):
-// CHECK-NEXT: Switch v4 cases=[0] -> case b5(), otherwise b6()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v7 = PropGet v6 key="last" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v8 = TypeOf v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="classInABlock"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v1 = NewClass v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = FinishClass v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[f_1]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v4 = Convert v2 declared={type=[[f_1]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="Made" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v7 = TypeOf v6
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="made"
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="handler"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="handler"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="made"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="made"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

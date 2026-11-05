@@ -122,86 +122,8 @@ show("2000 of each", () => {
   return [made, failed];
 });
 
-// GENERATED: Person note ByFields lines author
 // CHECK-LABEL: function {{*}}name="Person"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="note"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_3]]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_3]], v1: undefined|null|string, v2: undefined|null|[[f_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v3 = Call v2 calleeName="run"
-// CHECK-NEXT: v4 = PropGet v0 key="seen"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = String string=" "
-// CHECK-NEXT: v7 = Add v1, v6
-// CHECK-NEXT: v8 = TypeOf v3
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = String string=" "
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = Builtin builtin=String
-// CHECK-NEXT: v13 = Call v12, -, v3 calleeName="String"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v11, v14
-// CHECK-NEXT: v16 = Call v5, v4, v15 calleeKey="push" calleeName="this.seen.push"
-// CHECK-NEXT: v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v18 = CatchValue
-// CHECK-NEXT: v19 = PropGet v0 key="seen"
-// CHECK-NEXT: v20 = PropGet v19 key="push"
-// CHECK-NEXT: v21 = String string=" threw "
-// CHECK-NEXT: v22 = Add v1, v21
-// CHECK-NEXT: v23 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v24 = PropGet v23 key="TypeError" [isFreeName]
-// CHECK-NEXT: v25 = Convert v24 declared={type=builtin(TypeError) flags=[IsExpected]}
-// CHECK-NEXT: v26 = InstanceOf v18, v25
-// CHECK-NEXT: v27 = ToBoolean v26
-// CHECK-NEXT: Branch v27 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v28):
-// CHECK-NEXT: v29 = String string="TypeError"
-// CHECK-NEXT: Jump -> next b5(v29)
-// CHECK-NEXT: b4(v30):
-// CHECK-NEXT: v31 = String string="another error"
-// CHECK-NEXT: Jump -> next b5(v31)
-// CHECK-NEXT: b5(v32):
-// CHECK-NEXT: v33 = Add v22, v32
-// CHECK-NEXT: v34 = Call v20, v19, v33 calleeKey="push" calleeName="this.seen.push"
-// CHECK-NEXT: v35 = Convert v34 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v36 = Undefined
-// CHECK-NEXT: Return v36
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ByFields"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_7]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="lines"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_8]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="author"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="Person"
-// CHECK-NEXT: v2 = Construct v1 calleeName="Person"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

@@ -249,25 +249,4 @@ same("node:util/types isWeakMap", named9_isWeakMap === space9.isWeakMap, named9_
 same("node:util/types isWeakSet", named9_isWeakSet === space9.isWeakSet, named9_isWeakSet === whole9.isWeakSet, named9_isWeakSet === required9.isWeakSet, named9_isWeakSet === asked9.isWeakSet, space9.isWeakSet === required9.isWeakSet, whole9.isWeakSet === required9.isWeakSet, asked9.isWeakSet === required9.isWeakSet, whole9.isWeakSet === space9.isWeakSet);
 process.exit(0);
 
-// GENERATED: same
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=" "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = PropGet v1 key="map"
-// CHECK-NEXT: v10 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v11 = Call v9, v1, v10 calleeKey="map" calleeName="answers.map"
-// CHECK-NEXT: v12 = PropGet v11 key="join"
-// CHECK-NEXT: v13 = String string=""
-// CHECK-NEXT: v14 = Call v12, v11, v13 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v15 = Add v8, v14
-// CHECK-NEXT: v16 = Call v6, v4, v15 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }

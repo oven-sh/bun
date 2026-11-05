@@ -77,65 +77,8 @@ for (let round = 0; round < 6; round++) {
 
 export {};
 
-// GENERATED: callMethod construct firstKind fillStack unknown
 // CHECK-LABEL: function {{*}}name="callMethod"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="act"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="act" calleeName="holder.act"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="construct"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: v1 = Integer integer=3
-// CHECK-NEXT: v2 = Construct v0, -, v1 calleeName="callee"
-// CHECK-NEXT: v3 = PropGet v2 key="made"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="firstKind"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_2]]
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fillStack"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Add v0, v3
-// CHECK-NEXT: v5 = Integer integer=3
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = NewArray v0, v2, v4, v6 contents=anything
-// CHECK-NEXT: v8 = ToBoolean v0
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v11 = Integer integer=1
-// CHECK-NEXT: v12 = Sub v0, v11
-// CHECK-NEXT: v13 = Call v10, -, v12 calleeName="fillStack"
-// CHECK-NEXT: v14 = PropGet v7 key="length"
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: Jump -> next b3(v15)
-// CHECK-NEXT: b2(v16):
-// CHECK-NEXT: v17 = Integer
-// CHECK-NEXT: Jump -> next b3(v17)
-// CHECK-NEXT: b3(v18):
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="unknown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]]|[[f_5]]|[[f_6]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]]|[[f_5]]|[[f_6]]):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="CustomEvent" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(CustomEvent) flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="unknown"
-// CHECK-NEXT: v5 = NewObject -, v0 layout=[[L_7]] fields=[3]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: v7 = Construct v3, -, v4, v6 calleeName="CustomEvent"
-// CHECK-NEXT: v8 = PropGet v7 key="detail"
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

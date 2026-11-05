@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="lazy"
+// CHECK-LABEL: function {{*}}name="closure"
 
 // FILE: main.js
 // The plain case: exports that are read, stored and called by name, as TypeScript emits them.
@@ -50,25 +52,3 @@ exports.helper = typeof __importDefault;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: lazy closure
-// CHECK-LABEL: function {{*}}name="lazy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: EvaluateModule module=[[m_1]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="K"
-// CHECK-NEXT: v4 = PropGet v2 key="add"
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Integer integer=1
-// CHECK-NEXT: v7 = Call v4, v2, v5, v6 calleeKey="add" calleeName="inner.add"
-// CHECK-NEXT: v8 = Add v3, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="closure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_4]]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

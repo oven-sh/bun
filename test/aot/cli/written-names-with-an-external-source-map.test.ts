@@ -182,7 +182,8 @@ const expected: [label: string, shown: string][] = [
   ["callee that is a variable", `${short} is not a function\\..*`],
   ["constructor that is a variable", `undefined is not a constructor \\(evaluating 'new ${short}'\\)`],
   ["callee that is a member", `${short}\\.keptAbsentN48 is not a function\\..*`],
-  ["right side of instanceof", `${short} is not a function\\. \\(evaluating '${short} instanceof ${short}'\\)`],
+  // The executable holds no text to quote. A call says how its callee is written; `instanceof` says what the engine says before it quotes.
+  ["right side of instanceof", "Object  is not a function"],
 ];
 
 interface SourceMap {

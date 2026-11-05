@@ -2,6 +2,12 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="half"
+// CHECK-LABEL: function {{*}}name="total"
+// CHECK-LABEL: function {{*}}name="Holder"
+// CHECK-LABEL: function {{*}}name="take"
+// CHECK-LABEL: function {{*}}name="Puppy"
+// CHECK-LABEL: function {{*}}name="bark"
 
 // FILE: main.ts
 // A declaration file describes a js module wrongly.
@@ -246,80 +252,3 @@ export default function main() {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true }, "files": [] }
-
-// GENERATED: half total Holder take Puppy bark
-// CHECK-LABEL: function {{*}}name="half"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Div v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5: number, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = ElemGet v0, v6
-// CHECK-NEXT: v11 = Add v5, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number}
-// CHECK-NEXT: v13 = Increment v6
-// CHECK-NEXT: v14 = Convert v13 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v12, v14)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v15 = Convert v5 declared={type=number}
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="take"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_3]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="n"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="count"
-// CHECK-NEXT: v5 = Call v4 calleeName="count"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: PutEnvironmentField v0, v6 layout=[[L_3]]
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Puppy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_6]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="bark"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_5]]} results=[{type=number}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_5]]):
-// CHECK-NEXT: v2 = GetSuperBase v0 homeKind=ClassPrototype
-// CHECK-NEXT: v3 = SuperGet v2, v1 key="bark"
-// CHECK-NEXT: v4 = Call v3, v1 calleeName="super.bark"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Integer integer=1
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=number}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

@@ -280,6 +280,61 @@ const projects: Record<string, Record<string, string>> = {
         console.log("untouched", dep, kind, only, (await import("dep")).only, require("old").kind);
       });`,
   },
+  "a plugin answers for a package that helpers and packages name": {
+    "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js", "type": "module" }`,
+    "node_modules/dep/index.js": `export default "the real dep"; export const kind = "real";`,
+    "node_modules/dep/sub.js": `export default "the real sub";`,
+    "node_modules/old/package.json": `{ "name": "old", "version": "1.0.0", "main": "index.js" }`,
+    "node_modules/old/index.js": `module.exports = { kind: "the real old" };`,
+    "node_modules/user-of-dep/package.json": `{ "name": "user-of-dep", "version": "1.0.0", "main": "index.js", "type": "module" }`,
+    "node_modules/user-of-dep/index.js": `import dep, { kind } from "dep"; export const told = () => "the package says " + dep + " " + kind;`,
+    "helpers/user.js": `import dep, { kind } from "dep"; export const seen = () => dep + " " + kind;`,
+    "helpers/old-user.cjs": `const old = require("old"); exports.seen = () => old.kind;`,
+    "helpers/register.js": `import { plugin } from "bun";
+      export const register = () => plugin({ name: "helper", setup(build) { build.module("dep", () => ({ exports: { default: "the plugin's dep", kind: "virtual" }, loader: "object" })); } });`,
+    "helper.test.js": `${head}
+      import { plugin } from "bun";
+      import { register } from "./helpers/register.js";
+      test("a helper registers the plugin", async () => {
+        register();
+        console.log("helper", (await import("dep")).default, require("dep").kind, (await import("./helpers/user.js")).seen(), (await import("user-of-dep")).told());
+        plugin.clearAll();
+      });`,
+    "old.test.js": `${head}
+      import { plugin } from "bun";
+      test("a CommonJS helper loads behind the plugin", async () => {
+        plugin({ name: "old", setup(build) { build.module("old", () => ({ exports: { kind: "the plugin's old" }, loader: "object" })); } });
+        console.log("old", require("./helpers/old-user.cjs").seen(), (await import("./helpers/old-user.cjs")).seen());
+        plugin.clearAll();
+      });`,
+    "helpers/file.js": `export default "the real file";`,
+    "resolve.test.js": `${head}
+      import { plugin } from "bun";
+      test("a filter takes the name of a package, the path of a file and a name of the library", async () => {
+        plugin({ name: "resolve", setup(build) {
+          build.onResolve({ filter: /^dep$|file\\.js$/ }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onResolve({ filter: /^os$/, namespace: "node" }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ exports: { default: "the plugin's " + args.path, kind: "virtual" }, loader: "object" }));
+        } });
+        console.log("resolve", (await import("dep")).default, require("dep").kind, (await import("./helpers/file.js")).default, (await import("node:os")).default, require("node:os").default);
+        plugin.clearAll();
+      });`,
+    "constant.test.js": `${head}
+      import { plugin } from "bun";
+      const name = "dep";
+      test("the name of the module stands behind a constant", async () => {
+        plugin({ name: "constant", setup(build) { build.module(name, () => ({ exports: { default: "the plugin's dep", kind: "virtual" }, loader: "object" })); } });
+        console.log("constant", (await import("dep")).default, require("dep").kind);
+        plugin.clearAll();
+      });`,
+    "sub.test.js": `${head}
+      import { plugin } from "bun";
+      test("a file of the package", async () => {
+        plugin({ name: "sub", setup(build) { build.module("dep/sub.js", () => ({ exports: { default: "the plugin's sub" }, loader: "object" })); } });
+        console.log("sub", (await import("dep/sub.js")).default, require("dep/sub.js").default, (await import("dep")).default);
+        plugin.clearAll();
+      });`,
+  },
   "a module that a plugin answers for only later": {
     "later.test.js": `${head}
       import { plugin } from "bun";
@@ -796,6 +851,7 @@ const wrongAsOneProgram = [
   "modules that a plugin answers for",
   "names that only the onResolve of a plugin answers for",
   "a plugin answers for a package that exists",
+  "a plugin answers for a package that helpers and packages name",
   "a module that a plugin answers for only later",
   "a query makes one more instance of a file",
   "mock.module of a file that does not exist",

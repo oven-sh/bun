@@ -463,6 +463,7 @@ pub(crate) mod js_bundler {
         aot: bool,
         explain: Vec<Vec<u8>>,
         check: Vec<Vec<u8>>,
+        harden: Vec<Vec<u8>>,
         testing: Vec<Vec<u8>>,
         out: Vec<Vec<u8>>,
         omits_function_source: bool,
@@ -522,6 +523,7 @@ pub(crate) mod js_bundler {
             compile: JSValue,
         ) -> JsResult<()> {
             self.check = read_names(global_this, compile, "aotCheck")?;
+            self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
             self.out = read_names(global_this, compile, "aotOut")?;
             Ok(())
@@ -560,6 +562,7 @@ pub(crate) mod js_bundler {
             &'a self,
             compile: &'a CompileOptions,
             source_map: options::SourceMapOption,
+            checks_types: bool,
         ) -> CompileFlags<'a> {
             CompileFlags {
                 is_executable: true,
@@ -573,6 +576,7 @@ pub(crate) mod js_bundler {
                 has_external_source_map: source_map == options::SourceMapOption::External,
                 admits_inspector: self.admits_inspector,
                 allows_code_from_disk: self.allows_code_from_disk,
+                checks_types,
                 trim: TrimFlags {
                     removes_unused: self.removes_unused,
                     allow: self.allow.iter().map(Vec::as_slice).collect(),
@@ -587,6 +591,7 @@ pub(crate) mod js_bundler {
                 },
                 // In the order of the command line's flags.
                 developer_words: with_key("check", &self.check)
+                    .chain(with_key("harden", &self.harden))
                     .chain(with_key("testing", &self.testing))
                     .chain(with_key("out", &self.out))
                     .collect(),
@@ -1662,9 +1667,9 @@ pub(crate) mod js_bundler {
                 this.compile.as_ref().map(|c| c.compile_target),
             )? {
                 let compile = this.compile.insert(compile);
-                let settings =
-                    compile_options::resolve(&raw.compile_flags(compile, this.source_map))
-                        .map_err(|error| throw_option_error(global_this, error))?;
+                let flags = raw.compile_flags(compile, this.source_map, this.check);
+                let settings = compile_options::resolve(&flags)
+                    .map_err(|error| throw_option_error(global_this, error))?;
                 compile.aot = settings.aot;
                 compile.trim = settings.trim;
             }

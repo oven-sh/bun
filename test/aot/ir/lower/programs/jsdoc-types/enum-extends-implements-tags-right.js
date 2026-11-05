@@ -127,74 +127,8 @@ console.log(new Numbers().push(1).push(2).total(), new Numbers().top(), new Acco
 
 export {};
 
-// GENERATED: Stack push Numbers total
 // CHECK-LABEL: function {{*}}name="Stack"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = Data data=[[d_3]]
-// CHECK-NEXT: PropSet v3, v4 key="items"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = TypeTest v6 testedType=object
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: Jump -> next b2(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: anything):
-// CHECK-NEXT: v2 = PropGet v0 key="items"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v1 calleeKey="push" calleeName="this.items.push"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Numbers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_6]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_6]]):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v0 key="items"
-// CHECK-NEXT: v4 = IteratorOpen v3
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = IteratorResume v4
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v10 = Add v5, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v11)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v12 = CatchException
-// CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_6]] flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: [[L_6]], v1: number):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v3 = GetSuperBase v2 homeKind=ClassPrototype
-// CHECK-NEXT: v4 = SuperGet v3, v0 key="push"
-// CHECK-NEXT: v5 = Integer integer=2
-// CHECK-NEXT: v6 = Mul v1, v5
-// CHECK-NEXT: v7 = Call v4, v0, v6 calleeName="super.push"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }

@@ -5,14 +5,15 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // One executable for all cases. Two packages with the same text start the workers: the build gets the files of `passed` the way
-// the error for those of `left-out` says to pass them.
+// the error for those of `left-out` says to pass them. The paths come out of the environment of the run: a path that the text of
+// the package spells, or begins, the build finds by itself.
 const cure = (file: string) =>
   ` (entry point). It isn't in this executable, which only runs code that was compiled into it. If it is a file of your project, pass ${file} to bun compile as another entry point.`;
 
 const startsWorkers = `import * as threads from "node:worker_threads";
 export const starts = {
-  "Worker": () => new Worker(new URL("./lib/web.js", import.meta.url)),
-  "threads.Worker": () => new threads.Worker(new URL("./lib/node.js", import.meta.url)),
+  "Worker": () => new Worker(new URL(process.env.FILE_OF_WEB, import.meta.url)),
+  "threads.Worker": () => new threads.Worker(new URL(process.env.FILE_OF_NODE, import.meta.url)),
 };
 `;
 const packageOf = (name: string) => ({
@@ -50,7 +51,8 @@ process.exit(0);
     const entryPoints = ["main.js", "./node_modules/passed/lib/web.js", "./node_modules/passed/lib/node.js"];
     const build = [bunExe(), "build", "--compile", "--aot", ...entryPoints, "--outfile", "compiled"];
     expect((await run(build, cwd, bunEnv)).exitCode).toBe(0);
-    return (await run([join(cwd, "compiled")], cwd, bunEnv)).stdout.split("\n").filter(line => line.startsWith("SEEN"));
+    const env = { ...bunEnv, FILE_OF_WEB: "./lib/web.js", FILE_OF_NODE: "./lib/node.js" };
+    return (await run([join(cwd, "compiled")], cwd, env)).stdout.split("\n").filter(line => line.startsWith("SEEN"));
   })());
 
 test.each([

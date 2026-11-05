@@ -148,6 +148,8 @@ pub(super) struct Binder<'f, 's> {
     f: &'f File<'s>,
     options: BindOptions,
     atoms: &'f dyn crate::atom::Intern,
+    /// `bind_below_defines`
+    names_in_place: &'f [(Atom, Atom)],
     b: BoundBuilder,
     tables: Vec<Table>,
     /// For `Table::insert`.
@@ -263,12 +265,13 @@ impl<'f, 's> Binder<'f, 's> {
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
-        Self::run_in(f, options, atoms, &mut Buffers::default())
+        Self::run_in(f, options, &[], atoms, &mut Buffers::default())
     }
 
     pub(super) fn run_in(
         f: &'f File<'s>,
         options: BindOptions,
+        names_in_place: &'f [(Atom, Atom)],
         atoms: &'f dyn crate::atom::Intern,
         buffers: &mut Buffers,
     ) -> BoundBuilder {
@@ -342,6 +345,7 @@ impl<'f, 's> Binder<'f, 's> {
             f,
             options,
             atoms,
+            names_in_place,
             b,
             tables: std::mem::take(&mut buffers.tables),
             spare_names: std::mem::take(&mut buffers.spare_names),

@@ -9,5 +9,5 @@ if (exports.run === 1) {
   console.log(exports.run, again.run, exports.isMain, again.isMain, exports.isNotMain, again.isNotMain);
 }
 /* Build errors:
-error: TS100159: bun compile does not support a query string in an import path: "./entry-point-required-once-more-under-a-query.cjs?again"
+error: TS100159: bun compile can't load "./entry-point-required-once-more-under-a-query.cjs?again": a query string works on an import of code, not in require(), on a data file, or as ?raw or ?url. Drop the query. Under bun run --aot, --aot-allow-code-from-disk loads it as bun run does
 */

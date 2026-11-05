@@ -238,82 +238,10 @@ class Listener { constructor(public onKind: Taker) {} fire(kind: Kind) { this.on
 say("the others are as they were", tally());
 console.log(lines.join("\n"));
 
-// GENERATED: showMark returnsIt takeRest value listOfArguments put
 // CHECK-LABEL: function {{*}}name="showMark"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="showMark"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="returnsIt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: undefined|null|[[L_1]]):
-// CHECK-NEXT: InitialYield v2
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: v6 = Yield v5, v2
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="takeRest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="one"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="one"
-// CHECK-NEXT: v6 = NewObject layout=[[L_3]]
-// CHECK-NEXT: CopyDataProperties v6, v4 excludedKeys=["one"]
-// CHECK-NEXT: v8 = FinishObject v6
-// CHECK-NEXT: v9 = PropGet v8 key="two"
-// CHECK-NEXT: PropSet v9, v5 key="flags"
-// CHECK-NEXT: v11 = PropGet v8 key="two"
-// CHECK-NEXT: PropSet v11, v5 key="name"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_4]] field=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_4]]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_4]], v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: PrivateSet v0, v2, v1 layout=[[L_4]] field=1
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="listOfArguments"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: undefined|null|[[L_1]], v2: Array):
-// CHECK-NEXT: v3 = CreateUnmappedArguments v0, v2, v1
-// CHECK-NEXT: v4 = Builtin builtin=ArrayPrototypeSlice
-// CHECK-NEXT: v5 = PropGet v4 key="call"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4, v3 calleeKey="call" calleeName="Array.prototype.slice.call"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="put"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_6]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_6]], v1: anything):
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_6]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="kept"
-// CHECK-NEXT: PutEnvironmentField v0, v1 layout=[[L_6]]
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

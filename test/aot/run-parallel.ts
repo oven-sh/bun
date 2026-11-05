@@ -38,6 +38,8 @@
 //                                      stop at the same error agree and show nothing
 //   // Todo: <why>                     it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
 //                                      `// Todo: Not every time: <why>`: it is skipped either way
+//                                      No `Todo` of any kind stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
+//                                      a failed assertion and an internal compiler error fail the program whatever it is marked with
 //   // Todo on win32 x64: <why>        the same where process.platform and process.arch are those two, and nothing anywhere else. There it goes before a `// Todo:`
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
@@ -218,8 +220,6 @@ const environment = {
   // A Bun that a signal ends starts a command that sends a report. It goes where scripts/runner.node.ts says, or nowhere.
   ...(!inherited.BUN_CRASH_REPORT_URL && { BUN_ENABLE_CRASH_REPORTING: "0" }),
   ...(isASAN && {
-    // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas: it would see no string, Vector or hash table.
-    Malloc: "1",
     // The slow unwinder aborts in a frame of compiled code and cuts the report off.
     ASAN_OPTIONS:
       (inherited.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0") +
@@ -607,11 +607,17 @@ const shown = (output: Output) => ({
 
 const withoutLinesOfImage = (stderr: string) => stderr.replace(/^\[aot\] .*\r?\n/gm, "");
 
+/** What no mark stands for. A `Todo` says that a program answers otherwise than its reference, or that its build refuses it: not that something dies. */
+const deathOf = ({ signal, overLimit, stderr }: Output) =>
+  signal ??
+  overLimit ??
+  /^.*(?:internal compiler error \(|ERROR: AddressSanitizer|ASSERTION FAILED|panicked at ).*$/m.exec(stderr)?.[0];
+
 const waysLeft = new Map<string, number>();
 const verdicts = new Map<string, Record<string, unknown>[]>();
 /** A file has one verdict: of the ways that fail the first build, or else whichever failed first; or else the first. */
 function settle(program: Program, verdict: Record<string, unknown>) {
-  if (program.todoOfWay !== undefined)
+  if (program.todoOfWay !== undefined && !verdict.died)
     verdict =
       verdict.state === "fail" || program.todoOfWay.startsWith("Not every time:")
         ? { state: "todo" }
@@ -625,7 +631,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   if (all.length < waysLeft.get(program.file)!) return;
   const sum = (name: string) => all.reduce((total, verdict) => total + Number(verdict[name] ?? 0), 0);
   const failed = all.some(({ state }) => state === "fail");
-  if (program.todo !== undefined) {
+  if (program.todo !== undefined && !all.some(({ died }) => died)) {
     if (failed || moreFlags.length || program.todo.startsWith("Not every time:")) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}` });
@@ -640,7 +646,8 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   }
   hasFailed ||= failed;
   say({
-    ...(all.find(({ state, way }) => state === "fail" && way === "compiled") ??
+    ...(all.find(({ died }) => died) ??
+      all.find(({ state, way }) => state === "fail" && way === "compiled") ??
       all.find(({ state }) => state === "fail") ?? {
         ...all.find(({ state }) => state !== "todo"),
         compileMs: sum("compileMs"),
@@ -661,6 +668,7 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
     state: "fail",
     stage,
     message: program.way === "compiled" ? message : `${program.way}: ${message}`,
+    died: actual && deathOf(actual),
     expected: expected && shown(actual ? leavingOutTheSame(expected, actual) : expected),
     actual: actual && shown(expected ? leavingOutTheSame(actual, expected) : actual),
   });

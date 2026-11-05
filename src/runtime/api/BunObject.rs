@@ -751,9 +751,8 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
     };
 
     // mimalloc's scavenger sweeps this thread's heaps while it sleeps, as it does across the event loop's poll.
-    let gives_memory_back = !bun_threading::thread_pool::is_build_under_way();
     // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
-    let handed_off = gives_memory_back && unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
+    let handed_off = unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
     std::thread::sleep(core::time::Duration::from_millis(duration));
     if handed_off {
         bun_alloc::mimalloc::mi_on_thread_idle_end();

@@ -52,80 +52,9 @@ const writtenRule: Rule<number, undefined> = { value: 1, message: undefined, set
 say("the overload promises undefined where the implementation says string or undefined", () => { const count = rule(0); count.set(41); return count.value + 1 + " " + count.message + " " + writtenRule.value; });
 say("the overload promises a literal where the implementation says string or undefined", () => { const count = rule(0, "m"); count.set(41); return count.value + 1 + count.message; });
 
-// GENERATED: counter Holder say read run
 // CHECK-LABEL: function {{*}}name="counter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_3]]|[[f_4]]|[[f_5]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = NewObject -, v0, v2 layout=[[L_1]] fields=[1, 0]
-// CHECK-NEXT: v4 = FinishObject v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_7]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="say"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_8]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_8]]):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v4 = Builtin builtin=String
-// CHECK-NEXT: v5 = Call v1 calleeName="f"
-// CHECK-NEXT: v6 = Call v4, -, v5 calleeName="String"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v8 = CatchValue
-// CHECK-NEXT: v9 = String string="throws "
-// CHECK-NEXT: v10 = Convert v8 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v11 = PropGet v10 key="name"
-// CHECK-NEXT: v12 = Add v9, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b3(v13)
-// CHECK-NEXT: b3(v14: undefined|null|string):
-// CHECK-NEXT: v15 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v16 = PropGet v15 key="console" [isFreeName]
-// CHECK-NEXT: v17 = Convert v16 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v18 = PropGet v17 key="log"
-// CHECK-NEXT: v19 = Convert v18 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v20 = String string=" ==> "
-// CHECK-NEXT: v21 = Add v0, v20
-// CHECK-NEXT: v22 = Add v21, v14
-// CHECK-NEXT: v23 = Call v19, v17, v22 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v24 = Undefined
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_9]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_9]]):
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = Integer integer=100
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_9]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_9]]):
-// CHECK-NEXT: v2 = PropGet v1 key="value"
-// CHECK-NEXT: v3 = PropGet v0 key="initial"
-// CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

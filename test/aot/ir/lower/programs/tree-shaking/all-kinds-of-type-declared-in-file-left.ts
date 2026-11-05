@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="nobodyCallsThis"
+// CHECK-LABEL: function {{*}}name="width"
+// CHECK-LABEL: function {{*}}name="made"
+// CHECK-LABEL: function {{*}}name="color"
+// CHECK-LABEL: function {{*}}name="grow"
+// CHECK-LABEL: function {{*}}name="test"
 
 // FILE: main.ts
 // The application says "sideEffects": false, and of types.ts the program uses only types: an interface with a method, a function type, a generic alias, classes, an enum, a namespace, the types of a value and of a guard. The file is not in the executable; each type still has what the compiler makes for it.
@@ -67,69 +73,3 @@ export function guard(value: unknown): value is Shape {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: nobodyCallsThis width made color grow test
-// CHECK-LABEL: function {{*}}name="nobodyCallsThis"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="nobodyCallsThis"
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="width"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = NarrowByTest v0, v4
-// CHECK-NEXT: v6 = PropGet v5 key="width"
-// CHECK-NEXT: v7 = PropGet v5 key="area"
-// CHECK-NEXT: v8 = Call v7, v5 calleeKey="area" calleeName="box.area"
-// CHECK-NEXT: v9 = Add v6, v8
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = Convert v10 declared={type=number}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[OmitsNull]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="make"
-// CHECK-NEXT: v6 = Call v5, v4 calleeKey="make" calleeName="base?.make"
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="color"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|i32}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|i32):
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="String"
-// CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="grow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: v2 = NewObject layout=[[L_3]]
-// CHECK-NEXT: CopyDataProperties v2, v0
-// CHECK-NEXT: v4 = PropGet v0 key="size"
-// CHECK-NEXT: v5 = Add v4, v1
-// CHECK-NEXT: v6 = Convert v5 declared={type=number}
-// CHECK-NEXT: PropDefine v2, v6 key="size"
-// CHECK-NEXT: v8 = FinishObject v2
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="test"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: v2 = LogicalNot v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

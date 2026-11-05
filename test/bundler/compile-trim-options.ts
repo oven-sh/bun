@@ -58,7 +58,6 @@ export const obeyed: Record<string, string[]> = {
   "--aot-graph-fd": ["--aot-graph-fd=9"],
   "--aot-checked": ["--aot-checked=-"],
   "--aot-decode-crash-report": ["--aot-decode-crash-report=x"],
-  "--aot-crash-report-dir": ["--aot-crash-report-dir=reports"],
   "--inspect": ["--inspect", "--inspect=127.0.0.1:0"],
   "--inspect-wait": ["--inspect-wait=127.0.0.1:0"],
   "--inspect-brk": ["--inspect-brk=127.0.0.1:0"],

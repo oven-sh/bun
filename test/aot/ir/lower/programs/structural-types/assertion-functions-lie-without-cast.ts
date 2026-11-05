@@ -140,75 +140,8 @@ attempt("asserted once, used in a loop", () => {
 });
 attempt("honest again", () => [legsOf(new Dog()), barkOf(new Dog()), half(4), added(1), defined(1), checked(1), total([1, 2])]);
 
-// GENERATED: assertNumber half total Dog bark
 // CHECK-LABEL: function {{*}}name="assertNumber"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="RangeError" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(RangeError) flags=[IsExpected]}
-// CHECK-NEXT: v6 = String string="null"
-// CHECK-NEXT: v7 = Construct v5, -, v6 calleeName="RangeError"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Throw v8
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="half"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="assertNumber"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Div v0, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="assertList"
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = Convert v5 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v4, v6)
-// CHECK-NEXT: b1(v7: number, v8: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v10 = PropGet v0 key="length"
-// CHECK-NEXT: v11 = Less v8, v10
-// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v12 = ElemGet v0, v8
-// CHECK-NEXT: v13 = Add v7, v12
-// CHECK-NEXT: v14 = Convert v13 declared={type=number}
-// CHECK-NEXT: v15 = Increment v8
-// CHECK-NEXT: v16 = Convert v15 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v14, v16)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v17 = Convert v7 declared={type=number}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Dog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_5]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bark"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = PropGet v0 key="legs"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

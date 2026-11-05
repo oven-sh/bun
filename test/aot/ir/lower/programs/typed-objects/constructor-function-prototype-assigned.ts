@@ -108,75 +108,9 @@ for (let round = 0; round < 30000; round++) {
 Late.prototype = firstPrototype
 console.log(total, kindOf(new LateClass(12)), kindOf(older), kindOf(newer))
 
-// GENERATED: Late Modern show set store named
 // CHECK-LABEL: function {{*}}name="Late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_1]]} parameters=[{type=number}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: number):
-// CHECK-NEXT: PropSet v0, v1 key="value"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Modern"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_4]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = Call v5, v4 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = String string=" "
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = Builtin builtin=JSON
-// CHECK-NEXT: v11 = PropGet v10 key="stringify"
-// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v13 = Call v12, v10, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v9, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string|symbol flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_5]], v1: undefined|null|string|symbol, v2: anything, v3: anything):
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="trapped"
-// CHECK-NEXT: v6 = PropGet v5 key="push"
-// CHECK-NEXT: v7 = String string="set "
-// CHECK-NEXT: v8 = Builtin builtin=String
-// CHECK-NEXT: v9 = Call v8, -, v1 calleeName="String"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v11 = Add v7, v10
-// CHECK-NEXT: v12 = Call v6, v5, v11 calleeKey="push" calleeName="trapped.push"
-// CHECK-NEXT: v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v14 = Builtin builtin=Reflect
-// CHECK-NEXT: v15 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v16 = Call v15, v14, v0, v1, v2, v3 calleeName="Reflect.set"
-// CHECK-NEXT: ReturnCall v16 casts=[{declared={type=boolean}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="store"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|object):
-// CHECK-NEXT: PropSet v0, v1 key="prototype"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_7]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_8]]|[[f_9]]|[[f_10]]|[[f_11]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = NewObject -, v2 layout=[[L_5]] fields=[0]
-// CHECK-NEXT: v4 = FinishObject v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

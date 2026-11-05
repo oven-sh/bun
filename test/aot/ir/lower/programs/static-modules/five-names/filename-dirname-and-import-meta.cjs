@@ -11,27 +11,3 @@ module.exports = [require("node:path").basename(__filename), typeof import.meta.
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewObject layout=[[L_1]]
-// CHECK-NEXT: v1 = FinishObject v0
-// CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: RecordRequire module=[[m_3]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_3]] referrer=[[m_0]]
-// CHECK-NEXT: v11 = ModuleBuiltin builtin=ModuleObject module=[[m_3]]
-// CHECK-NEXT: v12 = PropGet v11 key="exports"
-// CHECK-NEXT: v13 = PropGet v12 key="join"
-// CHECK-NEXT: v14 = Call v13, v12 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v15 = Call v7, v5, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }

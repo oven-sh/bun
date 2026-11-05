@@ -269,18 +269,37 @@ fn last_compiled_jsx_pragma_wins_with_unusable_argument() {
 
 #[test]
 fn compiled_jsx_runtime_names() {
-    for (name, classic) in [
-        ("classic", Some(true)),
-        ("react", Some(true)),
-        ("automatic", Some(false)),
-        ("react-jsx", Some(false)),
-        ("react-jsxdev", Some(false)),
-        ("Classic", None),
-        ("preserve", None),
+    for (name, classic, is_development) in [
+        ("classic", Some(true), None),
+        ("react", Some(true), None),
+        ("automatic", Some(false), None),
+        ("react-jsx", Some(false), Some(false)),
+        ("react-jsxdev", Some(false), Some(true)),
+        ("Classic", None, None),
+        ("React-jsx", None, None),
+        ("preserve", None, None),
     ] {
         let text = format!("// @jsxRuntime {name}\na;");
-        assert_eq!(jsx_pragmas(&text, tsx(true)).0, classic, "{name}");
+        let pragmas = parsed(&text, tsx(true)).unwrap().jsx_pragmas;
+        let found = (pragmas.classic, pragmas.is_development);
+        assert_eq!(found, (classic, is_development), "{name}");
     }
+}
+
+#[test]
+fn last_compiled_jsx_runtime_decides_alone() {
+    for (first, last, is_development) in [
+        ("react-jsxdev", "react-jsx", Some(false)),
+        ("react-jsx", "react-jsxdev", Some(true)),
+        ("react-jsxdev", "automatic", None),
+        ("react-jsxdev", "preserve", None),
+    ] {
+        let text = format!("// @jsxRuntime {first}\n// @jsxRuntime {last}\na;");
+        let pragmas = parsed(&text, tsx(true)).unwrap().jsx_pragmas;
+        assert_eq!(pragmas.is_development, is_development, "{text}");
+    }
+    let checked = parsed("/* @jsxRuntime react-jsxdev */ a;", tsx(false)).unwrap();
+    assert_eq!(checked.jsx_pragmas, JsxPragmas::default());
 }
 
 #[test]
@@ -318,6 +337,146 @@ fn checked_file_reads_jsx_pragmas_like_tsc() {
         ("/* @jsxRuntime react */ a;", none),
     ];
     assert_jsx_pragmas(&[tsx(false), javascript(false, false)], &cases);
+}
+
+/// A line: what this program prints under `bun run` and as an executable of `bun build --compile`, then its comments. Its tsconfig.json says "jsx": "react".
+///
+/// ```js
+/// let ran = 0;
+/// function mark() { ran++; }
+/// const pick = (name) => (tag) => (tag === "a" ? name : tag);
+/// const React = { createElement: pick("createElement"), Fragment: "Fragment" };
+/// const h = pick("h"), g = pick("g"), F = "F";
+/// /* the comments */ mark();
+/// console.log(ran, <a />, <></>);
+/// ```
+///
+/// `jsxDEV` of `./tiny/jsx-dev-runtime` answers with that name. Where a line has fewer words the program has fewer elements: their factory would be no name.
+const READ_BY_BUN_RUN: &str = r"
+0 | /* @__PURE__ */
+0 | /* #__PURE__ */
+0 | /*@__PURE__*/
+0 | /* text @__PURE__ */
+0 | /* @other @__PURE__ */
+1 | /* @__PURE__x */
+0 | /* @__PURE__. */
+1 | /* @ __PURE__ */
+0 | /* @@__PURE__ */
+1 | /* __PURE__ */
+1 | /* @jsx @__PURE__ */
+1 | /* @jsxFrag @__PURE__ */
+1 | /* @jsxImportSource #__PURE__ */
+1 | /* @jsxRuntime @__PURE__ */
+1 | /* #jsx @__PURE__ */
+0 h Fragment | /* @jsx h @__PURE__ */
+1 | /* @jsx        @__PURE__ */
+0 | /* @jsx         @__PURE__ */
+1 | /* @jsx\t@__PURE__ */
+0 | /* @jsx\n@__PURE__ */
+0 | /* @jsx: @__PURE__ */
+0 | /* @jsxy @__PURE__ */
+0 | /* @JSX @__PURE__ */
+1 | /* @jsx a@__PURE__ */
+1 | /* @jsx h @jsxFrag @__PURE__ */
+0 | /* @jsx @__PURE__ @__PURE__ */
+0 h Fragment | /* @__PURE__ @jsx h */
+0 | /* @jsx @__PURE__ */ /* @__PURE__ */
+0 createElement Fragment | /* @jsx */ /* @__PURE__ */
+1 | /*# sourceMappingURL=a@__PURE__ */
+0 | /*# sourceMappingURL=a @__PURE__ */
+1 | /*@ sourceMappingURL=a@__PURE__ */
+0 | /*# sourceMappingURL= @__PURE__ */
+1 | /*# sourceMappingURL=@__PURE__ */
+0 | /*#sourceMappingURL=a@__PURE__ */
+0 | /*#  sourceMappingURL=a@__PURE__ */
+0 | /*# sourceMappingURL=é@__PURE__ */
+0 | /*# sourceMappingURL=a\t@__PURE__ */
+0 | /*# sourceMappingURL=a\n@__PURE__ */
+0 | /*# sourceURL=a@__PURE__ */
+0 | /*# sourcemappingurl=a@__PURE__ */
+0 | // @__PURE__\n
+0 | //@__PURE__\n
+0 | // #__PURE__\n
+0 | //\t@__PURE__\n
+1 | //\u{a0}@__PURE__\n
+1 | // text @__PURE__\n
+1 | // @other @__PURE__\n
+1 | // @jsx @__PURE__\n
+0 h Fragment | // @__PURE__ @jsx h\n
+1 | //# sourceMappingURL=a @__PURE__\n
+1 | // @__PURE__x\n
+1 h Fragment | // @jsx h\n
+1 h Fragment | /* @jsx h */
+1 createElement Fragment | //# sourceMappingURL=map@jsx h\n
+1 h Fragment | //# sourceMappingURL=map @jsx h\n
+1 createElement Fragment | /*# sourceMappingURL=map@jsx h */
+1 createElement Fragment | //@ sourceMappingURL=map@jsx h\n
+1 createElement Fragment | //# sourceMappingURL=@jsx h\n
+1 createElement Fragment | //# sourceMappingURL=map#jsx h\n
+1 h Fragment | //#sourceMappingURL=map@jsx h\n
+1 h Fragment | //# sourceMappingURL=é@jsx h\n
+1 createElement Fragment | //# sourceMappingURL=map@jsxFrag F\n
+1 h F | // @jsx h @jsxFrag F\n
+1 createElement Fragment | /* @jsxImportSource @jsx h */
+1 h Fragment | /* @jsxImportSource    @jsx h */
+1 h Fragment | /* @jsxImportSource     @jsx h */
+1 createElement Fragment | /* @jsxRuntime @jsx h */
+1 g Fragment | // @jsx h\n// @jsx g\n
+1 createElement Fragment | // @jsx h\n// @jsx \n
+1 h Fragment | /* @jsx h\n*/
+1 h Fragment | /* @jsx h*/
+1 g Fragment | // @jsx h@jsxFrag F\n// @jsx g\n
+1 createElement Fragment | /* @jsxImportSource   @jsx h */
+1 createElement F | // @jsxFrag F\n
+1 createElement Fragment | // @jsxFragment F\n
+1 createElement Fragment | // @jsx-h h\n
+1 h Fragment | // @jsx\u{a0}h\n
+1 h Fragment | /* @jsx h\u{a0}g */
+1 h Fragment | // @jsx h\r\n
+1 h Fragment | /*@jsx h*/
+0 h Fragment | /**\n * @jsx h\n * @__PURE__\n */
+1 h Fragment | // #jsx h\n
+1 g Fragment | // @jsx h // @jsx g\n
+1 h Fragment | // @@jsx h\n
+1 h Fragment | // a@jsx h\n
+1 | /* @jsxRuntime        @__PURE__ */
+0 | /* @jsxRuntime         @__PURE__ */
+1 | /* @jsx @__PURE__*/
+1 | /*# sourceMappingURL=a@__PURE__*/
+1 | /* @jsx a */ /* b */
+0 | /* @jsx @__PURE__ */ // @__PURE__\n
+0 | // @jsx @__PURE__\n/* @__PURE__ */
+1 ./tiny/jsx-dev-runtime | // @jsxRuntime automatic @jsxImportSource ./tiny\n
+1 createElement | // @jsxImportSource ./tiny\n//# sourceMappingURL=a@jsxRuntime automatic\n
+1 ./tiny/jsx-dev-runtime | // @jsxImportSource ./tiny\n//# sourceMappingURL=a @jsxRuntime automatic\n
+1 ./tiny/jsx-dev-runtime | // @jsxRuntime automatic\n// @jsxImportSource ./tiny\n//# sourceMappingURL=a@jsxImportSource ./none\n
+";
+
+#[test]
+fn comments_are_walked_like_bun_run() {
+    for line in READ_BY_BUN_RUN.trim().lines() {
+        let (printed, comments) = line.split_once(" | ").unwrap();
+        let comments = (comments.replace("\\n", "\n").replace("\\r", "\r")).replace("\\t", "\t");
+        let text = format!("{} mark();", comments.replace("\\u{a0}", "\u{a0}"));
+        let options = javascript(true, false);
+        let file = parsed(&text, options).unwrap();
+        let ran = file.calls.iter().filter(|call| !call.is_pure).count();
+        let (classic, [factory, fragment, import_source]) = jsx_pragmas(&text, options);
+        let or = |written: String, default: &str| match written.is_empty() {
+            true => default.to_owned(),
+            false => written,
+        };
+        let answer = match classic {
+            Some(false) => format!("{ran} {import_source}/jsx-dev-runtime"),
+            _ => {
+                let fragment = or(fragment, "Fragment");
+                format!("{ran} {} {fragment}", or(factory, "createElement"))
+            }
+        };
+        let word_count = printed.split(' ').count();
+        let words: Vec<&str> = answer.split(' ').take(word_count).collect();
+        assert_eq!(words.join(" "), printed, "{line}");
+    }
 }
 
 #[test]

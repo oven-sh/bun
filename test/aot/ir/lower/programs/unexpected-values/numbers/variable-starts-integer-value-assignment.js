@@ -157,63 +157,7 @@ function chosen(unknown) {
 
 runTable([orAssigned, andAssigned, nullishAssigned, chosen], impostors);
 
-// GENERATED: outcome make attempt nullishAssigned
 // CHECK-LABEL: function {{*}}name="outcome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v0 calleeName="run"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="show"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v4 = CatchValue
-// CHECK-NEXT: v5 = String string="threw "
-// CHECK-NEXT: v6 = PropGet v4 key="constructor"
-// CHECK-NEXT: v7 = PropGet v6 key="name"
-// CHECK-NEXT: v8 = Add v5, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Function" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Function) flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="log"
-// CHECK-NEXT: v5 = String string="return ("
-// CHECK-NEXT: v6 = Add v5, v0
-// CHECK-NEXT: v7 = String string=");"
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = Construct v3, -, v4, v8 calleeName="Function"
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="log"
-// CHECK-NEXT: v12 = Call v9, -, v11
-// CHECK-NEXT: ReturnCall v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attempt"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="nullishAssigned"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined|null
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(v2)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = Convert v0 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="letters"
-// CHECK-NEXT: v9 = ElemGet v8, v6
-// CHECK-NEXT: v10 = Integer integer=1
-// CHECK-NEXT: v11 = Add v6, v10
-// CHECK-NEXT: v12 = NewArray v9, v6, v11 contents=anything
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

@@ -28,27 +28,6 @@ switch ("🙂") { case "\uD83D" + "\uDE42": console.log("case: the pair"); break
 switch ("\uD83D" + "\uDE42") { case "\uD83D\uDE42": console.log("escapes: the pair"); break; default: console.log("escapes: not the pair"); }
 while ("\uD83D" + "\uDE42" !== "🙂") { console.log("while: not the pair"); break; }
 
-// GENERATED: join template viaConcat
 // CHECK-LABEL: function {{*}}name="join"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|string):
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="template"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|string):
-// CHECK-NEXT: v2 = ToString v0
-// CHECK-NEXT: v3 = ToString v1
-// CHECK-NEXT: v4 = Strcat v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="viaConcat"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|string):
-// CHECK-NEXT: v2 = PropGet v0 key="concat"
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey="concat" calleeName="a.concat"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

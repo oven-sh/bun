@@ -53,6 +53,11 @@ export function locate(file: string): string {
   return fs.existsSync(forCompiler) ? forCompiler : path.join(BASE, file);
 }
 
+/** The module that `text` holds a part of, if `text` has a line that says so. */
+export function findModuleHeldInPart(text: string): string | undefined {
+  return /^\/\* part of: (\S+) \*\/$/m.exec(text)?.[1];
+}
+
 /** `aot_engine_functions.json`, which src/codegen/builtins/index.ts writes: JavaScriptCore's own functions, as the compiler reads them. */
 export interface EngineFunctions {
   files: { name: string; text: string }[];

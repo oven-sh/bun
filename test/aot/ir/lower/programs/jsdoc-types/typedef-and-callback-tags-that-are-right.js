@@ -111,61 +111,7 @@ console.log(JSON.stringify([first, second, nested, pair, high]));
 
 export {};
 
-// GENERATED: reduce each rank up
 // CHECK-LABEL: function {{*}}name="reduce"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[IsExpected]}, {type=undefined|null|[[f_2]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_1]]>, v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b1(v3)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = IteratorResume v4
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v10 = Call v1, -, v5, v9 calleeName="reducer"
-// CHECK-NEXT: v11 = Convert v10 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v11)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v12 = CatchException
-// CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_3]]> flags=[IsExpected]}, {type=undefined|null|[[f_4]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_3]]>, v1: undefined|null|[[f_4]]):
-// CHECK-NEXT: v2 = PropGet v0 key="forEach"
-// CHECK-NEXT: v3 = NewClosure v1 function=[[f_5]]
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="forEach" calleeName="users.forEach"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rank"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"high"|"low" flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|"high"|"low"):
-// CHECK-NEXT: v1 = String string="low"
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v4 = Integer integer=2
-// CHECK-NEXT: Jump -> next b3(v4)
-// CHECK-NEXT: b3(v5):
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="up"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

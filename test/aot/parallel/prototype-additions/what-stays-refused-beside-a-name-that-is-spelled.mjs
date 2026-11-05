@@ -1,4 +1,4 @@
-// A new name that a file spells is let in. What replaces a member stays refused, and so does a name that the build cannot read.
+// A new name is let in, whether a file spells it or the build cannot read it, as long as no compiled code has taken it for absent. What replaces a member stays refused.
 const attempt = (what, write) => {
   try { write(); console.log(what, "done"); } catch (error) { console.log(what, error.name, error.message.split(" (")[0]); }
 };
@@ -16,7 +16,7 @@ attempt("a symbol", () => { Function.prototype[Symbol.iterator] = 1; });
 console.log((function () {}).spelled$, (function () {})[computed], [3, 1, 2].sort().join(), typeof Function.prototype.call);
 /* Output:
 a spelled name done
-a computed name TypeError Cannot assign to Function.prototype.madeup$ because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in Function.prototype.madeup$ = value
+a computed name done
 a spelled name on Object.prototype TypeError Cannot assign to Object.prototype.spelled$ because built-in objects are read-only in a compiled executable
 a computed name on Object.prototype TypeError Cannot assign to Object.prototype.madeup$ because built-in objects are read-only in a compiled executable
 Function.prototype.call TypeError Cannot assign to Function.prototype.call because built-in objects are read-only in a compiled executable
@@ -24,5 +24,5 @@ Array.prototype.sort TypeError Cannot assign to Array.prototype.sort because bui
 Object.prototype.hasOwnProperty TypeError Cannot assign to Object.prototype.hasOwnProperty because built-in objects are read-only in a compiled executable
 delete Function.prototype.apply TypeError Cannot delete Function.prototype.apply because built-in objects are read-only in a compiled executable
 a symbol TypeError Cannot assign to Function.prototype[Symbol(Symbol.iterator)] because built-in objects are read-only in a compiled executable
-1 undefined 1,2,3 function
+1 1 1,2,3 function
 */

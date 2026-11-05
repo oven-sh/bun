@@ -237,6 +237,11 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         let file = &*self.lowering.file;
         let import = file.inputs.modules.import_binding(file.file, symbol);
         match import {
+            // What the mock answers is no variable: the text gets what the name holds where `eval` is called.
+            ImportBinding::Variable(_) if file.may_be_answered_by_mock(symbol) => {
+                let value = self.lowering.get_import(symbol);
+                self.add_value(binding, value);
+            }
             ImportBinding::Variable(variable) => {
                 self.add_variable(binding, VariableKey::Symbol(variable));
             }

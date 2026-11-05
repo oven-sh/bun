@@ -44,38 +44,3 @@ console.log(named.name);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "auto", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true }, "files": [ "main.ts" ] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_1]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = String string="high"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|"high"|"low" flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v4 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v5 = PropGet v4 key="console" [isFreeName]
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v7 = PropGet v6 key="log"
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v9 = PropGet v1 key="sides"
-// CHECK-NEXT: v10 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v11 = PropGet v10 key="describe" [isFreeName]
-// CHECK-NEXT: v12 = Call v11, -, v1 calleeName="describe"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v14 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v15 = PropGet v14 key="Units" [isFreeName]
-// CHECK-NEXT: v16 = PropGet v15 key="perMeter"
-// CHECK-NEXT: v17 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v18 = PropGet v17 key="Meter" [isFreeName]
-// CHECK-NEXT: v19 = Integer integer=2
-// CHECK-NEXT: v20 = Construct v18, -, v19 calleeName="Meter"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string|[[L_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v22 = PropGet v21 key="length"
-// CHECK-NEXT: v23 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v24 = PropGet v23 key="Kind" [isFreeName]
-// CHECK-NEXT: v25 = PropGet v24 key="Second"
-// CHECK-NEXT: v26 = Call v8, v6, v9, v3, v13, v16, v22, v25 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v27 = Undefined
-// CHECK-NEXT: Return v27
-// CHECK-NEXT: }

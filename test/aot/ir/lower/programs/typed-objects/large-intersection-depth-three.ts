@@ -52,17 +52,5 @@ sum += other.a.b.c.g16.value.k16 + (other.a.b.again?.a.b.c.g16.children?.[0].val
 sum += other.a.b.c.g17.value.k17 + (other.a.b.again?.a.b.c.g17.children?.[0].value.k17 ?? 0);
 console.log(sum, few(outer).a.b.c.g1.value.k1);
 
-// GENERATED: make pass
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_2]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="pass"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]]):
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

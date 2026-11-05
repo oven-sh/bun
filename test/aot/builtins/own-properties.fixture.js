@@ -79,6 +79,8 @@ const hiddenObjects = new Map([
   ["%Generator%.prototype", getPrototypeOf(function* () {}).prototype],
   ["%GeneratorFunction%.prototype", getPrototypeOf(function* () {})],
   ["%HeadersIterator%.prototype", getPrototypeOf(new Headers()[Symbol.iterator]())],
+  ["%IntlSegmentIterator%.prototype", getPrototypeOf(new Intl.Segmenter().segment("")[Symbol.iterator]())],
+  ["%IntlSegments%.prototype", getPrototypeOf(new Intl.Segmenter().segment(""))],
   ["%IteratorHelper%.prototype", getPrototypeOf([].values().map(x => x))],
   ["%MapIterator%.prototype", getPrototypeOf(new Map()[Symbol.iterator]())],
   ["%NodeHTTPResponse%.prototype", await findPrototypeOfNativeResponses()],

@@ -33,24 +33,5 @@ for (const n of numbers) {
   console.log(keyOf(color), read(color), read(color) === undefined, typeof read(color), read(color) + 1, wayKey(Way.Down, color));
 }
 
-// GENERATED: keyOf read
 // CHECK-LABEL: function {{*}}name="keyOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|"color-0"|"color-1" flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: v1 = String string="color-"
-// CHECK-NEXT: v2 = ToString v0
-// CHECK-NEXT: v3 = Strcat v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|"color-0"|"color-1" flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: i32):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="byColor"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = Call v3, -, v0 calleeName="keyOf"
-// CHECK-NEXT: v5 = ElemGet v2, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

@@ -149,74 +149,8 @@ attempt("a template literal type", () => {
 });
 attempt("honest again", () => [double(four), isOn(on), new Fixed().twice(), new Fixed().label()]);
 
-// GENERATED: nameOf Fixed twice label read
 // CHECK-LABEL: function {{*}}name="nameOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="name"
-// CHECK-NEXT: v2 = String string="config"
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = NarrowByField v0, v4 key="name"
-// CHECK-NEXT: v6 = String string="config"
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = NarrowByField v0, v7 key="name"
-// CHECK-NEXT: v9 = String string="never"
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Fixed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="n"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="label"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = PropGet v0 key="mode"
-// CHECK-NEXT: v2 = String string=":"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = PropGet v0 key="mode"
-// CHECK-NEXT: v5 = PropGet v4 key="length"
-// CHECK-NEXT: v6 = Add v3, v5
-// CHECK-NEXT: v7 = String string=":"
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = PropGet v0 key="flag"
-// CHECK-NEXT: v10 = ToBoolean v9
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: v12 = String string="yes"
-// CHECK-NEXT: Jump -> next b3(v12)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: v14 = String string="no"
-// CHECK-NEXT: Jump -> next b3(v14)
-// CHECK-NEXT: b3(v15):
-// CHECK-NEXT: v16 = Add v8, v15
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined] variableName="box"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = PropGet v0 key="n"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="double"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }

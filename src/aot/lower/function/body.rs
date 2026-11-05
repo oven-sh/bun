@@ -48,6 +48,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_function_body(&mut self, source: FnId) {
         match self.file.hir[source].body {
             FnBody::Block(statements) => {
+                self.give_list_to_scope(self.file.bound.fns[source.idx()].scope, statements);
                 self.lower_statements(statements);
                 self.emit_empty_return();
             }

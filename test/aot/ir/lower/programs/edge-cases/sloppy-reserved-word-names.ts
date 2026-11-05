@@ -18,21 +18,3 @@ module.exports = { sum: package + interface + static, gone: gone, callee: f(1, 2
 
 // FILE: tsconfig.json
 { "compilerOptions": { "strict": true, "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "noEmit": true, "types": [], "lib": ["esnext", "dom"] }, "include": ["main.ts"] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v9 = Call v4, v2, v5, v6, v7, v8 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

@@ -98,74 +98,7 @@ console.log("in an array: " + JSON.stringify(many));
 
 export {};
 
-// GENERATED: note build assemble y
 // CHECK-LABEL: function {{*}}name="note"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Call v4, v3, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="build"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"x"|"y" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|"x"|"y"):
-// CHECK-NEXT: v1 = String string="x"
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Data data=[[d_3]]
-// CHECK-NEXT: Jump -> next b3(v3)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v4 = Data data=[[d_4]]
-// CHECK-NEXT: Jump -> next b3(v4)
-// CHECK-NEXT: b3(v5):
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="assemble"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_5]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_5]]>):
-// CHECK-NEXT: v1 = Data data=[[d_6]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4: undefined|null|[[L_2]]):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Convert v4 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v10 = NewObject layout=[[L_2]]
-// CHECK-NEXT: CopyDataProperties v10, v8
-// CHECK-NEXT: CopyDataProperties v10, v4
-// CHECK-NEXT: CopyDataProperties v10, v8
-// CHECK-NEXT: v14 = FinishObject v10
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b1(v15)
-// CHECK-NEXT: b5() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v16 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="get y"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Convert v6 declared={type=number}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

@@ -4,7 +4,6 @@ use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_ast::{Loc, Source};
 use bun_core::fmt::format_json_string_utf8;
-use bun_core::strings::index_of_char_usize;
 use bun_js_parser::{ExpandedImportMetaGlob, ImportMetaGlobFiles, InvalidImportMetaGlob};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
@@ -77,6 +76,8 @@ struct Writer<'a, 's> {
     /// What goes to the head of the file's body.
     head: Vec<StmtId>,
     is_common_js: bool,
+    /// Lays a module of the build's making beside the file: the specifier that finds it from there, and its text.
+    add_module: &'a dyn Fn(&[u8], Vec<u8>),
     /// Where the call that is being replaced stands.
     pos: u32,
     end: u32,
@@ -241,6 +242,7 @@ impl Writer<'_, '_> {
         let require = self.expression(ExprKind::Ident(known::require));
         let import_type = files.import_type.unwrap_or_default();
         let specifier = [LOCAL_NAME_PREFIX, import_type, b":", path].concat();
+        (self.add_module)(&specifier, write_module_of_eager_entry(import_type, path));
         let specifier = self.specifier(&specifier, SpecifierKind::RequireCall);
         let call = self.call(require, &[specifier]);
         let module = self.expression(ExprKind::Call(call));
@@ -369,16 +371,14 @@ impl Writer<'_, '_> {
 }
 
 /// `export * as entry from "path" with { type: "text" };`, for the specifier that `write_require` has written. `None`: it is no such specifier.
-pub(crate) fn write_module_of_eager_entry(specifier: &[u8]) -> Option<Vec<u8>> {
-    let rest = specifier.strip_prefix(LOCAL_NAME_PREFIX)?;
-    let (import_type, path) = rest.split_at(index_of_char_usize(rest, b':')?);
+fn write_module_of_eager_entry(import_type: &[u8], path: &[u8]) -> Vec<u8> {
     let quote = |text: &[u8]| format_json_string_utf8(text, Default::default()).to_string();
     let attributes = match import_type {
         [] => String::new(),
         _ => format!(" with {{ type: {} }}", quote(import_type)),
     };
-    let path = quote(&path[1..]);
-    Some(format!("export * as {EXPORT_OF_EAGER_ENTRY} from {path}{attributes};\n").into_bytes())
+    let path = quote(path);
+    format!("export * as {EXPORT_OF_EAGER_ENTRY} from {path}{attributes};\n").into_bytes()
 }
 
 fn warn(messages: &LoadMessages, path: &[u8], text: &[u8], invalid: &InvalidImportMetaGlob) {
@@ -429,6 +429,7 @@ pub(crate) fn expand_calls<'s>(
     atoms: &Interner<'s>,
     request: &mut EarlyTransformRequest<'_, 's>,
     source: &ParsedSource,
+    add_module: &dyn Fn(&[u8], Vec<u8>),
 ) -> TreeChange {
     if request.hir.rare_syntax & rare::IMPORT_META == 0 || source.kind != SourceKind::Program {
         return TreeChange::Unchanged;
@@ -452,6 +453,7 @@ pub(crate) fn expand_calls<'s>(
         atoms,
         head: Vec::new(),
         is_common_js,
+        add_module,
         pos: POSITION,
         end: POSITION,
     };

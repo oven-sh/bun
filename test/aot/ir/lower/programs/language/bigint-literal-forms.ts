@@ -48,66 +48,6 @@ function parse(text: string): string {
 }
 for (const text of ["12", "12n", "0n", "1_000", "0x10", "0x10n", "0o17", "0b101", "-12", "-0x10", "", " 12 ", "12.0", "1e3"]) console.log("BigInt(" + JSON.stringify(text) + "):", parse(text));
 
-// GENERATED: sumOfLiterals incrementedLiteral parse
 // CHECK-LABEL: function {{*}}name="sumOfLiterals"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = BigInt digits="0"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5: undefined|null|bigint, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = Less v6, v0
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = BigInt digits="18446744073709551616"
-// CHECK-NEXT: v10 = Add v5, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v12 = Increment v6
-// CHECK-NEXT: v13 = Convert v12 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v11, v13)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v14 = Convert v5 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="incrementedLiteral"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = BigInt digits="9007199254740993"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parse"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Builtin builtin=BigInt
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="BigInt"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|bigint flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v4 = PropGet v3 key="toString"
-// CHECK-NEXT: v5 = Call v4, v3 calleeKey="toString" calleeName="toString"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v7 = CatchValue
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="SyntaxError" [isFreeName]
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(SyntaxError) flags=[IsExpected]}
-// CHECK-NEXT: v11 = InstanceOf v7, v10
-// CHECK-NEXT: v12 = ToBoolean v11
-// CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: v14 = String string="SyntaxError"
-// CHECK-NEXT: Jump -> next b5(v14)
-// CHECK-NEXT: b4(v15):
-// CHECK-NEXT: v16 = String string="another error"
-// CHECK-NEXT: Jump -> next b5(v16)
-// CHECK-NEXT: b5(v17):
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }

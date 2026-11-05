@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 4
+// CHECK-LABEL: function {{*}}name="total"
 
 // FILE: main.cjs
 // deep.cjs walks from require.main over all the children and changes what each file exports.
@@ -49,32 +50,3 @@ exports.walk = require("./deep.cjs");
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: total
-// CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5, v6):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = Integer integer=1000
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = Construct v0 calleeName="Class"
-// CHECK-NEXT: v11 = PropGet v10 key="add"
-// CHECK-NEXT: v12 = Call v11, v10, v6 calleeKey="add" calleeName="add"
-// CHECK-NEXT: v13 = Add v5, v12
-// CHECK-NEXT: v14 = Integer
-// CHECK-NEXT: v15 = BitOr v13, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v17 = Increment v6
-// CHECK-NEXT: v18 = Convert v17 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v16, v18)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

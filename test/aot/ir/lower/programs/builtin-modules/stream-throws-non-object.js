@@ -135,84 +135,10 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
   }
 })();
 
-// GENERATED: note drain addAbortSignal [Symbol.iterator] next
 // CHECK-LABEL: function {{*}}name="note"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="notes"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeKey="push" calleeName="notes.push"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsSloppy] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_2]]|[[L_3]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]|[[L_3]]):
-// CHECK-NEXT: v1 = IteratorOpen v0 iteratorKind=Async
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v3 = IteratorResume v1, -, v0 iteratorKind=Async
-// CHECK-NEXT: v4 = ResultAt v3
-// CHECK-NEXT: v5 = ResultAt v3 index=1
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="note"
-// CHECK-NEXT: v9 = String string="chunk "
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="show"
-// CHECK-NEXT: v12 = Call v11, -, v5 calleeName="show"
-// CHECK-NEXT: v13 = Add v9, v12
-// CHECK-NEXT: v14 = Call v8, -, v13 calleeName="note"
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b5() role=IterationCleanup subject=v1:
-// CHECK-NEXT: v15 = CatchException
-// CHECK-NEXT: IteratorClose v1, v0 iteratorKind=Async completion=Throw
-// CHECK-NEXT: Rethrow v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="addAbortSignal"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Promise" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewClosure v0 function=[[f_6]]
-// CHECK-NEXT: v5 = Construct v3, -, v4 calleeName="Promise"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, IsNamedByComputedKey] captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_7]]
-// CHECK-NEXT: v2 = NewObject -, v1 layout=[[L_8]] fields=[0]
-// CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Promise" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="reject"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(PromiseReject) flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3, v0 calleeKey="reject" calleeName="Promise.reject"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsSloppy] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_9]]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

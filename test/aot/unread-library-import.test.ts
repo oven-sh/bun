@@ -4,9 +4,10 @@
 //
 // Every form is a folder of one project, with a package.json of its own, and the project runs once in each way.
 // ID in a text is the folder's name: each line that is printed begins with it, and so does each global, because at default flags the test files share a realm.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 

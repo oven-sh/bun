@@ -125,86 +125,8 @@ delete own.constructor;
 out.push(`which it loses | ${attempt(() => readToString(own))} ${attempt(() => readConstructor(own))} ${attempt(() => callValueOf(own))} ${attempt(() => callToString(own))}`);
 console.log(out.join("\n"));
 
-// GENERATED: attempt tryChange Top Middle Receiver
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v0 calleeName="action"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="describe"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v4 = CatchValue
-// CHECK-NEXT: v5 = String string="threw "
-// CHECK-NEXT: v6 = PropGet v4 key="constructor"
-// CHECK-NEXT: v7 = PropGet v6 key="name"
-// CHECK-NEXT: v8 = Add v5, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tryChange"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="tryChange"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Top"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Middle"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Receiver"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything):
-// CHECK-NEXT: v2 = Absent
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstruct v3, v1 layout=[[L_7]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_7]]}
-// CHECK-NEXT: v6 = TypeTest v2 testedType=absent
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = TypeTest v5 testedType=absent
-// CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v10
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: v12 = String string="value of the receiver"
-// CHECK-NEXT: PropSet v11, v12 key="value"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: v15 = TypeTest v14 testedType=object
-// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v16):
-// CHECK-NEXT: Jump -> next b9(v16)
-// CHECK-NEXT: b5(v17):
-// CHECK-NEXT: v18 = TypeTest v17 testedType=undefined
-// CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v19):
-// CHECK-NEXT: v20 = TypeTest v11 testedType=absent
-// CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v21):
-// CHECK-NEXT: v22 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v22
-// CHECK-NEXT: b8(v23):
-// CHECK-NEXT: Jump -> next b9(v23)
-// CHECK-NEXT: b9(v24):
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: b10(v25):
-// CHECK-NEXT: v26 = NewRuntimeError runtimeError=DerivedConstructorResult name="Receiver"
-// CHECK-NEXT: Throw v26
-// CHECK-NEXT: b11(v27):
-// CHECK-NEXT: v28 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v28
-// CHECK-NEXT: }

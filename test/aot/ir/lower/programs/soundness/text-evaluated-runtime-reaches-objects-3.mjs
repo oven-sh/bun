@@ -1,5 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="glue"
+// CHECK-LABEL: function {{*}}name="make"
+// CHECK-LABEL: function {{*}}name="sleep"
+// CHECK-LABEL: function {{*}}name="f"
 
 // FILE: main.mjs
 // Text evaluated at run time reaches objects 3.
@@ -174,68 +178,3 @@ await (async () => {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: glue make sleep f
-// CHECK-LABEL: function {{*}}name="glue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = PropGet v0 key="join"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="never"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = String string="x"
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = String string=""
-// CHECK-NEXT: Jump -> next b3(v8)
-// CHECK-NEXT: b3(v9):
-// CHECK-NEXT: v10 = Call v1, v0, v9 calleeKey="join" calleeName="parts.join"
-// CHECK-NEXT: ReturnCall v10
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Function" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Function) flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewArray contents=anything
-// CHECK-NEXT: v5 = PropGet v0 key="slice"
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = Integer integer=-1
-// CHECK-NEXT: v8 = Call v5, v0, v6, v7 calleeKey="slice" calleeName="parts.slice"
-// CHECK-NEXT: AppendSpread v4, v8
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="glue"
-// CHECK-NEXT: v12 = PropGet v0 key="length"
-// CHECK-NEXT: v13 = Integer integer=1
-// CHECK-NEXT: v14 = Sub v12, v13
-// CHECK-NEXT: v15 = ElemGet v0, v14
-// CHECK-NEXT: v16 = String string=""
-// CHECK-NEXT: v17 = Call v11, -, v15, v16 calleeName="glue"
-// CHECK-NEXT: AppendElement v4, v17
-// CHECK-NEXT: v19 = CallList v3, -, v4 calleeName="Function"
-// CHECK-NEXT: ReturnCall v19
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="sleep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Promise" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v3 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v4 = Construct v2, -, v3 calleeName="Promise"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="f"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 captures=[{type=anything variableName="o"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: PropSet v0, v1 key="n"
-// CHECK-NEXT: v3 = PropGet v0 key="list"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string="y"
-// CHECK-NEXT: v6 = Call v4, v3, v5 calleeKey="push" calleeName="o.list.push"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

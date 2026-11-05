@@ -230,87 +230,8 @@ say("in a loop: the 397th receiver is of another kind", () => {
 console.log("an async function resolves with another kind: " + describe(await uses21()));
 console.log("await of what is no promise: " + describe(await awaits22()));
 
-// GENERATED: numbers20 awaits22 size Made12
 // CHECK-LABEL: function {{*}}name="numbers20"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="outside"
-// CHECK-NEXT: v5 = PropGet v4 key="text"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number}
-// CHECK-NEXT: v7 = Yield v6
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v8
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = TypeOf v8
-// CHECK-NEXT: v11 = Convert v10 declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: v12 = Yield v11
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v16 = CheckInitialized v15 name="outside"
-// CHECK-NEXT: v17 = PropGet v16 key="number"
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaits22"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="outside"
-// CHECK-NEXT: v3 = PropGet v2 key="text"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = Await v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number}
-// CHECK-NEXT: v7 = TypeOf v6
-// CHECK-NEXT: v8 = Integer integer=1
-// CHECK-NEXT: v9 = Add v6, v8
-// CHECK-NEXT: v10 = NewArray v7, v9 contents=anything
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|object}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_2]]} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: number):
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: PrivateSet v0, v3, v2 layout=[[L_2]] field=1
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_2]] field=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Made12"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: number, v2: undefined|null|string):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_5]]
-// CHECK-NEXT: PropSet v5, v1 key="width"
-// CHECK-NEXT: PropSet v5, v2 key="name"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

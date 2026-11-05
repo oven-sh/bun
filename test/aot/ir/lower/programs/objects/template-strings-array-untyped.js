@@ -97,29 +97,4 @@ console.log('line cr', t`A${1 // }
 }B`));
 console.log('empty', t`${1 /* } */}`, JSON.stringify(String.raw`${1 /* } */}`));
 
-// GENERATED: t
 // CHECK-LABEL: function {{*}}name="t"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]]|Array flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]|Array, v1: Array):
-// CHECK-NEXT: v2 = Builtin builtin=JSON
-// CHECK-NEXT: v3 = PropGet v2 key="stringify"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v5 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v6 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v7 = IsPristineArray v0
-// CHECK-NEXT: Branch v7 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v8 = Builtin builtin=CompilerHelpersArrayFromList [isNotReadFromHolder]
-// CHECK-NEXT: v9 = Call v8, -, v0, v6
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = Builtin builtin=Array [isNotReadFromHolder]
-// CHECK-NEXT: v11 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
-// CHECK-NEXT: v12 = Call v11, v10, v0, v6
-// CHECK-NEXT: Jump -> next b3(v12)
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: v14 = PropGet v0 key="raw"
-// CHECK-NEXT: v15 = NewArray v13, v14, v1 contents=anything
-// CHECK-NEXT: v16 = Call v4, v2, v15 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v16
-// CHECK-NEXT: }

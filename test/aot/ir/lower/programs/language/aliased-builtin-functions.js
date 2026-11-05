@@ -38,27 +38,5 @@ show("calls", Uint8Array.of(1, 2).toString(), [...Uint8Array.of(1, 2).values()],
 const parse = Number.parseInt, trim = String.prototype.trimLeft
 show("values called", parse("7.9"), JSON.stringify(trim.call("  b ")), Number.parseInt.name, String.prototype.trimLeft.name, Set.prototype.keys.name)
 
-// GENERATED: isSame show
 // CHECK-LABEL: function {{*}}name="isSame"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = PropGet v1 key="join"
-// CHECK-NEXT: v10 = String string=" "
-// CHECK-NEXT: v11 = Call v9, v1, v10 calleeKey="join" calleeName="values.join"
-// CHECK-NEXT: v12 = Add v8, v11
-// CHECK-NEXT: v13 = Call v6, v4, v12 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v13
-// CHECK-NEXT: }

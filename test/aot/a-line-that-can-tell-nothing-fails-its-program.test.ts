@@ -19,10 +19,10 @@ const texts = process.argv.map(String);
 console.log(join(texts[0], "x").length > 0, join("y", texts[0]).length > 0, [join].length);
 `;
 const programs = {
-  "lines/lines-that-can-fail.ts": `// IRT= 1 join  = Strcat 
-// IRT= 0 join  = StringBuilderBegin
+  "lines/lines-that-can-fail.ts": `// IRT= 2 join  form=StringAndPrimitive 
+// IRT= 0 join  = StackStringBuilderBegin
 ${joins}`,
-  "lines/what-the-others-say-is-absent.ts": `// IR+  = StringBuilderBegin
+  "lines/what-the-others-say-is-absent.ts": `// IR+  = StackStringBuilderBegin
 function numbers(count: number): string { let text = ""; for (let i = 0; i < count; i++) { text += i; text += ","; } return text; }
 console.log(numbers(process.argv.length).length > 0, numbers(3), [numbers].length);
 `,
@@ -43,7 +43,7 @@ console.log(join(String(process.argv.length), "x"));
 export function join(a: string, b: string): string { return a + "-" + b; }
 `,
   "lines/operations-that-no-compiler-has.ts": `// IRT= 0 join  = ConcatenateInTheFrame 
-// IR- = Strcat .* \\[isBuiltInTheFrame\\]
+// IR- = Add .* \\[isBuiltInTheFrame\\]
 // IRM= 0  = NewTextOfTheOldCompiler 
 ${joins}`,
   "lines/a-declaration-that-is-not-there.ts": `// IR- ^layout (L\\d+) .*name="Gone" [\\s\\S]* receivers=\\[\\1, \\.\\.\\]
@@ -56,10 +56,10 @@ function read(kept: Kept): number { return kept.field; }
 console.log(read(all[0]) > 0, [read].length);
 `,
   "lines/a-pattern-that-finds-itself.ts": `// IR+ JoinedInTheFrame
-// IR+  = Strcat 
+// IR+  form=StringAndPrimitive 
 ${joins}`,
   "lines/top-level-code-that-awaits.ts": `// IRM= 1  = Await\\w+ 
-// IRM= 0  = StringBuilderBegin
+// IRM= 0  = StackStringBuilderBegin
 console.log(await Promise.resolve(process.argv.length > 0));
 `,
 };
@@ -93,7 +93,7 @@ test.skipIf(!!scriptSkipReason)(
       "FAIL lines/kinds-that-nothing-reads\t// IR-UNTIL X\tnothing reads a line of this kind",
       "ok   lines/lines-that-can-fail: 2 expectations",
       "FAIL lines/operations-that-no-compiler-has\t// IRT= 0 join  = ConcatenateInTheFrame \tit cannot fail: the dump of no program holds ConcatenateInTheFrame",
-      "FAIL lines/operations-that-no-compiler-has\t// IR- = Strcat .* \\[isBuiltInTheFrame\\]\tit cannot fail: the dump of no program holds isBuiltInTheFrame",
+      "FAIL lines/operations-that-no-compiler-has\t// IR- = Add .* \\[isBuiltInTheFrame\\]\tit cannot fail: the dump of no program holds isBuiltInTheFrame",
       "FAIL lines/operations-that-no-compiler-has\t// IRM= 0  = NewTextOfTheOldCompiler \tit cannot fail: the dump of no program holds NewTextOfTheOldCompiler",
       "ok   lines/top-level-code-that-awaits: 2 expectations",
       "ok   lines/what-the-others-say-is-absent: 1 expectations",

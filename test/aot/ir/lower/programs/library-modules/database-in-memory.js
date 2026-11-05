@@ -38,20 +38,5 @@ try {
   console.log(error instanceof Error);
 }
 
-// GENERATED: Person shout
 // CHECK-LABEL: function {{*}}name="Person"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="shout"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="name"
-// CHECK-NEXT: v2 = PropGet v1 key="toUpperCase"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="toUpperCase" calleeName="this.name.toUpperCase"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }

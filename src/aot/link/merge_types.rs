@@ -304,6 +304,12 @@ fn list_types_of_part(runs: &[Run], part: usize) -> Vec<Entry> {
     listed
 }
 
+/// Where `ListedTypes` lists a type.
+struct ListedAt {
+    part: usize,
+    place: usize,
+}
+
 /// The different types of some runs.
 struct ListedTypes {
     /// `None`: no two types of the runs are alike. Each run is a part then.
@@ -340,9 +346,12 @@ impl ListedTypes {
     }
 
     /// The part that lists the type of `entry`, and its place there. `entry` is one of `runs`.
-    fn find(&self, runs: &[Run], entry: Entry) -> (usize, usize) {
+    fn find(&self, runs: &[Run], entry: Entry) -> ListedAt {
         let Some(hashing) = self.hashing else {
-            return (entry.run as usize, entry.place as usize);
+            return ListedAt {
+                part: entry.run as usize,
+                place: entry.place as usize,
+            };
         };
         let part = hashing.part_of(entry.hash);
         let listed = &self.by_part[part];
@@ -362,7 +371,7 @@ impl ListedTypes {
             false => first,
         };
         debug_assert!(row_at(runs, listed[place]) == row_at(runs, entry));
-        (part, place)
+        ListedAt { part, place }
     }
 }
 
@@ -449,7 +458,7 @@ impl NumberedTypes {
 
     /// `entry` is one of `runs`.
     fn find(&self, runs: &[Run], entry: Entry) -> TypeId {
-        let (part, place) = self.listed.find(runs, entry);
+        let ListedAt { part, place } = self.listed.find(runs, entry);
         TypeId::from_word(self.ids[part][place].load(atomic::Ordering::Relaxed))
     }
 }
@@ -640,7 +649,7 @@ fn find_alike_types_in_lists(
     for_each_mut(&mut tasks, in_parallel, &|(run, share, chosen)| {
         let mut is_chosen = vec![false; run.numbers.len()];
         for &entry in &run.entries.items {
-            let (part, place) = listed.find(&runs, entry);
+            let ListedAt { part, place } = listed.find(&runs, entry);
             let number = run.numbers[entry.place as usize];
             share.items[(number - share.first_number) as usize] = first_groups[part] + place as u32;
             let of_group = listed.by_part[part][place];

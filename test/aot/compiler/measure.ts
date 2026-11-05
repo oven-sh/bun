@@ -106,6 +106,7 @@ const touchesOf = {
     GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries IndirectCallsThatMayEnterAnyClosure`),
   walk: words(`
     ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept
+    AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed
     DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents
     ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsThatNoTestTells
@@ -114,6 +115,7 @@ const touchesOf = {
   emit: words(`
     OperationsEmitted MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
+    RangeChecksRemoved
     OffsetsFoundByComparisons OffsetsFoundInFlatTables OffsetsFoundInHashedTables OffsetsFoundInPagedTables
     BytesOfFlatOffsetTables BytesOfHashedOffsetTables BytesOfPagedOffsetTables
     NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated

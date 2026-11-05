@@ -30,11 +30,6 @@ const programs: Record<string, Record<string, string>> = {
     "node_modules/outside/index.js": `module.exports = require("../../shared.js");\n`,
     "main.cjs": `const byName = require("outside");\nconsole.log(typeof byName, byName && byName.who);\nconst byPath = require("./shared.js");\n${show}`,
   },
-  "the package requires a file of its own first": {
-    "node_modules/outside/inner.js": counted("inner"),
-    "node_modules/outside/index.js": `module.exports = require("./inner.js");\n`,
-    "main.cjs": `const byName = require("outside");\nconsole.log(typeof byName, byName && byName.who);\nconst byPath = require("./node_modules/outside/inner.js");\n${show}`,
-  },
 };
 
 // --no-builtin-modules: a build that allows code from disk would compile all of them.
@@ -49,12 +44,7 @@ const modes: [string, string[], "executable" | "run"][] = [
 // executable is the stored program parallel/modules/external-package-whose-file-is-required-by-path.
 const witnesses: Record<string, string[]> = {
   "an executable": ["import() of the name, then of the path", "the namespace of an ES module"],
-  "code from disk is allowed": [
-    "require() of the name, then of the path",
-    "import() of the name, then of the path",
-    "the package requires a file of the program first",
-    "the package requires a file of its own first",
-  ],
+  "code from disk is allowed": ["require() of the name, then of the path", "import() of the name, then of the path"],
   "compiled in place": ["require() of the name, then of the path", "the package requires a file of the program first"],
 };
 

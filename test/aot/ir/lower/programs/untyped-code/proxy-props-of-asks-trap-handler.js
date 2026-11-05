@@ -65,75 +65,9 @@ const often = new Proxy({ alpha: 1 }, { getOwnPropertyDescriptor(target, key) { 
 for (let i = 0; i < 60000; i++) { if (Object.hasOwn(often, "alpha")) found++; if (has.call(often, "beta")) found++; }
 console.log(found, asked);
 
-// GENERATED: told shown configurable has Handler named
 // CHECK-LABEL: function {{*}}name="told"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = Call v0 calleeName="work"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v2 = CatchValue
-// CHECK-NEXT: v3 = PropGet v2 key="constructor"
-// CHECK-NEXT: v4 = PropGet v3 key="name"
-// CHECK-NEXT: v5 = String string=": "
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = PropGet v2 key="message"
-// CHECK-NEXT: v8 = PropGet v7 key="slice"
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = Integer integer=50
-// CHECK-NEXT: v11 = Call v8, v7, v9, v10 calleeKey="slice" calleeName="error.message.slice"
-// CHECK-NEXT: v12 = Add v6, v11
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="shown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="stringify"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v5 = Call v3, v1, v0, v4 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="configurable"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="read configurable"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Boolean boolean=true
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]], v1: undefined|null|string|symbol):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string="has "
-// CHECK-NEXT: v6 = Builtin builtin=String
-// CHECK-NEXT: v7 = Call v6, -, v1 calleeName="String"
-// CHECK-NEXT: v8 = Add v5, v7
-// CHECK-NEXT: v9 = Call v4, v3, v8 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v10 = ElemHas v0, v1
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Handler"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

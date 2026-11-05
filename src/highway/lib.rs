@@ -103,12 +103,6 @@ unsafe extern "C" {
 
     fn highway_last_index_of_slash_or_dot(path: *const u8, len: usize) -> usize;
 
-    fn highway_basename_posix(path: *const u8, len: usize) -> u64;
-
-    fn highway_dirname_posix(path: *const u8, len: usize) -> u64;
-
-    fn highway_extname_posix(path: *const u8, len: usize) -> u64;
-
     fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize;
 
     fn highway_count_slashes(path: *const u8, len: usize) -> usize;
@@ -873,50 +867,6 @@ pub fn last_index_of_slash_or_dot(path: &[u8]) -> Option<usize> {
     let found = found_at(result, path.len());
     debug_assert!(found.is_none_or(|i| matches!(path[i], b'/' | b'.')));
     found
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct PartOfPath(u64);
-
-impl PartOfPath {
-    pub const WHOLE: Self = Self(u64::MAX);
-    pub const NOT_ASCII: Self = Self(u64::MAX - 1);
-    pub const DOT: Self = Self(u64::MAX - 2);
-    pub const SLASH: Self = Self(u64::MAX - 3);
-    pub const TWO_SLASHES: Self = Self(u64::MAX - 4);
-
-    #[inline(always)]
-    pub const fn part(start: usize, end: usize) -> Self {
-        Self(start as u64 | (end as u64) << 32)
-    }
-
-    #[inline(always)]
-    pub const fn range(self) -> Option<(u32, u32)> {
-        if self.0 >> 63 == 0 {
-            Some((self.0 as u32, (self.0 >> 32) as u32))
-        } else {
-            None
-        }
-    }
-}
-
-#[inline(always)]
-pub fn basename_posix(path: &[u8]) -> PartOfPath {
-    // SAFETY: path.ptr/len are a valid readable range.
-    PartOfPath(unsafe { highway_basename_posix(path.as_ptr(), path.len()) })
-}
-
-#[inline(always)]
-pub fn dirname_posix(path: &[u8]) -> PartOfPath {
-    // SAFETY: path.ptr/len are a valid readable range.
-    PartOfPath(unsafe { highway_dirname_posix(path.as_ptr(), path.len()) })
-}
-
-#[inline(always)]
-pub fn extname_posix(path: &[u8]) -> PartOfPath {
-    // SAFETY: path.ptr/len are a valid readable range.
-    PartOfPath(unsafe { highway_extname_posix(path.as_ptr(), path.len()) })
 }
 
 /// How many bytes `a` and `b` start with in common.

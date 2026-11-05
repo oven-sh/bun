@@ -21,6 +21,14 @@ pub(super) const IS_PARAMETER: u32 = u32::MAX - 1;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct LocalVariable(pub(super) u32);
 
+/// Where the next operation stood when it was taken: behind `behind` in `block`, or at the head of the block.
+#[derive(Copy, Clone, Debug)]
+pub struct Place {
+    pub(super) block: BlockId,
+    pub(super) behind: u32,
+    position: Option<u32>,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Handler {
     pub(super) block: BlockId,
@@ -394,6 +402,56 @@ impl FunctionBuilder {
             position: self.position,
         };
         self.append_value(self.current_block, head, fields, false)
+    }
+
+    pub fn place(&self) -> Place {
+        Place {
+            block: self.current_block,
+            behind: self.blocks[self.current_block.index()].last_value,
+            position: self.position,
+        }
+    }
+
+    /// `build` appends one operation, whose operands stand above `place`. It stands at `place` from then on, in front of whatever has been appended there since.
+    pub fn build_at(
+        &mut self,
+        place: Place,
+        build: impl FnOnce(&mut FunctionBuilder) -> ValueId,
+    ) -> ValueId {
+        let position = core::mem::replace(&mut self.position, place.position);
+        let (source, from) = (self.current_block, self.place().behind);
+        let value = build(self);
+        self.position = position;
+        let id = value.to_word();
+        debug_assert_eq!(
+            self.current_block, source,
+            "an open block takes the operation"
+        );
+        debug_assert_eq!(self.blocks[source.index()].last_value, id, "one operation");
+        if source == place.block && from == place.behind {
+            return value;
+        }
+        let word_count = self.values[value.index()].word_count;
+        let pending = &mut self.blocks[source.index()];
+        pending.last_value = from;
+        pending.value_count -= 1;
+        pending.value_word_count -= word_count;
+        match from {
+            NO_VALUE => pending.first_value = NO_VALUE,
+            _ => self.values[from as usize].next = NO_VALUE,
+        }
+        let pending = &mut self.blocks[place.block.index()];
+        pending.value_count += 1;
+        pending.value_word_count += word_count;
+        let next = match place.behind {
+            NO_VALUE => core::mem::replace(&mut pending.first_value, id),
+            behind => core::mem::replace(&mut self.values[behind as usize].next, id),
+        };
+        if next == NO_VALUE {
+            pending.last_value = id;
+        }
+        self.values[value.index()].next = next;
+        value
     }
 
     /// `at_front`: ahead of every operation that `block` lists. `block` may be terminated already.

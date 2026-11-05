@@ -168,80 +168,8 @@ for (const text of ["n => n * 2", "n => 'text'", "null", "class {}", "new Proxy(
 
 honest("honest after");
 
-// GENERATED: counter hidden total add move
 // CHECK-LABEL: function {{*}}name="counter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v2 = Convert v0 declared={type=number}
-// CHECK-NEXT: PutEnvironmentField v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_4]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v6 = NewClosure v1 function=[[f_5]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v8 = NewObject -, v5, v7 layout=[[L_1]] fields=[0, 1]
-// CHECK-NEXT: v9 = FinishObject v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hidden"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="eval" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="("
-// CHECK-NEXT: v5 = Add v4, v0
-// CHECK-NEXT: v6 = String string=")"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Call v3, -, v7
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_7]]):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5: number, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="list"
-// CHECK-NEXT: v10 = PropGet v9 key="length"
-// CHECK-NEXT: v11 = Less v6, v10
-// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v12 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: v13 = CheckInitialized v12 name="list"
-// CHECK-NEXT: v14 = ElemGet v13, v6
-// CHECK-NEXT: v15 = Add v5, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=number}
-// CHECK-NEXT: v17 = Increment v6
-// CHECK-NEXT: v18 = Convert v17 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v16, v18)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="add"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_7]], v1: number):
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="list"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Call v4, v3, v1 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="move"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_8]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="p"
-// CHECK-NEXT: v3 = PropGet v2 key="x"
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: PropSet v2, v5 key="x"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

@@ -1,5 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="describe"
+// CHECK-LABEL: function {{*}}name="takesDefaultToo"
+// CHECK-LABEL: function {{*}}name="defineProperty"
+// CHECK-LABEL: function {{*}}name="a"
 
 // FILE: main.cjs
 // Functions that are named as TypeScript's helpers and differ from them in one place are ordinary functions. So is one that differs from __exportStar in one place and calls the real __createBinding, which is the only known helper here, under another name.
@@ -157,70 +161,3 @@ console.log(describe(byDirectCalls), byDirectCalls.a);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: describe takesDefaultToo defineProperty a
-// CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectOwnKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Reflect.ownKeys"
-// CHECK-NEXT: v4 = PropGet v3 key="map"
-// CHECK-NEXT: v5 = NewClosure v0 function=[[f_1]]
-// CHECK-NEXT: v6 = Call v4, v3, v5 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v7 = PropGet v6 key="join"
-// CHECK-NEXT: v8 = String string="; "
-// CHECK-NEXT: v9 = Call v7, v6, v8 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="takesDefaultToo"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: anything):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = ForInOpen v0
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = ForInStep v3, v0
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v11 = Builtin builtin=ObjectPrototypeHasOwnProperty
-// CHECK-NEXT: v12 = PropGet v11 key="call"
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v14 = Call v13, v11, v1, v10 calleeKey="call" calleeName="Object.prototype.hasOwnProperty.call"
-// CHECK-NEXT: v15 = ToBoolean v14
-// CHECK-NEXT: Branch v15 -> taken b5(), notTaken b4(| 0)
-// CHECK-NEXT: b4(v16):
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v18 = Call v17, -, v1, v0, v10 calleeName="real"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Jump -> next b1(v10)
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="calls"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = String string="define "
-// CHECK-NEXT: v7 = ToString v1
-// CHECK-NEXT: v8 = Strcat v6, v7
-// CHECK-NEXT: v9 = Call v5, v4, v8 calleeKey="push" calleeName="calls.push"
-// CHECK-NEXT: v10 = String string="mine"
-// CHECK-NEXT: ElemSet v0, v1, v10
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="a"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

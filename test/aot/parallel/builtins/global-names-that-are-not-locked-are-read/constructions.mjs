@@ -1,4 +1,5 @@
-// Other classes lie under two names. `bun run` leaves a construction out where nothing takes the object, and constructs where a variable does.
+// Reference: bun build --compile
+// Other classes lie under two names. `bun build --compile` constructs each time. `bun run` leaves a construction out where nothing takes the object.
 const made = [];
 globalThis.WeakMap = class { constructor() { made.push("WeakMap"); } };
 globalThis.Date = class { constructor(...given) { made.push("Date " + given.length); } };

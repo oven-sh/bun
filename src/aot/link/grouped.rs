@@ -5,19 +5,25 @@ pub(super) struct Grouped<T> {
     starts: Vec<u32>,
 }
 
+/// `Grouped::starts`
+fn starts_of_groups(groups: &[u32], group_count: usize) -> Vec<u32> {
+    let mut starts = vec![0u32; group_count + 1];
+    for &group in groups {
+        starts[group as usize + 1] += 1;
+    }
+    let mut count = 0;
+    for start in &mut starts {
+        count += *start;
+        *start = count;
+    }
+    starts
+}
+
 impl<T: Copy> Grouped<T> {
     /// `groups` holds the group of each item. The items of a group keep their order.
     pub(super) fn new(items: &[T], groups: &[u32], group_count: usize) -> Grouped<T> {
         assert_eq!(items.len(), groups.len());
-        let mut starts = vec![0u32; group_count + 1];
-        for &group in groups {
-            starts[group as usize + 1] += 1;
-        }
-        let mut count = 0;
-        for start in &mut starts {
-            count += *start;
-            *start = count;
-        }
+        let starts = starts_of_groups(groups, group_count);
         let mut next_places = starts.clone();
         let mut grouped = items.to_vec();
         for (&item, &group) in items.iter().zip(groups) {

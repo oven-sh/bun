@@ -713,19 +713,28 @@ fn walk_startup(
     walk.settled_times
 }
 
+/// Who runs a file that starts.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum StartedBy {
+    /// The loader of ES modules, which begins a graph at the file: it is an ES module, and something other than an import statement of an ES module loads it.
+    LoaderAsRootOfGraph,
+    /// The loader of ES modules, at any other file: a CommonJS entry point, or whatever stands under an import statement of an ES module.
+    Loader,
+    /// `require()`: a CommonJS file that is no entry point and stands under no import statement of an ES module.
+    Require,
+}
+
 impl StartupWalk<'_> {
-    /// `is_root_of_graph`: the file is an ES module, and something other than an import statement of an ES module loads it.
-    /// `is_run_by_loader`: it is an entry point, an ES module, or a CommonJS file under an import statement of an ES module.
-    fn start(&mut self, file: FileId, depth: u32, is_root_of_graph: bool, is_run_by_loader: bool) {
+    fn start(&mut self, file: FileId, depth: u32, started_by: StartedBy) {
         self.time += 1;
         self.start_times[file.idx()] = self.time;
-        if is_run_by_loader {
+        if started_by != StartedBy::Require {
             self.settled_times[file.idx()] = self.time;
         }
         self.depth_of_starting_file[file.idx()] = depth;
-        let files_run_at_link = match is_root_of_graph {
-            true => self.collect_files_run_at_link(file),
-            false => 0..0,
+        let files_run_at_link = match started_by {
+            StartedBy::LoaderAsRootOfGraph => self.collect_files_run_at_link(file),
+            StartedBy::Loader | StartedBy::Require => 0..0,
         };
         self.files_yet_to_run_at_link += files_run_at_link.len() as u32;
         self.stack.push(StartingFile {
@@ -794,8 +803,11 @@ impl StartupWalk<'_> {
         // A file has loaded one that is still starting. The functions that an ES module declares exist ahead of its body, so from that time on the loaded module can be
         // called, and through it every ES module that starts below it.
         let (mut cycle_depth, mut cycle_time) = (NEVER, NEVER);
-        let is_root_of_graph = !(self.is_commonjs)(entry_point);
-        self.start(entry_point, 0, is_root_of_graph, true);
+        let started_by = match (self.is_commonjs)(entry_point) {
+            true => StartedBy::Loader,
+            false => StartedBy::LoaderAsRootOfGraph,
+        };
+        self.start(entry_point, 0, started_by);
         while let Some(top) = self.stack.last_mut() {
             let file = top.file;
             let depth = self.depth_of_starting_file[file.idx()];
@@ -803,7 +815,7 @@ impl StartupWalk<'_> {
                 self.files_yet_to_run_at_link -= 1;
                 let imported = self.files_run_at_link[index as usize];
                 if self.start_times[imported.idx()] == NEVER {
-                    self.start(imported, depth + 1, false, true);
+                    self.start(imported, depth + 1, StartedBy::Loader);
                 }
                 continue;
             }
@@ -874,10 +886,13 @@ impl StartupWalk<'_> {
                 Some(target) if is_in_order => {
                     if self.start_times[target.idx()] == NEVER {
                         let is_linked_with_importer = load.is_hoisted && !is_importer_commonjs;
-                        let is_es_module = !(self.is_commonjs)(target);
-                        let is_root_of_graph = !is_linked_with_importer && is_es_module;
-                        let is_run_by_loader = is_linked_with_importer || is_es_module;
-                        self.start(target, depth + 1, is_root_of_graph, is_run_by_loader);
+                        let is_commonjs = (self.is_commonjs)(target);
+                        let started_by = match (is_linked_with_importer, is_commonjs) {
+                            (true, _) => StartedBy::Loader,
+                            (false, false) => StartedBy::LoaderAsRootOfGraph,
+                            (false, true) => StartedBy::Require,
+                        };
+                        self.start(target, depth + 1, started_by);
                     }
                 }
                 target => self.possible_loads.push(PossibleLoad {

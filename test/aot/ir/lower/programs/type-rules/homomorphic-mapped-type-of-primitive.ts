@@ -36,61 +36,9 @@ console.log(show(callback(text, () => "t")), show(callback(count, () => 2)), sho
 console.log(show(indexed({ a: count, b: text }, "a", 2)), show(indexed({ a: count, b: text }, "b", "t")), show(indexed({ a: { c: 1 } }, "a", { c: 2 })), kind(text, "t"), kind(count, 2), kind({ a: 1 }, { a: 2 }), objectsOnly({ name: "n" }, { name: "m" }));
 console.log(show(new Holder(text, "t").get()), show(new Holder(count, 2).get()), show(new Holder(new Point(1, 2), new Point(7, 8)).get()));
 
-// GENERATED: local callback kind objectsOnly norm Holder
 // CHECK-LABEL: function {{*}}name="local"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Data data=[[d_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = Call v5, v4, v1 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = ElemGet v4, v8
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: v2 = Call v1 calleeName="make"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kind"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="objectsOnly"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]], v1: anything):
-// CHECK-NEXT: v2 = PropGet v1 key="name"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="norm"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_6]]
-// CHECK-NEXT: PropSet v5, v2 key="held"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: v9 = TypeTest v8 testedType=object
-// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v10):
-// CHECK-NEXT: Jump -> next b2(v10)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

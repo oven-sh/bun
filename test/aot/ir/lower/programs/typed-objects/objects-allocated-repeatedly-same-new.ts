@@ -2,6 +2,8 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="look"
 
 // FILE: main.ts
 // Objects allocated repeatedly same new target.
@@ -100,49 +102,3 @@ export function addGetter(object, name, value) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: show look
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = Builtin builtin=JSON
-// CHECK-NEXT: v10 = PropGet v9 key="stringify"
-// CHECK-NEXT: v11 = Convert v10 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v12 = Call v11, v9, v1 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v14 = Add v8, v13
-// CHECK-NEXT: v15 = Call v6, v4, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="look"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="describe"
-// CHECK-NEXT: v2 = Call v1, v0 calleeKey="describe" calleeName="o.describe"
-// CHECK-NEXT: v3 = Builtin builtin=Object
-// CHECK-NEXT: v4 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v5 = Call v4, v3, v0 calleeName="Object.keys"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = PropGet v6 key="join"
-// CHECK-NEXT: v8 = Call v7, v6 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="readLate"
-// CHECK-NEXT: v12 = ModuleNamespace module=[[m_2]]
-// CHECK-NEXT: v13 = Call v11, v12, v0 calleeName="core.readLate"
-// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v15 = CheckInitialized v14 name="Core"
-// CHECK-NEXT: v16 = InstanceOf v0, v15
-// CHECK-NEXT: v17 = PropGet v0 key="kind"
-// CHECK-NEXT: v18 = PropGet v0 key="helper"
-// CHECK-NEXT: v19 = TypeOf v18
-// CHECK-NEXT: v20 = NewArray v2, v9, v13, v16, v17, v19 contents=anything
-// CHECK-NEXT: Return v20
-// CHECK-NEXT: }

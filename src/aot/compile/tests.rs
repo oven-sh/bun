@@ -284,6 +284,115 @@ fn early_error_fails_at_check_and_lower() {
 }
 
 #[test]
+fn only_an_executable_refuses_a_store_to_an_import() {
+    let stores = "count = 1; count++; [count] = []; for (count of []);";
+    let main = format!("import {{ count }} from \"./b.js\";\nconsole.log(() => {{ {stores} }});");
+    let files = [("a.js", &main[..]), ("b.js", "export let count = 1;")];
+    let mut project = TestProject::new(&files, &default_settings());
+    let (result, log) = link_project(&project, &WithoutServices);
+    expect_success(result, &log);
+    assert_eq!(log.errors, 0);
+    project.builds_executable = true;
+    let (result, log) = link_project(&project, &WithoutServices);
+    assert_eq!(expect_failure(result).stage, Stage::Lower);
+    assert_eq!(log.errors, 4);
+    assert!(has_code(&log, Kind::Err, 2632));
+}
+
+#[test]
+fn a_file_that_only_a_computed_name_finds_is_judged_as_the_loader_judges_it() {
+    let stores = "count = 1; all = 2; all.count = 3; delete all.count;";
+    let imports = "import * as all from \"./b.js\";\nimport { count } from \"./b.js\";";
+    let late = format!("{imports}\nconsole.log(() => {{ {stores} }});");
+    let main = "const name = process.argv.length > 9 ? \"never\" : \"late\";\nimport(\"./\" + name + \".js\");";
+    let counter = "export let count = 1;";
+    let files = [("a.js", main), ("late.js", &late[..]), ("b.js", counter)];
+    let mut project = TestProject::new(&files, &default_settings());
+    project.builds_executable = true;
+    let (result, log) = link_project(&project, &WithoutServices);
+    let program = print_program(&expect_success(result, &log).program);
+    assert!(program.contains("late.js"));
+    assert!(!program.contains("Cannot assign to") && !program.contains("cannot be a read-only"));
+}
+
+// The barrel is left out, and stays as a placeholder on the cycle with the files behind its stars. The link stops at a key that a lowered file does not define.
+#[test]
+fn nothing_names_what_a_placeholder_declares() {
+    let barrel = "export * from \"./first\";\nexport * from \"./second\";\nexport function describe() {}\nexport class Unread {}";
+    let first = "import { Second } from \"./index\";\nconsole.log(1);\nexport class First {\n  static last() {\n    return new Second();\n  }\n}";
+    let second =
+        "import { First } from \"./index\";\nconsole.log(2);\nexport class Second extends First {}";
+    let files = [
+        (
+            "main.ts",
+            "import { Second } from \"./three\";\nconsole.log(new Second());",
+        ),
+        ("three/index.ts", barrel),
+        ("three/first.ts", first),
+        ("three/second.ts", second),
+        (
+            "package.json",
+            "{ \"name\": \"p\", \"sideEffects\": false }",
+        ),
+    ];
+    let project = TestProject::new(&files, &default_settings());
+    let (result, log) = link_project(&project, &WithoutServices);
+    let program = print_program(&expect_success(result, &log).program);
+    assert!(program.contains("three/index.ts") && !program.contains("describe"));
+}
+
+#[test]
+fn an_executable_has_a_file_of_data_as_the_type_that_the_scan_of_the_bundler_comes_to_first() {
+    let call = "console.log(await import(\"./conf.txt\", { with: { type: \"text\" } }));";
+    let statement = "import conf from \"./conf.txt\" with { type: \"jsonc\" };\nconsole.log(conf);";
+    let forms_of = |main: &str, below: &str, builds_executable: bool| {
+        let main = format!("await import(\"./below.js\");\n{main}");
+        let conf = "{ \"port\": 21 }\n";
+        let files = [("a.js", &main[..]), ("below.js", below), ("conf.txt", conf)];
+        let mut project = TestProject::new(&files, &default_settings());
+        project.builds_executable = builds_executable;
+        let (result, log) = link_project(&project, &WithoutServices);
+        let text = print_program(&expect_success(result, &log).program);
+        ["conf.txt?jsonc", "conf.txt?text"].map(|form| text.contains(form))
+    };
+    // The loader of `bun run` goes by what the program asks for first when it runs: both forms are there for it.
+    assert_eq!(forms_of(call, statement, false), [true, true]);
+    assert_eq!(forms_of(statement, call, false), [true, true]);
+    // The text is what the name of the file says: alone, it has the plain path.
+    assert_eq!(forms_of(call, statement, true), [false, false]);
+    assert_eq!(forms_of(statement, call, true), [true, false]);
+    // Two files of one level: the bundler parses them side by side. The statement goes first, as under `bun run`.
+    let files = [
+        ("a.js", "import \"./caller.js\";\nimport \"./holder.js\";"),
+        ("caller.js", call),
+        ("holder.js", statement),
+        ("conf.txt", "{ \"port\": 21 }\n"),
+    ];
+    let mut project = TestProject::new(&files, &default_settings());
+    project.builds_executable = true;
+    let (result, log) = link_project(&project, &WithoutServices);
+    let text = print_program(&expect_success(result, &log).program);
+    assert!(text.contains("conf.txt?jsonc") && !text.contains("conf.txt?text"));
+}
+
+#[test]
+fn a_store_to_a_name_of_the_runner_costs_no_test_file() {
+    let is_lost = |name: &str, text: &str| {
+        let mut project = TestProject::new(&[(name, text)], &default_settings());
+        project.runs_tests = true;
+        let (result, log) = link_project(&project, &WithoutServices);
+        let program = expect_success(result, &log).program;
+        print_program(&program).contains("Cannot assign to")
+    };
+    let stores = "test('a', () => {});\nfunction never() { expect = 1; jest++; [vi] = []; }\n";
+    for name in ["a.test.cjs", "a.test.js", "a.test.ts"] {
+        assert!(!is_lost(name, stores), "{name}");
+    }
+    let own = "const own = 1;\nfunction never() { own = 2; }\ntest('a', () => {});\n";
+    assert!(is_lost("a.test.cjs", own));
+}
+
+#[test]
 fn type_error_builds() {
     let typed = "const x: number = \"a\";\nconsole.log(x);";
     let annotated = "/** @type {number} */\nconst x = \"a\";\nconsole.log(x);";

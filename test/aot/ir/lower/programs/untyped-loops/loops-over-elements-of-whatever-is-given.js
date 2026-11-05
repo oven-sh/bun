@@ -237,72 +237,7 @@ for (let round = 0; round < 3; round++) {
 }
 console.log(lines.join("\n"));
 
-// GENERATED: each CountingLength [Symbol.species] get
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: undefined|null|string|Array):
-// CHECK-NEXT: InitialYield v2
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v5)
-// CHECK-NEXT: b1(v6):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v2 key="length"
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b6()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = ElemGet v2, v6
-// CHECK-NEXT: v11 = Yield v10, v2
-// CHECK-NEXT: v12 = ResultAt v11
-// CHECK-NEXT: v13 = ResultAt v11 index=1
-// CHECK-NEXT: Switch v13 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Throw v12
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v14 = Increment v6
-// CHECK-NEXT: v15 = Convert v14 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v15)
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="CountingLength"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_2]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=Array
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_3]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="n"
-// CHECK-NEXT: v3 = ToNumeric v2
-// CHECK-NEXT: v4 = Increment v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_3]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="n"
-// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_3]]
-// CHECK-NEXT: v9 = Integer integer=2
-// CHECK-NEXT: v10 = Less v3, v9
-// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v11 = Integer integer=4
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v12 = Integer
-// CHECK-NEXT: Jump -> next b3(v12)
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }

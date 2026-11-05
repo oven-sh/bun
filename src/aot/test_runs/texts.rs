@@ -283,6 +283,14 @@ fn quote(text: &[u8]) -> Vec<u8> {
     quoted
 }
 
+/// What the code in the texts of a file does.
+struct CodeInTexts {
+    /// In the texts that go into files.
+    written: FoundInCode,
+    /// In the others.
+    handed_on: FoundInCode,
+}
+
 /// What code in a text does, with the texts as bytes: the tree that spells them is dropped.
 #[derive(Default)]
 struct FoundInCode {
@@ -680,7 +688,7 @@ impl<'t> Look<'t> {
                 texts.look_at(expression, node.kind);
             }
         }
-        let (written, handed_on) = texts.read_with(self);
+        let CodeInTexts { written, handed_on } = texts.read_with(self);
         read.in_texts.append(written);
         read.in_texts.append(handed_on);
         Some(read)
@@ -939,7 +947,7 @@ impl<'a, 's> TextReader<'a, 's> {
     }
 
     /// What the texts that go into files do, and what the others do.
-    fn read_with(self, look: &Look<'_>) -> (FoundInCode, FoundInCode) {
+    fn read_with(self, look: &Look<'_>) -> CodeInTexts {
         let (mut written, mut handed_on) = (FoundInCode::default(), FoundInCode::default());
         for (written_at, texts) in &self.candidates {
             let texts: Vec<&[u8]> = texts.iter().map(Vec::as_slice).collect();
@@ -953,7 +961,7 @@ impl<'a, 's> TextReader<'a, 's> {
                 WhereTextGoes::Anywhere => handed_on.append(of_text),
             }
         }
-        (written, handed_on)
+        CodeInTexts { written, handed_on }
     }
 
     /// `FileOfRun::in_texts_written`, `FileOfRun::in_texts_handed_on`
@@ -969,7 +977,7 @@ impl<'a, 's> TextReader<'a, 's> {
             names: BuiltinNames::new(&atoms),
             atoms,
         };
-        let (written, handed_on) = self.read_with(&look);
+        let CodeInTexts { written, handed_on } = self.read_with(&look);
         (
             written.intern(atoms_of_file),
             handed_on.intern(atoms_of_file),

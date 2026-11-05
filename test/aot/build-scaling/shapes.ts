@@ -548,6 +548,24 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "written types that require the same names and have one of their own that may be absent",
+    counted: "types, each with a literal and a function",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        "let total = 0;\n" +
+        lines(
+          size,
+          index =>
+            `interface Item${index} { id: number; name: string; own${index}?: number }\n` +
+            `function weigh${index}(item: Item${index}): number { return item.id + item.name.length + (item.own${index} ?? 0); }\n` +
+            `total += weigh${index}({ id: ${index}, name: "n", own${index}: 1 });`,
+        ) +
+        "console.log(total);\n",
+    }),
+  },
+  {
     name: "one function of many statements",
     counted: "statements",
     size: 1200,
@@ -953,6 +971,21 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `function run(list) {\n  let sum = 0;\n${lines(size, index => `  for (let i = 0; i < list.length; i++) sum = (sum + list[i] * ${index}) | 0;`)}  return sum;\n}\nconsole.log(run([1, 2, 3]));\n`,
+    }),
+  },
+  // Whether a variable that closures share is written in a turn was asked of each callee's whole body, and of its callees' bodies, at each read of each loop, four times a loop:
+  // 4,000 loops that call one function of 4,000 statements took the engine 13,039 M instructions where 2,000 of 2,000 took 5,175 and 1,000 of 1,000 took 2,555.
+  {
+    name: "loops that step a variable that closures share and call one function as long as the row of them",
+    counted: "loops, and statements of the function",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const hook: (x: number) => unknown = (globalThis as any).hook ?? ((x: number) => x);\nfunction make(start: any) {\n  let count: number = start;\n  const total: number[] = [0];\n` +
+        `  function big() {\n${lines(size, index => `    hook(${index});`)}  }\n` +
+        `  function run(turns: number) {\n${lines(size, () => `    for (let i = 0; i < turns; i++) { total[0] = i; count = count + 1; big(); }`)}    return count;\n  }\n` +
+        `  return [run, () => count] as const;\n}\nconst [run, read] = make(JSON.parse("0"));\nconsole.log(run(2), read());\n`,
     }),
   },
   // Whether an access is split by the parts of its receiver's type goes by what all the accesses of that receiver would gain. That was counted anew at each of them, and each count

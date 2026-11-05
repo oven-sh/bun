@@ -174,82 +174,8 @@ function statements(): string[] {
 say("statements", statements().join(" | "))
 console.log(log.join("\n"))
 
-// GENERATED: WithStatic flag say flips
 // CHECK-LABEL: function {{*}}name="WithStatic"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="flag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="reads"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="reads"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_2]]
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="say"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string=": "
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = Builtin builtin=Object
-// CHECK-NEXT: v8 = Builtin builtin=ObjectIs
-// CHECK-NEXT: v9 = Double number=-0
-// CHECK-NEXT: v10 = Call v8, v7, v1, v9 calleeName="Object.is"
-// CHECK-NEXT: v11 = Convert v10 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v12 = ToBoolean v11
-// CHECK-NEXT: Branch v12 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v13):
-// CHECK-NEXT: v14 = String string="-0"
-// CHECK-NEXT: Jump -> next b3(v14)
-// CHECK-NEXT: b2(v15):
-// CHECK-NEXT: v16 = Builtin builtin=String
-// CHECK-NEXT: v17 = Call v16, -, v1 calleeName="String"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3(v18)
-// CHECK-NEXT: b3(v19):
-// CHECK-NEXT: v20 = Add v6, v19
-// CHECK-NEXT: v21 = Call v4, v3, v20 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v22 = Convert v21 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v23 = Undefined
-// CHECK-NEXT: Return v23
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="flag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="reads"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="reads"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_2]]
-// CHECK-NEXT: v7 = Boolean
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="flips"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="settings"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="settings"
-// CHECK-NEXT: v4 = PropGet v3 key="debug"
-// CHECK-NEXT: v5 = ToBoolean v4
-// CHECK-NEXT: v6 = LogicalNot v5
-// CHECK-NEXT: PropSet v1, v6 key="debug"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

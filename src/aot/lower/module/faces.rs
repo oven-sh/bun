@@ -47,8 +47,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         for &export in modules.commonjs().copies(own_file) {
             let copied = *modules.synthetic_export(export);
-            // Only the object says which names it has: the run time takes the copies of a face that captures, behind its body.
+            // Only the object says which names it has: the run time takes the copies of a face that captures, behind its body. It takes what a loop over the object sees.
             if matches!(copied.module, ModuleRef::File(owner) if modules.commonjs().face_captures(owner))
+                && !(modules.commonjs()).is_getter_that_no_loop_sees(copied.module, copied.name)
             {
                 continue;
             }

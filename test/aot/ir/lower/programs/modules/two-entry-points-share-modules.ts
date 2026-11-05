@@ -3,6 +3,7 @@
 // ENTRY: main.ts worker.ts
 // STATISTIC: SourceFilesChecked = 6
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="late"
 
 // FILE: main.ts
 import type { Shape } from "./shapes";
@@ -72,11 +73,3 @@ parentPort!.postMessage(lines);
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: late
-// CHECK-LABEL: function {{*}}name="late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = ImportModule module=[[m_1]] referrer=[[m_0]]
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

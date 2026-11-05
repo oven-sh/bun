@@ -10,13 +10,21 @@ const NO_NUMBER: &str = "it is not a number";
 const ADVICE_AT_SPREAD: &str =
     " If it is a spread argument, pass its elements as separate arguments.";
 
-fn bounds_of(record: &UserDiagnosticRecord) -> (i64, i64) {
-    (record.minimum as i64, record.maximum as i64)
+struct Bounds {
+    minimum: i64,
+    maximum: i64,
+}
+
+fn bounds_of(record: &UserDiagnosticRecord) -> Bounds {
+    Bounds {
+        minimum: record.minimum as i64,
+        maximum: record.maximum as i64,
+    }
 }
 
 // `| 0` turns a number that is out of range into another number, so a constant is never told to write it.
 fn is_constant(record: &UserDiagnosticRecord, failure: Int32ProofFailure) -> bool {
-    let (minimum, maximum) = bounds_of(record);
+    let Bounds { minimum, maximum } = bounds_of(record);
     record.kind == UserDiagnosticKind::ConstantNotInt32
         || (failure == Int32ProofFailure::OutOfRange && minimum == maximum)
 }
@@ -42,7 +50,7 @@ fn describe_constant(failure: Int32ProofFailure) -> &'static str {
 fn describe_failure(record: &UserDiagnosticRecord, failure: Int32ProofFailure) -> String {
     let text = match failure {
         Int32ProofFailure::OutOfRange => {
-            let (minimum, maximum) = bounds_of(record);
+            let Bounds { minimum, maximum } = bounds_of(record);
             return format!("it can be anything from {minimum} to {maximum}");
         }
         Int32ProofFailure::Product => "a product can be too large to be exact, and it can be -0",

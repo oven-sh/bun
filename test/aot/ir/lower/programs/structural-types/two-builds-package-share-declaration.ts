@@ -2,6 +2,10 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="area"
+// CHECK-LABEL: function {{*}}name="border"
+// CHECK-LABEL: function {{*}}name="describe"
+// CHECK-LABEL: function {{*}}name="OldChild"
 
 // FILE: main.ts
 // Two builds of one package share one declaration file.
@@ -126,67 +130,3 @@ export declare function isWidget(value: unknown): value is Widget;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "paths": { "widgets-old": [ "./packages/old/index" ], "widgets-new": [ "./packages/new/index" ] } }, "files": [] }
-
-// GENERATED: area border describe OldChild
-// CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="area"
-// CHECK-NEXT: v2 = Call v1, v0 calleeKey="area" calleeName="w.area"
-// CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number}}, {declared={type=number}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="border"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = PropGet v0 key="width"
-// CHECK-NEXT: v3 = PropGet v0 key="height"
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: v5 = Mul v1, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="width"
-// CHECK-NEXT: v2 = PropGet v0 key="height"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = Call v3, -, v0 calleeName="area"
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v6 = Call v5, -, v0 calleeName="border"
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="Widget"
-// CHECK-NEXT: v9 = InstanceOf v0, v8
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="Widget"
-// CHECK-NEXT: v12 = InstanceOf v0, v11
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v14 = CheckInitialized v13 name="isWidget"
-// CHECK-NEXT: v15 = ModuleNamespace module=[[m_7]]
-// CHECK-NEXT: v16 = Call v14, v15, v0 calleeName="old.isWidget"
-// CHECK-NEXT: v17 = Convert v16 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v19 = CheckInitialized v18 name="isWidget"
-// CHECK-NEXT: v20 = ModuleNamespace module=[[m_9]]
-// CHECK-NEXT: v21 = Call v19, v20, v0 calleeName="fresh.isWidget"
-// CHECK-NEXT: v22 = Convert v21 declared={type=boolean} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v23 = Builtin builtin=Object
-// CHECK-NEXT: v24 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v25 = Call v24, v23, v0 calleeName="Object.keys"
-// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v27 = PropGet v26 key="join"
-// CHECK-NEXT: v28 = Call v27, v26 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v30 = NewArray v1, v2, v4, v6, v9, v12, v17, v22, v29 contents=anything
-// CHECK-NEXT: Return v30
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="OldChild"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_10]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_10]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_11]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

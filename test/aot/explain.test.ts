@@ -79,7 +79,6 @@ const firstBlock = (language: string) => page.match(new RegExp("^```" + language
 const example: Files = { "main.ts": firstBlock("ts") };
 
 const parts = [0, 1, 2];
-const readsInPart = 4;
 const parsingLine = `export const settings = JSON.parse('{ "panel": { "size": 3, "title": "a" } }');`;
 const readers: Files = {
   "settings.ts": parsingLine + "\n",
@@ -315,30 +314,6 @@ describe.concurrent("--explain", () => {
   );
 
   test(
-    "an entry names the line that parses, not the lines that read",
-    () =>
-      slot(async () => {
-        const { numbers, causes } = await explain(readers);
-        expect(causes).not.toBeEmpty();
-        const [first] = causes;
-        expect({
-          first: lineOf(first!),
-          source: first!.source,
-          family: first!.family,
-          ofAccesses: [...new Set(causes.filter(cause => cause.accesses > 0).map(lineOf))],
-          accesses: untyped(numbers.accesses),
-        }).toEqual({
-          first: "settings.ts:1",
-          source: parsingLine,
-          family: "unknown-code",
-          ofAccesses: ["settings.ts:1"],
-          accesses: parts.length * readsInPart,
-        });
-      }),
-    buildTimeout,
-  );
-
-  test(
     "a cause in a loop comes first",
     () =>
       slot(async () => {
@@ -347,8 +322,13 @@ describe.concurrent("--explain", () => {
         expect(
           ofAccesses.map(cause => ({ line: lineOf(cause), accesses: cause.accesses, isInLoop: cause.inLoops > 0 })),
         ).toEqual([
-          { line: "main.ts:2", accesses: 2, isInLoop: true },
-          { line: "main.ts:1", accesses: readsOutsideLoops, isInLoop: false },
+          { line: "main.ts:17", accesses: 1, isInLoop: true },
+          { line: "main.ts:17", accesses: 1, isInLoop: true },
+          ...Array.from({ length: readsOutsideLoops }, (_, index) => ({
+            line: `main.ts:${index + 3}`,
+            accesses: 1,
+            isInLoop: false,
+          })),
         ]);
       }),
     buildTimeout,

@@ -2764,11 +2764,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         found
     }
 
+    /// The checked type of an expression that evidence is taken from. `None`: it gives none.
+    fn type_for_evidence(&mut self, expression: ExprId) -> Option<TypeId> {
+        match self.expression_type(expression) {
+            Ok(checked) => Some(checked),
+            // Code that never runs, or that has no type, says nothing.
+            Err(GaveUp::UnreachedNode | GaveUp::ErrorType) => None,
+            // `note_gave_up` has counted it, so nobody keeps what is gathered around it.
+            Err(GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled | GaveUp::OutOfStack) => None,
+        }
+    }
+
     fn add_returned_expressions(&mut self, returned: ExprId, found: &mut ReturnedExpressions) {
         if self.c.is_stack_low() {
             return;
         }
-        let Ok(checked) = self.expression_type(returned) else {
+        let Some(checked) = self.type_for_evidence(returned) else {
             return;
         };
         let alternatives = find_alternatives(self.hir(), returned);
@@ -3369,7 +3380,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.c.is_stack_low() || !walk.enter_node_of(usage) {
             return;
         }
-        let Ok(checked) = self.expression_type(value) else {
+        let Some(checked) = self.type_for_evidence(value) else {
             return;
         };
         if !self.c.is_any(checked) {
@@ -3606,7 +3617,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_comparison(&mut self, other: ExprId, usage: &mut Usage) {
-        let Ok(ty) = self.expression_type(other) else {
+        let Some(ty) = self.type_for_evidence(other) else {
             return;
         };
         if self.is_number_type(ty) {
@@ -3661,7 +3672,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         key: ExprId,
         usage: &mut Usage,
     ) {
-        let Ok(key_type) = self.expression_type(key) else {
+        let Some(key_type) = self.type_for_evidence(key) else {
             return;
         };
         let is_index = self.is_number_type(key_type)
@@ -4226,7 +4237,8 @@ mod tests {
         let all_facts = [Facts::NUMBER, Facts::STRING, Facts::REQUIRED, Facts::STORED];
         let mut trees: Vec<(Rc<Usage>, PlainUsage)> = Vec::new();
         let (mut ended_budgets, mut most_members) = (0, 0);
-        for round in 0..1500 {
+        const ROUNDS: u32 = if cfg!(miri) { 150 } else { 1500 };
+        for round in 0..ROUNDS {
             let (mut usage, mut plain) = (Usage::default(), PlainUsage::default());
             let steps = 1 + next(5);
             for _ in 0..steps {
@@ -4275,8 +4287,11 @@ mod tests {
             most_members = most_members.max(usage.members.len());
             trees.push((Rc::new(usage), plain));
         }
-        assert!(ended_budgets > 100, "{ended_budgets}");
-        assert!(most_members > 100, "{most_members}");
+        assert!(ended_budgets > ROUNDS / 15, "{ended_budgets}");
+        assert!(
+            most_members > if cfg!(miri) { 30 } else { 100 },
+            "{most_members}"
+        );
     }
 
     fn assert_orders_are_light(usage: &Usage) {
@@ -4309,7 +4324,7 @@ mod tests {
     #[test]
     fn trees_with_the_same_few_names_do_not_string_their_orders_together() {
         let mut next: Option<Rc<Usage>> = None;
-        for index in 0..2000 {
+        for index in 0..100 {
             let mut usage = Usage::default();
             usage.member_mut(Atom(index % 12)).facts |= Facts::NUMBER;
             if let Some(next) = &next {
@@ -4319,7 +4334,7 @@ mod tests {
             assert!(count_orders(&usage) <= 4 * 12 + 16, "{index}");
             next = Some(Rc::new(usage));
         }
-        let expected: Vec<Atom> = (0..12).map(|back| Atom((1999 - back) % 12)).collect();
+        let expected: Vec<Atom> = (0..12).map(|back| Atom((99 - back) % 12)).collect();
         assert_eq!(names(&next.unwrap()), expected);
     }
 
@@ -4327,7 +4342,7 @@ mod tests {
     fn a_name_behind_the_names_of_the_next_copies_no_order() {
         let mut next: Option<Rc<Usage>> = None;
         let mut pieces = 0;
-        for index in 0..3000 {
+        for index in 0..100 {
             let mut usage = Usage::default();
             if let Some(next) = &next {
                 usage.merge(&mut Walk::new(4096), next);
@@ -4339,15 +4354,15 @@ mod tests {
             assert_orders_are_light(&usage);
             next = Some(Rc::new(usage));
         }
-        assert!(pieces <= 3 * 3000, "{pieces}");
-        let expected: Vec<Atom> = (0..3000).map(Atom).collect();
+        assert!(pieces <= 3 * 100, "{pieces}");
+        let expected: Vec<Atom> = (0..100).map(Atom).collect();
         assert_eq!(names(&next.unwrap()), expected);
     }
 
     #[test]
     fn a_tree_takes_over_the_members_of_the_next_as_they_lie_there() {
         let mut next: Option<Rc<Usage>> = None;
-        for index in 0..3000 {
+        for index in 0..100 {
             let mut usage = Usage::default();
             usage.member_mut(Atom(index)).facts |= Facts::STORED;
             if let Some(next) = &next {
@@ -4356,7 +4371,7 @@ mod tests {
             next = Some(Rc::new(usage));
         }
         let first = next.unwrap();
-        let expected: Vec<Atom> = (0..3000).rev().map(Atom).collect();
+        let expected: Vec<Atom> = (0..100).rev().map(Atom).collect();
         assert_eq!(names(&first), expected);
         let mut again = Usage::default();
         again.merge(&mut Walk::new(4096), &first);

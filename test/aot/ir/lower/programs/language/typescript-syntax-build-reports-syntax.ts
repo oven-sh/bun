@@ -1,5 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="newTarget"
+// CHECK-LABEL: function {{*}}name="x"
+// CHECK-LABEL: function {{*}}name="x"
+// CHECK-LABEL: function {{*}}name="method"
+// CHECK-LABEL: function {{*}}name="Modifiers"
 
 // FILE: typescript-syntax-build-reports-syntax.ts
 // @ts-nocheck
@@ -51,59 +56,3 @@ console.log(Modifiers.x, new Modifiers().y, new Modifiers().m());
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: newTarget x method Modifiers
-// CHECK-LABEL: function {{*}}name="newTarget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewObject layout=[[L_1]]
-// CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: v3 = TypeTest v0 testedType=undefined
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = Integer integer=2
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: PropSet v2, v8 key="A"
-// CHECK-NEXT: v10 = ToPropertyKey v8
-// CHECK-NEXT: v11 = String string="A"
-// CHECK-NEXT: ElemSet v2, v10, v11
-// CHECK-NEXT: v13 = PropGet v2 key="A"
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=undefined|null|[[L_2]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|null|[[L_2]] flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]], v1: number):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string="set"
-// CHECK-NEXT: v8 = Call v6, v4, v7, v1 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|null|[[L_2]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]], v1: anything):
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Modifiers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_4]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

@@ -5,10 +5,11 @@
 // and a snippet runs from its mark to the next one. The lint gets each snippet alone.
 //   finds <path> <pattern>    exactly one line is reported, under that pattern. If a line ends in `// here`, it is that line
 //   allows <path> <why>       no line is reported. If the path is the reason, the same lines are reported under an ordinary path
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { isCI, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import { test } from "../harness/default-timeout";
 import {
   allowed,
   findInSource,

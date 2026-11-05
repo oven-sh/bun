@@ -2,7 +2,7 @@ use super::code_barrels::ImportRequests;
 use super::projects::Projects;
 use super::*;
 use crate::file_analysis::FileAnalysis;
-use crate::fold::{FoldInputs, StoredByMocks};
+use crate::fold::FoldInputs;
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
@@ -25,8 +25,6 @@ pub struct CompileInputs<'a, 's> {
     /// Asked each time every file that was found is parsed, until it names nothing new. The load goes on with what it names, and ends as a load of all of them ends.
     pub finds_entry_points: Option<&'a FindsEntryPoints<'a>>,
     pub main_module: MainModule,
-    /// The program of the build that has loaded these files. This load folds each file and follows its imports as that one did.
-    pub loaded_before: Option<&'a Files<'s>>,
     pub code: &'a CodeOptions,
     pub fold: &'a FoldInputs<'s>,
     pub atoms: Interner<'s>,
@@ -36,34 +34,19 @@ pub struct CompileInputs<'a, 's> {
 pub(super) struct CompileLoad<'a, 's> {
     pub(super) host: &'a dyn CodeHost,
     pub(super) inputs: &'a CompileInputs<'a, 's>,
-    /// Loads that share parsed files may run in parallel.
-    pub(super) shares_parsed_files: bool,
 }
 
 impl<'s> Files<'s> {
-    /// `parsed`: `Run::of_compile_build` with the atoms of `inputs`.
-    pub fn load_for_compile_with_parsed_files<'u: 's>(
+    /// `load`, for a compile build, which also loads the files that run.
+    pub fn load_for_compile(
         session: &'s Session,
-        parsed: Option<&'s Run<'u>>,
         host: &dyn CodeHost,
         options: Options,
         roots: RootFileNames<'_>,
         inputs: &CompileInputs<'_, 's>,
     ) -> Files<'s> {
-        let compile = CompileLoad {
-            host,
-            inputs,
-            shares_parsed_files: parsed.is_some(),
-        };
-        Self::load_with(
-            session,
-            parsed,
-            host,
-            options,
-            roots,
-            &|_| {},
-            Some(compile),
-        )
+        let compile = CompileLoad { host, inputs };
+        Self::load_with(session, None, host, options, roots, &|_| {}, Some(compile))
     }
 }
 
@@ -85,15 +68,6 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     entry_points_only_imported_from_above: FxHashSet<Vec<u8>>,
     entry_points_required_from_above: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
-    shares_parsed_files: bool,
-    files_loaded_before: FxHashMap<(Cow<'a, [u8]>, HostLoader), FileId>,
-}
-
-/// A file as `CompileInputs::loaded_before` has it.
-#[derive(Copy, Clone)]
-pub(super) struct LoadedBefore<'a, 's> {
-    pub(super) hir: &'a hir::File<'s>,
-    pub(super) compiled: &'s CompiledModule<'s>,
 }
 
 const _: fn() = || {
@@ -144,13 +118,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             .iter()
             .map(|path| to_path(path, is_case_sensitive).into_owned())
             .collect();
-        let loaded_before = compile.inputs.loaded_before;
-        let files_loaded_before = loaded_before.into_iter().flat_map(|files| {
-            files.loaded_code_files().iter().filter_map(move |&file| {
-                let path = to_path(files.module(file).file_name(), is_case_sensitive);
-                Some(((path, files.compiled(file)?.loader), file))
-            })
-        });
         CodeLoadContext {
             session,
             host: compile.host,
@@ -167,27 +134,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             entry_points_only_imported_from_above,
             entry_points_required_from_above,
             is_case_sensitive,
-            shares_parsed_files: compile.shares_parsed_files,
-            files_loaded_before: files_loaded_before.collect(),
-        }
-    }
-
-    pub(super) fn find_loaded_before(&self, key: LoadKey<'_>) -> Option<LoadedBefore<'a, 's>> {
-        let files = self.inputs.loaded_before?;
-        let key = self.key_of_read_code(key);
-        let path = to_path(key.path, self.is_case_sensitive);
-        let &file = self.files_loaded_before.get(&(path, key.loader))?;
-        Some(LoadedBefore {
-            hir: files.hir(file),
-            compiled: files.compiled(file)?,
-        })
-    }
-
-    /// The I/O threads serve one load at a time.
-    pub(super) fn io_pool(&self) -> Option<&'a bun_threading::ThreadPool> {
-        match self.shares_parsed_files {
-            true => None,
-            false => self.host.io_pool(),
         }
     }
 
@@ -202,6 +148,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         (self.written_entry_points.iter().chain(found.iter()))
             .copied()
             .collect()
+    }
+
+    /// They come first among `entry_points()`.
+    pub(super) fn written_entry_point_count(&self) -> usize {
+        self.written_entry_points.len()
     }
 
     pub(super) fn entry_point_count(&self) -> usize {
@@ -297,9 +248,6 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) side_effects: DeclaredSideEffects<'r>,
     pub(super) is_aot_source: bool,
     pub(super) import_meta_main: Option<bool>,
-    pub(super) is_called_before_it_runs: bool,
-    pub(super) stored_by_mocks: StoredByMocks<'s>,
-    pub(super) is_only_imported: bool,
 }
 
 pub(super) struct LoadedCode<'s, 'r> {

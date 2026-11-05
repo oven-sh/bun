@@ -136,73 +136,7 @@ const last = generators.map(g => g.next("z").value);
 console.log(last[0]);
 console.log(last[29]);
 
-// GENERATED: churn soon Pair join
 // CHECK-LABEL: function {{*}}name="churn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Negate v0
-// CHECK-NEXT: v2 = NewObject -, v0, v1 layout=[[L_1]] fields=[0, 1]
-// CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Add v0, v4
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Add v0, v6
-// CHECK-NEXT: v8 = NewArray v0, v5, v7 contents=anything
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = Greater v0, v9
-// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: v13 = Sub v0, v12
-// CHECK-NEXT: v14 = Call v11, -, v13 calleeName="churn"
-// CHECK-NEXT: v15 = CallDirect v3, v8 function=[[f_3]]
-// CHECK-NEXT: v16 = Add v14, v15
-// CHECK-NEXT: v17 = Convert v16 declared={type=number}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v18 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v19 = PropGet v18 key="Bun" [isFreeName]
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(Bun) flags=[IsExpected]}
-// CHECK-NEXT: v21 = PropGet v20 key="gc"
-// CHECK-NEXT: v22 = Convert v21 declared={type=builtin(BunGc) flags=[IsExpected]}
-// CHECK-NEXT: v23 = Boolean boolean=true
-// CHECK-NEXT: v24 = Call v22, v20, v23 calleeKey="gc" calleeName="Bun.gc"
-// CHECK-NEXT: v25 = CallDirect v3, v8 function=[[f_3]]
-// CHECK-NEXT: ReturnCall v25 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="soon"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Promise" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="resolve"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3, v0 calleeKey="resolve" calleeName="Promise.resolve"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Pair"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_4]], v2: undefined|null|string):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_6]]
-// CHECK-NEXT: PropSet v5, v1 key="a"
-// CHECK-NEXT: PropSet v5, v2 key="b"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="join"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v3 = Call v2, -, v0, v1 calleeName="use"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }

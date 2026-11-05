@@ -367,10 +367,51 @@ finds src/aot/load/hoisted_mocks.rs matches!
     return matches!(name, known::require);
 allows src/aot/modules/referents.rs the exports of the module's own parameter
     return key == MemberKey::Name(known::exports) && bound.binding(object) == Binding::CommonJs(CommonJsVariable::Module);
+allows src/aot/lower/module/loads.rs the scheme of a built-in module
+    return alias.node_builtin && !name.starts_with(b"node:");
+allows src/aot/lower/quoted_text.rs an identifier that the build has made
+    return written_name_of_local(self.file.queries.atom_bytes(name)).starts_with(b"%");
+finds src/aot/lower/quoted_text.rs starts_with
+    return self.file.queries.atom_bytes(name).starts_with(b"_");
+allows src/aot/load/made_own_require.rs a member of the require that the binder has answered for
+    return name == known::createRequire && requires_node_module(hir, bound, obj);
+finds src/aot/load/made_own_require.rs ==
+    return name == known::eval;
+allows src/aot/lower/commonjs/variables.rs a member of import.meta in the lowering
+    return matches!(name, known::meta_dir | known::meta_dirname);
+allows src/aot/lower/function/text_replaced_by_bundling.rs the identifier eval where it is called
+    return is_callee && name == known::eval;
+allows src/aot/lower/known_call.rs a key of the descriptor of a helper
+    return Some(name) == atoms.lookup(b"key");
+allows src/aot/lower/call/written_operands.rs a parent that is written as a prototype
+    return self.file.queries.atom_bytes(name) == b"prototype";
+allows src/aot/modules/imports.rs a specifier that is no relative path
+    return !matches!(input.files.atoms.bytes(name), [b'.' | b'/', ..]);
+allows src/aot/test_runs/files_of_run.rs the scope of a package
+    return name.starts_with(b"@");
+allows src/aot/test_runs/texts.rs the specifier of another test runner
+    match atoms.bytes(specifier) {
+        b"@jest/globals" | b"vitest" => table::test_runner(),
+        text => find_module_named(text),
+    }
+allows src/aot/test_runs/texts.rs the length of a text that is followed
+    return obj == value && tree.text_of(name) == b"length";
+allows src/aot/test_run_loads/keys_of_cache.rs the start of a key of the table of loaded modules
+    return atoms.bytes(method) == b"startsWith" && bound.binding(asked) == Binding::Symbol(name);
+allows src/sema/check/aot/inferred_from_use.rs a key that no layout lists
+    match self.atom_bytes(name) {
+        b"__proto__" | b"Infinity" | b"NaN" | [] => false,
+        _ => true,
+    }
 allows src/aot/lower/condition.rs an answer of typeof
     return name == known::function;
 allows src/aot/lower/member.rs a member of a function that plain Bun answers while it runs
     return name != known::arguments && name != known::caller;
+allows aot/facts/AOTFactsRegExpTexts.cpp the default of a CommonJS module in the rehearsal
+    if (name == "default"_s)
+        return exported;
+allows aot/facts/AOTLinkCalls.cpp what a function of Object.prototype asks in turn
+    return questions.keys.contains(m_program.keyOf(BuiltinNames::toLocaleString));
 allows aot/walk/AOTWalkArguments.cpp the callee of an arguments object
     return object->allocation == Opcode::CreateMappedArguments && read.key() == program.keyOf(BuiltinNames::callee);
 finds aot/walk/AOTWalkArguments.cpp ==

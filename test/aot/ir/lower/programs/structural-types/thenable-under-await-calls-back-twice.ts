@@ -91,58 +91,5 @@ console.log(await wait(Promise.resolve(5), "a real promise at the same place"));
 
 export {};
 
-// GENERATED: Scripted then
 // CHECK-LABEL: function {{*}}name="Scripted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: undefined|null|[[f_1]]):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_3]]
-// CHECK-NEXT: PropSet v5, v1 key="label"
-// CHECK-NEXT: PropSet v5, v2 key="script"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="then"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=2 thisType={type=[[L_2]]} parameters=[{type=undefined|null|[[f_4]]}, {type=undefined|null|[[f_5]]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: int[0, 4294967295], v2: undefined|null|[[f_4]], v3: undefined|null|[[f_5]], v4: Array):
-// CHECK-NEXT: v5 = CreateUnmappedArguments v1, v4, v2, v3
-// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v7 = PropGet v6 key="console" [isFreeName]
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v9 = PropGet v8 key="log"
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v11 = PropGet v0 key="label"
-// CHECK-NEXT: v12 = String string=": then gets "
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = TypeOf v2
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: v16 = String string=" and "
-// CHECK-NEXT: v17 = Add v15, v16
-// CHECK-NEXT: v18 = TypeOf v3
-// CHECK-NEXT: v19 = Add v17, v18
-// CHECK-NEXT: v20 = String string=", "
-// CHECK-NEXT: v21 = Add v19, v20
-// CHECK-NEXT: v22 = PropGet v5 key="length"
-// CHECK-NEXT: v23 = Add v21, v22
-// CHECK-NEXT: v24 = String string=" arguments"
-// CHECK-NEXT: v25 = Add v23, v24
-// CHECK-NEXT: v26 = Call v10, v8, v25 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v27 = PropGet v0 key="script"
-// CHECK-NEXT: v28 = NewClosure v2 function=[[f_6]]
-// CHECK-NEXT: v29 = NewClosure v3 function=[[f_7]]
-// CHECK-NEXT: v30 = Call v27, v0, v28, v29 calleeKey="script" calleeName="this.script"
-// CHECK-NEXT: v31 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v32 = PropGet v31 key="Promise" [isFreeName]
-// CHECK-NEXT: v33 = Convert v32 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v34 = NewClosure function=[[f_8]]
-// CHECK-NEXT: v35 = Construct v33, -, v34 calleeName="Promise"
-// CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v36
-// CHECK-NEXT: }

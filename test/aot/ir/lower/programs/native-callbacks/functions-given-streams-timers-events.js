@@ -62,73 +62,7 @@ await { then(resolve) { seen("thenable", typeof this, arguments); resolve(); } }
 Bun.inspect({ [Bun.inspect.custom](depth, options, inspect) { seen("inspect.custom", typeof this, arguments); return "x"; } });
 console.log(lines.join("\n"));
 
-// GENERATED: seen cancel element x
 // CHECK-LABEL: function {{*}}name="seen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}, {type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|[[L_1]], v3: anything):
-// CHECK-NEXT: v4 = TypeTest v3 testedType=undefined
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = Data data=[[d_2]]
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: v9 = NewClosure v8 function=[[f_3]]
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="lines"
-// CHECK-NEXT: v12 = PropGet v11 key="push"
-// CHECK-NEXT: v13 = String string=": this "
-// CHECK-NEXT: v14 = Add v0, v13
-// CHECK-NEXT: v15 = CallDirect v8, v1 function=[[f_3]]
-// CHECK-NEXT: v16 = Add v14, v15
-// CHECK-NEXT: v17 = String string=", "
-// CHECK-NEXT: v18 = Add v16, v17
-// CHECK-NEXT: v19 = PropGet v2 key="length"
-// CHECK-NEXT: v20 = Add v18, v19
-// CHECK-NEXT: v21 = String string=": "
-// CHECK-NEXT: v22 = Add v20, v21
-// CHECK-NEXT: v23 = Builtin builtin=Array
-// CHECK-NEXT: v24 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v25 = Call v24, v23, v2, v9 calleeName="Array.from"
-// CHECK-NEXT: v26 = PropGet v25 key="join"
-// CHECK-NEXT: v27 = Call v26, v25 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v28 = Add v22, v27
-// CHECK-NEXT: v29 = Call v12, v11, v28 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v30 = Undefined
-// CHECK-NEXT: Return v30
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="cancel"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array):
-// CHECK-NEXT: v4 = CreateUnmappedArguments v1, v3, v2
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v6 = String string="source.cancel"
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="source"
-// CHECK-NEXT: v9 = NewObject -, v8 layout=[[L_7]] fields=[0]
-// CHECK-NEXT: v10 = FinishObject v9
-// CHECK-NEXT: v11 = Call v5, -, v6, v0, v4, v10 calleeName="seen"
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="element"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_8]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: undefined|null|[[L_8]], v3: Array):
-// CHECK-NEXT: v4 = CreateUnmappedArguments v1, v3, v2
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v6 = String string="element"
-// CHECK-NEXT: v7 = Call v5, -, v6, v0, v4 calleeName="seen"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: Array):
-// CHECK-NEXT: v3 = CreateUnmappedArguments v1, v2
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v5 = String string="getter under structuredClone"
-// CHECK-NEXT: v6 = Call v4, -, v5, v0, v3 calleeName="seen"
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

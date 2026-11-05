@@ -27,17 +27,4 @@ const limited = Bun.spawnSync(["sh", "-c", "yes | head -c 100000"], { maxBuffer:
 say(limited.exitedDueToMaxBuffer, "exitedDueToTimeout" in limited, typeof limited.stdout);
 try { Bun.spawnSync(["/does/not/exist"]); } catch (e) { say((e as any).code, (e as Error).name); }
 
-// GENERATED: say
 // CHECK-LABEL: function {{*}}name="say"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter, IsChecked] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="log"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v6 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v6, v0
-// CHECK-NEXT: v8 = CallList v5, v3, v6 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }

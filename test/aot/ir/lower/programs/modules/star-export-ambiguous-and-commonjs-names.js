@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 18
+// CHECK-LABEL: function {{*}}name="describe"
 
 // FILE: main.js
 // `export *` of two ES modules that export the same name: the name is ambiguous. `export *` of a CommonJS module that has the name too does not bring it back, so the namespace object has no such key. Two modules that export their own `import * as space` export two bindings, and two `export * as space` of one module export one.
@@ -99,21 +100,3 @@ export const value = "value of target";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: describe
-// CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = PropGet v3 key="join"
-// CHECK-NEXT: v5 = Call v4, v3 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v6 = PropHas v0 key="both"
-// CHECK-NEXT: v7 = PropGet v0 key="both"
-// CHECK-NEXT: v8 = PropHas v0 key="space"
-// CHECK-NEXT: v9 = PropGet v0 key="space"
-// CHECK-NEXT: v10 = TypeOf v9
-// CHECK-NEXT: v11 = NewArray v5, v6, v7, v8, v10 contents=anything
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

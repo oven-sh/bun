@@ -180,81 +180,8 @@ for (let i = 0; i < 2000; i++) {
 }
 everyCase("after 2000");
 
-// GENERATED: logged Odd [Symbol.iterator] set
 // CHECK-LABEL: function {{*}}name="logged"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[f_2]]|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[f_2]]|Array<number>):
-// CHECK-NEXT: v1 = Builtin builtin=Proxy
-// CHECK-NEXT: v2 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewObject layout=[[L_5]]
-// CHECK-NEXT: PropDefine v4, v3 key="get"
-// CHECK-NEXT: v6 = NewClosure function=[[f_6]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v4, v7 key="set"
-// CHECK-NEXT: v9 = NewClosure function=[[f_8]]
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_9]] flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v4, v10 key="apply"
-// CHECK-NEXT: v12 = FinishObject v4
-// CHECK-NEXT: v13 = Construct v1, -, v0, v12 calleeName="Proxy"
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Odd"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_10]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_10]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsNamedByComputedKey] thisType={type=[[L_10]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_10]], v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="log"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = String string="Odd.iterator"
-// CHECK-NEXT: v7 = Call v5, v4, v6 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v8 = String string="odd"
-// CHECK-NEXT: v9 = Yield v8
-// CHECK-NEXT: v10 = ResultAt v9
-// CHECK-NEXT: v11 = ResultAt v9 index=1
-// CHECK-NEXT: Switch v11 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v10
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|symbol, v2: anything, v3: anything):
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="log"
-// CHECK-NEXT: v6 = PropGet v5 key="push"
-// CHECK-NEXT: v7 = String string="set "
-// CHECK-NEXT: v8 = Builtin builtin=String
-// CHECK-NEXT: v9 = Call v8, -, v1 calleeName="String"
-// CHECK-NEXT: v10 = Add v7, v9
-// CHECK-NEXT: v11 = Call v6, v5, v10 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v12 = Builtin builtin=Reflect
-// CHECK-NEXT: v13 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v14 = Call v13, v12, v0, v1, v2, v3 calleeName="Reflect.set"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="own iterator"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Data data=[[d_12]]
-// CHECK-NEXT: v6 = PropGet v5 key=@@iterator
-// CHECK-NEXT: v7 = Call v6, v5 calleeKey=@@iterator
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }

@@ -2405,7 +2405,6 @@ pub(crate) fn inject<'a>(
         let _ = Syscall::unlink(name);
     };
 
-    let mut file_holds_template = true;
     let cloned_executable_fd: Fd = 'brk: {
         #[cfg(windows)]
         {
@@ -2566,16 +2565,6 @@ pub(crate) fn inject<'a>(
                     CompileTargetOs::Mac => true,
                     _ => false,
                 };
-            // An ELF executable that is not trimmed is written piece by piece over what the file holds of the template: write_elf().
-            // Where the file system shares blocks it holds the whole of it for nothing. Where it does not, all that stands behind the payload would be written twice,
-            // so the file stays empty and each piece is copied to its place.
-            #[cfg(target_os = "linux")]
-            if !additions.trims()
-                && matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd)
-            {
-                file_holds_template = bun_sys::linux::ioctl_ficlone(fd, self_fd) == 0;
-                break 'brk fd;
-            }
             if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
@@ -2590,7 +2579,6 @@ pub(crate) fn inject<'a>(
     };
     #[cfg(windows)]
     let _ = (&mut zname_owned, &mut zname);
-    let _ = &mut file_holds_template;
     additions.log_part("behind the engine: copy of the template");
 
     match target.os {
@@ -2779,7 +2767,7 @@ pub(crate) fn inject<'a>(
                     additions.symbols,
                 )
             } else {
-                let template = if additions.has_code || !file_holds_template {
+                let template = if additions.has_code {
                     bun_sys::File::read_from(Fd::cwd(), self_exe.as_bytes())
                 } else {
                     bun_sys::File::borrow(&cloned_executable_fd).read_to_end()

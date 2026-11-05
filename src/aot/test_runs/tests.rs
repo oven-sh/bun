@@ -783,9 +783,9 @@ fn every_member_that_a_test_may_replace_is_written_as_a_read() {
         assert!(has(BuiltinId::Map) && has(BuiltinId::Math));
         // The table leaves `Date.now` writable in every build: it is a read already.
         assert!(!has(BuiltinId::DateNow));
-        // Nothing replaces `prototype` on the Map of the table. A test that replaces `Map` replaces what `Map.prototype` reads.
+        // They stay what the executable has: `fix_places_on_the_way`.
         assert!(has(BuiltinId::MapPrototype) && has(BuiltinId::ObjectPrototype));
-        assert!(has(BuiltinId::SymbolIterator) && has(BuiltinId::MathPI));
+        assert!(!has(BuiltinId::SymbolIterator));
     });
 }
 
@@ -985,7 +985,7 @@ fn a_name_stored_on_an_object_from_somewhere_may_come_to_lie_on_a_closed_object_
 }
 
 #[test]
-fn a_stored_name_goes_with_the_file_that_lets_the_object_go_and_with_what_that_file_imports() {
+fn a_stored_name_may_come_to_lie_on_an_object_that_any_file_of_the_tests_lets_go() {
     let added = |lets_go: &str, other: &str| {
         let files = [
             ("a.test.ts", lets_go),
@@ -1003,9 +1003,9 @@ fn a_stored_name_goes_with_the_file_that_lets_the_object_go_and_with_what_that_f
     };
     let far = "import { test } from 'bun:test';\n(globalThis as any).far = (object: any) => { object.__far = 1; };\ntest('b', () => {});\n";
     let imports = "import { test } from 'bun:test';\nimport { put } from './put';\ntest('a', () => { put(Object.prototype); });\n";
-    assert_eq!(added(imports, far), ["__imported"]);
+    assert_eq!(added(imports, far), ["__far", "__imported"]);
     let alone = "import { test } from 'bun:test';\ntest('a', () => { (globalThis as any).far(Object.prototype); });\n";
-    assert!(added(alone, far).is_empty());
+    assert_eq!(added(alone, far), ["__far"]);
 }
 
 #[test]

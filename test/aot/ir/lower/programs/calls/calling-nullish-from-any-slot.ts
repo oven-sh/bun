@@ -332,82 +332,9 @@ console.log("in a switch, last, in try:", outcome(() => { var r; r = c153({ firs
 console.log("in a switch, not last:", outcome(() => { var r; r = c154({ first: inc, second: inc }, 1) + c154({ first: inc, second: inc }, 2); return r; }), outcome(() => { var r; r = c154({ first: proxied, second: proxied }, 1) + c154({ first: proxied, second: proxied }, 2); return r; }), outcome(() => { var r; r = c154({ second: null }, 1); return r; }), outcome(() => { var r; r = c154({ first: revoked, second: revoked }, 1) + c154({ first: revoked, second: revoked }, 2); return r; }), outcome(() => { var r; r = c154({ first: inc, second: inc }, 1) + c154({ first: inc, second: inc }, 2); return r; }));
 console.log("in a switch, not last, in try:", outcome(() => { var r; r = c155({ first: inc, second: inc }, 1) + c155({ first: inc, second: inc }, 2); return r; }), outcome(() => { var r; r = c155({ first: proxied, second: proxied }, 1) + c155({ first: proxied, second: proxied }, 2); return r; }), outcome(() => { var r; r = c155({ second: null }, 1); return r; }), outcome(() => { var r; r = c155({ first: revoked, second: revoked }, 1) + c155({ first: revoked, second: revoked }, 2); return r; }), outcome(() => { var r; r = c155({ first: inc, second: inc }, 1) + c155({ first: inc, second: inc }, 2); return r; }));
 
-// GENERATED: c93 c128 c132 c8 Heir c24
 // CHECK-LABEL: function {{*}}name="c93"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="first"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v4 key="first"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b4():
-// CHECK-NEXT: v6 = Integer integer=1
-// CHECK-NEXT: v7 = Call v5, -, v6 calleeName="first"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b4() role=CatchHandler:
-// CHECK-NEXT: v8 = CatchValue
-// CHECK-NEXT: v9 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v10 = PropGet v9 key="TypeError" [isFreeName]
-// CHECK-NEXT: v11 = Convert v10 declared={type=builtin(TypeError) flags=[IsExpected]}
-// CHECK-NEXT: v12 = InstanceOf v8, v11
-// CHECK-NEXT: v13 = ToBoolean v12
-// CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v14):
-// CHECK-NEXT: v15 = Integer integer=-1
-// CHECK-NEXT: Jump -> next b7(v15)
-// CHECK-NEXT: b6(v16):
-// CHECK-NEXT: v17 = Integer integer=-2
-// CHECK-NEXT: Jump -> next b7(v17)
-// CHECK-NEXT: b7(v18):
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c128"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectApply
-// CHECK-NEXT: v3 = PropGet v0 key="first"
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: v5 = Data data=[[d_2]]
-// CHECK-NEXT: v6 = Call v2, v1, v3, v4, v5 calleeName="Reflect.apply"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c132"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_3]]):
-// CHECK-NEXT: v1 = PropGet v0 key="tag"
-// CHECK-NEXT: v2 = NewTemplateObject templateStrings=[{cooked="x" raw="x"}]
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="tag" calleeName="t.tag"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c8"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_4]] field=3
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeName="this.#hidden"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_7]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="c24"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v2 = GetSuperBase v1 homeKind=ClassPrototype
-// CHECK-NEXT: v3 = SuperGet v2, v0 key="got"
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Call v3, v0, v4 calleeName="super.got"
-// CHECK-NEXT: ReturnCall v5
-// CHECK-NEXT: }

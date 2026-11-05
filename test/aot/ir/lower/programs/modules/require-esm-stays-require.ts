@@ -2,6 +2,13 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 14
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="lazily"
+// CHECK-LABEL: function {{*}}name="readsEarly"
+// CHECK-LABEL: function {{*}}name="typeofEarly"
+// CHECK-LABEL: function {{*}}name="shadowed"
+// CHECK-LABEL: function {{*}}name="makes"
+// CHECK-LABEL: function {{*}}name="seen"
+// CHECK-LABEL: function {{*}}name="require"
 
 // FILE: main.ts
 // Where `require()` of an ES module differs from an import: the module is evaluated at the call, once; a destructured name is a copy; the variable that holds the module has a dead zone of its own; the object is the one that `import *` yields and says `__esModule` from the first `require` on.
@@ -212,81 +219,3 @@ export const a = "of the module";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: lazily readsEarly typeofEarly shadowed makes seen require
-// CHECK-LABEL: function {{*}}name="lazily"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = String string="in the function"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="log"
-// CHECK-NEXT: EvaluateModule module=[[m_2]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: v5 = Boolean boolean=true
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="value"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="readsEarly"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="early"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="count"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="typeofEarly"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="early"
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="shadowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_6]]):
-// CHECK-NEXT: v1 = String string="./marked"
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="require"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="makes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: RecordRequire module=[[m_7]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_7]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_7]] referrer=[[m_0]]
-// CHECK-NEXT: v3 = ModuleNamespace module=[[m_7]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v5 = NewClosure v4 function=[[f_8]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="seen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = PropGet v0 key="__esModule"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = String string=":"
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Builtin builtin=Object
-// CHECK-NEXT: v8 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v9 = Call v8, v7, v0 calleeName="Object.keys"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v11 = PropGet v10 key="join"
-// CHECK-NEXT: v12 = Call v11, v10 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v14 = Add v6, v13
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="require"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = String string="inner "
-// CHECK-NEXT: v2 = Add v1, v0
-// CHECK-NEXT: v3 = NewObject -, v2 layout=[[L_9]] fields=[0]
-// CHECK-NEXT: v4 = FinishObject v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

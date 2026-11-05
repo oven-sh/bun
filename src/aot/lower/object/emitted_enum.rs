@@ -38,7 +38,8 @@ pub(in crate::lower) struct EmittedEnum {
 const LARGEST_INDEX: f64 = i32::MAX as f64;
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn symbol_named_by(&self, expression: ExprId) -> Option<SymbolId> {
+    /// The symbol that a name is bound to. `None`: the expression is no name, or its name is bound to no symbol.
+    pub(in crate::lower) fn symbol_named_by(&self, expression: ExprId) -> Option<SymbolId> {
         match (self.hir[expression].kind, self.bound.binding(expression)) {
             (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
             _ => None,

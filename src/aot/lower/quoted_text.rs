@@ -11,8 +11,8 @@ use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId,
-    PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
+    BinOp, Call, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId, PatKind,
+    PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -136,8 +136,10 @@ struct Printer<'f, 'a, 'c, 'p, 's> {
     end_of_number: usize,
     /// Where what is being printed begins: what stands in front of it is another text.
     start: usize,
-    /// Where a statement or the body of an arrow function begins: a brace there would open a block.
+    /// Where a statement begins: a brace there would open a block, `function` a declaration.
     start_of_statement: usize,
+    /// Where the body of an arrow function begins: a brace there would open a block.
+    start_of_arrow_body: usize,
 }
 
 /// An operator whose left side is being printed.
@@ -163,6 +165,10 @@ fn is_truthy(constant: Constant, is_empty: impl FnOnce(Atom) -> bool) -> Option<
 }
 
 impl Printer<'_, '_, '_, '_, '_> {
+    fn brace_would_open_block(&self) -> bool {
+        self.text.len() == self.start_of_statement || self.text.len() == self.start_of_arrow_body
+    }
+
     fn space_before_name(&mut self) {
         let is_part_of_name =
             |last: u8| last == b'_' || last == b'$' || last >= 0x80 || last.is_ascii_alphanumeric();
@@ -191,12 +197,10 @@ impl Printer<'_, '_, '_, '_, '_> {
 
     fn constant_of(&self, expression: ExprId) -> Option<Constant> {
         let (hir, decisions) = (self.file.hir, self.file.decisions());
-        // A template stays one.
-        let is_template = matches!(hir[expression].kind, ExprKind::Template { .. })
-            || hir
-                .expr_flags(expression)
-                .contains(ExprFlags::TEMPLATE_LITERAL);
-        if is_template || !decisions.is_constant_in_bun_run(hir, expression) {
+        // A template with substitutions stays one.
+        if matches!(hir[expression].kind, ExprKind::Template { .. })
+            || !decisions.is_constant_in_bun_run(hir, expression)
+        {
             return None;
         }
         match decisions.constant(hir, expression) {
@@ -358,12 +362,9 @@ impl Printer<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn arrow(&mut self, function: FnId, body: ExprId) {
+    fn parameters(&mut self, function: FnId) {
         let hir = self.file.hir;
         let written = hir[function];
-        if written.flags.contains(Flags::ASYNC) {
-            self.word(b"async ");
-        }
         self.text.push(b'(');
         for (index, parameter) in written.params.iter().enumerate() {
             let parameter = hir[parameter];
@@ -376,8 +377,44 @@ impl Printer<'_, '_, '_, '_, '_> {
             self.pattern(parameter.pat);
             self.default_of_pattern(parameter.default);
         }
-        self.text.extend_from_slice(b") => ");
-        self.start_of_statement = self.text.len();
+        self.text.push(b')');
+    }
+
+    /// `function g(x) {}`, `async () => {}`
+    fn function_without_statements(&mut self, function: FnId) {
+        let written = self.file.hir[function];
+        if written.flags.contains(Flags::ASYNC) {
+            self.word(b"async ");
+        }
+        if written.kind != FnKind::Arrow {
+            self.word(b"function");
+            if written.flags.contains(Flags::GENERATOR) {
+                self.text.extend_from_slice(b"* ");
+            }
+            if written.name != Atom::NONE {
+                self.space_before_name();
+                append_printed_name(
+                    written_name_of_local(self.file.queries.atom_bytes(written.name)),
+                    &mut self.text,
+                );
+            }
+        }
+        self.parameters(function);
+        self.text
+            .extend_from_slice(if written.kind == FnKind::Arrow {
+                b" => {}"
+            } else {
+                b" {}"
+            });
+    }
+
+    fn arrow(&mut self, function: FnId, body: ExprId) {
+        if self.file.hir[function].flags.contains(Flags::ASYNC) {
+            self.word(b"async ");
+        }
+        self.parameters(function);
+        self.text.extend_from_slice(b" => ");
+        self.start_of_arrow_body = self.text.len();
         let around = Around {
             forbids_in: true,
             ..Around::default()
@@ -544,8 +581,29 @@ impl Printer<'_, '_, '_, '_, '_> {
                 }
                 _ => {}
             }
+            // `js_parser` drops a constant in front of a comma, but where what follows may be called with a receiver or is `eval`: `(0, o.f)()`.
+            let names_callee = || {
+                matches!(
+                    hir[self.file.skip_type_syntax(right)].kind,
+                    ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Ident(_)
+                )
+            };
+            if op == BinOp::Comma
+                && self.constant_of(self.file.skip_type_syntax(left)).is_some()
+                && !names_callee()
+            {
+                expression = right;
+                continue;
+            }
             let own = level_and_text_of(op).0;
-            let wraps = level >= own || (op == BinOp::In && around.forbids_in);
+            // `js_printer`: where a statement or the body of an arrow begins, the operator behind an object literal opens the bracket: `({} instanceof f)`.
+            let begins_with_literal = self.brace_would_open_block()
+                && matches!(
+                    hir[self.file.skip_type_syntax(left)].kind,
+                    ExprKind::Object(_)
+                );
+            let wraps =
+                level >= own || (op == BinOp::In && around.forbids_in) || begins_with_literal;
             if wraps {
                 self.text.push(b'(');
             }
@@ -733,11 +791,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                 let start = around.start_of_new.unwrap_or(self.text.len());
                 self.expression(obj, Level::Postfix, around);
                 let name = written_name(self.file.queries.atom_bytes(name));
-                self.member_name(
-                    name,
-                    chain == Chain::Start,
-                    hir.is_written_in_brackets(expression),
-                );
+                // `js_parser`: `a["b"]` is `a.b`.
+                let stays_in_brackets = hir.is_written_in_brackets(expression)
+                    && !(name.is_ascii() && is_identifier(name));
+                self.member_name(name, chain == Chain::Start, stays_in_brackets);
                 (start, wraps)
             }
             ExprKind::Index { obj, index, chain } => {
@@ -847,13 +904,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.expression(operand, Level::Prefix.below(), Around::default());
                 (start, wraps)
             }
-            ExprKind::String(text) => {
-                let start = self.text.len();
-                self.text.push(b'`');
-                self.characters(text, b'`');
-                self.text.push(b'`');
-                (start, false)
-            }
             ExprKind::Template { exprs } => {
                 let start = self.text.len();
                 let texts = hir.template_texts(exprs);
@@ -915,13 +965,20 @@ impl Printer<'_, '_, '_, '_, '_> {
                 (start, wraps)
             }
             ExprKind::Fn(function) => {
-                let wraps = level >= Level::Assign;
+                // `js_printer` brackets an arrow by what stands round it, a function where a statement begins.
+                let wraps = match hir[function].kind {
+                    FnKind::Arrow => level >= Level::Assign,
+                    _ => self.text.len() == self.start_of_statement,
+                };
                 if wraps {
                     self.text.push(b'(');
                 }
                 let start = self.text.len();
                 match hir[function].body {
                     FnBody::Expr(body) => self.arrow(function, body),
+                    FnBody::Block(statements) if statements.is_empty() => {
+                        self.function_without_statements(function)
+                    }
                     FnBody::None | FnBody::Block(_) => self.gaps += 1,
                 }
                 (start, wraps)
@@ -951,7 +1008,7 @@ impl Printer<'_, '_, '_, '_, '_> {
                         .file
                         .is_on_one_line(hir[expression].pos, hir[expression].end) =>
             {
-                let wraps = self.text.len() == self.start_of_statement;
+                let wraps = self.brace_would_open_block();
                 if wraps {
                     self.text.push(b'(');
                 }
@@ -1012,10 +1069,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ExprKind::Array(_) | ExprKind::Object(_) => {
                 self.is_on_one_line(written.pos, written.end)
             }
-            ExprKind::Fn(function) => {
-                self.hir[function].kind == FnKind::Arrow
-                    && matches!(self.hir[function].body, FnBody::Expr(_))
-            }
+            ExprKind::Fn(function) => match self.hir[function].body {
+                FnBody::Expr(_) => true,
+                FnBody::Block(statements) => statements.is_empty(),
+                FnBody::None => false,
+            },
             ExprKind::Class(_)
             | ExprKind::Jsx(_)
             | ExprKind::JsxText(_)
@@ -1064,6 +1122,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             end_of_number: usize::MAX,
             start,
             start_of_statement: usize::MAX,
+            start_of_arrow_body: usize::MAX,
         };
         print(&mut printer);
         let Printer {

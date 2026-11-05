@@ -6,7 +6,7 @@
 // sanitizer 329 ran twice. So every test file of this folder is in the first list, and one that is long there is in `excludeFiles` of the second.
 //
 //   AOT_CI_LISTS_UPDATE=1 bun test test/aot/ci-lists.test.ts                            enters what is missing: a file that nobody has timed counts as long
-//   AOT_CI_LISTS_UPDATE="mock-ends.test.ts=12 perf/start.test.ts=30" bun test ..  with the seconds that a file took in your gate. With a sanitizer: four times that.
+//   AOT_CI_LISTS_UPDATE="mock-ends.test.ts=12 perf/threads-of-a-build.test.ts=30" bun test ..  with the seconds that a file took in your gate. With a sanitizer: four times that.
 //                                                                                 They also replace what the first command entered for a file.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";

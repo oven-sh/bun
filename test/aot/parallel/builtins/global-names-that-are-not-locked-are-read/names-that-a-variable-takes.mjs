@@ -1,4 +1,5 @@
-// A getter lies on each name. A variable that nothing reads takes the value: `bun run` evaluates that, whether its parser lists the name or not.
+// Reference: bun build --compile
+// A getter lies on each name. A variable that nothing reads takes the value: `bun build --compile` leaves the declaration out where its parser lists the name, and evaluates it where it does not. `bun run` evaluates each.
 const reads = [];
 const realCrypto = globalThis.crypto;
 Object.defineProperty(globalThis, "crypto", { configurable: true, get() { reads.push("crypto"); return realCrypto; } });

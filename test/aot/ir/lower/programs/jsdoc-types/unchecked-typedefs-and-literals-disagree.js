@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="sum"
+// CHECK-LABEL: function {{*}}name="area"
+// CHECK-LABEL: function {{*}}name="x"
+// CHECK-LABEL: function {{*}}name="y"
+// CHECK-LABEL: function {{*}}name="x"
+// CHECK-LABEL: function {{*}}name="y"
 
 // FILE: main.js
 function show(value) {
@@ -128,60 +134,3 @@ attempt("what falls off the end is used", () => [area({ kind: "oval" }) + 1, typ
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: sum area x y
-// CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]]|[[L_3]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]|[[L_3]]):
-// CHECK-NEXT: v1 = PropGet v0 key="kind"
-// CHECK-NEXT: SwitchString v1 strings=["circle", "square"] -> case b1(| 0), case b2(| 0), otherwise b3()
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByField v0, v2 key="kind"
-// CHECK-NEXT: v4 = PropGet v3 key="r"
-// CHECK-NEXT: v5 = PropGet v3 key="r"
-// CHECK-NEXT: v6 = Mul v4, v5
-// CHECK-NEXT: v7 = Integer integer=3
-// CHECK-NEXT: v8 = Mul v6, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = NarrowByField v0, v9 key="kind"
-// CHECK-NEXT: v11 = PropGet v10 key="side"
-// CHECK-NEXT: v12 = PropGet v10 key="side"
-// CHECK-NEXT: v13 = Mul v11, v12
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="got"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=2
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

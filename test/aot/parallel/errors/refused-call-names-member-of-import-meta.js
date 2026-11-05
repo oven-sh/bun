@@ -1,5 +1,3 @@
-// Reference: bun build --compile
-// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // Each line: the message where a member of import.meta that is no function is called or constructed. It names the member as written.
 const show = run => {
   try {

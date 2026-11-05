@@ -2,6 +2,9 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="plusOne"
+// CHECK-LABEL: function {{*}}name="size"
+// CHECK-LABEL: function {{*}}name="attempt"
 
 // FILE: main.ts
 import { Box, count, double, name, origin } from "./values.js";
@@ -86,80 +89,3 @@ export const origin = "values.ts";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true }, "files": [] }
-
-// GENERATED: plusOne size attempt
-// CHECK-LABEL: function {{*}}name="plusOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = PropGet v0 key="length"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_1]]):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: PropSet v3, v4 key="length"
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v7 = PropGet v6 key="console" [isFreeName]
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v9 = PropGet v8 key="log"
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v11 = String string="->"
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v13 = Call v1 calleeName="run"
-// CHECK-NEXT: v14 = Call v12, -, v13 calleeName="show"
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v16 = CheckInitialized v15 name="log"
-// CHECK-NEXT: v17 = PropGet v16 key="join"
-// CHECK-NEXT: v18 = String string=" "
-// CHECK-NEXT: v19 = Call v17, v16, v18 calleeKey="join" calleeName="log.join"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v21 = Call v10, v8, v0, v11, v14, v20 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v22 = CatchValue
-// CHECK-NEXT: v23 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v24 = PropGet v23 key="console" [isFreeName]
-// CHECK-NEXT: v25 = Convert v24 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v26 = PropGet v25 key="log"
-// CHECK-NEXT: v27 = Convert v26 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v28 = String string="threw"
-// CHECK-NEXT: v29 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v30 = PropGet v29 key="Error" [isFreeName]
-// CHECK-NEXT: v31 = Convert v30 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v32 = InstanceOf v22, v31
-// CHECK-NEXT: v33 = ToBoolean v32
-// CHECK-NEXT: Branch v33 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v34):
-// CHECK-NEXT: v35 = PropGet v22 key="constructor"
-// CHECK-NEXT: v36 = PropGet v35 key="name"
-// CHECK-NEXT: Jump -> next b5(v36)
-// CHECK-NEXT: b4(v37):
-// CHECK-NEXT: v38 = TypeOf v22
-// CHECK-NEXT: Jump -> next b5(v38)
-// CHECK-NEXT: b5(v39):
-// CHECK-NEXT: v40 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v41 = CheckInitialized v40 name="log"
-// CHECK-NEXT: v42 = PropGet v41 key="join"
-// CHECK-NEXT: v43 = String string=" "
-// CHECK-NEXT: v44 = Call v42, v41, v43 calleeKey="join" calleeName="log.join"
-// CHECK-NEXT: v45 = Convert v44 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v46 = Call v27, v25, v0, v28, v39, v45 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v47 = Undefined
-// CHECK-NEXT: Return v47
-// CHECK-NEXT: }

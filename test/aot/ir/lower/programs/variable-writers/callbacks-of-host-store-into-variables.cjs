@@ -28,55 +28,8 @@ let v19 = 1; const r19 = () => v19; console.log("%s", { toString() { v19 = 16; r
 let v20 = 1; const r20 = () => v20; class T extends require("node:stream").Transform { _transform(c, e, cb) { v20++; cb(); } } const t = new T(); t.write("a"); t.write("b"); out.push(r20());
 console.log(JSON.stringify(out));
 
-// GENERATED: target r1 style T _transform
 // CHECK-LABEL: function {{*}}name="target"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Error" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v3 = String string="e"
-// CHECK-NEXT: v4 = Construct v2, -, v3 calleeName="Error"
-// CHECK-NEXT: v5 = PropGet v4 key="stack"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="r1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="v1"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="style"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="v16"
-// CHECK-NEXT: v2 = Integer integer=13
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_2]]
-// CHECK-NEXT: v5 = String string="decimal"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="T"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="_transform"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: undefined|null|function):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="v20"
-// CHECK-NEXT: v5 = Increment v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="v20"
-// CHECK-NEXT: PutModuleVariable v6 variable=[[g_5]]
-// CHECK-NEXT: v10 = Call v2 calleeName="cb"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

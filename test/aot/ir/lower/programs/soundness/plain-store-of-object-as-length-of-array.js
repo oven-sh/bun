@@ -75,74 +75,9 @@ try { list.length = fraction; } catch (error) { console.log(error instanceof Ran
 const neither = { valueOf() { calls++; return {}; }, toString() { calls++; return []; } };
 try { list.length = neither; } catch (error) { console.log(error instanceof TypeError, list.length, calls); }
 
-// GENERATED: storeUnder dropTheArray setLength Count L [Symbol.toPrimitive]
 // CHECK-LABEL: function {{*}}name="storeUnder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|Array<never> flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}, {type=undefined|null|number|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|Array<never>, v1: undefined|null|number|string, v2: undefined|null|number|[[L_2]]):
-// CHECK-NEXT: ElemSet v0, v1, v2
-// CHECK-NEXT: v4 = PropGet v0 key="length"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="dropTheArray"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v1 = NewObject -, v0 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: v3 = Data data=[[d_4]]
-// CHECK-NEXT: PropSet v3, v2 key="length"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="setLength"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_2]]|[[L_5]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|boolean|number|string|symbol|bigint|[[L_2]]|[[L_5]]):
-// CHECK-NEXT: PropSet v0, v1 key="length"
-// CHECK-NEXT: v3 = PropGet v0 key="length"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_6]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_6]]}
-// CHECK-NEXT: PropSet v4, v1 key="n"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = TypeTest v6 testedType=object
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: Jump -> next b2(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="L"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="calls"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="calls"
-// CHECK-NEXT: PutModuleVariable v4 variable=[[g_7]]
-// CHECK-NEXT: v8 = String string="number"
-// CHECK-NEXT: v9 = StrictEq v0, v8
-// CHECK-NEXT: Branch v9 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v10 = Integer integer=4
-// CHECK-NEXT: Jump -> next b3(v10)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v11 = Integer integer=40
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

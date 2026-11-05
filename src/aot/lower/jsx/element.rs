@@ -16,6 +16,7 @@ use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, module};
+use crate::modules::{ModuleRef, SiteAnswer};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum JsxRoot {
@@ -122,11 +123,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn get_jsx_import(&mut self, import: JsxImport) -> Callee {
-        let binding = self.file.inputs.modules.jsx_binding(self.file.file, import);
+        let modules = self.file.inputs.modules;
+        let binding = modules.jsx_binding(self.file.file, import);
+        let asked = match modules.find_site_answer(self.file.file, import.site_kind()) {
+            Some(SiteAnswer::Module(ModuleRef::File(module))) => {
+                let atoms = &self.file.queries.files().atoms;
+                Some((module, atoms.intern(import.export_name())))
+            }
+            _ => None,
+        };
         let name = self.file.intern_bytes(import.export_name());
         let required = self.emit_required_jsx_import(import, name);
         Callee {
-            function: required.unwrap_or_else(|| module::emit_import_binding(self, binding, name)),
+            function: required
+                .unwrap_or_else(|| module::emit_import_binding_asked(self, binding, name, asked)),
             this: None,
             key: None,
             name: Some(name),

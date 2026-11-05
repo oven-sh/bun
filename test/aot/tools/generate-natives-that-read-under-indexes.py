@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-natives-that-read-under-indexes.py <folder>: all 510; ../parallel/natives-that-read-under-indexes/ holds 7 of them: one program for each way of laying something under 0 and 1 ABOVE an object, times each built-in that reads an object it is handed under its indexes by [[Get]].
+# generate-natives-that-read-under-indexes.py <folder>: all 510; ../parallel/natives-that-read-under-indexes/ holds 6 of them: one program for each way of laying something under 0 and 1 ABOVE an object, times each built-in that reads an object it is handed under its indexes by [[Get]].
 # What is found above is of another type than any field of the object, and what comes out of the built-in is used as that type. The reference is `bun <file>`.
 import os, sys
 

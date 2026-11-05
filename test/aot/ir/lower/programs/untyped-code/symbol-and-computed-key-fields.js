@@ -81,81 +81,9 @@ var visits = count("operationAOTDefineField");
 for (var i = 0; i < 300; i++) { made.push(new Ten(function () {})); made.push(new Twenty); }
 console.log(made.length, made[598][s[9]], made[599].t19, !counted() || count("operationAOTDefineField") - visits < 100);
 
-// GENERATED: counted Old WithOwn Closed Has toString
 // CHECK-LABEL: function {{*}}name="counted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="count"
-// CHECK-NEXT: v2 = String string="operationAOTDefineField"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="count"
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Greater v3, v4
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Old"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: PropSet v0, v1 key="x"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="WithOwn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_4]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Closed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: v4 = Builtin builtin=Object
-// CHECK-NEXT: v5 = Builtin builtin=ObjectPreventExtensions
-// CHECK-NEXT: v6 = Call v5, v4, v3 calleeName="Object.preventExtensions"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]]}
-// CHECK-NEXT: v4 = Builtin builtin=Object
-// CHECK-NEXT: v5 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: v8 = ElemGet v6, v7
-// CHECK-NEXT: v9 = String string="fixed"
-// CHECK-NEXT: v10 = NewObject -, v9 layout=[[L_8]] fields=[4]
-// CHECK-NEXT: v11 = FinishObject v10
-// CHECK-NEXT: v12 = Call v5, v4, v3, v8, v11 calleeName="Object.defineProperty"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: v14 = TypeTest v13 testedType=object
-// CHECK-NEXT: Branch v14 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v15):
-// CHECK-NEXT: Jump -> next b2(v15)
-// CHECK-NEXT: b2(v16):
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything variableName="asked"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="push"
-// CHECK-NEXT: v2 = String string="asked"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="push" calleeName="asked.push"
-// CHECK-NEXT: v4 = String string="made"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

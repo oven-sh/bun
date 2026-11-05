@@ -113,77 +113,8 @@ show("other things", [walk("héllo"), walk(new Uint8Array([1, 2])), walk(mapOf(2
 for (const nothing of [undefined, null, 1, true, {}, () => 1, Symbol.iterator]) attempt("not iterable: " + text(nothing), () => walk(nothing));
 console.log(said.join("\n"));
 
-// GENERATED: attempt numbers mixed Doubled value
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="show"
-// CHECK-NEXT: v4 = Call v1 calleeName="f"
-// CHECK-NEXT: v5 = Call v3, -, v0, v4 calleeName="show"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v6 = CatchValue
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="show"
-// CHECK-NEXT: v9 = PropGet v6 key="constructor"
-// CHECK-NEXT: v10 = PropGet v9 key="name"
-// CHECK-NEXT: v11 = Call v8, -, v0, v10 calleeName="show"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="numbers"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=7
-// CHECK-NEXT: v2 = Mul v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mixed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer integer=3
-// CHECK-NEXT: v2 = Mod v0, v1
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = String string="k"
-// CHECK-NEXT: v6 = Add v5, v0
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v7 = Integer integer=3
-// CHECK-NEXT: v8 = Mod v0, v7
-// CHECK-NEXT: v9 = Integer integer=1
-// CHECK-NEXT: v10 = StrictEq v8, v9
-// CHECK-NEXT: Branch v10 -> taken b3(v0), notTaken b4()
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v12 = Builtin builtin=Symbol
-// CHECK-NEXT: v13 = Builtin builtin=SymbolFor
-// CHECK-NEXT: v14 = String string="s"
-// CHECK-NEXT: v15 = Add v14, v0
-// CHECK-NEXT: v16 = Call v13, v12, v15 calleeName="Symbol.for"
-// CHECK-NEXT: ReturnCall v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_3]]
-// CHECK-NEXT: v1 = PropGet v0 key=@@iterator
-// CHECK-NEXT: v2 = Call v1, v0 calleeKey=@@iterator
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }

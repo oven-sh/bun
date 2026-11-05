@@ -4,7 +4,9 @@ use crate::builtins::BuiltinId;
 use crate::ir::generated::{ImportPhase, ModuleRequestKind};
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
+use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::ExprId;
+use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::Sym;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -245,6 +247,21 @@ impl<'g> Candidates<'g> {
             Candidates::All => &[],
             Candidates::Modules(spelled_modules) => spelled_modules,
         }
+    }
+
+    /// The build has read every text that the name can be, and has found a module under each.
+    pub fn hold_every_name(self, analysis: &FileAnalysis<'_>, written: &ImportSpecifier) -> bool {
+        let spelled_modules = self.spelled_modules().iter();
+        let mut spellings: Vec<u32> = spelled_modules.map(|it| it.spelling.0).collect();
+        spellings.sort_unstable();
+        let alternatives = analysis.alternatives_of(written);
+        !alternatives.is_empty()
+            && alternatives.iter().all(|alternative| match alternative {
+                ImportSpecifier::Constant(text) => spellings.binary_search(&text.0).is_ok(),
+                ImportSpecifier::Pattern { .. }
+                | ImportSpecifier::OneOf(_)
+                | ImportSpecifier::Unknown => false,
+            })
     }
 }
 

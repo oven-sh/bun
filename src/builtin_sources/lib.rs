@@ -182,7 +182,7 @@ impl Manifest {
         self.module(id).is_some_and(|module| module.path.is_some())
     }
 
-    /// The module that `module` holds a part of. A stack trace shows the part under the name of that module, where the part stands there.
+    /// The module that `module` holds a part of. A stack trace shows the part under the name of that module.
     pub fn module_held_in_part(&self, module: u32) -> Option<u32> {
         let path = self.module(module)?.path.as_deref()?;
         let (_, whole) = (self.parts_of_modules.iter()).find(|(part, _)| **part == *path)?;

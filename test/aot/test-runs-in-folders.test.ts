@@ -3,9 +3,10 @@
 // A project needs no expectation of its own. It prints what a wrong answer would change. A preload is named by a bunfig.toml in the folder.
 // The test files of a project end in _test, which `bun test` finds: scripts/runner.node.ts takes every name that holds ".test" for a test of the repository.
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
+// A file flags.txt in the folder holds flags for both runs: `--isolate`.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -23,6 +24,11 @@ const testFilesIn = (folder: string) =>
     .filter(path => /_test\.[cm]?[jt]sx?$/.test(path) && !path.split("/").includes("node_modules"))
     .sort()
     .map(path => "./" + path);
+
+const flagsOf = (folder: string) =>
+  existsSync(join(folder, "flags.txt"))
+    ? readFileSync(join(folder, "flags.txt"), "utf8").split(/\s+/).filter(Boolean)
+    : [];
 
 function layPackages(folder: string) {
   for (const entry of readdirSync(folder, { withFileTypes: true })) {
@@ -57,9 +63,10 @@ for (const area of foldersIn(root)) {
       // A folder for each run: a build leaves files beside what it reads.
       using plainDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
+      const flags = flagsOf(join(root, area, project));
       const [plain, compiled] = await Promise.all([
-        outcomeOf(String(plainDir)),
-        outcomeOf(String(compiledDir), "--aot"),
+        outcomeOf(String(plainDir), ...flags),
+        outcomeOf(String(compiledDir), "--aot", ...flags),
       ]);
       // A run in which plain printed nothing would pass for the wrong reason.
       expect(plain.printed.length).toBeGreaterThan(0);

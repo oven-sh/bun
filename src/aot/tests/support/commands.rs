@@ -84,7 +84,13 @@ pub fn parse_option_words<'a>(
         match word.as_str() {
             "erase-types" => aot.erases_types = true,
             "builtin-modules" => aot.omits_builtin_modules = false,
+            "obfuscates" => aot.obfuscates = true,
             "entry-points-run-again" => aot.entry_points_run_again = true,
+            "runs-in-place" => aot.runs_in_place = true,
+            "runs-tests" => {
+                aot.runs_tests = true;
+                aot.runs_in_place = true;
+            }
             "platform=darwin" => aot.platform = Some(TargetPlatform::Darwin),
             "platform=linux" => aot.platform = Some(TargetPlatform::Linux),
             "platform=windows" => aot.platform = Some(TargetPlatform::Windows),

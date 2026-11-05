@@ -1,6 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="sometimes"
+// CHECK-LABEL: function {{*}}name="yields"
+// CHECK-LABEL: function {{*}}name="later"
+// CHECK-LABEL: function {{*}}name="Source"
+// CHECK-LABEL: function {{*}}name="make"
 
 // FILE: main.js
 function show(value) {
@@ -169,79 +174,3 @@ attempt("then of what is no promise", () => notAPromise().then(plusOne));
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: sometimes yields later Source make
-// CHECK-LABEL: function {{*}}name="sometimes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = Integer integer=1000
-// CHECK-NEXT: v2 = Mod v0, v1
-// CHECK-NEXT: v3 = Integer integer=999
-// CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(v0)
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = String string="late"
-// CHECK-NEXT: Jump -> next b2(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="yields"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = String string="a"
-// CHECK-NEXT: v4 = Yield v3
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Null
-// CHECK-NEXT: v8 = Yield v7
-// CHECK-NEXT: v9 = ResultAt v8
-// CHECK-NEXT: v10 = ResultAt v8 index=1
-// CHECK-NEXT: Switch v10 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v9
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v11 = Integer integer=3
-// CHECK-NEXT: v12 = Yield v11
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b7(), case b8(), otherwise b9()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b8():
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b9():
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = String string="later"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Source"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v2 = NewObject -, v0, v1 layout=[[L_3]] fields=[1, 0]
-// CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

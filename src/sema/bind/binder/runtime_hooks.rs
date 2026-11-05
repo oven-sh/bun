@@ -110,6 +110,7 @@ impl Binder<'_, '_> {
             idents: &idents,
             options,
             atoms: self.atoms,
+            names_in_place: self.names_in_place,
         };
         runtime::compute(input, private_references);
         self.idents = idents;

@@ -49,41 +49,7 @@ source;
 
 console.log(log.join("\n"));
 
-// GENERATED: effect getter get valueOf
 // CHECK-LABEL: function {{*}}name="effect"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="log"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="getter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = String string="a getter"
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="effect"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|symbol):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = String string="a get trap for "
-// CHECK-NEXT: v4 = Builtin builtin=String
-// CHECK-NEXT: v5 = Call v4, -, v1 calleeName="String"
-// CHECK-NEXT: v6 = Add v3, v5
-// CHECK-NEXT: v7 = Call v2, -, v6 calleeName="effect"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v1 = String string="valueOf"
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="effect"
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

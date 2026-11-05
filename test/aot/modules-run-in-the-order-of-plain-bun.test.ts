@@ -300,11 +300,13 @@ Object.assign(programs, {
     "x.cjs": `${mode("x")} console.log("x begins"); require("./n.mjs"); console.log("x ends");`,
     "n.mjs": `import "./x.cjs"; console.log("n");`,
   },
+  // Its mode is not asked here. `bun run` believes the package and runs d.mjs sloppy. An executable holds it as the ES module that it is by its name, as `bun build --compile` does:
+  // parallel/modules/a-module-by-its-name-is-one-to-every-loader-of-an-executable.
   "a file named .mjs in a package of CommonJS": {
     "main.mjs": `import "./m.mjs";`,
     "package.json": `{ "type": "commonjs" }`,
     "m.mjs": above,
-    "d.mjs": `${mode("d")} console.log("d begins"); import("./r.mjs"); console.log("d ends");`,
+    "d.mjs": `console.log("d begins"); import("./r.mjs"); console.log("d ends");`,
     "r.mjs": `require("./n.mjs"); export {};`,
     "n.mjs": n,
   },

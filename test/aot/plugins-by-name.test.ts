@@ -155,3 +155,61 @@ test("a plugin in one entry point takes no file from another entry point", async
     exitCode: 0,
   });
 }, 120_000);
+
+// What a package.json or a tsconfig.json makes of a name is written down in the executable for the files that a name behind a choice may lead to, so such a name is left
+// to the loader too. `bun build --compile` follows no such name and its executable finds no package where no plugin answers: the reference is `bun <file>`.
+test("a plugin is asked about the name of a package behind a choice, and the executable finds the package where none answers", async () => {
+  using dir = tempDir("aot-plugins-by-name-packages", {
+    "package.json": `{ "name": "program", "type": "module" }`,
+    "tsconfig.json": `{ "compilerOptions": { "baseUrl": ".", "paths": { "~/*": ["./src/*"] } } }`,
+    "src/inner/part.mjs": `export default "the file behind the alias";`,
+    "node_modules/kit-a/package.json": `{ "name": "kit-a", "version": "1.0.0", "main": "start.js", "type": "module" }`,
+    "node_modules/kit-a/start.js": `export default "package a";`,
+    "node_modules/kit-a/sub.js": `export default "package a, sub";`,
+    "node_modules/kit-b/package.json": `{ "name": "kit-b", "version": "1.0.0", "main": "start.js" }`,
+    "node_modules/kit-b/start.js": `module.exports = "package b";`,
+    "node_modules/@scope/kit-c/package.json": `{ "name": "@scope/kit-c", "version": "1.0.0", "type": "module", "exports": { ".": "./lib/main.js", "./tool": "./lib/tool.js" } }`,
+    "node_modules/@scope/kit-c/lib/main.js": `export default "package c";`,
+    "node_modules/@scope/kit-c/lib/tool.js": `export default "package c, tool";`,
+    "main.mjs": `Bun.plugin({
+        name: "swap",
+        setup(build) {
+          build.onResolve({ filter: /^kit-a$/ }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ contents: "export default " + JSON.stringify("THE PLUGIN for " + args.path), loader: "js" }));
+        },
+      });
+      const many = process.argv.length > 5;
+      const asked = many ? "kit-b" : "kit-a";
+      const main = many ? "kit-a" : "kit-b";
+      const scoped = many ? "kit-a" : "@scope/kit-c";
+      const tool = many ? "kit-a" : "@scope/kit-c/tool";
+      const sub = many ? "kit-b" : "kit-a/sub.js";
+      const alias = many ? "kit-a" : "~/inner/part.mjs";
+      for (const name of [asked, main, scoped, tool, sub, alias]) console.log(name + ":", (await import(name)).default);
+      console.log("required:", require(asked).default, require(main), import.meta.require(scoped).default);
+      console.log("the same modules:", (await import(scoped)) === (await import("@scope/kit-c")), require(main) === require("kit-b"), (await import(alias)) === (await import("./src/inner/part.mjs")));`,
+  });
+  using elsewhere = tempDir("aot-plugins-by-name-packages-elsewhere", {});
+  const directory = String(dir);
+  const plain = await run([bunExe(), "main.mjs"], directory, bunEnv);
+  expect(plain.stdout.trim().split("\n")).toEqual([
+    "kit-a: THE PLUGIN for kit-a",
+    "kit-b: package b",
+    "@scope/kit-c: package c",
+    "@scope/kit-c/tool: package c, tool",
+    "kit-a/sub.js: package a, sub",
+    "~/inner/part.mjs: the file behind the alias",
+    "required: THE PLUGIN for kit-a package b package c",
+    "the same modules: true true true",
+  ]);
+  const executable = join(String(elsewhere), "program");
+  const flags = ["build", "--compile", "--aot", "main.mjs", "--outfile", executable];
+  const built = await run([bunExe(), ...flags], directory, bunEnv);
+  expect(built.exitCode).toBe(0);
+  const ran = await run([executable], String(elsewhere), bunEnv);
+  expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+    stdout: plain.stdout,
+    stderr: "",
+    exitCode: 0,
+  });
+}, 120_000);

@@ -383,15 +383,26 @@ pub(crate) fn deal(
         if core::mem::take(&mut tries_what_is_reached) {
             limits.push(reached);
         }
-        let mut found: Vec<Option<Vec<u32>>> = std::thread::scope(|scope| {
+        let mut found: Vec<Option<Vec<u32>>> = vec![None; limits.len()];
+        std::thread::scope(|scope| {
             let dealer = &dealer;
-            let mut tries = Vec::with_capacity(limits.len());
-            for &limit in &limits {
-                tries.push(scope.spawn(move || dealer.deal_within(limit)));
+            let mut threads = Vec::with_capacity(limits.len());
+            let mut refused = Vec::new();
+            for (at, &limit) in limits.iter().enumerate() {
+                // SAFETY: no state of a VM goes along: a `Dealer` holds numbers, and lists of them.
+                let thread = std::thread::Builder::new().name("AOT shards".into());
+                match thread.spawn_scoped(scope, move || dealer.deal_within(limit)) {
+                    Ok(started) => threads.push((at, started)),
+                    Err(_) => refused.push(at),
+                }
             }
-            (tries.into_iter())
-                .map(|it| it.join().expect("dealing does not panic"))
-                .collect()
+            // The system gives fewer threads, or none, at a limit of them: this thread tries what is left while the others try theirs.
+            for at in refused {
+                found[at] = dealer.deal_within(limits[at]);
+            }
+            for (at, started) in threads {
+                found[at] = started.join().expect("dealing does not panic");
+            }
         });
         let Some(at) = found.iter().position(Option::is_some) else {
             too_short = limits.last().copied().unwrap_or(reached);

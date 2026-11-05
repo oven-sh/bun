@@ -3,6 +3,8 @@
 
 mod code_pragmas;
 
+pub(crate) use code_pragmas::{CommentMark, comment_marks};
+
 use bun_sema::atom::Atom;
 use bun_sema::hir::{
     Diagnostic, DiagnosticKind, FileBuilder, FileKind, JsxPragmas, ReferenceKind, ResolutionMode,

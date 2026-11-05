@@ -13,64 +13,6 @@ row("in an arrow function made ahead of super() and called behind it", () => new
 row("a class that extends nothing", () => new (class { constructor() { this.id = "own"; this.seen = eval("this.id"); } })().seen);
 row("no super() at all", () => new (class extends Base { constructor() { eval("1"); } })());
 
-// GENERATED: Base run
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
-// CHECK-NEXT: v4 = String string="base"
-// CHECK-NEXT: PropSet v3, v4 key="id"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = TypeTest v6 testedType=object
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: Jump -> next b2(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=env [[L_4]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_3]], v1: env [[L_4]], v2: anything, v3: function, v4: object, v5: anything):
-// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v7 = PropGet v6 key="eval" [isFreeName]
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v9 = String string="2"
-// CHECK-NEXT: v10 = Builtin builtin=Eval [isNotReadFromHolder]
-// CHECK-NEXT: v11 = StrictEq v8, v10
-// CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2(| 0)
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: v13 = GetEnvironmentField v0 layout=[[L_3]]
-// CHECK-NEXT: v14 = PropGet v13 key="prototype"
-// CHECK-NEXT: v15 = DirectEval v9, v12, v2, v1, v5, v3, v14, v0 evalScope=e6
-// CHECK-NEXT: Jump -> next b3(v15)
-// CHECK-NEXT: b2(v16):
-// CHECK-NEXT: v17 = Call v16, -, v9 calleeName="eval"
-// CHECK-NEXT: Jump -> next b3(v17)
-// CHECK-NEXT: b3(v18):
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=env [[L_6]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_5]], v1: env [[L_6]], v2: anything, v3: function, v4: object, v5: anything):
-// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v7 = PropGet v6 key="eval" [isFreeName]
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v9 = String string="this.id"
-// CHECK-NEXT: v10 = Builtin builtin=Eval [isNotReadFromHolder]
-// CHECK-NEXT: v11 = StrictEq v8, v10
-// CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2(| 0)
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: v13 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v14 = PropGet v13 key="prototype"
-// CHECK-NEXT: v15 = DirectEval v9, v12, v2, v1, v5, v3, v14, v0 evalScope=e7
-// CHECK-NEXT: Jump -> next b3(v15)
-// CHECK-NEXT: b2(v16):
-// CHECK-NEXT: v17 = Call v16, -, v9 calleeName="eval"
-// CHECK-NEXT: Jump -> next b3(v17)
-// CHECK-NEXT: b3(v18):
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }

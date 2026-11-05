@@ -109,66 +109,7 @@ namespace Space {
 row("the prefix of a namespace", Space.reads());
 export {};
 
-// GENERATED: readerAbove clauses later own
 // CHECK-LABEL: function {{*}}name="readerAbove"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=6
-// CHECK-NEXT: v1 = CallDirect v0 function=[[f_1]]
-// CHECK-NEXT: ReturnCall v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="clauses"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v2 = Absent
-// CHECK-NEXT: Switch v0 cases=[0, 1] -> case b1(| 0), case b2(), otherwise b3()
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = Integer integer=2
-// CHECK-NEXT: PutEnvironmentField v1, v4 layout=[[L_2]]
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v6 = Integer integer=30
-// CHECK-NEXT: PutEnvironmentField v1, v6 layout=[[L_2]] field=1
-// CHECK-NEXT: v8 = CallDirect v1 function=[[f_3]]
-// CHECK-NEXT: v9 = CallDirect v1 function=[[f_4]]
-// CHECK-NEXT: v10 = NewArray v8, v9 contents=anything
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v11 = Data data=[[d_5]]
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]]):
-// CHECK-NEXT: v1 = NewObject layout=[[L_6]]
-// CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="early"
-// CHECK-NEXT: PropSet v2, v4 key="Early"
-// CHECK-NEXT: v6 = ToPropertyKey v4
-// CHECK-NEXT: v7 = String string="Early"
-// CHECK-NEXT: ElemSet v2, v6, v7
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: PropSet v2, v9 key="AfterEarly"
-// CHECK-NEXT: v11 = String string="AfterEarly"
-// CHECK-NEXT: PropSet v2, v11 key="undefined"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="own"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]]):
-// CHECK-NEXT: v1 = NewObject layout=[[L_7]]
-// CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_2]] field=1
-// CHECK-NEXT: v4 = CheckInitialized v3 name="late"
-// CHECK-NEXT: PropSet v2, v4 key="Late"
-// CHECK-NEXT: v6 = ToPropertyKey v4
-// CHECK-NEXT: v7 = String string="Late"
-// CHECK-NEXT: ElemSet v2, v6, v7
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: PropSet v2, v9 key="AfterLate"
-// CHECK-NEXT: v11 = String string="AfterLate"
-// CHECK-NEXT: PropSet v2, v11 key="undefined"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

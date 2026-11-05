@@ -9,6 +9,55 @@ mod tests;
 
 const CODE_PRAGMA_NAMES: [&[u8]; 4] = [b"jsx", b"jsxFrag", b"jsxRuntime", b"jsxImportSource"];
 
+/// What `bun run` reads behind a `@` or a `#` of a comment.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum CommentMark<'t> {
+    /// `@__PURE__`
+    Pure,
+    /// `@jsx h`: the index of the name in `CODE_PRAGMA_NAMES`, and the argument.
+    Pragma(usize, &'t [u8]),
+}
+
+/// `scan_comment_text`, `scan_single_line_comment` and `scan_pragma`. Behind a pragma the lexer goes on after as many bytes as the name and the argument have,
+/// not counting the whitespace between them, and it passes over the value of ` sourceMappingURL=`: a sign in what it has passed over starts nothing.
+pub(crate) fn comment_marks<'t>(
+    text: &'t [u8],
+    comment: &Comment,
+) -> impl Iterator<Item = CommentMark<'t>> {
+    let is_block = comment.is_block;
+    let closing = if is_block { 2 } else { 0 };
+    let (from, to) = (comment.pos as usize + 2, comment.end as usize);
+    let mut rest = text
+        .get(from..to.saturating_sub(closing))
+        .unwrap_or_default();
+    let mut is_first_sign = true;
+    std::iter::from_fn(move || {
+        while let Some(sign) = strings::index_of_any(rest, b"@#") {
+            // In a `//` comment only the first sign can start `__PURE__`, behind nothing but whitespace.
+            let may_be_pure =
+                is_block || (is_first_sign && strings::is_all_whitespace(&rest[..sign]));
+            is_first_sign = false;
+            rest = &rest[sign + 1..];
+            if may_be_pure && strings::has_prefix_with_word_boundary(rest, b"__PURE__") {
+                return Some(CommentMark::Pure);
+            }
+            let pragma = (CODE_PRAGMA_NAMES.into_iter())
+                .position(|name| strings::has_prefix_with_word_boundary(rest, name));
+            if let Some(pragma) = pragma {
+                let name_len = CODE_PRAGMA_NAMES[pragma].len();
+                if let Some(argument) = code_pragma_argument(&rest[name_len..]) {
+                    rest = &rest[name_len + argument.len()..];
+                    return Some(CommentMark::Pragma(pragma, argument));
+                }
+            } else if let Some(url) = rest.strip_prefix(b" sourceMappingURL=") {
+                let end = strings::index_of_space_or_newline_or_non_ascii(url, 0);
+                rest = &url[end.map_or(url.len(), |end| end as usize)..];
+            }
+        }
+        None
+    })
+}
+
 pub(super) fn code_jsx_pragmas(
     text: &[u8],
     file: &FileBuilder,
@@ -16,28 +65,15 @@ pub(super) fn code_jsx_pragmas(
 ) -> JsxPragmas {
     let mut arguments: [&[u8]; 4] = [b""; 4];
     for comment in &file.comments {
-        let written = &text[comment.pos as usize..comment.end as usize];
-        let mut rest = match comment.is_block {
-            true => written.strip_suffix(b"*/").unwrap_or(written),
-            false => written,
-        };
         let mut is_in_tag = None;
-        while let Some(marker) = strings::index_of_any(rest, b"@#") {
-            rest = &rest[marker + 1..];
-            let pragma = (CODE_PRAGMA_NAMES.into_iter())
-                .position(|name| strings::has_prefix_with_word_boundary(rest, name));
-            let Some(pragma) = pragma else {
-                continue;
-            };
-            let name_len = CODE_PRAGMA_NAMES[pragma].len();
-            let Some(argument) = code_pragma_argument(&rest[name_len..]) else {
+        for mark in comment_marks(text, comment) {
+            let CommentMark::Pragma(pragma, argument) = mark else {
                 continue;
             };
             if *is_in_tag.get_or_insert_with(|| stands_in_tag(text, file, comment)) {
                 break;
             }
             arguments[pragma] = argument;
-            rest = &rest[name_len + argument.len()..];
         }
     }
     let [factory, fragment_factory, runtime, import_source] = arguments;
@@ -45,12 +81,17 @@ pub(super) fn code_jsx_pragmas(
         true => Atom::NONE,
         false => intern(argument),
     };
+    // `RUNTIME_MAP`
+    let (classic, is_development) = match runtime {
+        b"classic" | b"react" => (Some(true), None),
+        b"automatic" => (Some(false), None),
+        b"react-jsx" => (Some(false), Some(false)),
+        b"react-jsxdev" => (Some(false), Some(true)),
+        _ => (None, None),
+    };
     JsxPragmas {
-        classic: match runtime {
-            b"classic" | b"react" => Some(true),
-            b"automatic" | b"react-jsx" | b"react-jsxdev" => Some(false),
-            _ => None,
-        },
+        classic,
+        is_development,
         factory: atom_of(code_factory(factory)),
         fragment_factory: atom_of(code_factory(fragment_factory)),
         import_source: atom_of(import_source),

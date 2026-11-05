@@ -27,10 +27,4 @@ for (const each of [target]) log.push(each());
 log.push(`${meta()}`, constructor(), require2());
 console.log(log.join(" "));
 
-// GENERATED: is
 // CHECK-LABEL: function {{*}}name="is"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="is"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

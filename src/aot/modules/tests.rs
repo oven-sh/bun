@@ -1,7 +1,8 @@
 mod code_unit_order;
 
 use super::testing::{
-    bind_whole_program, describe_module, file_named, with_graph, with_runtime_graph,
+    bind_whole_program, describe_module, file_named, with_graph, with_graph_of_test_files,
+    with_runtime_graph,
 };
 use super::*;
 use crate::builtins::RuntimeModule;
@@ -684,6 +685,61 @@ fn every_export_of_a_native_module_that_mirrors_an_object_may_be_deferred() {
         assert!(deferred_exports.contains(module, b"stdout"), "{specifier}");
     }
     assert!(!deferred_exports.contains(RuntimeModule::NodeFs, b"stdout"));
+}
+
+#[test]
+fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
+    let files = [
+        (
+            "a.test.js",
+            "import near from './conf.txt' with { type: 'jsonc' };\nimport { held } from './below.js';\nconsole.log(near, held);\n",
+        ),
+        (
+            "b.test.js",
+            "import { held } from './below.js';\nconsole.log(held);\n",
+        ),
+        (
+            "c.test.js",
+            "import alone from './alone.txt' with { type: 'jsonc' };\nconsole.log(alone);\n",
+        ),
+        (
+            "below.js",
+            "import held from './conf.txt' with { type: 'text' };\nexport { held };\n",
+        ),
+        ("conf.txt", "{ \"port\": 21 }\n"),
+        ("alone.txt", "{ \"port\": 21 }\n"),
+    ];
+    with_graph_of_test_files(&files, 3, 0, |graph, input| {
+        let types_left_to_loader = |graph: &ModuleGraph, name: &str| -> Vec<_> {
+            let requests = graph.requests(file_named(input, name)).iter();
+            let left = requests.filter_map(|request| match request.target {
+                ModuleRef::External { type_attribute, .. } => Some(type_attribute),
+                _ => None,
+            });
+            left.collect()
+        };
+        let is_loaded_by_loader = |graph: &ModuleGraph, name: &str| {
+            graph.is_loaded_by_loader(ModuleRef::File(file_named(input, name)))
+        };
+        // One loader comes to the test files one behind the other, and the build has said who is first.
+        for name in ["a.test.js", "b.test.js", "c.test.js", "below.js"] {
+            assert!(types_left_to_loader(graph, name).is_empty(), "{name}");
+            assert!(!is_loaded_by_loader(graph, name), "{name}");
+        }
+        let graph = bind_whole_program(&BindInput {
+            runs_in_several_realms: true,
+            ..*input
+        });
+        let (jsonc, text) = (Some(bun_ast::Loader::Jsonc), Some(bun_ast::Loader::Text));
+        assert_eq!(types_left_to_loader(&graph, "a.test.js"), [jsonc]);
+        assert_eq!(types_left_to_loader(&graph, "below.js"), [text]);
+        for name in ["a.test.js", "b.test.js", "below.js"] {
+            assert!(is_loaded_by_loader(&graph, name), "{name}");
+        }
+        // One type asks for the file.
+        assert!(types_left_to_loader(&graph, "c.test.js").is_empty());
+        assert!(!is_loaded_by_loader(&graph, "c.test.js"));
+    });
 }
 
 #[test]

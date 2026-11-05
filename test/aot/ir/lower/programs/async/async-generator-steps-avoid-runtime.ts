@@ -98,76 +98,7 @@ for (let round = 0; round < 2; round++) {
 }
 console.log(lines.join("\n"));
 
-// GENERATED: forwards Holder countsSoFar read
 // CHECK-LABEL: function {{*}}name="forwards"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|AsyncGenerator flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|AsyncGenerator flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: undefined|null|AsyncGenerator):
-// CHECK-NEXT: InitialYield v2
-// CHECK-NEXT: v4 = IteratorOpen v2 iteratorKind=Async [isDelegating]
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Jump -> next b1(v5)
-// CHECK-NEXT: b1(v6):
-// CHECK-NEXT: v7 = IteratorResume v4, v6, v2 iteratorKind=Async [readsValueWhenDone]
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b4(v9), notTaken b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v12 = Yield v10, v2
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Switch v14 cases=[1, 2] -> case b3(v13), case b5(v13), otherwise b1(v13)
-// CHECK-NEXT: b3(v15):
-// CHECK-NEXT: v16 = IteratorResume v4, v15, v2 iteratorKind=Async resumeMode=Throw [readsValueWhenDone]
-// CHECK-NEXT: v17 = ResultAt v16
-// CHECK-NEXT: v18 = ResultAt v16 index=1
-// CHECK-NEXT: Branch v17 -> taken b4(v18), notTaken b2(v18)
-// CHECK-NEXT: b4(v19):
-// CHECK-NEXT: v20 = Undefined
-// CHECK-NEXT: Return v20
-// CHECK-NEXT: b5(v21):
-// CHECK-NEXT: v22 = IteratorResume v4, v21, v2 iteratorKind=Async resumeMode=Return [readsValueWhenDone]
-// CHECK-NEXT: v23 = ResultAt v22
-// CHECK-NEXT: v24 = ResultAt v22 index=1
-// CHECK-NEXT: Branch v23 -> taken b6(v24), notTaken b2(v24)
-// CHECK-NEXT: b6(v25):
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_2]]
-// CHECK-NEXT: PropSet v4, v1 key="base"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="countsSoFar"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="aotRuntimeCounters" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v2 = TypeTest v1 testedType=function
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v5 = PropGet v4 key="aotRuntimeCounters" [isFreeName]
-// CHECK-NEXT: v6 = Call v5 calleeName="aotRuntimeCounters"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: v8 = String string=""
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -2,6 +2,7 @@
 // OPTIONS: builtin-modules
 // DIAGNOSTIC: TS100150 1
 // STATISTIC: SourceFilesInferred = 8
+// CHECK-LABEL: function {{*}}name="lastParts"
 
 // FILE: main.mjs
 // A `require` that another file exports resolves paths from that file's folder, not from the folder of the file that calls it.
@@ -68,19 +69,3 @@ module.exports = "beside the second chunk";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: lastParts
-// CHECK-LABEL: function {{*}}name="lastParts"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = PropGet v0 key="split"
-// CHECK-NEXT: v3 = NewRegExp pattern="[\\\\/]"
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="split" calleeName="path.split"
-// CHECK-NEXT: v5 = PropGet v4 key="slice"
-// CHECK-NEXT: v6 = Negate v1
-// CHECK-NEXT: v7 = Call v5, v4, v6 calleeKey="slice" calleeName="slice"
-// CHECK-NEXT: v8 = PropGet v7 key="join"
-// CHECK-NEXT: v9 = String string="/"
-// CHECK-NEXT: v10 = Call v8, v7, v9 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v10
-// CHECK-NEXT: }

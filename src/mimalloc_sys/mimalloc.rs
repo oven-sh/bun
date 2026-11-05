@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_long, c_void};
+use core::ffi::{c_char, c_long, c_void};
 
 // `Option` below is the mimalloc `mi_option_t` enum, which shadows
 // `core::option::Option` in this module. Nullable fn-pointer params therefore
@@ -29,22 +29,6 @@ unsafe extern "C" {
     /// Gives every freed page that nobody has taken again back to the system now, whatever
     /// `purge_delay` says, on the calling thread. Touches no heap of that thread. No preconditions.
     pub safe fn mi_arenas_purge();
-    /// Reserves address space for an arena that every heap allocates in. Zero where it succeeds, and then `arena_id` names the arena.
-    ///
-    /// # Safety
-    /// `arena_id` is valid for a write.
-    pub fn mi_reserve_os_memory_ex(
-        size: usize,
-        commit: bool,
-        allow_large: bool,
-        exclusive: bool,
-        arena_id: *mut *mut c_void,
-    ) -> c_int;
-    /// Where the arena lies. Null for an id that names none.
-    ///
-    /// # Safety
-    /// `size` is valid for a write.
-    pub fn mi_arena_area(arena_id: *mut c_void, size: *mut usize) -> *mut c_void;
     /// Call when a thread goes idle: collects this thread's pending frees, discards the
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
@@ -179,7 +163,6 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
-    arena_purge_min_size = 44,
     purge_holes = 56,
 }
 

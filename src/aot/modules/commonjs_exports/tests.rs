@@ -184,7 +184,7 @@ fn describe_entry(bind: &BindInput<'_, '_>, entry: &NameEntry) -> String {
         u32::MAX => "?",
         _ => "",
     };
-    let target = match entry.target {
+    let target = match entry.getter.map(|getter| getter.target) {
         None => String::new(),
         Some(AliasTarget::Member { module, name }) => {
             let module = describe_module_ref(bind, module);

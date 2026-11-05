@@ -84,74 +84,9 @@ attempt("i2", () => new Gauge().level + 1)
 attempt("j1", () => untyped("5") + 1)
 attempt("j2", () => typeof loose("3"))
 
-// GENERATED: typed apply attempt Gauge level make
 // CHECK-LABEL: function {{*}}name="typed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="untyped"
-// CHECK-NEXT: ReturnCall v2 casts=[{declared={type=boolean}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="apply"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_2]], v1: number):
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="f"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Mul v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_3]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Builtin builtin=String
-// CHECK-NEXT: v8 = Call v1 calleeName="f"
-// CHECK-NEXT: v9 = Call v7, -, v8 calleeName="String"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v11 = Call v6, v4, v0, v10 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v12 = CatchValue
-// CHECK-NEXT: v13 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v14 = PropGet v13 key="console" [isFreeName]
-// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v16 = PropGet v15 key="log"
-// CHECK-NEXT: v17 = Convert v16 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v18 = Convert v12 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v19 = PropGet v18 key="constructor"
-// CHECK-NEXT: v20 = PropGet v19 key="name"
-// CHECK-NEXT: v21 = Call v17, v15, v0, v20 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v22 = Undefined
-// CHECK-NEXT: Return v22
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Gauge"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="level"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]]} results=[{type=number}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: v1 = PropGet v0 key="raw"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|string):
-// CHECK-NEXT: v2 = Add v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

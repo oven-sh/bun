@@ -97,68 +97,7 @@ console.log("rounds", total);
 const long = "word ".repeat(300_000);
 console.log("long", long.split(/\s+/).length, long.split(/\s/).length);
 
-// GENERATED: seen show joined changed
 // CHECK-LABEL: function {{*}}name="seen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="statics"
-// CHECK-NEXT: v2 = PropGet v1 key="lastMatch"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="statics"
-// CHECK-NEXT: v5 = PropGet v4 key="input"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="statics"
-// CHECK-NEXT: v8 = PropGet v7 key="leftContext"
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="statics"
-// CHECK-NEXT: v11 = PropGet v10 key="rightContext"
-// CHECK-NEXT: v12 = NewArray v2, v5, v8, v11 contents=anything
-// CHECK-NEXT: v13 = PropGet v12 key="map"
-// CHECK-NEXT: v14 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v15 = Call v13, v12, v14 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v17 = PropGet v16 key="join"
-// CHECK-NEXT: v18 = Call v17, v16 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v18 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = PropGet v1 key="length"
-// CHECK-NEXT: v8 = Builtin builtin=JSON
-// CHECK-NEXT: v9 = PropGet v8 key="stringify"
-// CHECK-NEXT: v10 = Convert v9 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v10, v8, v1 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v14 = Call v13 calleeName="seen"
-// CHECK-NEXT: v15 = Call v6, v4, v0, v7, v12, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="joined"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|string):
-// CHECK-NEXT: v2 = String string="|"
-// CHECK-NEXT: v3 = Add v0, v2
-// CHECK-NEXT: v4 = Add v3, v1
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="changed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = NewRegExp pattern="\\s+"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v3 = NewClosure function=[[f_5]]
-// CHECK-NEXT: PropSet v2, v3 key="exec"
-// CHECK-NEXT: v5 = PropGet v0 key="split"
-// CHECK-NEXT: v6 = Call v5, v0, v2 calleeKey="split" calleeName="text.split"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

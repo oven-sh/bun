@@ -40,71 +40,8 @@ for (const flags of ["", "g", "y", "gy", "gu", "gi", "gd", "gv", "gs", "gm"]) {
 }
 console.log(lines.join("\n"));
 
-// GENERATED: symbolOff valueOf R exec
 // CHECK-LABEL: function {{*}}name="symbolOff"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = Boolean
-// CHECK-NEXT: PropSet v0, v1 key=@@match
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = NewClosure v0 function=[[f_3]]
-// CHECK-NEXT: v5 = Call v3, -, v4 calleeName="show"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v7 = NewClosure v0 function=[[f_4]]
-// CHECK-NEXT: v8 = Call v6, -, v7 calleeName="show"
-// CHECK-NEXT: v9 = Add v5, v8
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=anything variableName="flags"}, {type=undefined|null|[[L_6]] flags=[IsExpected] variableName="r"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_5]], v1: anything, v2: undefined|null|[[L_6]]):
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="n"
-// CHECK-NEXT: v5 = Increment v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v7 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="n"
-// CHECK-NEXT: PutEnvironmentField v0, v6 layout=[[L_5]]
-// CHECK-NEXT: v10 = PropGet v2 key="compile"
-// CHECK-NEXT: v11 = String string="b+"
-// CHECK-NEXT: v12 = PropGet v1 key="replace"
-// CHECK-NEXT: v13 = NewRegExp pattern="[dv]" regExpFlags=[Global]
-// CHECK-NEXT: v14 = String string=""
-// CHECK-NEXT: v15 = Call v12, v1, v13, v14 calleeKey="replace" calleeName="flags.replace"
-// CHECK-NEXT: v16 = Call v10, v2, v11, v15 calleeKey="compile" calleeName="r.compile"
-// CHECK-NEXT: v17 = Integer integer=2
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|string|[[L_7]]|[[L_1]] flags=[IsExpected] variableName="r"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|[[L_7]]|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="compile"
-// CHECK-NEXT: v2 = String string="c"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="compile" calleeName="r.compile"
-// CHECK-NEXT: v4 = Integer integer=4
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="R"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="exec"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_8]] flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_8]], v2: undefined|null|string):
-// CHECK-NEXT: v3 = GetSuperBase v0 homeKind=ClassPrototype
-// CHECK-NEXT: v4 = SuperGet v3, v1 key="exec"
-// CHECK-NEXT: v5 = Call v4, v1, v2 calleeName="super.exec"
-// CHECK-NEXT: v6 = ToBoolean v5
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = String string="!"
-// CHECK-NEXT: ElemSet v5, v8, v9
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

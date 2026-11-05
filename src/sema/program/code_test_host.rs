@@ -959,7 +959,6 @@ fn with_compile_inputs<'s, R>(
         entry_points: &entry_points,
         finds_entry_points: None,
         main_module: MainModule::EntryPoint,
-        loaded_before: None,
         code: &build.code,
         fold: &fold,
         atoms: Interner::new_in(session),
@@ -978,7 +977,6 @@ pub(super) fn with_compile_context<R>(
         let compile = CompileLoad {
             host: build.host,
             inputs,
-            shares_parsed_files: false,
         };
         let context = CodeLoadContext::new(session, &resolver, options, compile);
         test(&context)
@@ -988,9 +986,8 @@ pub(super) fn with_compile_context<R>(
 pub(super) fn load_files<'s>(session: &'s Session, build: &TestBuild<'_>) -> Files<'s> {
     with_compile_inputs(session, build, |inputs| {
         let (options, roots) = (build.options.clone(), to_paths(build.roots));
-        Files::load_for_compile_with_parsed_files(
+        Files::load_for_compile(
             session,
-            None,
             build.host,
             options,
             RootFileNames::Listed(&roots),

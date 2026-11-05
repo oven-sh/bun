@@ -1,4 +1,4 @@
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, RefCell, RefMut};
 use core::ops::Range;
 
 use bun_core::strings;
@@ -140,20 +140,25 @@ impl KnownMemberValues {
         declaration: EnumId,
         then: impl FnOnce(&mut DeclarationMemo) -> R,
     ) -> R {
-        let mut files = self.files.borrow_mut();
-        let at = match files.binary_search_by_key(&file, |memo| memo.file) {
-            Ok(at) => at,
-            Err(at) => {
-                let declarations = Vec::new();
-                files.insert(at, FileMemo { file, declarations });
-                at
+        then(&mut self.memo_of(file, declaration))
+    }
+
+    fn memo_of(&self, file: FileId, declaration: EnumId) -> RefMut<'_, DeclarationMemo> {
+        RefMut::map(self.files.borrow_mut(), |files| {
+            let at = match files.binary_search_by_key(&file, |memo| memo.file) {
+                Ok(at) => at,
+                Err(at) => {
+                    let declarations = Vec::new();
+                    files.insert(at, FileMemo { file, declarations });
+                    at
+                }
+            };
+            let declarations = &mut files[at].declarations;
+            if declarations.len() <= declaration.idx() {
+                declarations.resize(declaration.idx() + 1, DeclarationMemo::default());
             }
-        };
-        let declarations = &mut files[at].declarations;
-        if declarations.len() <= declaration.idx() {
-            declarations.resize(declaration.idx() + 1, DeclarationMemo::default());
-        }
-        then(&mut declarations[declaration.idx()])
+            &mut declarations[declaration.idx()]
+        })
     }
 
     fn evaluation(&self, (file, declaration, named): DeclarationKey) -> Evaluation {

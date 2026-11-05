@@ -22,7 +22,7 @@ The driver is `src/aot/tests/ir_tests.rs`, with `src/aot/tests/support/`.
 | --- | --- |
 | `commands/` | the commands `lower`, `link` and `emit`, and the option words |
 | `lower/<construct family>/` | lowering, one folder per family of constructs |
-| `lower/programs/<topic>/` | whole programs, each held to what its entry module lowers to today. Their `tsconfig.json` is the one of `test/aot/parallel` |
+| `lower/programs/<topic>/` | whole programs: each lowers, reports no diagnostic that it does not list, counts what its `STATISTIC` lines say and has the functions that its labels name. Their `tsconfig.json` is the one of `test/aot/parallel` |
 
 - A test file ends in `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` or `.cjs`. A declaration file (`.d.ts`, `.d.mts`, `.d.cts`)
   is not a test, and neither is a `package.json` or a `tsconfig.json`.
@@ -131,7 +131,9 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`RUN`.** A file has at least one. Runs with the same options print one build. A prefix is capitals and digits, and it is not the name of
   a directive. A prefix needs at least one check line, or a `SAME` that names it.
 - **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file, `OPTIONS(<prefix>)` to the runs of that prefix.
-- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `platform=darwin | linux | windows` and `threads=<n>`.
+- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `runs-in-place`, `runs-tests`, `platform=darwin | linux | windows` and `threads=<n>`.
+  `runs-tests` is how `bun test --aot` builds: in place, and each entry point is a test file.
+  `runs-in-place` is how `bun run --aot` and `bun test --aot` build: no executable, and where the bundle of `bun build --compile` and `bun run` part, the answer of `bun run`.
   `entry-points-run-again` is what `bun test --aot --rerun-each` builds its test files with. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
   the run time a program has. Paths, and `process.platform` written out, stay those of the machine that runs the test. The engine's option words are unknown here.
 - **`DIAGNOSTIC`** takes one of these names. With a count, the diagnostic must be reported that many times.

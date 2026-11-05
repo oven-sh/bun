@@ -1,26 +1,11 @@
-use bun_core::strings;
+use crate::pragmas::{CommentMark, comment_marks};
 use bun_sema::hir::*;
 
 #[cfg(test)]
 mod tests;
 
 fn has_annotation(comment: &Comment, text: &[u8]) -> bool {
-    let closing = if comment.is_block { 2 } else { 0 };
-    let (from, to) = (comment.pos as usize + 2, comment.end as usize);
-    let mut rest = text
-        .get(from..to.saturating_sub(closing))
-        .unwrap_or_default();
-    while let Some(sign) = strings::index_of_any(rest, b"@#") {
-        let (before, after) = (&rest[..sign], &rest[sign + 1..]);
-        if strings::has_prefix_with_word_boundary(after, b"__PURE__") {
-            return comment.is_block || strings::is_all_whitespace(before);
-        }
-        if !comment.is_block {
-            return false;
-        }
-        rest = after;
-    }
-    false
+    comment_marks(text, comment).any(|mark| mark == CommentMark::Pure)
 }
 
 fn annotated_token_starts(comments: &[Comment], text: &[u8]) -> Vec<u32> {

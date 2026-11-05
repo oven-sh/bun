@@ -3,7 +3,7 @@
 // the executable gets a load from a low address written over its code.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
@@ -179,21 +179,17 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
     return printed;
   }
 
-  test("a Bun without compiled code prints no registers and writes no file", async () => {
+  test("a Bun without compiled code prints no registers", async () => {
     using dir = tempDir("aot-crash-in-compiled-code", {
-      "fault.js": `process.env.BUN_CRASH_REPORT_DIR = process.cwd() + "/by-program";
-require("bun:internal-for-testing").crash_handler.segfault();`,
+      "fault.js": `require("bun:internal-for-testing").crash_handler.segfault();`,
     });
-    const { stderr, exitCode } = await run(
-      [bunExe(), "--aot-crash-report-dir=" + join(String(dir), "by-build"), "fault.js"],
-      String(dir),
-      { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_CRASH_REPORT_DIR: join(String(dir), "by-environment") },
-    );
+    const { stderr, exitCode } = await run([bunExe(), "fault.js"], String(dir), {
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    });
     expect(exitCode).not.toBe(0);
     expect(stderr).toContain("Segmentation fault at address");
     expect(stderr).not.toContain("Registers:");
     expect(stderr).not.toContain("Code at rip:");
-    expect(readdirSync(String(dir))).toEqual(["fault.js"]);
   });
 
   test("in a function: the function and all its callers, by name, file, line and column", async () => {
@@ -247,9 +243,7 @@ require("bun:internal-for-testing").crash_handler.segfault();`,
   });
 });
 
-// A program that draws on the whole terminal never sees what its own crash printed. It names a directory, and finds a file there
-// when it next starts.
-describe.skipIf(isWindows || isASAN)("the file of a crash", () => {
+describe.skipIf(isWindows || isASAN)("a crash in what a compiled function calls", () => {
   const program = `import { read } from "bun:ffi";
 import { crash_handler } from "bun:internal-for-testing";
 
@@ -264,10 +258,8 @@ function lowest(how: string): number {
   return 1;
 }
 
-const [how, directory, tag, listens, raw] = process.argv.slice(2);
+const [how, listens, raw] = process.argv.slice(2);
 if (raw) process.stdin.setRawMode(true);
-if (directory) process.env.BUN_CRASH_REPORT_DIR = directory;
-if (tag) process.env.BUN_CRASH_REPORT_TAG = tag;
 if (listens) for (const signal of ["SIGTRAP", "SIGABRT"] as const) process.on(signal, () => {});
 if (how.endsWith(" in a Worker")) new Worker("./app.ts", { argv: [how.replace(" in a Worker", "")] });
 else console.log("went on", lowest(how));
@@ -275,102 +267,32 @@ else console.log("went on", lowest(how));
   const forTesting = { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
   let dir: ReturnType<typeof tempDir>;
   let cwd: string;
-  let id: string;
-  let runs = 0;
 
   beforeAll(async () => {
-    dir = tempDir("aot-file-of-a-crash", { "app.ts": program });
+    dir = tempDir("aot-crash-below-compiled-code", { "app.ts": program });
     cwd = String(dir);
     const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], cwd, forTesting);
     expect(built.stderr).not.toMatch(/^error\b/m);
     expect(built.exitCode).toBe(0);
-    id = built.stdout.match(/^ +build id  ([0-9a-f]{32})$/m)![1];
   });
 
-  /** What the one file in `directory` holds, held against what the process printed. */
-  function read(directory: string, stderr: string) {
-    const names = readdirSync(directory);
-    expect(names).toEqual([expect.stringMatching(/^\d+\.\d+\.crash\.json$/)]);
-    const path = join(directory, names[0]);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-    const text = readFileSync(path, "utf8");
-    expect(text).not.toContain(cwd);
-    const { pid, ppid, startedAtMs, crashedAtMs, featuresWord, features, traceString, compiledFrames, ...rest } =
-      JSON.parse(text);
-    expect(names[0]).toBe(`${pid}.${crashedAtMs}.crash.json`);
-    expect(ppid).toBe(process.pid);
-    expect(crashedAtMs - startedAtMs).toBeWithin(0, 60_000);
-    expect(Date.now() - crashedAtMs).toBeWithin(0, 60_000);
-    expect(featuresWord).toMatch(/^0x[0-9a-f]+$/);
-    expect(features).toContain("aot");
-    expect(stderr.split("\n")).toContain(" " + traceString);
-    const printed = stderr.split("Compiled JavaScript on the stack:\n")[1]?.split("\n\n")[0];
-    expect(compiledFrames).toEqual(printed?.split("\n").map(line => line.replace(/^ +at /, "")) ?? null);
-    return { ...rest, lowest: compiledFrames?.[0] };
-  }
-  const always = () => ({
-    version: 1,
-    bunVersion: Bun.version.replace(/-.*/, ""),
-    bunRevision: Bun.revision,
-    isCanary: expect.any(Boolean),
-    platform: process.platform,
-    arch: process.arch,
-    aot: true,
-    buildId: id,
-    thread: "main",
-  });
-  const inLowest = expect.stringMatching(/^lowest \(.*app\.ts:\d+:\d+\)$/);
-  // The frames that are kept are the innermost, all of them native.
-  const outOfStack = {
-    reason: expect.stringMatching(/^(segmentation fault|bus error)$/),
-    signal: expect.stringMatching(/^SIG(SEGV|BUS)$/),
-    address: expect.any(String),
-    message: null,
-    lowest: undefined,
-  };
+  const inLowest = /^lowest app\.ts:\d+:\d+$/;
 
-  test.each([
-    ["fault", { reason: "segmentation fault", signal: "SIGSEGV", address: "0x8", message: null, lowest: inLowest }],
-    [
-      "panic",
-      {
-        reason: "panic",
-        signal: "SIGABRT",
-        address: null,
-        message: "invoked crashByPanic() handler",
-        lowest: inLowest,
-      },
-    ],
-    [
-      "panic of Rust",
-      { reason: "panic", signal: "SIGABRT", address: null, message: "invoked rustPanic() handler", lowest: inLowest },
-    ],
-    ["out of memory", { reason: "out of memory", signal: "SIGABRT", address: null, message: null, lowest: inLowest }],
-    ["trap", { reason: "trap", signal: "SIGTRAP", address: expect.any(String), message: null, lowest: inLowest }],
-    ["abort", { reason: "abort", signal: "SIGABRT", address: null, message: null, lowest: inLowest }],
-    ["no stack left", outOfStack],
-    ["no stack left in a Worker", { ...outOfStack, thread: "other" }],
-  ])("says how the process ended: %s", async (how, cause) => {
-    const directory = join(cwd, `made/for-run-${runs++}`);
-    const { stdout, stderr } = await run([join(cwd, "app"), how], cwd, {
-      ...forTesting,
-      BUN_CRASH_REPORT_DIR: directory,
-      BUN_CRASH_REPORT_TAG: 'session "7"\n',
-    });
-    expect(stdout).toBe("");
-    expect(read(directory, stderr)).toEqual({ ...always(), tag: 'session "7"\n', ...cause });
-  });
+  test.each(["fault", "panic", "panic of Rust", "out of memory", "trap", "abort"])(
+    "names the function first: %s",
+    async how => {
+      const { stdout, stderr } = await run([join(cwd, "app"), how], cwd, forTesting);
+      expect(stdout).toBe("");
+      expect(framesOf(stderr)[0]).toMatch(inLowest);
+    },
+  );
 
   // glibc's raise() keeps no frame record and has the id of the thread where the frame pointer would be, and every eighth id is aligned.
   // From there the stack is searched, and what earlier calls have left on it differs from run to run.
-  test("says in which function the process ended, run after run: abort", async () => {
+  test("names the function first, run after run: abort", async () => {
     for (let time = 0; time < 16; time++) {
-      const directory = join(cwd, `made/for-run-${runs++}`);
-      const { stderr } = await run([join(cwd, "app"), "abort"], cwd, {
-        ...forTesting,
-        BUN_CRASH_REPORT_DIR: directory,
-      });
-      expect(read(directory, stderr).lowest).toEqual(inLowest);
+      const { stderr } = await run([join(cwd, "app"), "abort"], cwd, forTesting);
+      expect(framesOf(stderr)[0]).toMatch(inLowest);
     }
   });
 
@@ -386,7 +308,7 @@ else console.log("went on", lowest(how));
   ])("the terminal is out of raw mode again: %s", async how => {
     let shown = "";
     const child = Bun.spawn({
-      cmd: ["sh", "-c", 'ulimit -c 0; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "", "", "raw"],
+      cmd: ["sh", "-c", 'ulimit -c 0; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "raw"],
       cwd,
       env: { ...bunEnv, ...quiet, ...forTesting },
       terminal: {
@@ -398,31 +320,6 @@ else console.log("went on", lowest(how));
     await child.exited;
     expect(shown).toContain("Bun has ");
     expect(shown.match(/-?\b(?:icanon|echo|isig|icrnl)\b/g)?.sort()).toEqual(["echo", "icanon", "icrnl", "isig"]);
-  });
-
-  test("goes where the program says, else where the environment says, else where the build said", async () => {
-    const [byBuild, byEnvironment, byProgram] = ["by-build", "by-environment", "by-program"].map(name =>
-      join(cwd, name),
-    );
-    const executable = join(cwd, "app");
-    // A build hands the flag on with --compile-exec-argv.
-    const ofBuild = { ...forTesting, BUN_OPTIONS: "--aot-crash-report-dir=" + byBuild };
-    const environment = { ...ofBuild, BUN_CRASH_REPORT_DIR: byEnvironment, BUN_CRASH_REPORT_TAG: "theirs" };
-    const tagOf = (directory: string, stderr: string) => read(directory, stderr).tag;
-
-    expect(tagOf(byProgram, (await run([executable, "fault", byProgram, "mine"], cwd, environment)).stderr)).toBe(
-      "mine",
-    );
-    expect([byBuild, byEnvironment].map(existsSync)).toEqual([false, false]);
-    expect(tagOf(byEnvironment, (await run([executable, "fault"], cwd, environment)).stderr)).toBe("theirs");
-    expect(existsSync(byBuild)).toBe(false);
-    expect(tagOf(byBuild, (await run([executable, "fault"], cwd, ofBuild)).stderr)).toBe(null);
-  });
-
-  test("is not written unless somebody names a directory", async () => {
-    const before = readdirSync(cwd);
-    expect((await run([join(cwd, "app"), "fault"], cwd, forTesting)).stderr).toContain("Segmentation fault");
-    expect(readdirSync(cwd)).toEqual(before);
   });
 
   // The npm package signal-exit listens for both signals, and half the command line tools on npm load it.
@@ -437,9 +334,8 @@ else console.log("went on", lowest(how));
     ]),
     gap(`${forwarded}: abort() ends the process without a word`, ["abort", "SIGABRT", "the signal"]),
   ] as const)("%s ends a program with %s and a report where it listens for %s", async (how, signal, heard) => {
-    const directory = join(cwd, `made/for-run-${runs++}`);
     await using child = Bun.spawn({
-      cmd: withoutCoreDump([join(cwd, "app"), how, directory, "", heard === "nothing" ? "" : "listens"]),
+      cmd: withoutCoreDump([join(cwd, "app"), how, heard === "nothing" ? "" : "listens"]),
       env: { ...bunEnv, ...quiet, ...forTesting },
       stdout: "pipe",
       stderr: "pipe",
@@ -449,7 +345,7 @@ else console.log("went on", lowest(how));
     });
     const [stdout, stderr] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     expect({ stdout, signal: child.signalCode }).toEqual({ stdout: "", signal });
-    expect(read(directory, stderr).signal).toBe(signal);
+    expect(framesOf(stderr)[0]).toMatch(inLowest);
   });
 });
 

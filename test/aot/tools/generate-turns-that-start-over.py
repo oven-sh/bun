@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-turns-that-start-over.py <folder>: all 588; ../parallel/turns-that-start-over/ holds 51 of them.
+# generate-turns-that-start-over.py <folder>: all 588; ../parallel/turns-that-start-over/ holds 8 of them.
 # A TURN STARTS OVER: in the typed copy of a loop the failing side of a test leaves for the other copy, which does the whole turn again from what the head held. ITS FAILURE IS AN EFFECT DONE TWICE OR NOT AT ALL,
 # and no check at run time sees that: every printed line bears a count that a repeated or a lost effect changes.
 # ONE SHAPE A PROGRAM, each built alone:

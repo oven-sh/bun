@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 23
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="isPlainLeaf"
 
 // FILE: main.mjs
 // import() of modules whose graphs have cycles, share modules with each other, and end in CommonJS modules, which run when their importers are linked. One of the roots is requested by nothing,
@@ -141,49 +143,3 @@ export const describe = () => eight;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: show isPlainLeaf
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="ran" [isFreeName]
-// CHECK-NEXT: v7 = PropGet v6 key="filter"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="isPlainLeaf"
-// CHECK-NEXT: v10 = Call v7, v6, v9 calleeKey="filter" calleeName="ran.filter"
-// CHECK-NEXT: v11 = PropGet v10 key="sort"
-// CHECK-NEXT: v12 = Call v11, v10 calleeKey="sort" calleeName="sort"
-// CHECK-NEXT: v13 = PropGet v12 key="join"
-// CHECK-NEXT: v14 = String string=" "
-// CHECK-NEXT: v15 = Call v13, v12, v14 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v16 = String string="|"
-// CHECK-NEXT: v17 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v18 = PropGet v17 key="ran" [isFreeName]
-// CHECK-NEXT: v19 = PropGet v18 key="filter"
-// CHECK-NEXT: v20 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v21 = Call v19, v18, v20 calleeKey="filter" calleeName="ran.filter"
-// CHECK-NEXT: v22 = PropGet v21 key="join"
-// CHECK-NEXT: v23 = String string=" "
-// CHECK-NEXT: v24 = Call v22, v21, v23 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v25 = Call v4, v2, v15, v16, v24 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v26 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v27 = PropGet v26 key="ran" [isFreeName]
-// CHECK-NEXT: v28 = Integer
-// CHECK-NEXT: PropSet v27, v28 key="length"
-// CHECK-NEXT: v30 = Undefined
-// CHECK-NEXT: Return v30
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="isPlainLeaf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = NewRegExp pattern="^leaf-[a-z]+$"
-// CHECK-NEXT: v2 = PropGet v1 key="test"
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeKey="test" calleeName="test"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }

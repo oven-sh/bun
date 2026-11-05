@@ -76,13 +76,18 @@ pub struct FoldInputs<'s> {
     pub(super) nodes: &'s [TrieNode<'s>],
     pub(super) roots: &'s [(DefineRoot, u32)],
     pub(super) root_filter: u64,
+    /// `bind_below_defines`. In a bundle `require` names nothing where a define puts it: the list leaves it out, and it stays a name of the global object.
+    pub(super) names_in_place: &'s [(Atom, Atom)],
+    /// With it: `for_program_that_runs_in_place`.
+    pub(super) names_in_place_for_bun_run: &'s [(Atom, Atom)],
     pub(super) features: &'s [Atom],
     pub(super) features_are_unknown: bool,
     pub(super) preserves_unused_imports: bool,
     pub(super) minifies_syntax: bool,
+    /// `config["flat"]` is `config.flat` by the time a path is looked up.
+    pub(super) has_names_for_brackets: bool,
     pub(super) max_string_bytes: usize,
     pub(super) max_pattern_bytes: usize,
-    pub(super) is_called_before_it_runs: bool,
     pub(super) stored_by_mocks: StoredByMocks<'s>,
 }
 

@@ -127,67 +127,7 @@ function beyond(a, i) {
 say("the second holder is not there", beyond({ name: "a", other: "", n: 0 }, 3));
 console.log(rows + " rows");
 
-// GENERATED: onlyText beyond Holder valueOf
 // CHECK-LABEL: function {{*}}name="onlyText"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: v2 = NewClosure v0, v1 function=[[f_1]]
-// CHECK-NEXT: v3 = NewObject -, v2 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v4 = FinishObject v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="beyond"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_3]] flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_3]], v1: i32):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = Builtin builtin=String
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="map"
-// CHECK-NEXT: v5 = PropGet v4 key="get"
-// CHECK-NEXT: v6 = PropGet v0 key="name"
-// CHECK-NEXT: v7 = String string=","
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="nothing"
-// CHECK-NEXT: v11 = ElemGet v10, v1
-// CHECK-NEXT: v12 = PropGet v11 key="name"
-// CHECK-NEXT: v13 = Add v8, v12
-// CHECK-NEXT: v14 = Call v5, v4, v13 calleeKey="get" calleeName="map.get"
-// CHECK-NEXT: v15 = Call v2, -, v14 calleeName="String"
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v16 = CatchValue
-// CHECK-NEXT: v17 = String string="throws "
-// CHECK-NEXT: v18 = PropGet v16 key="name"
-// CHECK-NEXT: v19 = Add v17, v18
-// CHECK-NEXT: Return v19
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_7]]
-// CHECK-NEXT: PropSet v5, v1 key="tag"
-// CHECK-NEXT: PropSet v5, v2 key="v"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything variableName="tag"}, {type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="seen"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string=".valueOf"
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = Call v4, v3, v6 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

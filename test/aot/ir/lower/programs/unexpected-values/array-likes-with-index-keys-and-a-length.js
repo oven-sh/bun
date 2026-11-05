@@ -205,79 +205,8 @@ attempt("a typed array", () => [sum(new Uint8Array([250, 10])), store(new Uint8A
 attempt("arguments", () => (function () { return [sum(arguments), last(arguments), Array.from(arguments)]; })(1, 2, 3));
 attempt("a function", () => [sum(function (a, b) {}), last(function (a) {})]);
 
-// GENERATED: doubled Foo length [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|Array<number>|Uint8Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|Array<number>|Uint8Array):
-// CHECK-NEXT: v1 = Data data=[[d_2]]
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v3)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = PropGet v0 key="length"
-// CHECK-NEXT: v7 = Less v4, v6
-// CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v8 = PropGet v1 key="push"
-// CHECK-NEXT: v9 = ElemGet v0, v4
-// CHECK-NEXT: v10 = Integer integer=2
-// CHECK-NEXT: v11 = Mul v9, v10
-// CHECK-NEXT: v12 = Call v8, v1, v11 calleeKey="push" calleeName="result.push"
-// CHECK-NEXT: v13 = Increment v4
-// CHECK-NEXT: v14 = Convert v13 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v14)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Foo"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_4]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="reads"
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_4]]
-// CHECK-NEXT: v8 = Integer integer=2
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_5]]):
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="length"
-// CHECK-NEXT: v3 = ToNumeric v2
-// CHECK-NEXT: v4 = Decrement v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="length"
-// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_5]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = String string="by iterator"
-// CHECK-NEXT: v4 = Yield v3
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

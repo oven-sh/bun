@@ -1,6 +1,7 @@
 use super::effects::{ProgramOrigins, compute_origins};
 use super::{
-    CompileRequest, EntryPointFailure, EntryPoints, LoadFailure, LoadedProgram, WithoutBunTypes,
+    BunTypes, CompileRequest, EntryPointFailure, EntryPoints, LoadFailure, LoadedProgram,
+    WithoutBunTypes,
 };
 use crate::{
     Libs, default_compiler_options, diagnostic_from_config_error, host, use_dedicated_pool,
@@ -11,7 +12,7 @@ use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
 use bun_sema::program::{
-    CodeView, CompileInputs, FileId, Files, LoggedSteps, MainModule, RootFileNames, Run,
+    CodeView, CompileInputs, FileId, Files, LoggedSteps, MainModule, RootFileNames,
 };
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
@@ -31,37 +32,6 @@ pub fn load_program<'s>(
     session: &'s Session,
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
-) -> Result<LoadedProgram<'s>, LoadFailure> {
-    load_program_with_parsed_files(session, host, request, None)
-}
-
-/// `parsed`: the declaration files that the loads of the build have parsed so far.
-pub fn load_program_with_parsed_files<'u: 's, 's>(
-    session: &'s Session,
-    host: &dyn CodeHost,
-    request: &CompileRequest<'_, 's>,
-    parsed: Option<&'s Run<'u>>,
-) -> Result<LoadedProgram<'s>, LoadFailure> {
-    load(session, host, request, parsed, None)
-}
-
-/// Loads files of `loaded_before` as a program of their own, under another configuration.
-pub fn load_program_of_loaded_files<'s>(
-    session: &'s Session,
-    host: &dyn CodeHost,
-    request: &CompileRequest<'_, 's>,
-    parsed: Option<&'s Run<'s>>,
-    loaded_before: &Files<'s>,
-) -> Result<LoadedProgram<'s>, LoadFailure> {
-    load(session, host, request, parsed, Some(loaded_before))
-}
-
-fn load<'u: 's, 's>(
-    session: &'s Session,
-    host: &dyn CodeHost,
-    request: &CompileRequest<'_, 's>,
-    parsed: Option<&'s Run<'u>>,
-    loaded_before: Option<&Files<'s>>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");
     let mut steps = LoggedSteps::begin(host);
@@ -117,6 +87,7 @@ fn load<'u: 's, 's>(
     let mut last_files = Vec::new();
     let options = &mut project.options;
     options.allows_es_module_mark = request.code.allows_es_module_mark;
+    options.builds_executable = request.code.builds_executable;
     options
         .current_directory
         .clone_from(&request.code.working_directory);
@@ -189,9 +160,8 @@ fn load<'u: 's, 's>(
         _ => Vec::new(),
     };
     steps.end("entry points, project, libraries");
-    let files = Files::load_for_compile_with_parsed_files(
+    let files = Files::load_for_compile(
         session,
-        parsed,
         host,
         project.options,
         root_files,
@@ -204,7 +174,6 @@ fn load<'u: 's, 's>(
                 | EntryPoints::WrittenAndFound(_, main_module, _) => main_module,
                 EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
             },
-            loaded_before,
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,
@@ -226,17 +195,22 @@ fn load<'u: 's, 's>(
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
     steps.end("origins of the files");
-    let without_bun_types = (is_application && !has_bun_types).then_some(WithoutBunTypes {
-        incomplete_containers: containers_completed_by_bun_types(files),
-        errors_with_bun_types: host.errors_with_bun_types().map(<[_]>::to_vec),
-    });
+    let bun_types = if !is_application || has_bun_types_installed {
+        BunTypes::Installed
+    } else if brings_bun_types {
+        BunTypes::Brought
+    } else {
+        BunTypes::Missing(WithoutBunTypes {
+            incomplete_containers: containers_completed_by_bun_types(files),
+            errors_with_bun_types: host.errors_with_bun_types().map(<[_]>::to_vec),
+        })
+    };
     let has_configuration_file = !config_path.is_empty();
     let diagnostics = ProgramOrigins {
         files: Some(files),
         origins: &origins,
         project_origin: request.project_origin,
-        without_bun_types: without_bun_types.as_ref(),
-        lacks_installed_bun_types: is_application && !has_bun_types_installed,
+        bun_types: &bun_types,
         has_configuration_file,
     }
     .apply_effects(configuration_diagnostics(host, config_path, errors));
@@ -250,10 +224,9 @@ fn load<'u: 's, 's>(
         origins,
         project_origin: request.project_origin,
         diagnostics,
-        has_bun_types_installed,
-        brings_bun_types,
-        without_bun_types,
+        bun_types,
         has_configuration_file,
+        files_left_to_loader: Default::default(),
     })
 }
 
@@ -713,8 +686,7 @@ fn without_files(project_origin: FileOrigin) -> ProgramOrigins<'static, 'static>
         files: None,
         origins: &[],
         project_origin,
-        without_bun_types: None,
-        lacks_installed_bun_types: false,
+        bun_types: &BunTypes::Installed,
         has_configuration_file: true,
     }
 }

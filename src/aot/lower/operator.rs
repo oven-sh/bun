@@ -73,7 +73,7 @@ pub(in crate::lower) fn lower_unary(
             lowering.builder.type_of(value)
         }
         UnOp::Void => {
-            lowering.lower_expression_for_effect(operand);
+            lowering.lower_operand_of_taken_void(operand);
             lowering.builder.undefined()
         }
         UnOp::Delete => delete::lower_delete(lowering, operand),

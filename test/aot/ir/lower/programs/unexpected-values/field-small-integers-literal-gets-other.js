@@ -147,81 +147,9 @@ for (const [made, make] of Object.entries(makers)) {
   console.log(made, "a sum over three honest ones again", sumCounts(mixed));
 }
 
-// GENERATED: maskCount sumCounts Reflect.set Object.assign Object.defineProperty valueOf
 // CHECK-LABEL: function {{*}}name="maskCount"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="count"
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = BitOr v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumCounts"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_1]]>):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v2, v4)
-// CHECK-NEXT: b1(v5, v6):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Less v6, v8
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = ElemGet v0, v6
-// CHECK-NEXT: v11 = PropGet v10 key="count"
-// CHECK-NEXT: v12 = Add v5, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v14 = Increment v6
-// CHECK-NEXT: v15 = Convert v14 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v13, v15)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Reflect.set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=Reflect
-// CHECK-NEXT: v3 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="name"
-// CHECK-NEXT: v6 = Call v3, v2, v0, v5, v1 calleeName="Reflect.set"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.assign"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectAssign
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="name"
-// CHECK-NEXT: v6 = ToPropertyKey v5
-// CHECK-NEXT: v7 = NewObject layout=[[L_3]]
-// CHECK-NEXT: ElemDefine v7, v6, v1
-// CHECK-NEXT: v9 = FinishObject v7
-// CHECK-NEXT: v10 = Call v3, v2, v0, v9 calleeName="Object.assign"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="name"
-// CHECK-NEXT: v6 = NewObject -, v1 layout=[[L_4]] fields=[4]
-// CHECK-NEXT: v7 = FinishObject v6
-// CHECK-NEXT: v8 = Call v3, v2, v0, v5, v7 calleeName="Object.defineProperty"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=9
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

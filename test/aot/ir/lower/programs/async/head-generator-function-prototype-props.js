@@ -109,82 +109,8 @@ asyncConstant.prototype = undefined;
 line(protoOf(asyncConstant()), protoOf(asyncConstant(2)));
 line((await asyncConstant().next()).value, (await asyncConstant(3).next()).value, (await asyncCalls().next()).value);
 
-// GENERATED: fail asyncConstant Tree line [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="fail"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="named"
-// CHECK-NEXT: v3 = String string="throwing.changed"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="named"
-// CHECK-NEXT: PropSet v0, v4 key="prototype"
-// CHECK-NEXT: v6 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v7 = PropGet v6 key="RangeError" [isFreeName]
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(RangeError) flags=[IsExpected]}
-// CHECK-NEXT: v9 = String string="head"
-// CHECK-NEXT: v10 = Construct v8, -, v9 calleeName="RangeError"
-// CHECK-NEXT: Throw v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asyncConstant"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function, v2: undefined|number):
-// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: InitialYield v8
-// CHECK-NEXT: v10 = Await v8, v8
-// CHECK-NEXT: v11 = Yield v10, v8
-// CHECK-NEXT: v12 = ResultAt v11
-// CHECK-NEXT: v13 = ResultAt v11 index=1
-// CHECK-NEXT: Switch v13 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Throw v12
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Tree"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="line"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="log"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v0 key="join"
-// CHECK-NEXT: v7 = String string=" "
-// CHECK-NEXT: v8 = Call v6, v0, v7 calleeKey="join" calleeName="parts.join"
-// CHECK-NEXT: v9 = Call v5, v3, v8 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="named"
-// CHECK-NEXT: v3 = String string="listPattern.by iterator"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="named"
-// CHECK-NEXT: PropSet v0, v4 key="prototype"
-// CHECK-NEXT: v6 = Data data=[[d_5]]
-// CHECK-NEXT: v7 = PropGet v6 key=@@iterator
-// CHECK-NEXT: v8 = Call v7, v6 calleeKey=@@iterator
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }

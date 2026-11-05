@@ -26,7 +26,6 @@ const {
   ring,
   asyncContext,
   ticksAreUnseen,
-  ticksAreUnhooked,
 } = require("internal/process/next_tick_queue");
 
 const http = require("internal/http");
@@ -947,7 +946,8 @@ function isUnheard(req: $Node.IncomingMessage, name: string) {
 function endsUnwatched(req: $Node.IncomingMessage) {
   let state: $Node.ReadableState;
   try {
-    if ($isProxyObject(req) || !req[noBodySymbol] || req.resume !== resume) {
+    // A process.nextTick of the program's own is handed the callbacks: it sees those of the long road.
+    if ($isProxyObject(req) || !req[noBodySymbol] || req.resume !== resume || !ticksAreUnseen()) {
       return false;
     }
     state = req._readableState;
@@ -992,7 +992,7 @@ function resumeUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState)
     finishReadOfNothing(state);
     return finishResume(req, state);
   }
-  if (ring.read === ring.write && ticksAreUnhooked()) endUnwatched(req);
+  if (ring.read === ring.write && ticksAreUnseen()) endUnwatched(req);
   else queueTick1(endUnwatched, req);
 }
 
@@ -1024,7 +1024,7 @@ function endUnwatched(req: $Node.IncomingMessage) {
     queueTick3(destroyUnwatched, req, state, undefined);
     throw error;
   }
-  if (ring.read === ring.write && ticksAreUnhooked()) destroyUnwatched(req, state, held);
+  if (ring.read === ring.write && ticksAreUnseen()) destroyUnwatched(req, state, held);
   else queueTick3(destroyUnwatched, req, state, held);
 }
 

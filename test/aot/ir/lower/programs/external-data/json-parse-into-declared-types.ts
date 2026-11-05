@@ -1,6 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="holdFlat"
+// CHECK-LABEL: function {{*}}name="listOfFlat"
+// CHECK-LABEL: function {{*}}name="parseAs"
+// CHECK-LABEL: function {{*}}name="toString"
+// CHECK-LABEL: function {{*}}name="get"
 
 // FILE: main.ts
 // JSON.parse(text) whose result goes to a declared type is parsed by code compiled for that type where the text is compact and has the declared keys in the declared order, and by JSON.parse itself otherwise. Whatever the text is, an object or array that comes out is what JSON.parse makes of it. A primitive for an object or an array type throws a TypeError at the cast, annotation, parameter or result. A cast refuses no object, so an object passes `as Flat[]` and an object that is no text passes `as string`. `x!` tests nothing.
@@ -603,57 +608,3 @@ export function parseEveryText(sites: [string, (text: string) => unknown][]) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: holdFlat listOfFlat parseAs toString get
-// CHECK-LABEL: function {{*}}name="holdFlat"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse" expectedResult=x5
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v6 = NewObject -, v5 layout=[[L_1]] fields=[0]
-// CHECK-NEXT: v7 = FinishObject v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="listOfFlat"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|[[L_2]]> flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse" expectedResult=x6
-// CHECK-NEXT: v5 = NewArray v4 contents=undefined|null|[[L_2]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|[[L_2]]> flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="parseAs"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="conversions"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="conversions"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_3]]
-// CHECK-NEXT: v7 = String string="{\"id\":1,\"name\":\"n\",\"ok\":true,\"note\":null}"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="computed"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

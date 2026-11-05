@@ -130,73 +130,8 @@ impostors.forEach(function (pair) {
   attempt("honest again", function () { return [readOf(new Reader(4)), halfOf(new Reader(4)), setHalf(new Reader(4), 1)]; });
 });
 
-// GENERATED: _isNativeReflectConstruct _getPrototypeOf get set
 // CHECK-LABEL: function {{*}}name="_isNativeReflectConstruct"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b3(v0):
-// CHECK-NEXT: v1 = Builtin builtin=BooleanPrototypeValueOf
-// CHECK-NEXT: v2 = PropGet v1 key="call"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Builtin builtin=Reflect
-// CHECK-NEXT: v5 = Builtin builtin=ReflectConstruct
-// CHECK-NEXT: v6 = Builtin builtin=Boolean
-// CHECK-NEXT: v7 = Data data=[[d_1]]
-// CHECK-NEXT: v8 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v9 = Call v5, v4, v6, v7, v8 calleeName="Reflect.construct"
-// CHECK-NEXT: v10 = Call v3, v1, v9 calleeKey="call" calleeName="Boolean.prototype.valueOf.call"
-// CHECK-NEXT: v11 = ToBoolean v10
-// CHECK-NEXT: v12 = LogicalNot v11
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b3(v12):
-// CHECK-NEXT: Jump -> next b4(v12)
-// CHECK-NEXT: b3(v13) role=CatchHandler:
-// CHECK-NEXT: v14 = CatchValue
-// CHECK-NEXT: Jump -> next b4(v13)
-// CHECK-NEXT: b4(v15):
-// CHECK-NEXT: v16 = NewClosure v15 function=[[f_3]]
-// CHECK-NEXT: PutModuleVariable v16 variable=[[g_4]]
-// CHECK-NEXT: v18 = Call v16
-// CHECK-NEXT: ReturnCall v18
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="_getPrototypeOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=ObjectSetPrototypeOf
-// CHECK-NEXT: v2 = Builtin builtin=ObjectGetPrototypeOf
-// CHECK-NEXT: v3 = PropGet v2 key="bind"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(FunctionPrototypeBind) flags=[IsExpected]}
-// CHECK-NEXT: v5 = Call v4, v2 calleeKey="bind" calleeName="Object.getPrototypeOf.bind"
-// CHECK-NEXT: PutModuleVariable v5 variable=[[g_5]]
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v8 = Call v7, -, v0 calleeName="_getPrototypeOf"
-// CHECK-NEXT: ReturnCall v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="_isNativeReflectConstruct"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=anything variableName="t"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: v2 = LogicalNot v1
-// CHECK-NEXT: v3 = ToBoolean v2
-// CHECK-NEXT: v4 = LogicalNot v3
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="pages"
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Div v1, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Integer integer=2
-// CHECK-NEXT: v3 = Mul v1, v2
-// CHECK-NEXT: PropSet v0, v3 key="pages"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

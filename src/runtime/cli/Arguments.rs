@@ -390,7 +390,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--aot-graph-fd <STR>"),
     parse_param!("--aot-checked <STR>"),
     parse_param!("--aot-decode-crash-report <STR>"),
-    parse_param!("--aot-crash-report-dir <STR>"),
     parse_param!("--aot-build-id"),
 ];
 
@@ -598,7 +597,6 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"aot-graph-fd"), Nothing),
         (Long(b"aot-checked"), Nothing),
         (Long(b"aot-decode-crash-report"), Nothing),
-        (Long(b"aot-crash-report-dir"), Nothing),
         (Long(b"aot-build-id"), Nothing),
         (Long(b"main-fields"), Nothing),
         (Long(b"preserve-symlinks"), Nothing),
@@ -742,6 +740,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
         ),
         parse_param!("--aot-check <STR>..."),
+        parse_param!("--aot-harden <STR>..."),
         parse_param!("--aot-testing <STR>..."),
         parse_param!("--aot-references <STR>"),
         parse_param!("--aot-cpu <STR>"),

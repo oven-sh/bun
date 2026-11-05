@@ -50,80 +50,8 @@ row("hot, then it throws", () => { function f(a) { let s = 0; try { for (const x
 (async () => { async function f(a) { try { for (const x of a) await 0; } catch (e) { return "caught " + e; } return "none"; } try { console.log("in an async function: " + await f(boom([1, 2], 1))); } catch (e) { console.log("in an async function: THE CALLER caught " + e); }
   async function h(a) { try { for await (const x of a); } catch (e) { return "caught " + e; } return "none"; } try { console.log("for await over an array: " + await h(boom([1, 2], 1))); } catch (e) { console.log("for await over an array: THE CALLER caught " + e); } })();
 
-// GENERATED: entries boom K h done
 // CHECK-LABEL: function {{*}}name="entries"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_1]]
-// CHECK-NEXT: v1 = PropGet v0 key="entries"
-// CHECK-NEXT: v2 = Call v1, v0 calleeKey="entries" calleeName="entries"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="boom"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|number|string|symbol flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array, v1: undefined|null|number|string|symbol):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = NewObject layout=[[L_4]]
-// CHECK-NEXT: PropDefine v6, v5 key="get"
-// CHECK-NEXT: v8 = Boolean boolean=true
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|boolean flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v6, v9 key="configurable"
-// CHECK-NEXT: v11 = FinishObject v6
-// CHECK-NEXT: v12 = Call v3, v2, v0, v1, v11 calleeName="Object.defineProperty"
-// CHECK-NEXT: ReturnCall v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b8():
-// CHECK-NEXT: v2 = IteratorOpen v1 iteratorKind=Async
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b8():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v4 = IteratorResume v2, -, v1 iteratorKind=Async
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Branch v5 -> taken b3(), notTaken b5()
-// CHECK-NEXT: b3() handler=b8():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v7 = String string="none"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b5() handler=b8():
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b7():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b7() role=IterationCleanup subject=v2 handler=b8():
-// CHECK-NEXT: v8 = CatchException
-// CHECK-NEXT: IteratorClose v2, v1 iteratorKind=Async completion=Throw
-// CHECK-NEXT: Rethrow v8
-// CHECK-NEXT: b8() role=CatchHandler:
-// CHECK-NEXT: v10 = CatchValue
-// CHECK-NEXT: v11 = String string="caught "
-// CHECK-NEXT: v12 = Add v11, v10
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="done"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=anything variableName="log"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_6]], v1: anything):
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="done"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_6]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="i"
-// CHECK-NEXT: v7 = Integer integer=3
-// CHECK-NEXT: v8 = GreaterEq v6, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

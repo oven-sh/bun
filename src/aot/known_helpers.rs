@@ -73,7 +73,8 @@ impl KnownHelpers {
         }
     }
 
-    pub fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
+    #[cfg(test)]
+    pub(crate) fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
         KnownHelpers::compute_below_added_names(files, &[], in_parallel)
     }
 

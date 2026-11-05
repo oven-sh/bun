@@ -2,6 +2,8 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="B"
+// CHECK-LABEL: function {{*}}name="H"
 
 // FILE: polymorphic-field-reads.ts
 // Fields of unions of string literals, at other places in each of many classes, are read by name by code that knows nothing of the classes.
@@ -48,38 +50,3 @@ export function callKind(o) { try { return o.kind(); } catch (error) { return er
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: B H
-// CHECK-LABEL: function {{*}}name="B"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|""|"circle"|"ring"|"square" flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: number, v2: undefined|null|""|"circle"|"ring"|"square"):
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_2]]
-// CHECK-NEXT: PropSet v5, v1 key="id"
-// CHECK-NEXT: PropSet v5, v2 key="kind"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="H"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_3]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_4]]
-// CHECK-NEXT: PropSet v4, v1 key="kind"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

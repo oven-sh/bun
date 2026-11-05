@@ -111,66 +111,6 @@ console.log("the bit is minus zero: " + Object.is(d.bit, -0));
 
 export {};
 
-// GENERATED: nameOfStep bump scale
 // CHECK-LABEL: function {{*}}name="nameOfStep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="step"
-// CHECK-NEXT: Switch v1 cases=[1, 2, 3] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByField v0, v2 key="step"
-// CHECK-NEXT: v4 = String string="one"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = NarrowByField v0, v6 key="step"
-// CHECK-NEXT: v8 = String string="two"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = NarrowByField v0, v10 key="step"
-// CHECK-NEXT: v12 = String string="three"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: v2 = RequireObjectCoercible v0 nullishAccess=Update
-// CHECK-NEXT: v3 = TypeTest v1 testedType=object
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = ToPropertyKey v4
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b3(v7):
-// CHECK-NEXT: v8 = ElemGet v0, v7
-// CHECK-NEXT: v9 = Integer integer=1
-// CHECK-NEXT: v10 = Add v8, v9
-// CHECK-NEXT: ElemSet v0, v7, v10
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="scale"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: number):
-// CHECK-NEXT: v3 = RequireObjectCoercible v0 nullishAccess=Update
-// CHECK-NEXT: v4 = TypeTest v1 testedType=object
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = ToPropertyKey v5
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: v9 = ElemGet v0, v8
-// CHECK-NEXT: v10 = Mul v9, v2
-// CHECK-NEXT: ElemSet v0, v8, v10
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

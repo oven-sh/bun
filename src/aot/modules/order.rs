@@ -910,6 +910,23 @@ fn find_loads_seen_by_program(
     seen
 }
 
+/// The files with a statement that `leave_imports_of_test_files_to_loader` has left to the loader because statements of other types ask for the same file of data.
+fn find_importers_that_ask_for_several_types(modules: &ModuleSet) -> Vec<u32> {
+    let typed = || {
+        let statements = modules.left_to_loader.iter();
+        statements.filter_map(|&((importer, _, asked), file)| Some((importer, asked?, file)))
+    };
+    let mut first_types = FxHashMap::default();
+    let mut asked_under_several = FxHashSet::default();
+    for (_, asked, file) in typed() {
+        if *first_types.entry(file).or_insert(asked) != asked {
+            asked_under_several.insert(file);
+        }
+    }
+    let asking = typed().filter(|it| asked_under_several.contains(&it.2));
+    asking.map(|it| it.0.0).collect()
+}
+
 fn find_prefix_roots(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -1012,7 +1029,7 @@ pub(super) fn compute_order(
         is_half_at_link[target as usize] = true;
     }
     let prefix_roots = find_prefix_roots(input, scans, modules, &is_code_of_program, &planned);
-    let loads = find_loads_seen_by_program(
+    let mut loads = find_loads_seen_by_program(
         scans,
         modules,
         &numbers,
@@ -1020,6 +1037,17 @@ pub(super) fn compute_order(
         &is_code_of_program,
         &planned,
     );
+    // The loader comes to the statements of a graph level by level, and the first that asks for a file of data says what the file is to the others.
+    let ask_for_several_types = find_importers_that_ask_for_several_types(modules);
+    if !ask_for_several_types.is_empty() {
+        let comes_to_them = find_reached(&importers, ask_for_several_types);
+        let is_loaded_by_loader = loads.is_loaded_by_loader.iter_mut();
+        for (is_loaded, (comes, is_code)) in
+            is_loaded_by_loader.zip(comes_to_them.iter().zip(&is_code_of_program))
+        {
+            *is_loaded |= *comes && *is_code;
+        }
+    }
     let mut makes_values_at_load = vec![false; file_count];
     let mut is_es_module_to_imports = vec![false; file_count];
     for &file in &modules.compiled_files {

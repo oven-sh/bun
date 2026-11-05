@@ -2,19 +2,14 @@
 // and an executable that only runs what was compiled into it loads the addon under whatever name it is asked for, as an executable built without --aot does.
 // An addon on disk stays refused, and so does a script that lies in the executable as a file: that is text that nobody has compiled.
 // ./addons-named-by-the-platform/addon.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp.
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
-import { built, slot, spawned, unsupported } from "./harness/commands";
+import { cCompiler, without } from "./harness/capabilities";
+import { built, slot, spawned } from "./harness/commands";
 import { afterAll, beforeAll, test } from "./harness/default-timeout";
-
-const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-
-if (!systemCC)
-  console.error(
-    "SKIPPED: test/aot/an-addon-in-the-executable-is-loaded-under-any-name.test.ts: there is no C compiler: not in $CC, no cc, gcc or clang",
-  );
+import { describe } from "./supported";
 
 const says = `const say = (label: string, ask: () => unknown) => {
   try {
@@ -58,7 +53,7 @@ say("a script on disk", () => require(process.argv[3]).add(40, 2));
 say("a script that lies in the executable as a file", () => require([text].join("")).add(40, 2));
 `;
 
-describe.skipIf(!systemCC || !!unsupported || isWindows)("compile/aot/an-addon-in-the-executable", () => {
+describe.skipIf(!!without("a C compiler") || isWindows)("compile/aot/an-addon-in-the-executable", () => {
   const folder = String(tempDir("aot-addon-in-the-executable", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const sources = join(folder, "sources");
@@ -69,7 +64,7 @@ describe.skipIf(!systemCC || !!unsupported || isWindows)("compile/aot/an-addon-i
     for (const made of [sources, disk, elsewhere]) mkdirSync(made);
     const compile = await spawned(
       [
-        systemCC!,
+        cCompiler!,
         "-shared",
         "-fPIC",
         ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),

@@ -33,6 +33,7 @@ pub(super) fn run_queue<'s>(
         always_reported: 0,
         checking: Instant::now(),
         file_work: Some(work),
+        files_left_to_loader: loaded.files_left_to_loader(),
     })
 }
 

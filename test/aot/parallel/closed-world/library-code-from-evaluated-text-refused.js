@@ -73,7 +73,7 @@ Buffer.alloc(1).parent.byteLength > 0: true
 Buffer.alloc(1).offset >= 0: true
 JSON.stringify(Buffer.alloc(1)): {"type":"Buffer","data":[0]}
 typeof console.write: function
-console.write(''): refused: console.write was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+console.write(''): 0
 typeof process.stdout.write: function
 process.pid > 0 && typeof process.cwd() + typeof Bun.version + typeof console.log: stringstringfunction
 the program goes on

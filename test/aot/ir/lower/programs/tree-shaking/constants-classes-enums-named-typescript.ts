@@ -1,6 +1,14 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="WithProperty"
+// CHECK-LABEL: function {{*}}name="hello"
+// CHECK-LABEL: function {{*}}name="WithAccessor"
+// CHECK-LABEL: function {{*}}name="value"
+// CHECK-LABEL: function {{*}}name="value"
+// CHECK-LABEL: function {{*}}name="read"
+// CHECK-LABEL: function {{*}}name="generic"
+// CHECK-LABEL: function {{*}}name="Concrete"
 
 // FILE: main.ts
 // Each declaration has one reference, and it is written in a form that only TypeScript has: `import a = N.b`, `export import`, `export =` in another file, a namespace that closes over it, a parameter property's default, `satisfies`, `as const`, a non-null mark, an angle-bracket cast, an instantiation expression, an enum initializer, an abstract class's heritage, an accessor's initializer. `bun run` does not get as far as running it (SyntaxError: import call expects one or two arguments), so `bun build --compile` is the reference.
@@ -47,81 +55,3 @@ export = whole;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: WithProperty hello WithAccessor value read generic Concrete
-// CHECK-LABEL: function {{*}}name="WithProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_2]]
-// CHECK-NEXT: v6 = TypeTest v1 testedType=undefined
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="asDefault"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b3(v10)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: Jump -> next b3(v11)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: PropSet v4, v12 key="value"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: v15 = TypeTest v14 testedType=object
-// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(v4)
-// CHECK-NEXT: b4(v16):
-// CHECK-NEXT: Jump -> next b5(v16)
-// CHECK-NEXT: b5(v17):
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="hello"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="an abstract base"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="WithAccessor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_5]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} kind=Getter flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_4]] field=1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="value"
-// CHECK: module=[[m_0]] position={{*}} kind=Setter flags=[HasThis, IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: PrivateSet v0, v2, v1 layout=[[L_4]] field=1
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="inNested"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="generic"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy, IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Concrete"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

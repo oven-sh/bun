@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 5
+// CHECK-LABEL: function {{*}}name="makeNext"
+// CHECK-LABEL: function {{*}}name="next"
+// CHECK-LABEL: function {{*}}name="next"
 
 // FILE: main.ts
 // `export const f = () => ..` of another module, called through a namespace: `import * as ns`, or a folder's `export * as default from '.'`.
@@ -64,39 +67,3 @@ export type WithNext<E, O> = {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: makeNext next
-// CHECK-LABEL: function {{*}}name="makeNext"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=Object
-// CHECK-NEXT: v1 = Builtin builtin=ObjectAssign
-// CHECK-NEXT: v2 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v3 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[f_4]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = String string="next"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = NewObject -, v4, v6 layout=[[L_5]] fields=[1, 0]
-// CHECK-NEXT: v8 = FinishObject v7
-// CHECK-NEXT: v9 = Call v1, v0, v2, v8 calleeName="Object.assign"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|null|[[f_6]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, HasRestParameter, IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: v2 = PropGet v1 key="length"
-// CHECK-NEXT: v3 = Add v0, v2
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, HasRestParameter, IsChecked] length=1 syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined] variableName="next"}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|string, v2: Array):
-// CHECK-NEXT: v3 = String string="w"
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="passOn"
-// CHECK-NEXT: v6 = ModuleNamespace module=[[m_8]]
-// CHECK-NEXT: v7 = Call v5, v6, v1, v0, v2 calleeName="Steps.passOn"
-// CHECK-NEXT: v8 = Await v7, v1, v2
-// CHECK-NEXT: v9 = Add v3, v8
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

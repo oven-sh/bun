@@ -67,16 +67,23 @@ pub(in crate::modules) enum AliasTarget {
     Binding(Sym),
 }
 
+/// The getter of a name that has no variable of its own.
+#[derive(Copy, Clone, Debug)]
+pub(in crate::modules) struct Getter {
+    /// What it returns.
+    pub target: AliasTarget,
+    /// The link may come in front of what fills the binding that it returns.
+    pub is_seen_unfilled: bool,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) struct NameEntry {
     pub name: Atom,
     /// `None`: the module has a variable for it.
-    pub target: Option<AliasTarget>,
+    pub getter: Option<Getter>,
     /// Where the body has created it for sure. `u32::MAX`: some run of the body may end without it.
     pub created_at: u32,
     pub is_enumerable: bool,
-    /// The link may come in front of what fills the binding that the name stands for.
-    pub is_seen_unfilled: bool,
 }
 
 /// Whether plain Bun comes to a name that the object has where it lists the names for the ES modules that import the file.
@@ -95,6 +102,8 @@ pub(in crate::modules) struct ModuleEntries {
     pub knows_all_names: bool,
     /// `ModuleText::lists_only_enumerable_names`
     pub lists_only_enumerable_names: bool,
+    /// `BindInput::runs_in_place`
+    pub runs_in_place: bool,
     pub is_half: bool,
     pub is_replaced_late: bool,
     /// `ModuleText::exports_ordinary_object`
@@ -217,6 +226,8 @@ struct ModuleText {
     marker_nodes: Vec<ExprId>,
     /// Ascending.
     erased: Vec<StmtId>,
+    /// `const keys = { .. };` in front of `module.exports = keys;`: the store evaluates the literal in its place.
+    evaluated_at_store: Option<StmtId>,
     names_read: Vec<Atom>,
     names_called: Vec<Atom>,
     /// What `__esModule` reads. `false`: the text never gives the module one. `true`: once, in order, a true constant. `None`: only the run knows.
@@ -225,6 +236,8 @@ struct ModuleText {
     is_marker_fixed: bool,
     /// The package of the file says `"type": "module"`: to an ES importer the `default` of the file is its value, whatever `__esModule` reads.
     is_marker_ignored_by_imports: bool,
+    /// `BindInput::runs_in_place`
+    runs_in_place: bool,
     needs_wrapped_body: bool,
     uses_module_object: bool,
     /// Something may store to `module.exports` once the body has ended.
@@ -275,6 +288,14 @@ impl ModuleText {
                 is_accessor,
                 self.lists_only_enumerable_names(),
             )
+    }
+
+    /// An import statement that names it finds it once the body has run to its end. `bun run` links the statement by the names that are listed. The bundle of `bun build --compile` reads the name off the object.
+    fn is_always_found_by_statements(&self, name: Atom) -> bool {
+        match self.runs_in_place {
+            true => self.always_lists(name),
+            false => self.always_creates(name),
+        }
     }
 
     /// Something that is stored under the name may look at its `this`.
@@ -888,17 +909,21 @@ fn find_taken_objects(
 ) -> TakenObjects {
     let (hir, bound, decisions) = (text.hir, text.bound, text.decisions);
     let mut taken = TakenObjects::default();
-    let mut mentions = text.builtins.module_object_mentions().iter();
-    taken.names_way_to_module_objects = mentions.any(|mention| {
+    let mentions = text.builtins.module_object_mentions().iter();
+    let mut mentions = mentions.map(|mention| (mention.owner, mention.object_use));
+    // As `program_reach::reach_module_object` keeps every module object.
+    taken.names_way_to_module_objects = mentions.any(|mention| match mention {
         // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined.
-        (mention.owner != ModuleObjectOwner::EntryPoint || commonjs_file_may_be_main)
-            && matches!(
-                mention.object_use,
-                ModuleObjectUse::Parent
-                    | ModuleObjectUse::Children
-                    | ModuleObjectUse::HandedOn
-                    | ModuleObjectUse::HolderHandedOn
-            )
+        (ModuleObjectOwner::EntryPoint, _) if !commonjs_file_may_be_main => false,
+        (_, ModuleObjectUse::Tested) => false,
+        (ModuleObjectOwner::EntryPoint, _) => true,
+        (_, object_use) => matches!(
+            object_use,
+            ModuleObjectUse::Parent
+                | ModuleObjectUse::Children
+                | ModuleObjectUse::HandedOn
+                | ModuleObjectUse::HolderHandedOn
+        ),
     });
     // `require.cache` lists the files of the program in a test run alone.
     taken.names_way_to_module_objects |=
@@ -1672,7 +1697,7 @@ impl Scan<'_, '_, '_> {
                 Some(literal) => {
                     let is_added = self.add_literal(literal);
                     if is_added {
-                        self.found.erased.extend(replacement.declared_at);
+                        self.found.evaluated_at_store = replacement.declared_at;
                     }
                     is_added
                 }
@@ -2002,6 +2027,7 @@ impl Scan<'_, '_, '_> {
             found.creations = Vec::new();
             found.aliases = Vec::new();
             found.erased = Vec::new();
+            found.evaluated_at_store = None;
             found.defined_values = Vec::new();
             found.marker = None;
         }
@@ -2039,11 +2065,13 @@ fn begin_scan<'t, 'a, 's>(
             defined_values: Vec::new(),
             marker_nodes: Vec::new(),
             erased: Vec::new(),
+            evaluated_at_store: None,
             names_read: Vec::new(),
             names_called: Vec::new(),
             marker: None,
             is_marker_fixed: false,
             is_marker_ignored_by_imports: false,
+            runs_in_place: false,
             needs_wrapped_body: false,
             uses_module_object: summary.module_object_escapes,
             is_replaced_late: false,
@@ -2169,7 +2197,7 @@ fn scan_own_text(
         }
     }
     if !hir.is_js {
-        for statement in hir.ids(hir.body) {
+        for statement in (hir.ids(hir.body)).chain(bound.export_assignments_in_namespaces(hir)) {
             // `export = e` of TypeScript is the statement `module.exports = e`.
             let statement: StmtId = statement;
             if let StmtKind::ExportAssign(value) = hir[statement].kind {
@@ -2281,6 +2309,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         found.push(ModuleText {
             is_marker_ignored_by_imports: interop.export_rule
                 == SyntheticExportRule::CommonJsIgnoringAnnotation,
+            runs_in_place: bind.runs_in_place,
             ..own_text
         });
         found.append(&mut inner_texts);
@@ -2356,12 +2385,10 @@ impl CommonJsTexts {
         let handed_over = calls.filter(|&(module, name)| {
             text_of(module).is_some_and(|text| text.may_look_at_this_under(name))
         });
-        let every_module = self.modules.iter().map(ModuleText::module);
-        let every_module = every_module.filter(|_| taken.names_way_to_module_objects);
         let changed = taken.required.iter().chain(&taken.imported).copied();
         let changed = changed.chain(taken.defaults.iter().copied().filter(lacks_marker));
         let changed = changed.chain(handed_over.map(|(module, _)| module));
-        let changed: Vec<ModuleRef> = changed.chain(every_module).collect();
+        let changed: Vec<ModuleRef> = changed.collect();
         let mut is_listed = FxHashSet::default();
         for module in changed {
             // What a test file does to a module that the loader links for it, it does to the compiled file.
@@ -2376,6 +2403,12 @@ impl CommonJsTexts {
                 if is_listed.insert(module) {
                     self.stored_markers.push(module);
                 }
+            }
+        }
+        // Whether the program comes to the way only `program_reach` finds out, which looks at every file then. Until then no file needs an object for it.
+        if taken.names_way_to_module_objects {
+            for text in self.modules.iter_mut().filter(|text| !text.is_marker_fixed) {
+                text.marker = None;
             }
         }
     }
@@ -2415,10 +2448,9 @@ fn create_entries(text: &ModuleText) -> ModuleEntries {
                 (creation.start, creation.start),
                 NameEntry {
                     name: creation.name,
-                    target: None,
+                    getter: None,
                     created_at,
                     is_enumerable: creation.is_enumerable,
-                    is_seen_unfilled: false,
                 },
             )),
         }
@@ -2426,10 +2458,12 @@ fn create_entries(text: &ModuleText) -> ModuleEntries {
     names.extend(text.aliases.iter().map(|alias| {
         let entry = NameEntry {
             name: alias.name,
-            target: Some(alias.target),
+            getter: Some(Getter {
+                target: alias.target,
+                is_seen_unfilled: alias.is_seen_unfilled,
+            }),
             created_at: alias.start,
             is_enumerable: alias.is_enumerable,
-            is_seen_unfilled: alias.is_seen_unfilled,
         };
         ((alias.start, alias.returned_start), entry)
     }));
@@ -2439,6 +2473,7 @@ fn create_entries(text: &ModuleText) -> ModuleEntries {
         has_names: text.has_names,
         knows_all_names: text.knows_all_names(),
         lists_only_enumerable_names: text.lists_only_enumerable_names(),
+        runs_in_place: text.runs_in_place,
         is_half: text.is_half,
         is_replaced_late: text.is_replaced_late,
         exports_ordinary_object: text.exports_ordinary_object,
@@ -2989,6 +3024,12 @@ impl CommonJsExports {
         }
     }
 
+    /// An import statement of an executable finds it all the same.
+    pub fn is_getter_that_no_loop_sees(&self, module: ModuleRef, name: Atom) -> bool {
+        let alias = self.text_of(module).and_then(|text| text.alias_of(name));
+        alias.is_some_and(|alias| !alias.is_enumerable)
+    }
+
     /// `ns.N` and `import { N }`: what the module had when it was linked.
     pub fn imported_member(&self, variable: SyntheticExportId) -> Member {
         match self.name_of_variable(variable) {
@@ -3017,6 +3058,13 @@ impl CommonJsExports {
                     .erased
                     .binary_search(&statement)
                     .is_ok()
+        })
+    }
+
+    /// The declaration runs nothing where it stands: the next statement, which stores its literal as `module.exports`, evaluates the literal. Its code is live like any other.
+    pub fn is_evaluated_at_store(&self, file: FileId, statement: StmtId) -> bool {
+        self.number_of(ModuleRef::File(file)).is_some_and(|number| {
+            self.keeps_names(number) && self.modules[number].evaluated_at_store == Some(statement)
         })
     }
 

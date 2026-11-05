@@ -160,9 +160,12 @@ const programs: Record<string, Program> = {
         function hide(object, key, value) { return Object.defineProperty(object, key, { configurable: true, writable: true, value }); }
         function $export(name, source) { for (const key in source) hide(globalThis[name].prototype, key, source[key]); }
         $export("Function", { part() { return this.bind(undefined, ...arguments); } });
-        console.log(Math.max.part(2)(1));`,
+        console.log(Math.max.part(2)(1));
+        function define(Base, next) { hide(Base.prototype, Symbol.iterator, function () { return { i: 0, l: +this, next }; }); }
+        define(Number, function () { return this.i < this.l ? { done: false, value: this.i++ } : { done: true, value: undefined }; });
+        console.log([...3].join());`,
     },
-    plain: "2\n",
+    plain: "2\n0,1,2\n",
   },
   "harmony-reflect": {
     files: {

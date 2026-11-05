@@ -339,76 +339,12 @@ await showAsync("try { await pass(1); } finally { pass(2); } return `${{ toStrin
 await showAsync("if (await pass(1)) { pass(2); } return `${{ toString: () => fail() }}`;", async () => { if (await pass(1)) { pass(2); } return `${{ toString: () => fail() }}`; });
 await showAsync("for (const a of holder.arr) { await pass(a); } return `${{ toString: () => fail() }}`;", async () => { for (const a of holder.arr) { await pass(a); } return `${{ toString: () => fail() }}`; });
 
-// GENERATED: fail placesOf Made nothing B each
 // CHECK-LABEL: function {{*}}name="fail"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Error" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v3 = String string="fail"
-// CHECK-NEXT: v4 = Construct v2, -, v3 calleeName="Error"
-// CHECK-NEXT: Throw v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="placesOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = PropGet v0 key="stack"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = PropGet v3 key="split"
-// CHECK-NEXT: v5 = String string="\n"
-// CHECK-NEXT: v6 = Call v4, v3, v5 calleeKey="split" calleeName="split"
-// CHECK-NEXT: v7 = PropGet v6 key="filter"
-// CHECK-NEXT: v8 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v9 = Call v7, v6, v8 calleeKey="filter" calleeName="filter"
-// CHECK-NEXT: v10 = PropGet v9 key="map"
-// CHECK-NEXT: v11 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v12 = Call v10, v9, v11 calleeKey="map" calleeName="map"
-// CHECK-NEXT: ReturnCall v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="Made"
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="nothing"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="nothing"
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="B"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

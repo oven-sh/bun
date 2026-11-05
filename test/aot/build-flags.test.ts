@@ -57,6 +57,32 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     },
     prints: "42 named true number staging\n",
   },
+  "--define of a name in place of a name": {
+    flags: ["--define=MODE=mode", "--define=CALC=Math", "--define=load=require"],
+    files: {
+      "main.js": `globalThis.mode = "global";
+const mode = "module";
+function pick(mode) { return MODE; }
+function later(mode) { return () => MODE; }
+function store(mode) { MODE = "stored"; return mode; }
+function own() { const MODE = "own"; return MODE; }
+function local(Math) { return CALC.max(1, 2); }
+console.log(MODE, pick("parameter"), later("captured")(), store("parameter"), globalThis.mode, own(), typeof MODE);
+let said; try { said = typeof load("node:os").platform; } catch (e) { said = e.message; }
+console.log(local({ max: () => "local" }), CALC.max(1, 2), said);`,
+    },
+    prints: "module parameter captured stored global own string\nlocal 2 require is not defined\n",
+  },
+  "--define of a name in place of a path, under typeof": {
+    flags: ["--define=config.flag=absent", "--define=FLAG=absent", "--define=config.there=present"],
+    files: {
+      "main.ts": `declare const config: { flag: unknown; there: unknown }; declare const FLAG: unknown;
+(globalThis as any).present = 1;
+const kind = (read: () => string) => { try { return read(); } catch (e) { return (e as Error).name; } };
+console.log(kind(() => typeof config.flag), kind(() => typeof (config.flag)), kind(() => typeof FLAG), kind(() => typeof config.there));`,
+    },
+    prints: "ReferenceError ReferenceError undefined number\n",
+  },
   "--define and --drop of a path that the program ends in brackets": {
     ...pathsThatEndInBrackets,
     prints:

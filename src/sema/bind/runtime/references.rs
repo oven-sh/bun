@@ -42,6 +42,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         idents,
         options,
         atoms,
+        names_in_place: input.names_in_place,
         type_only,
         direct_evals,
         first_eval_id: bound.ids.len() as u32,
@@ -157,6 +158,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) idents: &'a [(ExprId, ScopeId)],
     pub(super) options: RuntimeBindOptions,
     pub(super) atoms: &'a dyn Intern,
+    pub(super) names_in_place: &'a [(Atom, Atom)],
     pub(super) type_only: TypeOnlyCode,
     pub(super) direct_evals: Vec<DirectEval>,
     pub(super) first_eval_id: u32,
@@ -182,7 +184,13 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             insert_bit(&mut self.references.evaluated_idents, ident.idx());
-            let found = self.lookup.find(scope, name, hir[ident].pos);
+            let mut found = self.lookup.find(scope, name, hir[ident].pos);
+            // `--define MODE=mode`: Bun looks `mode` up where `MODE` stands. Where that is free too, the fold has the define.
+            if found.binding == Binding::Free
+                && let Some(&(_, in_place)) = self.names_in_place.iter().find(|it| it.0 == name)
+            {
+                found = self.lookup.find(scope, in_place, hir[ident].pos);
+            }
             if found.binding != bound.default_binding(ident) {
                 self.references.ident_bindings.push((ident, found.binding));
             }

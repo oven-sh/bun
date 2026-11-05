@@ -451,11 +451,17 @@ impl<'s> SymbolMap<'s> {
     }
 
     /// `extendExportSymbols` without a lookup table: adds the entries of `source` whose names are
-    /// not in the table.
+    /// not in the table, but for `default`, which no `export *` passes on.
     fn extend_with_missing(&mut self, source: &SymbolMap<'_>) {
+        self.entries.reserve(source.len());
+        self.index_by_name.reserve(source.len());
         for &(name, symbol) in source.iter() {
-            if !self.contains_key(name) {
-                self.insert(name, symbol);
+            if name == known::default {
+                continue;
+            }
+            if let hashbrown::hash_map::Entry::Vacant(place) = self.index_by_name.entry(name) {
+                place.insert(self.entries.len() as u32);
+                self.entries.push((name, symbol));
             }
         }
     }
@@ -924,15 +930,14 @@ pub struct Run<'u> {
     /// `Interner::in_common`
     atoms: Interner<'u>,
     /// By path. The last element is true if the file couldn't be read: see `Host::read_source`.
-    /// Allocated in `session`, because nothing drops the run of a compile build.
+    /// Allocated in `session`, like the files that it holds.
     parsed: ShardedMap<Vec<u8, &'u Session>, Guarded<ParsesOfPath<'u>>, &'u Session>,
     /// The paths (`tspath.Path`) whose text differs from what's on disk. They're parsed separately for each program.
     provided: FxHashSet<Vec<u8>>,
     /// Only declaration files are shared. Every other file is parsed for each program and freed with it.
     only_declaration_files: bool,
     parses: AtomicUsize,
-    /// `None`: nobody asks for them. Each look at the size of an arena walks the pages of every arena of the process.
-    bytes: Option<AtomicUsize>,
+    bytes: AtomicUsize,
     /// The first `Host::origin` number that isn't taken.
     origins: AtomicUsize,
 }
@@ -946,21 +951,7 @@ impl<'u> Run<'u> {
             provided,
             only_declaration_files: false,
             parses: AtomicUsize::new(0),
-            bytes: Some(AtomicUsize::new(0)),
-            origins: AtomicUsize::new(1),
-        }
-    }
-
-    /// For the loads of one compile build, which all intern in `atoms`. They share declaration files.
-    pub fn of_compile_build(session: &'u Session, atoms: Interner<'u>) -> Run<'u> {
-        Run {
-            session,
-            atoms,
-            parsed: ShardedMap::new_in(session),
-            provided: FxHashSet::default(),
-            only_declaration_files: true,
-            parses: AtomicUsize::new(0),
-            bytes: None,
+            bytes: AtomicUsize::new(0),
             origins: AtomicUsize::new(1),
         }
     }
@@ -980,8 +971,7 @@ impl<'u> Run<'u> {
 
     /// Bytes allocated for the parsed files.
     pub fn bytes(&self) -> usize {
-        let bytes = self.bytes.as_ref();
-        bytes.map_or(0, |bytes| bytes.load(Ordering::Relaxed))
+        self.bytes.load(Ordering::Relaxed)
     }
 
     /// How many files have been parsed.
@@ -1029,8 +1019,7 @@ impl<'u> Run<'u> {
         self.parses.fetch_add(1, Ordering::Relaxed);
         let arena = self.session.arena();
         // Only this thread allocates in it.
-        let bytes = self.bytes.as_ref();
-        let bytes = bytes.map(|bytes| (bytes, arena.allocated_bytes()));
+        let before = arena.allocated_bytes();
         let text = text.unwrap_or_else(|| read_types_file(host, key.is_part, path));
         let is_unreadable = text.is_empty() && host.read(path).is_none();
         let (mut hir, bound) = Files::parse_and_bind(
@@ -1059,10 +1048,8 @@ impl<'u> Run<'u> {
             is_shared: true,
         });
         path_parses.push((key, parse, is_unreadable));
-        if let Some((bytes, before)) = bytes {
-            let more = arena.allocated_bytes().saturating_sub(before);
-            bytes.fetch_add(more, Ordering::Relaxed);
-        }
+        let more = arena.allocated_bytes().saturating_sub(before);
+        self.bytes.fetch_add(more, Ordering::Relaxed);
         parse
     }
 }
@@ -2374,7 +2361,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let mut nested_symbols = SymbolMap::new_in(visit.arena);
         // `ExportCollisionTable`: the `export *` that exported the name first.
         let mut lookup_table: FxHashMap<Atom, (FileId, StmtId)> = FxHashMap::default();
-        for node in self.export_stars_of(symbol) {
+        let stars = self.export_stars_of(symbol);
+        let is_only_star = stars.len() == 1;
+        for node in stars {
             let StmtKind::ExportStar {
                 spec,
                 type_only,
@@ -2404,6 +2393,11 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     &visited_now
                 }
             };
+            // No name comes twice: in a row of files, each with a star over the one before, the two tables in between are most of the work.
+            if is_only_star {
+                symbols.extend_with_missing(exported);
+                break;
+            }
             // `extendExportSymbols`
             for &(name, source) in exported.iter() {
                 if name == known::default {
@@ -7067,10 +7061,7 @@ impl<'s> Files<'s> {
         if prefetch.is_done() {
             return meanwhile(&mut || ());
         }
-        let io = match build {
-            Some(build) => build.io_pool(),
-            None => host.io_pool(),
-        };
+        let io = host.io_pool();
         let threads = host.threads();
         let mut pools_lock = io.map(|_| WAITS_ACROSS_POOLS.lock());
         let mut meanwhile = || meanwhile(&mut || drop(pools_lock.take()));

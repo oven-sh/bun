@@ -32,6 +32,7 @@ async function answerOf(body: string) {
     "main.mjs": `import "./start.cjs";\n`,
     "sum.cjs": sum,
     "named.cjs": `exports.label = "named by the build";\n`,
+    "named.mjs": `export const label = "named by the build";\n`,
   });
   const directory = String(dir);
   await Bun.write(join(directory, "start.cjs"), head + body.replaceAll("FOLDER", directory.replaceAll("\\", "/")));
@@ -151,6 +152,34 @@ go();
 function* go() { yield 1; fs.writeFileSync("FOLDER/late.json", "{}"); try { require("FOLDER/late.json"); } catch (e) { out += "|" + say(e); } fs.rmSync("FOLDER/late.json"); yield 2; }
 for (const step of go()) total += 0 * step;
 console.log(String(total), out);
+`,
+  // Nobody of the program stands on the stack when the host asks: the callback has answered and returned, or the host was handed natives alone. What the engine asked for lies outside the image, so no file of the image is the host's to ask for.
+  "onResolve of a plugin answers with the path of the file": String.raw`let target; try { require(JSON.parse('"./sum.cjs"')); } catch (e) { target = /'([^']+)'/.exec(String(e.message))[1]; }
+Bun.plugin({ name: "late", setup(build) { build.onResolve({ filter: /late\.json$/ }, () => ({ path: target })); } });
+try { const again = require("FOLDER/late.json"); out = typeof again + ":" + again("a", "b"); } catch (e) { out = "inside " + say(e); }
+console.log(String(total), out);
+`,
+  "Module._resolveFilename laid over answers with the path of the file": String.raw`let target; try { require(JSON.parse('"./sum.cjs"')); } catch (e) { target = /'([^']+)'/.exec(String(e.message))[1]; }
+const Module = require("node:module");
+const original = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) { return String(request).endsWith("late.json") ? target : original.call(this, request, ...rest); };
+try { const again = require("FOLDER/late.json"); out = typeof again + ":" + again("a", "b"); } catch (e) { out = "inside " + say(e); }
+console.log(String(total), out);
+`,
+  "natives and bound functions alone": String.raw`const holder = [{}][JSON.parse("0")];
+const source = Object.defineProperty({}, "got", { enumerable: true, get: require.bind(null, JSON.parse('"./sum.cjs"')) });
+require.extensions[".json"] = Object.assign.bind(null, holder, source);
+fs.writeFileSync("FOLDER/late.json", "{}"); try { require("FOLDER/late.json"); out = typeof holder.got + ":" + holder.got("a", "b"); } catch (e) { out = "inside " + say(e); } fs.rmSync("FOLDER/late.json");
+console.log(String(total), out);
+`,
+  // Once the program has been loaded the import() turns to the host at once. What was under way comes back as it was made, above the loader.
+  "a loader imports a file that the build named, then asks": String.raw`require.extensions[".json"] = function load(module, filename) {
+  import("./named.mjs");
+  try { const again = require(JSON.parse('"./sum.cjs"')); out = typeof again + ":" + again("a", "b"); } catch (e) { out = "inside " + say(e); }
+  module.exports = 1;
+};
+async function go() { await null; await new Promise(r => setTimeout(r, 1)); fs.writeFileSync("FOLDER/late.json", "{}"); try { require("FOLDER/late.json"); } catch (e) { out += "|" + say(e); } fs.rmSync("FOLDER/late.json"); console.log(String(total), out); }
+go();
 `,
   "outside any window": String.raw`try { const again = require(JSON.parse('"./sum.cjs"')); out = typeof again + ":" + again("a", "b"); } catch (e) { out = "inside " + say(e); }
 console.log(String(total), out);

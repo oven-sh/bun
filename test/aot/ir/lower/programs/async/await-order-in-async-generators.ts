@@ -150,90 +150,9 @@ report("async generator", onceInGenerator, await roundsOf(awaitInLoop()));
 
 export {};
 
-// GENERATED: roundsOf Derived then rejected thenable
 // CHECK-LABEL: function {{*}}name="roundsOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|AsyncGenerator flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|Map<undefined|null|string, number>> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|AsyncGenerator):
-// CHECK-NEXT: v2 = Builtin builtin=Map
-// CHECK-NEXT: v3 = Construct v2 calleeName="Map"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = IteratorOpen v1 iteratorKind=Async
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v7 = IteratorResume v5, -, v1 iteratorKind=Async
-// CHECK-NEXT: v8 = ResultAt v7
-// CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = Convert v4 declared={type=undefined|null|object}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v12 = Call v11, -, v4 calleeName="count"
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b5() role=IterationCleanup subject=v5:
-// CHECK-NEXT: v13 = CatchException
-// CHECK-NEXT: IteratorClose v5, v1 iteratorKind=Async completion=Throw
-// CHECK-NEXT: Rethrow v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="then"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_2]]} parameters=[{type=undefined|null|[[f_3]]}, {type=undefined|null|[[f_4]]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: undefined|null|[[f_3]], v2: undefined|null|[[f_4]]):
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="say"
-// CHECK-NEXT: v5 = String string="Derived.then"
-// CHECK-NEXT: v6 = Call v4, -, v5 calleeName="say"
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v8 = GetSuperBase v7 homeKind=ClassPrototype
-// CHECK-NEXT: v9 = SuperGet v8, v0 key="then"
-// CHECK-NEXT: v10 = Call v9, v0, v1, v2 calleeName="super.then"
-// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rejected"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Promise" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="reject"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(PromiseReject) flags=[IsExpected]}
-// CHECK-NEXT: v5 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v6 = PropGet v5 key="RangeError" [isFreeName]
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(RangeError) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string="four"
-// CHECK-NEXT: v9 = Construct v7, -, v8 calleeName="RangeError"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v11 = Call v4, v2, v10 calleeKey="reject" calleeName="Promise.reject"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="thenable"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_7]]
-// CHECK-NEXT: v1 = NewObject -, v0 layout=[[L_8]] fields=[0]
-// CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="then"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_9]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_9]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="say"
-// CHECK-NEXT: v3 = String string="thenable.then"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="say"
-// CHECK-NEXT: v5 = Integer integer=8
-// CHECK-NEXT: v6 = Call v0, -, v5 calleeName="resolve"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

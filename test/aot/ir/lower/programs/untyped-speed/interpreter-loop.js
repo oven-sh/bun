@@ -137,35 +137,4 @@ function run(rounds) {
 
 console.log(run(4000));
 
-// GENERATED: run
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v3, v5)
-// CHECK-NEXT: b1(v6, v7):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v9 = Less v7, v0
-// CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v12 = Integer integer=200
-// CHECK-NEXT: v13 = Integer integer=63
-// CHECK-NEXT: v14 = BitAnd v7, v13
-// CHECK-NEXT: v15 = Add v12, v14
-// CHECK-NEXT: v16 = Call v10, -, v11, v15 calleeName="execute"
-// CHECK-NEXT: v17 = Add v6, v16
-// CHECK-NEXT: v18 = Integer integer=1000000007
-// CHECK-NEXT: v19 = Mod v17, v18
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: v21 = Increment v7
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v20, v22)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

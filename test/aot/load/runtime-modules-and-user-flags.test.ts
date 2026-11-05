@@ -180,7 +180,8 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
         using dir = tempDir("aot-load-user-flags", { "main.ts": source });
         const folder = String(dir);
         const program = join(folder, exe("compiled"));
-        const command = [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", program];
+        // Without --check no build looks for a name that nobody declares: build-gate.test.ts.
+        const command = [bunExe(), "build", "--compile", "--aot", "--check", "main.ts", "--outfile", program];
         const built = await spawned(command, folder, { ...bunEnv, NO_COLOR: "1" });
         const lines = (built.stdout + built.stderr).split(/\r?\n/);
         const codes = (prefix: string) =>

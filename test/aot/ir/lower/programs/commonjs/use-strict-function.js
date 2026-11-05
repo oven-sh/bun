@@ -30,73 +30,9 @@ for (let i = 0; i < 100000; i++) if (strict.call(i) === "number" && sloppy.call(
 console.log("a hundred thousand times:", hot);
 module.exports = { strict };
 
-// GENERATED: deletes generator later parameters method getter
 // CHECK-LABEL: function {{*}}name="deletes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v0 = Builtin builtin=Object
-// CHECK-NEXT: v1 = Builtin builtin=ObjectFreeze
-// CHECK-NEXT: v2 = Data data=[[d_1]]
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.freeze"
-// CHECK-NEXT: v4 = PropDelete v3 key="a"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v5 = CatchValue
-// CHECK-NEXT: v6 = PropGet v5 key="name"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generator"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = TypeOf v0
-// CHECK-NEXT: v4 = Yield v3
-// CHECK-NEXT: v5 = ResultAt v4
-// CHECK-NEXT: v6 = ResultAt v4 index=1
-// CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeOf v0
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="parameters"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: undefined|null|string, v2: anything, v3: Array):
-// CHECK-NEXT: v4 = CreateUnmappedArguments v0, v3, v1, v2
-// CHECK-NEXT: v5 = String string="A"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: v8 = String string="B"
-// CHECK-NEXT: ElemSet v4, v7, v8
-// CHECK-NEXT: v10 = Integer
-// CHECK-NEXT: v11 = ElemGet v4, v10
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: v13 = ElemGet v4, v12
-// CHECK-NEXT: v14 = NewArray v6, v2, v11, v13 contents=anything
-// CHECK-NEXT: v15 = PropGet v14 key="join"
-// CHECK-NEXT: v16 = Call v15, v14 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeOf v0
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="getter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeOf v0
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

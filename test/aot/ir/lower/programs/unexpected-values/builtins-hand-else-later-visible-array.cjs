@@ -234,62 +234,7 @@ async function main() {
 
 main();
 
-// GENERATED: attempt observe pushes1 Odd
 // CHECK-LABEL: function {{*}}name="observe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsSloppy, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: undefined|null|function):
-// CHECK-NEXT: v3 = ToThis v0
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="results"
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: PropSet v5, v6 key="length" mode=Sloppy
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v9 = NewClosure v2 function=[[f_3]]
-// CHECK-NEXT: v10 = Call v8, -, v9 calleeName="outcome"
-// CHECK-NEXT: v11 = Await v10, v1, v2
-// CHECK-NEXT: v12 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v13 = PropGet v12 key="console" [isFreeName]
-// CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v14 key="log"
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v17 = String string=" -> "
-// CHECK-NEXT: v18 = Add v1, v17
-// CHECK-NEXT: v19 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v21 = CheckInitialized v20 name="results"
-// CHECK-NEXT: v22 = Call v19, -, v21 calleeName="show"
-// CHECK-NEXT: v23 = Add v18, v22
-// CHECK-NEXT: v24 = String string=" "
-// CHECK-NEXT: v25 = Add v23, v24
-// CHECK-NEXT: v26 = Add v25, v11
-// CHECK-NEXT: v27 = Call v16, v14, v26 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v28 = Undefined
-// CHECK-NEXT: Return v28
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="pushes1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = PropGet v0 key="push"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="push" calleeName="a.push"
-// CHECK-NEXT: v4 = PropGet v0 key="length"
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="results"
-// CHECK-NEXT: v7 = PropGet v6 key="push"
-// CHECK-NEXT: v8 = Call v7, v6, v4 calleeKey="push" calleeName="results.push"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attempt"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Odd"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

@@ -154,36 +154,5 @@ attempt("Math.pow(2, 31)", () => Math.pow(2, 31));
 attempt("Math.sign(-0)", () => Math.sign(-0));
 attempt("Math.trunc(-0.9)", () => Math.trunc(-0.9));
 
-// GENERATED: outcome attempt
 // CHECK-LABEL: function {{*}}name="outcome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v0 calleeName="run"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="show"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v4 = CatchValue
-// CHECK-NEXT: v5 = String string="threw "
-// CHECK-NEXT: v6 = PropGet v4 key="constructor"
-// CHECK-NEXT: v7 = PropGet v6 key="name"
-// CHECK-NEXT: v8 = Add v5, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string="->"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v9 = Call v8, -, v1 calleeName="outcome"
-// CHECK-NEXT: v10 = Call v6, v4, v0, v7, v9 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

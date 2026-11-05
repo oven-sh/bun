@@ -1815,11 +1815,32 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
+    /// Whether the declaration is an enum or a namespace that makes an object, or adds to one, when it runs.
+    pub fn makes_container_object(&self, f: &File, decl: Decl) -> bool {
+        match decl {
+            Decl::Enum(it) => !f[it].flags.contains(Flags::AMBIENT),
+            Decl::Module(it) => self.makes_namespace_object(f, it),
+            _ => false,
+        }
+    }
+
     /// Whether the declaration makes the object of a namespace, or adds to it, when it runs.
     pub fn makes_namespace_object(&self, f: &File, m: ModuleId) -> bool {
         matches!(f[m].name, ModuleName::Ident(_))
             && !f[m].is_erased
             && self.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated
+    }
+
+    /// `namespace N { export = e }`: tsc refuses it, and `bun run` stores `module.exports` where the body of the namespace runs.
+    pub fn export_assignments_in_namespaces(&self, f: &File) -> impl Iterator<Item = StmtId> {
+        let count = match f.rare_syntax & rare::EXPORT_ASSIGNMENT {
+            0 => 0,
+            _ => f.stmts.len() as u32,
+        };
+        (0..count).map(StmtId).filter(move |&statement| {
+            matches!(f[statement].kind, StmtKind::ExportAssign(_))
+                && matches!(self.parent_of_stmt(statement), Parent::Module(namespace) if self.makes_namespace_object(f, namespace))
+        })
     }
 
     #[inline]
@@ -3203,8 +3224,19 @@ pub fn bind<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
+    bind_below_defines(file, options, &[], atoms, arena)
+}
+
+/// `names_in_place`: `--define MODE=mode`: the free name, and the name that stands in its place. That one is bound in the scope at hand, as if it were written there.
+pub fn bind_below_defines<'s>(
+    file: &File,
+    options: BindOptions,
+    names_in_place: &[(Atom, Atom)],
+    atoms: &dyn crate::atom::Intern,
+    arena: &'s Arena,
+) -> Bound<'s> {
     let mut buffers = binder::take_buffers();
-    let mut built = binder::Binder::run_in(file, options, atoms, &mut buffers);
+    let mut built = binder::Binder::run_in(file, options, names_in_place, atoms, &mut buffers);
     let bound = built.move_to_arena(arena);
     buffers.b = built;
     binder::return_buffers(buffers);

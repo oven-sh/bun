@@ -62,7 +62,6 @@ pub struct FileAnalysis<'s> {
     /// How many of `errors`, the first ones, folding found.
     fold_error_count: u32,
     pub strings_over_limit: &'s [ExprId],
-    pub relies_on_running_before_calls: bool,
     /// `import.meta`, `require.main === module`: the text holds one, wherever.
     pub asks_for_main_module: bool,
     /// What the code reads of other files through its import statements, each name once, in the order of the first reads.

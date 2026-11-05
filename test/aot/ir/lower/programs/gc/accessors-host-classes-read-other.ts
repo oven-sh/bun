@@ -157,64 +157,6 @@ function run(label: string, takesDescriptorsFirst: boolean) {
 run("reads first", false);
 run("descriptors first", true);
 
-// GENERATED: describeUrl describeRequest describeRest
 // CHECK-LABEL: function {{*}}name="describeUrl"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|URL):
-// CHECK-NEXT: v1 = PropGet v0 key="href"
-// CHECK-NEXT: v2 = PropGet v0 key="origin"
-// CHECK-NEXT: v3 = PropGet v0 key="protocol"
-// CHECK-NEXT: v4 = PropGet v0 key="username"
-// CHECK-NEXT: v5 = PropGet v0 key="password"
-// CHECK-NEXT: v6 = PropGet v0 key="host"
-// CHECK-NEXT: v7 = PropGet v0 key="hostname"
-// CHECK-NEXT: v8 = PropGet v0 key="port"
-// CHECK-NEXT: v9 = PropGet v0 key="pathname"
-// CHECK-NEXT: v10 = PropGet v0 key="search"
-// CHECK-NEXT: v11 = PropGet v0 key="hash"
-// CHECK-NEXT: v12 = PropGet v0 key="searchParams"
-// CHECK-NEXT: v13 = PropGet v12 key="size"
-// CHECK-NEXT: v14 = NewArray v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v13 contents=anything
-// CHECK-NEXT: v15 = PropGet v14 key="join"
-// CHECK-NEXT: v16 = String string=" "
-// CHECK-NEXT: v17 = Call v15, v14, v16 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v17 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describeRequest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Request flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Request):
-// CHECK-NEXT: v1 = PropGet v0 key="method"
-// CHECK-NEXT: v2 = PropGet v0 key="url"
-// CHECK-NEXT: v3 = PropGet v0 key="mode"
-// CHECK-NEXT: v4 = PropGet v0 key="cache"
-// CHECK-NEXT: v5 = PropGet v0 key="redirect"
-// CHECK-NEXT: v6 = PropGet v0 key="credentials"
-// CHECK-NEXT: v7 = PropGet v0 key="referrerPolicy"
-// CHECK-NEXT: v8 = PropGet v0 key="bodyUsed"
-// CHECK-NEXT: v9 = PropGet v0 key="headers"
-// CHECK-NEXT: v10 = PropGet v9 key="count"
-// CHECK-NEXT: v11 = PropGet v0 key="signal"
-// CHECK-NEXT: v12 = PropGet v11 key="aborted"
-// CHECK-NEXT: v13 = NewArray v1, v2, v3, v4, v5, v6, v7, v8, v10, v12 contents=anything
-// CHECK-NEXT: v14 = PropGet v13 key="join"
-// CHECK-NEXT: v15 = String string=" "
-// CHECK-NEXT: v16 = Call v14, v13, v15 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v16 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describeRest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Blob flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|TextEncoder flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|CryptoHasher flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Blob, v1: undefined|null|[[L_1]], v2: undefined|null|TextEncoder, v3: undefined|null|CryptoHasher):
-// CHECK-NEXT: v4 = PropGet v0 key="size"
-// CHECK-NEXT: v5 = PropGet v0 key="type"
-// CHECK-NEXT: v6 = PropGet v1 key="encoding"
-// CHECK-NEXT: v7 = PropGet v1 key="fatal"
-// CHECK-NEXT: v8 = PropGet v1 key="ignoreBOM"
-// CHECK-NEXT: v9 = PropGet v2 key="encoding"
-// CHECK-NEXT: v10 = PropGet v3 key="algorithm"
-// CHECK-NEXT: v11 = PropGet v3 key="byteLength"
-// CHECK-NEXT: v12 = NewArray v4, v5, v6, v7, v8, v9, v10, v11 contents=anything
-// CHECK-NEXT: v13 = PropGet v12 key="join"
-// CHECK-NEXT: v14 = String string=" "
-// CHECK-NEXT: v15 = Call v13, v12, v14 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

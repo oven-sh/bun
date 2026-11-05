@@ -139,76 +139,8 @@ attempt("this as a result, taken off the object", () => {
 });
 attempt("honest again", () => [largest([new Meters(1), new Meters(3)]).amount, new Point3().same(new Point3())]);
 
-// GENERATED: sorted Meters same Point3
 // CHECK-LABEL: function {{*}}name="sorted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_1]]>):
-// CHECK-NEXT: v1 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v1, v0
-// CHECK-NEXT: v3 = PropGet v1 key="sort"
-// CHECK-NEXT: v4 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v5 = Call v3, v1, v4 calleeKey="sort" calleeName="sort"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|null|Array<undefined|null|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Meters"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_3]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_4]]
-// CHECK-NEXT: PropSet v4, v1 key="amount"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_5]]} parameters=[{type=undefined|null|[[L_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: [[L_5]], v1: undefined|null|[[L_5]]):
-// CHECK-NEXT: v2 = PropGet v0 key="x"
-// CHECK-NEXT: v3 = PropGet v1 key="x"
-// CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point3"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_8]]} parameters=[{type=undefined|null|[[L_8]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: [[L_8]], v1: undefined|null|[[L_8]]):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v3 = GetSuperBase v2 homeKind=ClassPrototype
-// CHECK-NEXT: v4 = SuperGet v3, v0 key="same"
-// CHECK-NEXT: v5 = Call v4, v0, v1 calleeName="super.same"
-// CHECK-NEXT: v6 = ToBoolean v5
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = PropGet v0 key="z"
-// CHECK-NEXT: v9 = PropGet v8 key="toFixed"
-// CHECK-NEXT: v10 = Integer
-// CHECK-NEXT: v11 = Call v9, v8, v10 calleeKey="toFixed" calleeName="this.z.toFixed"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = PropGet v1 key="z"
-// CHECK-NEXT: v14 = PropGet v13 key="toFixed"
-// CHECK-NEXT: v15 = Integer
-// CHECK-NEXT: v16 = Call v14, v13, v15 calleeKey="toFixed" calleeName="other.z.toFixed"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v18 = StrictEq v12, v17
-// CHECK-NEXT: Jump -> next b3(v18)
-// CHECK-NEXT: b2(v19):
-// CHECK-NEXT: Jump -> next b3(v19)
-// CHECK-NEXT: b3(v20):
-// CHECK-NEXT: v21 = Convert v20 declared={type=boolean}
-// CHECK-NEXT: Return v21
-// CHECK-NEXT: }

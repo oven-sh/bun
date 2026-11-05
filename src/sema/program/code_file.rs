@@ -49,7 +49,6 @@ impl<'s> AcceptedTree<'s, '_> {
 /// What the rest of the program says about a file.
 #[derive(Copy, Clone, Default)]
 pub(super) struct LoadInputs<'a, 's> {
-    pub(super) is_called_before_it_runs: bool,
     pub(super) stored_by_mocks: StoredByMocks<'s>,
     pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
@@ -73,7 +72,6 @@ pub(super) fn load_code_file<'s, 'r>(
         ..
     } = context;
     let &LoadInputs {
-        is_called_before_it_runs,
         stored_by_mocks,
         is_only_imported,
         ..
@@ -106,16 +104,7 @@ pub(super) fn load_code_file<'s, 'r>(
     if tree.hir.text.is_empty() && tree.hir.source_len as usize == tree.text.len() {
         tree.hir.text = std::mem::take(&mut tree.text);
     }
-    let (bound, analyzed) = analyze(
-        context,
-        arena,
-        key,
-        settings,
-        is_called_before_it_runs,
-        stored_by_mocks,
-        is_only_imported,
-        &mut tree,
-    );
+    let (bound, analyzed) = analyze(context, arena, key, settings, stored_by_mocks, &mut tree);
     if !tree.request.options.keeps_comments {
         crate::erasure::keep_only_comments_beside_types(&mut tree.hir, arena);
     }
@@ -149,18 +138,17 @@ fn write_what_other_files_say<'s>(
 fn fold_inputs_of<'c, 's: 'c>(
     context: &'c CodeLoadContext<'_, 's, '_>,
     arena: &'s Arena,
-    is_called_before_it_runs: bool,
     stored_by_mocks: StoredByMocks<'s>,
 ) -> &'c FoldInputs<'s> {
-    if !is_called_before_it_runs && stored_by_mocks == StoredByMocks::Nothing {
+    if stored_by_mocks == StoredByMocks::Nothing {
         return context.inputs.fold;
     }
-    let fold = context.inputs.fold;
-    let fold = fold.for_file_stored_by_mocks(stored_by_mocks);
-    arena.alloc(match is_called_before_it_runs {
-        true => fold.for_file_called_before_it_runs(),
-        false => fold,
-    })
+    arena.alloc(
+        context
+            .inputs
+            .fold
+            .for_file_stored_by_mocks(stored_by_mocks),
+    )
 }
 
 fn resolve_analyzed_file<'s, 'r>(
@@ -233,11 +221,6 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
     from: AnalyzedAgainFrom,
 ) -> Option<ParsedCodeFile<'s, 'r>> {
     let key = target.key;
-    let &LoadInputs {
-        is_called_before_it_runs,
-        stored_by_mocks,
-        ..
-    } = inputs;
     let ParsedCodeFile {
         mut parse,
         specifies_esm,
@@ -260,7 +243,7 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
     } = analyze_file_again(
         &parse.hir,
         &parse.bound,
-        fold_inputs_of(context, arena, is_called_before_it_runs, stored_by_mocks),
+        fold_inputs_of(context, arena, inputs.stored_by_mocks),
         file,
         &previous.analysis,
         from,
@@ -268,8 +251,6 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         arena,
     )?;
     code.analyzed.analysis = analysis;
-    code.analyzed.is_called_before_it_runs = is_called_before_it_runs;
-    code.analyzed.stored_by_mocks = stored_by_mocks;
     // The same sites lead where they led. What the host implied comes again when it looks at the file.
     match has_same_import_sites {
         true => code.forget_implied(),
@@ -353,7 +334,7 @@ fn declared_module_type_of(
         return DeclaredModuleType::Unknown;
     }
     match is_only_imported {
-        true => context.resolver.package_module_type(path),
+        true => context.resolver.module_type_where_imported(path),
         false => context.resolver.declared_module_type(path),
     }
 }
@@ -403,9 +384,7 @@ fn analyze<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
-    is_called_before_it_runs: bool,
     stored_by_mocks: StoredByMocks<'s>,
-    is_only_imported: bool,
     tree: &mut AcceptedTree<'s, 'r>,
 ) -> (Bound<'s>, Analyzed<'s, 'r>) {
     let &CodeLoadContext {
@@ -443,7 +422,7 @@ fn analyze<'s, 'r>(
         jsx: jsx_mode,
         own_name: arena.alloc_slice_copy(bun_paths::basename_posix(path)),
     };
-    let fold = fold_inputs_of(context, arena, is_called_before_it_runs, stored_by_mocks);
+    let fold = fold_inputs_of(context, arena, stored_by_mocks);
     let (bound, analysis, host_values) =
         analyze_with_host(context, arena, path, bind, fold, file, tree);
     let analyzed = Analyzed {
@@ -460,9 +439,6 @@ fn analyze<'s, 'r>(
         side_effects: resolver.declared_side_effects(path),
         is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
         import_meta_main,
-        is_called_before_it_runs,
-        stored_by_mocks,
-        is_only_imported,
     };
     (bound, analyzed)
 }
@@ -555,9 +531,6 @@ pub(super) fn import_meta_main(
     context: &CodeLoadContext<'_, '_, '_>,
     key: LoadKey<'_>,
 ) -> Option<bool> {
-    if let Some(known) = context.find_loaded_before(key) {
-        return known.compiled.import_meta_main;
-    }
     let file = LoadKey {
         path: context.host.file_of_module(key.path),
         ..key

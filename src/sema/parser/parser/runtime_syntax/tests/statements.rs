@@ -187,6 +187,30 @@ fn erased_namespaces() {
 }
 
 #[test]
+fn global_at_the_end_of_a_line() {
+    let compiled = Options {
+        compiles: true,
+        ..typescript()
+    };
+    for (text, options, is_declaration) in [
+        ("global\n{ a }", compiled, false),
+        ("namespace N { global\n{ a } }", compiled, false),
+        ("function f() { global\n{ a } }", compiled, false),
+        ("global\na", compiled, false),
+        ("global\n{ a }", typescript(), true),
+        ("global { a }", compiled, true),
+        ("declare global\n{ var a }", compiled, true),
+        ("declare module 'm' { global\n{ var a } }", compiled, true),
+        ("declare namespace N { global\n{ var a } }", compiled, true),
+    ] {
+        let (file, _) = parsed(text, options);
+        let mut modules = file.modules.iter();
+        let has_declaration = modules.any(|it| matches!(it.name, ModuleName::Global));
+        assert_eq!(has_declaration, is_declaration, "{text}");
+    }
+}
+
+#[test]
 fn module_declaration_makes_file_strict() {
     let javascript = compiled_javascript();
     for (text, options, is_strict) in [

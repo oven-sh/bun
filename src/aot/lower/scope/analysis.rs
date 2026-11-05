@@ -17,6 +17,16 @@ pub(in crate::lower) enum BindingRef {
     Slot(ScopeId, ScopeSlot),
 }
 
+impl BindingRef {
+    /// `symbols`: ascending.
+    pub(in crate::lower) fn is_listed_in(self, symbols: &[SymbolId]) -> bool {
+        match self {
+            BindingRef::Symbol(symbol) => symbols.binary_search(&symbol).is_ok(),
+            BindingRef::Slot(..) => false,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum BindingForm {
     NotAValue,

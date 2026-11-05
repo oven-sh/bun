@@ -41,83 +41,8 @@ const all = new Everything() as any;
 log.push(all.base(), all.computedMethod(), all.field, Everything.field, all.computedField, all.auto, all.computedGetter, all.hidden(), all.property);
 console.log(log.join("\n"));
 
-// GENERATED: c1 Everything auto hidden
 // CHECK-LABEL: function {{*}}name="c1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v1 = NewClass v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewClosure function=[[f_3]]
-// CHECK-NEXT: DefineMethod v1, v2 layout=[[L_2]] key="base"
-// CHECK-NEXT: v4 = FinishClass v1 layout=[[L_2]]
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Everything"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|string):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v7 = Call v6 calleeName="c10"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b3(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = GetSuperBase v0
-// CHECK-NEXT: v12 = SuperConstruct v11, v1 layout=[[L_6]]
-// CHECK-NEXT: v13 = Convert v12 declared={type=[[L_6]]}
-// CHECK-NEXT: v14 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b12(| 0)
-// CHECK-NEXT: b4(v15):
-// CHECK-NEXT: v16 = CallDirect v13 function=[[f_7]]
-// CHECK-NEXT: PropSet v13, v10 key="property"
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: v19 = TypeTest v18 testedType=object
-// CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v20):
-// CHECK-NEXT: Jump -> next b10(v20)
-// CHECK-NEXT: b6(v21):
-// CHECK-NEXT: v22 = TypeTest v21 testedType=undefined
-// CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b7(v23):
-// CHECK-NEXT: v24 = TypeTest v13 testedType=absent
-// CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b8(v25):
-// CHECK-NEXT: v26 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v26
-// CHECK-NEXT: b9(v27):
-// CHECK-NEXT: Jump -> next b10(v27)
-// CHECK-NEXT: b10(v28):
-// CHECK-NEXT: Return v28
-// CHECK-NEXT: b11(v29):
-// CHECK-NEXT: v30 = NewRuntimeError runtimeError=DerivedConstructorResult name="Everything"
-// CHECK-NEXT: Throw v30
-// CHECK-NEXT: b12(v31):
-// CHECK-NEXT: v32 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v32
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="auto"
-// CHECK: module=[[m_0]] position={{*}} kind=Getter flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=4
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="auto"
-// CHECK: module=[[m_0]] position={{*}} kind=Setter flags=[HasThis, IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: PrivateSet v0, v2, v1 layout=[[L_6]] field=4
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hidden"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_6]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=3
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

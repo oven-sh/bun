@@ -55,45 +55,6 @@ sentry-cli sourcemaps upload --org my-org --project my-project dist
 
 If the process crashes, Bun prints a report to stderr. It ends with the functions of your program that were running, innermost first, with file, line and column. The `Build ID:` line matches the ID that `bun compile` printed when you built it. Please [open an issue](https://github.com/oven-sh/bun/issues) with the report.
 
-### Write the report to a file
-
-A program that draws on the whole terminal, or whose stderr nobody keeps, never sees that report. Name a directory, and each crash also leaves a JSON file there, which your program can read and send when it next starts. Nothing is written unless you name one. Not on Windows yet.
-
-```ts
-process.env.BUN_CRASH_REPORT_DIR = join(homedir(), ".myapp", "crashes");
-process.env.BUN_CRASH_REPORT_TAG = sessionId; // any text of yours, up to 256 bytes; the file repeats it
-```
-
-Both take effect when you assign them, on the main thread. You can also set them in the environment that the executable starts in. To cover a crash that happens before your first statement runs, give the build a default. A leading `~/` stands for the home directory:
-
-```bash terminal icon="terminal"
-bun compile --compile-exec-argv="--aot-crash-report-dir=~/.myapp/crashes" ./src/index.ts --outfile dist/app
-```
-
-What the program assigns wins over the environment, which wins over the build. Missing directories are created. The file is called `<pid>.<crashedAtMs>.crash.json`, only its owner can read it, and it is complete before the report is sent anywhere and before the process ends.
-
-| Member                                  | What it holds                                                                                                                                                             |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                               | `1`                                                                                                                                                                       |
-| `tag`                                   | `BUN_CRASH_REPORT_TAG`, or `null`                                                                                                                                         |
-| `pid`, `ppid`                           | The process and its parent                                                                                                                                                |
-| `startedAtMs`, `crashedAtMs`            | Milliseconds since 1970                                                                                                                                                   |
-| `bunVersion`, `bunRevision`, `isCanary` | The Bun that built the executable                                                                                                                                         |
-| `platform`, `arch`                      | As `process.platform` and `process.arch`                                                                                                                                  |
-| `aot`, `buildId`                        | `true`, and the ID that `bun compile` printed                                                                                                                             |
-| `thread`                                | `"main"` or `"other"`                                                                                                                                                     |
-| `reason`                                | `"segmentation fault"`, `"illegal instruction"`, `"bus error"`, `"floating point error"`, `"trap"`, `"abort"`, `"panic"`, `"unreachable"`, `"out of memory"` or `"error"` |
-| `signal`                                | The signal that ends the process, which its parent sees: `"SIGSEGV"`, `"SIGILL"`, `"SIGBUS"`, `"SIGFPE"`, `"SIGTRAP"` or `"SIGABRT"`                                      |
-| `address`                               | The address of the fault as a hexadecimal string, or `null`                                                                                                               |
-| `message`                               | The message of a panic, or `null`                                                                                                                                         |
-| `features`, `featuresWord`              | The parts of Bun that the process had used, by name and as the number in the link                                                                                         |
-| `traceString`                           | The link that the report prints. It holds the native frames                                                                                                               |
-| `compiledFrames`                        | The functions of your program that were running, innermost first, as the report prints them, or `null`                                                                    |
-
-The file holds no arguments, no environment variables and no working directory. With `--sourcemap=external` a frame is a line and a column, like `39:21`, and the map of that build turns it into your names.
-
-No file is written for a death that no code of the process gets to see: `SIGKILL` and the kernel's out-of-memory killer. `process.abort()` and an uncaught exception aren't crashes.
-
 ## Run your tests compiled
 
 ```bash terminal icon="terminal"

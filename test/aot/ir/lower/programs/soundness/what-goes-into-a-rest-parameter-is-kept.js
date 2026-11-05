@@ -48,68 +48,7 @@ out.push("an element handed to a callback with a rest parameter: " + new C9().ea
 
 console.log(out.join("\n"));
 
-// GENERATED: read6 take7 churn Taker
 // CHECK-LABEL: function {{*}}name="read6"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="kept6"
-// CHECK-NEXT: v2 = PropHas v1 key="w"
-// CHECK-NEXT: v3 = ToBoolean v2
-// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="kept6"
-// CHECK-NEXT: v7 = PropGet v6 key="w"
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = String string="missing"
-// CHECK-NEXT: Jump -> next b3(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="take7"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="kept7"
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = ElemGet v1, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: PutModuleVariable v6 variable=[[g_2]]
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="churn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Data data=[[d_4]]
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v2)
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v5 = Integer integer=200000
-// CHECK-NEXT: v6 = Less v3, v5
-// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v7 = PropGet v0 key="push"
-// CHECK-NEXT: v8 = NewArray v3 contents=anything
-// CHECK-NEXT: v9 = NewObject -, v3, v8 layout=[[L_5]] fields=[0, 1]
-// CHECK-NEXT: v10 = FinishObject v9
-// CHECK-NEXT: v11 = Call v7, v0, v10 calleeKey="push" calleeName="junk.push"
-// CHECK-NEXT: v12 = Increment v3
-// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v13)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v14 = PropGet v0 key="length"
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Taker"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

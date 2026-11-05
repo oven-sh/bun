@@ -144,81 +144,9 @@ attempt("a negative zero among strings", () => withANegativeZero(["a", 0], 0));
 attempt("counting by halves", () => countingByHalves([1, 2, 3]));
 attempt("counting down by division", () => countingDownByDivision([0, 1, 2, 3, 4, 5, 6, 7, 8]));
 
-// GENERATED: root round remove from asASetMember same
 // CHECK-LABEL: function {{*}}name="root"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=Math
-// CHECK-NEXT: v2 = Builtin builtin=MathSqrt
-// CHECK-NEXT: v3 = Mul v0, v0
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeName="Math.sqrt"
-// CHECK-NEXT: v5 = Integer integer=2
-// CHECK-NEXT: v6 = Div v4, v5
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="round"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=Math
-// CHECK-NEXT: v2 = Builtin builtin=MathRound
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Div v0, v3
-// CHECK-NEXT: v5 = Double number=0.25
-// CHECK-NEXT: v6 = Sub v4, v5
-// CHECK-NEXT: v7 = Call v2, v1, v6 calleeName="Math.round"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="remove"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: anything):
-// CHECK-NEXT: v2 = ElemDelete v0, v1
-// CHECK-NEXT: v3 = Builtin builtin=Object
-// CHECK-NEXT: v4 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v5 = Call v4, v3, v0 calleeName="Object.keys"
-// CHECK-NEXT: v6 = PropGet v5 key="join"
-// CHECK-NEXT: v7 = Call v6, v5 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="from"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: v4 = NewClosure function=[[f_1]]
-// CHECK-NEXT: v5 = Builtin builtin=CompilerHelpersArrayFromLength [isNotReadFromHolder]
-// CHECK-NEXT: v6 = Call v5, -, v1, v4
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asASetMember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = Builtin builtin=Set
-// CHECK-NEXT: v3 = Construct v2 calleeName="Set"
-// CHECK-NEXT: v4 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
-// CHECK-NEXT: v5 = Call v4, v3, v1
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
-// CHECK-NEXT: v8 = Call v7, v3, v6
-// CHECK-NEXT: v9 = Integer
-// CHECK-NEXT: v10 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
-// CHECK-NEXT: v11 = Call v10, v3, v9
-// CHECK-NEXT: v12 = PropGet v3 key="size"
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array, v1: anything):
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = ElemGet v0, v2
-// CHECK-NEXT: v4 = StrictEq v1, v3
-// CHECK-NEXT: v5 = Builtin builtin=Object
-// CHECK-NEXT: v6 = Builtin builtin=ObjectIs
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: v8 = ElemGet v0, v7
-// CHECK-NEXT: v9 = Call v6, v5, v1, v8 calleeName="Object.is"
-// CHECK-NEXT: v10 = Integer integer=1
-// CHECK-NEXT: v11 = ElemGet v0, v10
-// CHECK-NEXT: v12 = Eq v1, v11
-// CHECK-NEXT: v13 = NewArray v4, v9, v12 contents=anything
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }

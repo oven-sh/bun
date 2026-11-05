@@ -280,6 +280,7 @@ fn lower_part_of_comma(
 ) {
     let file = &*lowering.file;
     let reads_name = usage == ResultUsage::Value
+        && !file.inputs.options.removable.minifies_syntax()
         && file.reads_only_what_bun_run_leaves_out(part, true)
         && !file.reads_only_what_bun_run_leaves_out(part, false);
     match reads_name {

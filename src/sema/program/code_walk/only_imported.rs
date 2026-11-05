@@ -7,9 +7,16 @@
 //!
 //! No ES module runs before a loader has followed the import statements below it to their end. So where the code of a file runs, all that statements
 //! lead to from it, or from a file above it, is loaded too. Not for CommonJS that a statement imports: it runs where the loader comes to it, in the
-//! midst of the statements, and so does whatever it loads.
+//! midst of the statements, and so does whatever it loads. What is read by then: the requests of a module go out together, in the order in which they
+//! are written, so the loader has read what the same module imports in front of such a file, and what a module above that one imports. What stands
+//! behind it, or a level below, it may not have.
+//!
+//! `await import(K)` that is a statement of a body has ended when what stands behind it in that body runs: the file that it names is loaded then, with all that
+//! statements lead to from there. If it fails, nothing behind it runs.
 
 use super::*;
+use crate::bind::{Bound, FnOwner, MemberOwner, Parent};
+use crate::hir::{ExprId, ExprKind, FnId};
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeImportKind, ComputedResolution, SiteResolution};
 
@@ -22,13 +29,6 @@ pub(super) enum LoadedBy {
 }
 
 impl LoadedBy {
-    pub(super) fn as_loaded_before(was_only_imported: bool) -> LoadedBy {
-        match was_only_imported {
-            true => LoadedBy::ImportAlone,
-            false => LoadedBy::Require,
-        }
-    }
-
     pub(super) fn is_import_alone(self) -> bool {
         self == LoadedBy::ImportAlone
     }
@@ -87,13 +87,13 @@ fn is_module(file: &WalkedFile<'_, '_>) -> bool {
 struct Behind {
     /// The lowest of what is loaded when any of them runs. `NOT_LOADED`: none is noted.
     lowest: u32,
-    /// `LoadOrder::runs_amid_statements` of a file that holds one of them.
-    is_amid_statements: bool,
+    /// The same of those alone that stand in files of which `LoadOrder::runs_amid_statements` holds. `NOT_LOADED`: none does.
+    lowest_amid_statements: u32,
 }
 
 const BEHIND_NO_LOAD: Behind = Behind {
     lowest: NOT_LOADED,
-    is_amid_statements: false,
+    lowest_amid_statements: NOT_LOADED,
 };
 
 /// What is loaded by the time the code of a file runs.
@@ -105,8 +105,14 @@ struct LoadOrder {
     left_at: Vec<u32>,
     /// By file: the files with a statement that imports it and finds no mock in its place.
     importers: Vec<Vec<u32>>,
+    /// By file: what its statements import, in the order in which they are written, without what may find a mock in its place.
+    imported_in_order: Vec<Vec<u32>>,
+    /// By file: the files that load it, in whatever way.
+    loaders: Vec<Vec<u32>>,
     /// By file: it may run while a loader follows statements.
     runs_amid_statements: Vec<bool>,
+    /// By file: a mock may stand in its place.
+    may_be_mocked: Vec<bool>,
 }
 
 impl LoadOrder {
@@ -126,7 +132,10 @@ impl LoadOrder {
             above: vec![NOT_LOADED; files.len() + 2],
             left_at: vec![NOT_LOADED; files.len() + 2],
             importers: vec![Vec::new(); files.len() + 2],
+            imported_in_order: vec![Vec::new(); files.len() + 2],
+            loaders: Vec::new(),
             runs_amid_statements: vec![false; files.len() + 2],
+            may_be_mocked: vec![false; files.len() + 2],
         };
         let (any_file, host) = (order.any_file(), order.host());
         // More than is loaded: what a file only resolves is among its targets. Then fewer files are above others.
@@ -183,6 +192,7 @@ impl LoadOrder {
                 has_changed |= std::mem::replace(&mut order.above[file as usize], lowest) != lowest;
             }
         }
+        order.loaders = loaders;
         order
     }
 
@@ -196,6 +206,9 @@ impl LoadOrder {
                 may_be_mocked[target as usize] |=
                     matches!(site, Some(ImportSiteKind::MockModule(_)));
             });
+        }
+        for (kept, &is_named) in self.may_be_mocked.iter_mut().zip(&may_be_mocked) {
+            *kept = is_any_file_mocked || is_named;
         }
         let mut to_visit: Vec<u32> = Vec::new();
         for (index, file) in (0..).zip(files) {
@@ -213,6 +226,7 @@ impl LoadOrder {
                 }
                 if !is_any_file_mocked && !may_be_mocked[target as usize] {
                     self.importers[target as usize].push(index);
+                    self.imported_in_order[index as usize].push(target);
                 }
                 let imported = &files[target as usize];
                 if !is_module(imported) && imported.target.host_module.is_none() {
@@ -225,6 +239,65 @@ impl LoadOrder {
                 to_visit.extend(&loads[file as usize]);
             }
         }
+    }
+
+    /// Of loads that all stand at or below `lowest`, in files that run amid statements: the loader has asked for `file` sooner than for what runs there.
+    /// The module that begins it imports `file` in front of it, or a module above that one imports `file`.
+    fn is_imported_in_front(&self, file: u32, lowest: u32) -> bool {
+        let runs_amid_statements = |file: u32| self.runs_amid_statements[file as usize];
+        if !runs_amid_statements(lowest) {
+            return false;
+        }
+        // The highest file above the loads that runs amid statements: a statement of the module above it begins it.
+        let mut first_to_run = lowest;
+        while runs_amid_statements(self.above[first_to_run as usize]) {
+            first_to_run = self.above[first_to_run as usize];
+        }
+        // Another file that runs amid statements may load it sooner than the loader comes to that statement.
+        let is_below_it = |mut loader: u32| {
+            while loader != first_to_run && loader != self.host() {
+                loader = self.above[loader as usize];
+            }
+            loader == first_to_run
+        };
+        let mut loaders = self.loaders[first_to_run as usize].iter();
+        if loaders.any(|&loader| runs_amid_statements(loader) && !is_below_it(loader)) {
+            return false;
+        }
+        let mut module = self.above[first_to_run as usize];
+        let imported = &self.imported_in_order[module as usize];
+        let place_of = |target: u32| imported.iter().position(|&it| it == target);
+        if matches!((place_of(file), place_of(first_to_run)), (Some(file), Some(behind)) if file < behind)
+        {
+            return true;
+        }
+        while module != self.host() {
+            module = self.above[module as usize];
+            if self.imported_in_order[module as usize].contains(&file) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether `file` is loaded once a load of `imported` by `import` has ended: it is that file, or statements lead to it from there.
+    fn is_loaded_by_import_of(&self, file: u32, imported: u32) -> bool {
+        if self.may_be_mocked[imported as usize] {
+            return false;
+        }
+        let mut is_met = vec![false; self.above.len()];
+        let mut to_visit = vec![file];
+        while let Some(loaded) = to_visit.pop() {
+            if loaded == imported {
+                return true;
+            }
+            for &importer in &self.importers[loaded as usize] {
+                if !std::mem::replace(&mut is_met[importer as usize], true) {
+                    to_visit.push(importer);
+                }
+            }
+        }
+        false
     }
 
     fn lowest_above_both(&self, mut one: u32, mut other: u32) -> u32 {
@@ -240,23 +313,31 @@ impl LoadOrder {
     }
 
     fn load_in(&self, file: u32) -> Behind {
+        let lowest = match self.left_at[file as usize] {
+            NOT_LOADED => self.host(),
+            _ => file,
+        };
         Behind {
-            lowest: match self.left_at[file as usize] {
-                NOT_LOADED => self.host(),
-                _ => file,
+            lowest,
+            lowest_amid_statements: match self.runs_amid_statements[file as usize] {
+                true => lowest,
+                false => NOT_LOADED,
             },
-            is_amid_statements: self.runs_amid_statements[file as usize],
         }
     }
 
     /// Returns whether `load` changes `behind`.
     fn note(&self, load: Behind, behind: &mut Behind) -> bool {
+        let lowest_of = |known: u32, noted: u32| match (known, noted) {
+            (NOT_LOADED, other) | (other, NOT_LOADED) => other,
+            _ => self.lowest_above_both(known, noted),
+        };
         let noted = Behind {
-            lowest: match behind.lowest {
-                NOT_LOADED => load.lowest,
-                known => self.lowest_above_both(known, load.lowest),
-            },
-            is_amid_statements: behind.is_amid_statements || load.is_amid_statements,
+            lowest: lowest_of(behind.lowest, load.lowest),
+            lowest_amid_statements: lowest_of(
+                behind.lowest_amid_statements,
+                load.lowest_amid_statements,
+            ),
         };
         std::mem::replace(behind, noted) != noted
     }
@@ -267,8 +348,12 @@ impl LoadOrder {
         while !std::mem::replace(&mut is_above[lower as usize], true) {
             lower = self.above[lower as usize];
         }
-        if is_above[file as usize] || behind.is_amid_statements {
-            return is_above[file as usize];
+        if is_above[file as usize] {
+            return true;
+        }
+        let amid_statements = behind.lowest_amid_statements;
+        if amid_statements != NOT_LOADED && !self.is_imported_in_front(file, amid_statements) {
+            return false;
         }
         let mut is_met = vec![false; self.above.len()];
         let mut to_visit = vec![file];
@@ -284,6 +369,107 @@ impl LoadOrder {
         }
         false
     }
+}
+
+/// `await import(K)` that is a statement of a body, or what such a statement declares a name with.
+struct AwaitedImport {
+    /// Where the call stands.
+    place: u32,
+    /// The file that it names.
+    imported: u32,
+    /// The function whose body holds the statement. None: the file.
+    body: Option<FnId>,
+}
+
+/// Whether the expression stands in the body, be it inside functions and classes that are made there: they run no sooner than the statement that makes them.
+/// Not inside a function that a statement of the body itself declares: it is there from the start of the body.
+fn stands_in_body(bound: &Bound<'_>, expression: ExprId, body: Option<FnId>) -> bool {
+    let is_body = |parent: Parent| match parent {
+        Parent::File => body.is_none(),
+        Parent::FnBody(function) => body == Some(function),
+        _ => false,
+    };
+    let mut parent = bound.parent_of_expr(expression);
+    while !is_body(parent) {
+        let function = match parent {
+            Parent::FnBody(function) => Some(function),
+            Parent::ParamDefault(parameter) => Some(bound.param_fn[parameter.idx()]),
+            _ => None,
+        };
+        let member = match (
+            parent,
+            function.map(|function| bound.fns[function.idx()].owner),
+        ) {
+            (Parent::MemberInit(member), _) | (_, Some(FnOwner::Member(member))) => Some(member),
+            _ => None,
+        };
+        parent = match (
+            parent,
+            function.map(|function| bound.fns[function.idx()].owner),
+        ) {
+            (Parent::Expr(outer), _) if outer.is_some() => bound.parent_of_expr(outer),
+            (Parent::Stmt(statement), _) if statement.is_some() => bound.parent_of_stmt(statement),
+            (Parent::VarInit(declaration), _) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+            (Parent::Prop(property), _) => Parent::Expr(bound.prop_owner[property.idx()]),
+            (Parent::Case(case), _) => Parent::Stmt(bound.case_stmt[case.idx()]),
+            (_, Some(FnOwner::Expr(made_by))) => Parent::Expr(made_by),
+            (_, Some(FnOwner::Stmt(declared_by))) => match bound.parent_of_stmt(declared_by) {
+                outer if is_body(outer) => return false,
+                outer => outer,
+            },
+            _ => match member.map(|member| bound.member_owner[member.idx()]) {
+                Some(MemberOwner::Class(class)) => bound.class_owner[class.idx()].to_parent(),
+                _ => return false,
+            },
+        };
+    }
+    true
+}
+
+fn find_awaited_imports(file: &WalkedFile<'_, '_>) -> Vec<AwaitedImport> {
+    let Some(parsed) = &file.parsed else {
+        return Vec::new();
+    };
+    let (hir, bound) = (&parsed.parse.hir, &parsed.parse.bound);
+    let mut awaited: Vec<AwaitedImport> = Vec::new();
+    visit_named_files(file, &mut |imported, site| {
+        let Some(ImportSiteKind::ImportCall(call)) = site else {
+            return;
+        };
+        let Parent::Expr(outer) = bound.parent_of_expr(call) else {
+            return;
+        };
+        let statement = match bound.parent_of_expr(outer) {
+            Parent::Stmt(statement) => statement,
+            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()],
+            _ => return,
+        };
+        let body = match bound.parent_of_stmt(statement) {
+            Parent::File => None,
+            Parent::FnBody(function) => Some(function),
+            _ => return,
+        };
+        if matches!(hir[outer].kind, ExprKind::Await(_)) {
+            let place = hir[call].pos;
+            awaited.push(AwaitedImport {
+                place,
+                imported,
+                body,
+            });
+        }
+    });
+    // A call that names one of several files loads one of them.
+    let places: Vec<u32> = awaited.iter().map(|it| it.place).collect();
+    awaited.retain(|it| places.iter().filter(|&&place| place == it.place).count() == 1);
+    awaited
+}
+
+/// Whether the import has ended whenever the call of the site runs.
+fn runs_behind(file: &WalkedFile<'_, '_>, site: ImportSiteKind, awaited: &AwaitedImport) -> bool {
+    let parse = file.parsed.as_ref().map(|parsed| &parsed.parse);
+    parse.zip(site.call()).is_some_and(|(parse, call)| {
+        awaited.place < parse.hir[call].pos && stands_in_body(&parse.bound, call, awaited.body)
+    })
 }
 
 /// Whether a site of `file` that `is_asked` holds of names a file of which the build knows nothing.
@@ -336,7 +522,21 @@ fn find_files_that_require_may_load(
         }
     }
     for (index, file) in (0..).zip(files) {
-        visit_loaded_files(file, &mut |target, kind| {
+        let awaited = find_awaited_imports(file);
+        visit_named_files(file, &mut |target, site| {
+            let kind = match site.map(loading_kind) {
+                None => None,
+                Some(None) => return,
+                Some(kind) => kind,
+            };
+            // The file is loaded when the call runs.
+            let is_loaded = |awaited: &AwaitedImport| {
+                site.is_some_and(|site| runs_behind(file, site, awaited))
+                    && order.is_loaded_by_import_of(target, awaited.imported)
+            };
+            if awaited.iter().any(is_loaded) {
+                return;
+            }
             if kind == Some(CodeImportKind::Import) {
                 return;
             }
@@ -387,7 +587,7 @@ fn is_another_format_where_imported(
         && !context.host.is_plugin_source(path)
         && analysis
             .module_formats
-            .get(context.resolver.package_module_type(path))
+            .get(context.resolver.module_type_where_imported(path))
             != analysis.module_format
 }
 

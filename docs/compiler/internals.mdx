@@ -70,7 +70,7 @@ Where it can't tell which objects reach a property access, the compiled code loo
 
 Strings passed to `eval`, `new Function` and `node:vm` run in JavaScriptCore's interpreter, in the same process and on the same objects. There's no JIT above it, so a library that generates its hot code this way runs slower compiled.
 
-The compiler finds these calls at build time and assumes less about whatever they can reach. If it finds none, it assumes it has seen all the code there is, and a call that gets to `eval` anyway throws an `EvalError`. See [Code from strings](/compiler/compatibility#code-from-strings).
+The compiler finds these calls at build time and assumes less about whatever they can reach. A read that it can't follow, like `globalThis[name]`, counts as one. If it finds none, it assumes it has seen all the code there is and turns `eval` off. See [Code from strings](/compiler/compatibility#code-from-strings).
 
 ## Read-only built-ins
 

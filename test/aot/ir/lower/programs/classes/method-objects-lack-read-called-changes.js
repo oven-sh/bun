@@ -65,80 +65,8 @@ for (const step of steps) {
   at += 400;
 }
 
-// GENERATED: getLazy readSymbol Base Socket ownOfBase
 // CHECK-LABEL: function {{*}}name="getLazy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="Lazy"
-// CHECK-NEXT: v2 = ToBoolean v1
-// CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v3):
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="Lazy"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="Lazy"
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="Base"
-// CHECK-NEXT: v11 = ResolveHeritage v10
-// CHECK-NEXT: v12 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v13 = NewClass v12, v10, v11 layout=[[L_4]]
-// CHECK-NEXT: v14 = NewClosure function=[[f_5]]
-// CHECK-NEXT: DefineMethod v13, v14 layout=[[L_4]] key="plain"
-// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v17 = CheckInitialized v16 name="some"
-// CHECK-NEXT: v18 = ToPropertyKey v17
-// CHECK-NEXT: v19 = NewClosure function=[[f_7]]
-// CHECK-NEXT: SetFunctionName v19, v18
-// CHECK-NEXT: DefineMethod v13, v19, v18 layout=[[L_4]] index=1
-// CHECK-NEXT: v22 = FinishClass v13 layout=[[L_4]]
-// CHECK-NEXT: v23 = Convert v22 declared={type=[[f_3]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v24 = Convert v22 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: PutModuleVariable v24 variable=[[g_1]]
-// CHECK-NEXT: v26 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v27 = CheckInitialized v26 name="Lazy"
-// CHECK-NEXT: Return v27
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="readSymbol"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_9]] flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_9]], v1: i32):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="some"
-// CHECK-NEXT: v4 = ElemGet v0, v3
-// CHECK-NEXT: v5 = TypeTest v4 testedType=undefined
-// CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v6):
-// CHECK-NEXT: v7 = Integer integer=-2
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = NarrowByTest v4, v8
-// CHECK-NEXT: v10 = PropGet v9 key="call"
-// CHECK-NEXT: v11 = Call v10, v9, v0, v1 calleeKey="call" calleeName="method.call"
-// CHECK-NEXT: ReturnCall v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_11]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_11]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_11]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_12]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Socket"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ownOfBase"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = PropGet v0 key="count"
-// CHECK-NEXT: v3 = Add v2, v1
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

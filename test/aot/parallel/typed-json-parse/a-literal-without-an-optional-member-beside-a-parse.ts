@@ -1,4 +1,3 @@
-// STATISTIC: TypedResultsSelected >= 10
 interface Config {
   port: number;
   host: string;

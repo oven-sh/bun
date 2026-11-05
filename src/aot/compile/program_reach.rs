@@ -1834,17 +1834,6 @@ impl<'a, 's> FileScan<'a, 's> {
                     let interest = match call {
                         Some(call) if is_object_followed => {
                             self.units.interests[region].push(Interest::AnswerOfLoader(target));
-                            // The loader reads these two off an ES module to find what `require` answers.
-                            let atoms = &self.input.files.atoms;
-                            let names = [Some(known::__esModule), atoms.lookup(b"module.exports")];
-                            for name in names.into_iter().flatten() {
-                                if let ExportLookup::Found(_) =
-                                    graph.find_export(target, name, atoms)
-                                {
-                                    self.units.interests[region]
-                                        .push(Interest::Export(target, name));
-                                }
-                            }
                             self.interest_in_module_object(target, call)
                         }
                         Some(_) | None => Interest::EveryExport(target),
@@ -2623,6 +2612,10 @@ impl<'a, 's> Walk<'a, 's> {
         let is_read_by_evaluated_text = files
             .filter_map(|&file| parsed_source(input.files, file))
             .any(|source| source.builtins.mentions_evaluator());
+        // It also imports a data file of the executable by its path and stores into the object that it finds there.
+        if is_read_by_evaluated_text {
+            reacher.hand_on_data_objects();
+        }
         // A test writes a file and loads it. No build sees that code, and it may read `require.main`.
         let is_read_by_code_from_disk = !input.files_started_by_runner.is_empty();
         // A file without units is reached whole.
@@ -2776,7 +2769,7 @@ impl<'a> LoadsByUnknownNames<'a> {
         self.files_found.push(file);
         let module = ModuleRef::File(file);
         reacher.evaluate(module);
-        reacher.give_module_object(module);
+        reacher.reach_answer_of_loader(module);
         if self.looks_at_every_export {
             reacher.reach_every_export(module);
         } else {
@@ -3349,6 +3342,19 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
+    // By whatever name the loader of the run time came to the module. It reads these two off an ES module to find what `require` answers.
+    fn reach_answer_of_loader(&mut self, module: ModuleRef) {
+        self.give_module_object(module);
+        let input = self.walk.input;
+        let atoms = &input.files.atoms;
+        let names = [Some(known::__esModule), atoms.lookup(b"module.exports")];
+        for name in names.into_iter().flatten() {
+            if let ExportLookup::Found(_) = input.graph.find_export(module, name, atoms) {
+                self.reach_export(module, name);
+            }
+        }
+    }
+
     fn reach_module_object(
         &mut self,
         file: FileId,
@@ -3437,7 +3443,7 @@ impl Reacher<'_, '_, '_> {
                 self.evaluate(target);
                 self.note_answer_of_require(referrer, target);
             }
-            Interest::AnswerOfLoader(target) => self.give_module_object(target),
+            Interest::AnswerOfLoader(target) => self.reach_answer_of_loader(target),
             Interest::Request(module) => {
                 if !walk.is_request_waiting(file, module) {
                     self.note_statement_runs(file, module);

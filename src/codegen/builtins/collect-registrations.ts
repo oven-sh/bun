@@ -160,10 +160,6 @@ function listAccessors(text: string, file: string, problems: Problems): ListedAc
   return resolveAliases(parseListedLines(text, report), report);
 }
 
-export function parseBufferAccessors(text: string, file: string, problems: Problems): BufferAccessor[] {
-  return listAccessors(text, file, problems).map(({ accessor }) => accessor);
-}
-
 function movedTypeOf({ numberKind, byteCount }: BufferAccessor): b.TableType {
   const bitCount = 8 * byteCount;
   switch (numberKind) {

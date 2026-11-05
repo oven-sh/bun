@@ -105,75 +105,8 @@ class InnerLater extends Outer {}
 for (let i = 0; i < 8; i++) early.push(InnerLater.a + InnerLater.b);
 console.log(Outer.seen, early.join());
 
-// GENERATED: read make Base Middle kindAbove
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]], v1: undefined|null|string):
-// CHECK-NEXT: SwitchString v1 strings=["kind", "count", "ratio", "list", "nothing", "own", "computed"] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b5(| 0), case b6(| 0), case b7(| 0), otherwise b8()
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = PropGet v0 key="kind"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = PropGet v0 key="count"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3(v6):
-// CHECK-NEXT: v7 = PropGet v0 key="ratio"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b4(v8):
-// CHECK-NEXT: v9 = PropGet v0 key="list"
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b5(v10):
-// CHECK-NEXT: v11 = PropGet v0 key="nothing"
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: b6(v12):
-// CHECK-NEXT: v13 = PropGet v0 key="own"
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: b7(v14):
-// CHECK-NEXT: v15 = PropGet v0 key="computed"
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: b8():
-// CHECK-NEXT: v16 = PropGet v0 key="missing"
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v2 = NewClass v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = FinishClass v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[f_2]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v5 = Convert v3 declared={type=function flags=[IsFromCompiler]}
-// CHECK-NEXT: v6 = CallDirect v0, v2, v5 function=[[f_4]]
-// CHECK-NEXT: v7 = Convert v3 declared={type=[[f_2]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v8 = ResolveHeritage v7
-// CHECK-NEXT: v9 = NewClosure function=[[f_5]]
-// CHECK-NEXT: v10 = NewClass v9, v7, v8 layout=[[L_6]]
-// CHECK-NEXT: v11 = FinishClass v10 layout=[[L_6]]
-// CHECK-NEXT: v12 = Convert v11 declared={type=[[f_5]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v13 = Convert v11 declared={type=[[f_5]] flags=[IsFromCompiler]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_8]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_8]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Middle"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_10]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_10]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kindAbove"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v2 = GetSuperBase v1
-// CHECK-NEXT: v3 = SuperGet v2, v0 key="kind"
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

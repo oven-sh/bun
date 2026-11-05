@@ -81,7 +81,6 @@ pub(super) struct Folder<'a, 's> {
     pub(super) list_holders: ListHolders,
     pub(super) imported_names: ImportedNames,
     pub(super) enum_members: EnumMembers,
-    pub(super) relies_on_running_before_calls: Cell<bool>,
     asks_for_main_module: bool,
     pub(super) values: Vec<Value>,
     pub(super) effects: Vec<Effects>,
@@ -141,7 +140,6 @@ pub(super) fn run<'s>(
         list_holders: ListHolders::default(),
         imported_names: ImportedNames::default(),
         enum_members: EnumMembers::none(),
-        relies_on_running_before_calls: Cell::new(false),
         asks_for_main_module: false,
         values: vec![Value::Unknown; hir.exprs.len()],
         effects: vec![Effects::Unknown; hir.exprs.len()],
@@ -437,7 +435,6 @@ impl<'s> Folder<'_, 's> {
             decisions,
             errors: slice_in(&errors, arena),
             strings_over_limit: slice_in(&self.strings_over_limit, arena),
-            relies_on_running_before_calls: self.relies_on_running_before_calls.get(),
             asks_for_main_module: self.asks_for_main_module,
             imported_names: slice_in(&self.imported_names.into_asked_for(), arena),
         }

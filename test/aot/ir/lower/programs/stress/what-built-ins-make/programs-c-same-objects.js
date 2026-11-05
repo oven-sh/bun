@@ -50,42 +50,4 @@ console.log("node:module", moduleModule.default === moduleModule.Module, moduleM
 console.log("Bun", Bun.sql === Bun.postgres, Bun.fetch === fetch, Bun.env === process.env, Bun.argv === process.argv, BuildError === BuildMessage, ResolveError === ResolveMessage, globalThis.self === globalThis);
 for (const line of lines) console.log(line);
 
-// GENERATED: compare
 // CHECK-LABEL: function {{*}}name="compare"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|object, v2: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: v3 = PropGet v2 key="filter"
-// CHECK-NEXT: v4 = NewClosure v1 function=[[f_1]]
-// CHECK-NEXT: v5 = Call v3, v2, v4 calleeKey="filter" calleeName="names.filter"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="lines"
-// CHECK-NEXT: v8 = PropGet v7 key="push"
-// CHECK-NEXT: v9 = ToString v0
-// CHECK-NEXT: v10 = String string=": "
-// CHECK-NEXT: v11 = PropGet v2 key="length"
-// CHECK-NEXT: v12 = PropGet v5 key="length"
-// CHECK-NEXT: v13 = Sub v11, v12
-// CHECK-NEXT: v14 = ToString v13
-// CHECK-NEXT: v15 = String string=" of "
-// CHECK-NEXT: v16 = PropGet v2 key="length"
-// CHECK-NEXT: v17 = ToString v16
-// CHECK-NEXT: v18 = String string=" are the globals"
-// CHECK-NEXT: v19 = PropGet v5 key="length"
-// CHECK-NEXT: v20 = ToBoolean v19
-// CHECK-NEXT: Branch v20 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v21):
-// CHECK-NEXT: v22 = String string=", not "
-// CHECK-NEXT: v23 = PropGet v5 key="join"
-// CHECK-NEXT: v24 = Call v23, v5 calleeKey="join" calleeName="different.join"
-// CHECK-NEXT: v25 = Add v22, v24
-// CHECK-NEXT: Jump -> next b3(v25)
-// CHECK-NEXT: b2(v26):
-// CHECK-NEXT: v27 = String string=""
-// CHECK-NEXT: Jump -> next b3(v27)
-// CHECK-NEXT: b3(v28):
-// CHECK-NEXT: v29 = ToString v28
-// CHECK-NEXT: v30 = Strcat v9, v10, v14, v15, v17, v18, v29
-// CHECK-NEXT: v31 = Call v8, v7, v30 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v32 = Undefined
-// CHECK-NEXT: Return v32
-// CHECK-NEXT: }

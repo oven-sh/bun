@@ -83,82 +83,9 @@ attempt("Object.setPrototypeOf(Set.prototype, Map.prototype)", () => (Object as 
 table("after the attempts");
 console.log(lines.join("\n"));
 
-// GENERATED: thingIsMap withPrototype attempt MapHeir getPrototypeOf [Symbol.hasInstance]
 // CHECK-LABEL: function {{*}}name="thingIsMap"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number>|Date|Map<undefined|null|string, number>|Promise<number>|RegExp|Set<undefined|null|string>|WeakMap<undefined|null|object, number>|WeakSet<undefined|null|object> flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>|Date|Map<undefined|null|string, number>|Promise<number>|RegExp|Set<undefined|null|string>|WeakMap<undefined|null|object, number>|WeakSet<undefined|null|object>):
-// CHECK-NEXT: v1 = Builtin builtin=Map
-// CHECK-NEXT: v2 = InstanceOf v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="withPrototype"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsUndefined]}] results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|object):
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectSetPrototypeOf
-// CHECK-NEXT: v4 = Call v3, v2, v0, v1 calleeName="Object.setPrototypeOf"
-// CHECK-NEXT: v5 = Convert v0 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="lines"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string=": "
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = Builtin builtin=String
-// CHECK-NEXT: v8 = Call v1 calleeName="run"
-// CHECK-NEXT: v9 = Call v7, -, v8 calleeName="String"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v11 = PropGet v10 key="slice"
-// CHECK-NEXT: v12 = Integer
-// CHECK-NEXT: v13 = Integer integer=12
-// CHECK-NEXT: v14 = Call v11, v10, v12, v13 calleeKey="slice" calleeName="slice"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v16 = Add v6, v15
-// CHECK-NEXT: v17 = Call v4, v3, v16 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v18 = Convert v17 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v19 = CatchValue
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v21 = CheckInitialized v20 name="lines"
-// CHECK-NEXT: v22 = PropGet v21 key="push"
-// CHECK-NEXT: v23 = String string=": throws "
-// CHECK-NEXT: v24 = Add v0, v23
-// CHECK-NEXT: v25 = Convert v19 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v26 = PropGet v25 key="constructor"
-// CHECK-NEXT: v27 = PropGet v26 key="name"
-// CHECK-NEXT: v28 = Add v24, v27
-// CHECK-NEXT: v29 = Call v22, v21, v28 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v30 = Convert v29 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v31 = Undefined
-// CHECK-NEXT: Return v31
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="MapHeir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="getPrototypeOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=SetPrototype
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.hasInstance]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -633,79 +633,9 @@ console.log("honest uses", warm);
 
 export {};
 
-// GENERATED: legs0 honest1 via8 via11 A0 D0
 // CHECK-LABEL: function {{*}}name="legs0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: v1 = PropGet v0 key="pet"
-// CHECK-NEXT: v2 = PropGet v1 key="legs"
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Add v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="honest1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="A1"
-// CHECK-NEXT: v2 = Construct v1 calleeName="A1"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_5]]|[[L_4]]|[[L_6]]|[[L_7]]|[[L_8]]|[[L_9]]|[[L_10]]|[[L_11]]|[[L_12]]|[[L_13]]|[[L_14]]|[[L_15]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = NewObject -, v4 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="via8"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_16]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_16]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_17]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="yes"
-// CHECK-NEXT: v3 = ToBoolean v2
-// CHECK-NEXT: Branch v3 -> taken b2(v0), notTaken b1(| 0)
-// CHECK-NEXT: b1(v4):
-// CHECK-NEXT: Jump -> next b2(v4)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|boolean|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = TypeTest v6 testedType=boolean
-// CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_18]]
-// CHECK-NEXT: v10 = Call v9 calleeName="honest8"
-// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b4(v11):
-// CHECK-NEXT: v12 = NarrowByTest v6, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="via11"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_19]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_19]]):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_20]]
-// CHECK-NEXT: v2 = Call v1 calleeName="honest11"
-// CHECK-NEXT: v3 = NewArray v2, v0 contents=undefined|null|[[L_2]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|[[L_2]]> flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = ElemGet v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[L_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="A0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_21]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_22]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="D0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_23]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_24]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_24]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_25]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

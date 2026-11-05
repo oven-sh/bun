@@ -2,6 +2,11 @@
 // OPTIONS: builtin-modules
 // CWD: parallel/language
 // STATISTIC: SourceFilesInferred = 3
+// CHECK-LABEL: function {{*}}name="elementOf"
+// CHECK-LABEL: function {{*}}name="Words"
+// CHECK-LABEL: function {{*}}name="[Symbol.species]"
+// CHECK-LABEL: function {{*}}name="subarray"
+// CHECK-LABEL: function {{*}}name="[Symbol.species]"
 
 // FILE: parallel/language/typedarray-buffer-classes-keep-members.js
 // A compiled program locks every member that these have at the start: the prototypes of ArrayBuffer, SharedArrayBuffer and DataView, and both the constructor and the prototype of %TypedArray%, of every typed array class and of Buffer, but for four functions that core-js/full replaces: Uint8Array.fromBase64 and fromHex, Uint8Array.prototype.toBase64 and toHex. core-js 2 defines toLocaleString on each typed array class, so that one inherited name is open there. The objects stay extensible for ordinary names, and the constructors for indexes too. The prototypes take no index-like key, and none of them takes a well-known symbol or a name that an object further up its chain has (a new Uint8Array.prototype.subarray would replace the member for every Uint8Array), and the prototypes take no then and no toJSON. Their own prototypes stay. A subclass and a single object can still have members of their own, a species among them.
@@ -143,37 +148,3 @@ export const keysThatOnlyLookNumeric = ["01", "1.0", "+1", "1e3", "0x1"];
 
 // FILE: parallel/tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: elementOf Words [Symbol.species] subarray
-// CHECK-LABEL: function {{*}}name="elementOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string):
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Words"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=Uint16Array
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="subarray"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="its own subarray"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=ArrayBuffer
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

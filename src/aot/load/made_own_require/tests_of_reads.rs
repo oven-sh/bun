@@ -1,3 +1,4 @@
+use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::hir::{ExprId, ExprKind, StmtKind};
 
 use crate::compile::testing::{default_settings, with_loaded_build};
@@ -26,8 +27,10 @@ fn keep_their_stores(texts: &[String]) -> Vec<bool> {
         let files = loaded.project(ProjectId::Application).loaded.files();
         let keeps_store = |name: &String| {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
-            let hir = files.hir(file.expect("the file is in the program"));
-            let is_require = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(name) if files.atoms.bytes(name) == b"require");
+            let file = file.expect("the file is in the program");
+            let (hir, bound) = (files.hir(file), files.bound(file));
+            let is_require =
+                |e: ExprId| bound.binding(e) == Binding::CommonJs(CommonJsVariable::Require);
             hir.ids(hir.body)
                 .any(|statement| match hir[statement].kind {
                     StmtKind::Expr(e) => {

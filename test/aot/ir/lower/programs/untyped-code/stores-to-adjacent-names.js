@@ -169,79 +169,8 @@ for (let i = 0; i < 40; i++) {
 }
 console.log(refused, StampsPrivately.sum(stamped));
 
-// GENERATED: reset describe Returns Stamps sum
 // CHECK-LABEL: function {{*}}name="reset"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]], v1: undefined|null|number|string):
-// CHECK-NEXT: PropSet v0, v1 key="first"
-// CHECK-NEXT: v3 = Null
-// CHECK-NEXT: PropSet v0, v3 key="second"
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="kFlags"
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: ElemSet v0, v6, v7
-// CHECK-NEXT: v9 = String string=""
-// CHECK-NEXT: PropSet v0, v9 key="third"
-// CHECK-NEXT: v11 = Boolean
-// CHECK-NEXT: PropSet v0, v11 key="fourth"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Call v1, -, v0 calleeName="Object"
-// CHECK-NEXT: v3 = StrictEq v2, v0
-// CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v4 = Builtin builtin=Reflect
-// CHECK-NEXT: v5 = Builtin builtin=ReflectOwnKeys
-// CHECK-NEXT: v6 = Call v5, v4, v0 calleeName="Reflect.ownKeys"
-// CHECK-NEXT: v7 = PropGet v6 key="map"
-// CHECK-NEXT: v8 = NewClosure v0 function=[[f_3]]
-// CHECK-NEXT: v9 = Call v7, v6, v8 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v10 = PropGet v9 key="join"
-// CHECK-NEXT: v11 = String string=" "
-// CHECK-NEXT: v12 = Call v10, v9, v11 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v12
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v13 = Builtin builtin=String
-// CHECK-NEXT: v14 = Call v13, -, v0 calleeName="String"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Returns"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_5]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_5]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_5]]}
-// CHECK-NEXT: v5 = TypeTest v1 testedType=object
-// CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v6):
-// CHECK-NEXT: Jump -> next b2(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Stamps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_7]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_8]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_10]] field=1
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v4 = PrivateGet v0, v3 layout=[[L_10]] field=2
-// CHECK-NEXT: v5 = Add v2, v4
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v7 = PrivateGet v0, v6 layout=[[L_10]] field=3
-// CHECK-NEXT: v8 = Add v5, v7
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

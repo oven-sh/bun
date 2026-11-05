@@ -462,7 +462,9 @@ fn build_of_this_executable() -> Option<BuildRecord> {
     Some(BuildRecord {
         omits_function_source: bun_jsc::compiled_program::omits_function_source(program),
         admits_inspector: admitted.contains(AdmittedCode::INSPECTOR),
-        loads_code_from_disk: bun_jsc::compiled_program::loads_code_outside_image(program),
+        // The flag of the image says what its proofs allow for, and an image that admits the inspector has it too. Who may name a file is for `--aot-allow-code-from-disk` to say.
+        loads_code_from_disk: program.allows_code_from_disk
+            && bun_jsc::compiled_program::loads_code_outside_image(program),
     })
 }
 

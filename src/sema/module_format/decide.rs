@@ -164,7 +164,7 @@ fn find_statement_evidence(
     decisions: &Decisions<'_>,
 ) -> CommonJsEvidence {
     let mut evidence = CommonJsEvidence::empty();
-    if has_live_export_assignment(hir, decisions) {
+    if has_live_export_assignment(hir, bound, decisions) {
         evidence |= CommonJsEvidence::MODULE;
     }
     if has_with_statement(hir, bound) {
@@ -180,10 +180,15 @@ fn has_with_statement(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     })
 }
 
-fn has_live_export_assignment(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
-    hir.ids(hir.body).any(|stmt| {
-        matches!(hir[stmt].kind, StmtKind::ExportAssign(_)) && !decisions.is_dead_stmt(stmt)
-    })
+fn has_live_export_assignment(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+) -> bool {
+    let own = hir.ids(hir.body);
+    let own = own.filter(|&stmt: &StmtId| matches!(hir[stmt].kind, StmtKind::ExportAssign(_)));
+    own.chain(bound.export_assignments_in_namespaces(hir))
+        .any(|stmt| !decisions.is_dead_stmt(stmt))
 }
 
 fn has_runtime_import_statement(hir: &File<'_>) -> bool {

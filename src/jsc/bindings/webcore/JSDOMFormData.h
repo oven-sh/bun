@@ -65,7 +65,6 @@ protected:
 };
 
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSDOMFormData* castedThis);
-JSC::JSObject* domFormDataIteratorPrototype(JSDOMGlobalObject&);
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMFormData&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMFormData* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

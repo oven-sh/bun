@@ -2,7 +2,9 @@
 //
 // A thread that joins a build touches megabytes of its own first. So the compiler's pool starts a thread only when a task waits
 // for one, and no more than four for what is part of every build (the libraries' declarations, Bun's own modules) plus one for
-// every 32 KB of the program's own source text, as that text is read. The bundler's pool has nothing to parse and starts none.
+// every 32 KB of the program's own source text, as that text is read. The engine then has one for every 256 KB of what it is
+// handed: ten lines and Bun's library are 1.8 MB, which it compiles fastest on six to eight threads. The bundler's pool has
+// nothing to parse and starts none.
 // With --aot-threads=<n> the compiler's pool starts no more than n.
 //
 // The threads of a pool live until the process ends, so the names under /proc/<pid>/task, read again and again while the
@@ -80,7 +82,7 @@ test.skipIf(!isLinux)("a ten-line program is built by a few threads", async () =
   console.log(threads);
   expect(threads["Bun Pool"] ?? 0).toBe(0);
   expect(threads["Early Load"] ?? 0).toBe(0);
-  expect(threads["Bun Compile"]).toBeLessThanOrEqual(4);
+  expect(threads["Bun Compile"]).toBeLessThanOrEqual(8);
 });
 
 test.skipIf(!isLinux)("a program of six megabytes is built by all threads", async () => {

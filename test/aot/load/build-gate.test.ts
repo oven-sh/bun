@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
+// A type is a guess that the engine tests, so a build computes none to find fault with it: by itself it looks a file through for early errors alone (src/sema/driver/compile/effects.rs).
+// `--check` makes it look for every mistake that `bun check` finds in the program's own files. What each kind of mistake then does to the build, by the kind of the file, is what the table below says.
+const CHECK = ["--check"];
+
 type Files = Record<string, string>;
 type Verdict = (result: Awaited<ReturnType<typeof run>>) => void;
 
@@ -88,18 +92,6 @@ const builds =
   result =>
     expect(result).toMatchObject({ errors: [], warnings: [], exitCode: 0, wroteExecutable: true, stdout });
 
-const DEMOTED =
-  /^TS100009: 'dep' has 1 type error \(the first at .*node_modules[\\/]dep[\\/]index\.ts:2:9\), so 1 of its 1 files are compiled without their types\. They still work, but run slower\.$/;
-
-const buildsWithoutTypes: Verdict = result =>
-  expect(result).toMatchObject({
-    errors: [],
-    warnings: [expect.stringMatching(DEMOTED)],
-    exitCode: 0,
-    wroteExecutable: true,
-    stdout: "6\n",
-  });
-
 const ANYWHERE = /(?:)/;
 const CHECK_JS = { allowJs: true, checkJs: true };
 
@@ -176,7 +168,8 @@ type DependencyCase = [name: string, compilerOptions: object, line: string, verd
 
 const dependencyCases: DependencyCase[] = [
   ["no warning when it has no errors", {}, "", builds("6\n")],
-  ["a type error demotes it", {}, MISTYPED_LOCAL, buildsWithoutTypes],
+  // Nobody looks for type errors in a dependency, with or without --check.
+  ["a type error in it says nothing", {}, MISTYPED_LOCAL, builds("6\n")],
   [
     "a style rule of the application does not demote it",
     { noUnusedLocals: true },
@@ -193,9 +186,19 @@ describe.concurrent("compile/aot/load/build-gate", () => {
     (_, compilerOptions, files, entry, verdict, location = ANYWHERE) =>
       slot(async () => {
         using dir = tempDir("aot-build-gate", { "tsconfig.json": tsconfig(compilerOptions), ...files });
-        const result = await run(String(dir), entry);
+        const result = await run(String(dir), entry, CHECK);
         verdict(result);
         expect(result.output).toMatch(location);
+      }),
+    600_000,
+  );
+
+  test(
+    "without --check a type error stops no build, and the program runs as plain Bun runs it",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-build-gate", { "tsconfig.json": tsconfig(), "main.ts": TYPE_ERROR });
+        builds("text\n")(await run(String(dir), "main.ts"));
       }),
     600_000,
   );
@@ -210,7 +213,7 @@ describe.concurrent("compile/aot/load/build-gate", () => {
           "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", main: "index.ts" }),
           "node_modules/dep/index.ts": twice(line),
         });
-        const result = await run(String(dir), "main.ts", [], "3");
+        const result = await run(String(dir), "main.ts", CHECK, "3");
         verdict(result);
         expect(result.output).toMatch(location);
       }),
@@ -226,7 +229,7 @@ describe.concurrent("compile/aot/load/build-gate", () => {
           "main.ts": callsTwice("./dep/index.ts"),
           "dep/index.ts": twice(MISTYPED_LOCAL),
         });
-        const result = await run(String(dir), "main.ts", [], "3");
+        const result = await run(String(dir), "main.ts", CHECK, "3");
         stops("TS2322")(result);
         expect(result.warnings).toEqual([]);
       }),

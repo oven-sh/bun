@@ -300,6 +300,7 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
     pub idents: &'a [(ExprId, ScopeId)],
     pub options: RuntimeBindOptions,
     pub atoms: &'a dyn Intern,
+    pub names_in_place: &'a [(Atom, Atom)],
 }
 
 #[derive(Default)]

@@ -9,8 +9,10 @@ export const knownChanges: ReadonlyMap<string, readonly OperandUse[]> = new Map(
   ["NodeEvents/0", storesIntoReceiver],
   ["NodeStream/0", storesIntoReceiver],
   ["Node_stream_wrap/0", storesIntoReceiver],
+  // src/js/builtins/NodeModuleObject.ts stores `globalPaths` on what require("node:module") answers, whatever the receiver is: here that object is the receiver.
+  ["NodeModule_initPaths/0", storesIntoReceiver],
   // With another constructor as the receiver they fill what it constructs.
-  ["ArrayFrom/5", definesOnNewInstance],
+  ["ArrayFrom/7", definesOnNewInstance],
   ["ArrayFromAsync/1", definesOnNewInstance],
   ["ArrayOf/1", definesOnNewInstance],
 ]);

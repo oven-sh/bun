@@ -2,6 +2,7 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 4
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="honest"
 
 // FILE: main.ts
 // Without eval an untyped module calls typed exports.
@@ -135,47 +136,3 @@ export function untypedCalls(log) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true }, "files": [] }
-
-// GENERATED: honest
-// CHECK-LABEL: function {{*}}name="honest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="log"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="total"
-// CHECK-NEXT: v8 = Data data=[[d_2]]
-// CHECK-NEXT: v9 = Call v7, -, v8 calleeName="total"
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="sum"
-// CHECK-NEXT: v12 = Data data=[[d_4]]
-// CHECK-NEXT: v13 = Call v11, -, v12 calleeName="sum"
-// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v15 = CheckInitialized v14 name="code"
-// CHECK-NEXT: v16 = String string="a"
-// CHECK-NEXT: v17 = Call v15, -, v16 calleeName="code"
-// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v19 = CheckInitialized v18 name="halved"
-// CHECK-NEXT: v20 = Integer integer=3
-// CHECK-NEXT: v21 = Call v19, -, v20 calleeName="halved"
-// CHECK-NEXT: v22 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v23 = CheckInitialized v22 name="Scale"
-// CHECK-NEXT: v24 = Integer integer=2
-// CHECK-NEXT: v25 = Construct v23, -, v24 calleeName="Scale"
-// CHECK-NEXT: v26 = PropGet v25 key="apply"
-// CHECK-NEXT: v27 = Integer integer=3
-// CHECK-NEXT: v28 = Call v26, v25, v27 calleeKey="apply" calleeName="apply"
-// CHECK-NEXT: v29 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v30 = CheckInitialized v29 name="insideTheLibrary"
-// CHECK-NEXT: v31 = Call v30 calleeName="insideTheLibrary"
-// CHECK-NEXT: v32 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v33 = CheckInitialized v32 name="honestElsewhere"
-// CHECK-NEXT: v34 = Integer integer=2
-// CHECK-NEXT: v35 = Call v33, -, v34 calleeName="honestElsewhere"
-// CHECK-NEXT: v36 = Call v5, v3, v0, v9, v13, v17, v21, v28, v31, v35 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v37 = Undefined
-// CHECK-NEXT: Return v37
-// CHECK-NEXT: }

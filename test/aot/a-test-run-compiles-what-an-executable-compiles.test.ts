@@ -117,6 +117,21 @@ console.log(join([describe(new Failure("one")), {}, [1, 2], () => 3, 4]));
 `,
     },
   },
+  // `Symbol`, `Object`, `Array` and `Map` are looked up in a test run. What hangs below them is what the executable has: a key of a layout, a constant.
+  "what hangs below a built-in that a test may replace": {
+    files: {
+      "main.ts": `
+class Row {
+  constructor(public cells: number[]) {}
+  *[Symbol.iterator]() { yield* this.cells; }
+  get [Symbol.toStringTag]() { return "Row"; }
+}
+function own(o: object, key: string): boolean { return Object.prototype.hasOwnProperty.call(o, key); }
+function rest(...all: number[]): number[] { return Array.prototype.slice.call(all, 1); }
+console.log([...new Row([1, 2, 3])].join(), String(new Row([])), own({ a: 1 }, "a"), rest(1, 2, 3).join(), Object.getPrototypeOf(new Map()) === Map.prototype);
+`,
+    },
+  },
   "CommonJS files that require each other": {
     files: {
       "shapes.cjs": `

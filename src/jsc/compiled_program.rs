@@ -1039,7 +1039,6 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         program.set_module_listing(for_each_module_path_starting_with);
         program.set_test_of_names_left_outside(is_left_to_code_outside_image);
         bun_crash_handler::report_aborts();
-        bun_crash_handler::report_file::take_settings_from_environment();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {
             settings_for_debugging::print_image_summary(program.first_image().len());

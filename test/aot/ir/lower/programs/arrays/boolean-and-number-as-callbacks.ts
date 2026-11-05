@@ -67,74 +67,8 @@ tell("many strings", () => { const list: string[] = []; for (let i = 0; i < 3000
 tell("a function of the program named Number", () => { const Number = (x: unknown) => "n" + x; return ["1"].map(Number); });
 tell("Number kept in a variable", () => { const convert = Number; return ["1", "x"].map(convert); });
 
-// GENERATED: tell Rows Boolean valueOf
 // CHECK-LABEL: function {{*}}name="tell"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_1]]):
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1() handler=b2():
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v5 = Call v1 calleeName="make"
-// CHECK-NEXT: v6 = Call v4, -, v5 calleeName="show"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b2() role=CatchHandler:
-// CHECK-NEXT: v8 = CatchValue
-// CHECK-NEXT: v9 = String string="threw "
-// CHECK-NEXT: v10 = Convert v8 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v11 = PropGet v10 key="constructor"
-// CHECK-NEXT: v12 = PropGet v11 key="name"
-// CHECK-NEXT: v13 = Add v9, v12
-// CHECK-NEXT: v14 = String string=": "
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: v16 = PropGet v10 key="message"
-// CHECK-NEXT: v17 = Add v15, v16
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b3(v18)
-// CHECK-NEXT: b3(v19: undefined|null|string):
-// CHECK-NEXT: v20 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v21 = PropGet v20 key="console" [isFreeName]
-// CHECK-NEXT: v22 = Convert v21 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v23 = PropGet v22 key="log"
-// CHECK-NEXT: v24 = Convert v23 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v25 = String string=": "
-// CHECK-NEXT: v26 = Add v0, v25
-// CHECK-NEXT: v27 = Add v26, v19
-// CHECK-NEXT: v28 = Call v24, v22, v27 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v29 = Undefined
-// CHECK-NEXT: Return v29
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Rows"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Boolean"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Integer integer=7
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined] variableName="list"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = String string="30"
-// CHECK-NEXT: ElemSet v0, v1, v2
-// CHECK-NEXT: v4 = Integer integer=3
-// CHECK-NEXT: PropSet v0, v4 key="length"
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

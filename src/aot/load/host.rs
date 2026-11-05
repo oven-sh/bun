@@ -818,8 +818,17 @@ impl LoadHost<'_> {
     ) -> TreeChange {
         let (provider, messages) = (self.input.provider, self.input.messages);
         let runs_tests = self.input.options.load.runs_tests;
+        let modules = &self.modules_with_queries;
+        let file = modules.file_behind(request.path).to_vec();
         import_meta_glob::expand_calls(
-            provider, messages, runs_tests, arena, atoms, request, source,
+            provider,
+            messages,
+            runs_tests,
+            arena,
+            atoms,
+            request,
+            source,
+            &|specifier, text| modules.add_text(&file, specifier, text),
         )
     }
 
@@ -850,13 +859,11 @@ impl CodeHost for LoadHost<'_> {
         if is_import && request.specifier == BUNDLE_MODULE {
             return HostResolution::Erased;
         }
+        let modules = &self.modules_with_queries;
         if is_import
-            && self.holds_modules_with_queries()
-            && let Some(text) = import_meta_glob::write_module_of_eager_entry(request.specifier)
+            && let Some(path) =
+                modules.find_text(modules.file_behind(request.importer), request.specifier)
         {
-            let file = self.modules_with_queries.file_behind(request.importer);
-            let query = [b"?", request.specifier].concat();
-            let path = self.modules_with_queries.add_text(file, &query, text);
             return HostResolution::Path(path);
         }
         let mut entry_texts = self.input.options.load.entry_texts.iter();

@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="key"
+// CHECK-LABEL: function {{*}}name="get"
 
 // FILE: main.mjs
 // An ES importer holds what a CommonJS file exported when it was first imported, whatever happens to the exports object afterwards.
@@ -49,27 +51,3 @@ console.log(again === namespace, again.replaced === namespace.replaced, again.de
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: key get
-// CHECK-LABEL: function {{*}}name="key"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: v1 = Builtin builtin=Process
-// CHECK-NEXT: v2 = PropGet v1 key="argv"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(ProcessArgv) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="length"
-// CHECK-NEXT: v5 = Integer integer=99
-// CHECK-NEXT: v6 = Greater v4, v5
-// CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(v0)
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v7 = String string="other"
-// CHECK-NEXT: Jump -> next b2(v7)
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="a getter"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -31,7 +31,9 @@ use crate::load::sources::parsed_source;
 use crate::module_keys::loader_by_name;
 use crate::options::Options;
 use crate::test_runs::files_of_run::find_whose_files;
-use crate::test_runs::{RunContents, RunInput, WhoseFile, collect_run_contents};
+use crate::test_runs::{
+    RunContents, RunInput, WhoseFile, collect_run_contents, fix_places_on_the_way,
+};
 
 #[derive(Default)]
 pub(crate) struct FileContents {
@@ -92,6 +94,8 @@ pub(crate) struct ProgramContents {
     pub names_added_to_builtins: Vec<(BuiltinId, Atom)>,
     /// In some file: a live `ImportSiteKind::MockModule` site one of whose values is no `Constant`, or `ResolvedBuiltins::hands_mock_on()`.
     pub mocks_any_module: bool,
+    /// In a test run, in some file: a store to `Module._resolveFilename` or `Module.prototype.require`. From then on `bun test` asks the program what a `require` answers.
+    pub stores_loader_functions: bool,
     /// By binding, in some file: `!keys_taken_out_of_module_cache().is_empty()` (a delete or a store), `loses_sight_of_module_cache()`, or `resets_modules()`.
     /// In a test run: `LoadsOfRun::is_every_file`, the word for "nobody can say which". `RunContents::loads` lists the files where somebody can.
     pub any_module_loads_again: bool,
@@ -107,16 +111,6 @@ pub(crate) struct ProgramContents {
     pub run: RunContents,
     /// `ContentsInput::any_file_may_become_main_module`
     pub any_file_may_become_main_module: bool,
-}
-
-impl ProgramContents {
-    /// What no file takes for what the table says, Bun's own code no more than the application's. In a test run: all that a test may replace, spelled or not.
-    pub(crate) fn builtins_written_as_reads(&self) -> &[u32] {
-        match self.run.members_written_as_reads.is_empty() {
-            true => &self.replaced_builtins,
-            false => &self.run.members_written_as_reads,
-        }
-    }
 }
 
 pub(crate) struct ContentsInput<'a, 's> {
@@ -158,6 +152,7 @@ struct FoundInFiles {
     opened_holders: Vec<BuiltinId>,
     names_added: Vec<(BuiltinId, Atom)>,
     mocks_any_module: bool,
+    stores_loader_functions: bool,
     any_module_loads_again: bool,
     loads_by_unknown_name: bool,
     loads_by_unknown_path: bool,
@@ -174,6 +169,7 @@ impl FoundInFiles {
             opened_holders: take(&mut self.opened_holders),
             names_added: take(&mut self.names_added),
             mocks_any_module: true,
+            stores_loader_functions: true,
             any_module_loads_again: true,
             loads_by_unknown_name: true,
             loads_by_unknown_path: true,
@@ -202,22 +198,33 @@ impl FoundInFiles {
                 self.names_added.extend_from_slice(&texts.names_added);
             }
         }
-        self.mocks_any_module |=
+        let stores_loader_functions = builtins.stores_loader_functions();
+        let mocks_any_module =
             builtins.hands_mock_on() || mocks_module_that_it_does_not_spell(files, file);
         // `test_run_loads` says which files of a test run load again.
-        self.any_module_loads_again |= !input.is_test_run
+        let any_module_loads_again = !input.is_test_run
             && (!builtins.keys_taken_out_of_module_cache().is_empty()
                 || builtins.loses_sight_of_module_cache()
                 || builtins.resets_modules());
         let gives_unknown_name_to_imported_loader =
             resolve_loads_through_imported_loaders(files, file);
-        self.loads_by_unknown_name |=
+        let loads_by_unknown_name =
             contents.names.loads_by_unknown_name || gives_unknown_name_to_imported_loader;
-        self.loads_by_unknown_path |=
+        let loads_by_unknown_path =
             contents.names.loads_by_unknown_path || gives_unknown_name_to_imported_loader;
-        self.names_worker_constructor |= contents.names_worker_constructor;
-        self.hands_worker_constructor_on |= contents.hands_worker_constructor_on;
-        self.starts_worker_out_of_sight |= contents.starts_worker_out_of_sight;
+        self.append(FoundInFiles {
+            replaced_members: Vec::new(),
+            opened_holders: Vec::new(),
+            names_added: Vec::new(),
+            mocks_any_module,
+            stores_loader_functions,
+            any_module_loads_again,
+            loads_by_unknown_name,
+            loads_by_unknown_path,
+            names_worker_constructor: contents.names_worker_constructor,
+            hands_worker_constructor_on: contents.hands_worker_constructor_on,
+            starts_worker_out_of_sight: contents.starts_worker_out_of_sight,
+        });
     }
 
     fn append(&mut self, mut following: FoundInFiles) {
@@ -226,6 +233,7 @@ impl FoundInFiles {
         self.opened_holders.append(&mut following.opened_holders);
         self.names_added.append(&mut following.names_added);
         self.mocks_any_module |= following.mocks_any_module;
+        self.stores_loader_functions |= following.stores_loader_functions;
         self.any_module_loads_again |= following.any_module_loads_again;
         self.loads_by_unknown_name |= following.loads_by_unknown_name;
         self.loads_by_unknown_path |= following.loads_by_unknown_path;
@@ -422,21 +430,27 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     };
     all.names_added.extend_from_slice(&run.names_added);
     sort_names_added(&mut all.names_added, files);
+    let fixed_builtins = FixedBuiltins::default();
     if is_test_run {
         for &file in files.compiled_files() {
             if let Some(source) = parsed_source(files, file) {
                 source
                     .builtins
                     .unlock(Arc::clone(&run.members_written_as_reads));
+                fix_places_on_the_way(&source.builtins, &fixed_builtins);
             }
         }
     }
     ProgramContents {
         found_entry_points,
         replaced_builtins,
-        fixed_builtins: FixedBuiltins::default(),
+        fixed_builtins,
         names_added_to_builtins: all.names_added,
-        mocks_any_module: all.mocks_any_module || run.mocks_any_module,
+        // What the program's function answers stands in the place of the module, as a mock does.
+        mocks_any_module: all.mocks_any_module
+            || run.mocks_any_module
+            || all.stores_loader_functions,
+        stores_loader_functions: all.stores_loader_functions,
         any_module_loads_again: match is_test_run {
             true => run.loads.is_every_file,
             false => all.any_module_loads_again,

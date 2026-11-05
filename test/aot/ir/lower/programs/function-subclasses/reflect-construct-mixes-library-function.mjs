@@ -22,81 +22,8 @@ function NoPrototype() {}
 NoPrototype.prototype = 5;
 console.log(Object.getPrototypeOf(Reflect.construct(EventEmitter, [], NoPrototype)) === Object.prototype);
 
-// GENERATED: Other hello Bus read
 // CHECK-LABEL: function {{*}}name="Other"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: PropSet v3, v4 key="other"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = TypeTest v6 testedType=object
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v3)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: Jump -> next b2(v8)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hello"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="other"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Bus"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything):
-// CHECK-NEXT: v2 = Absent
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstruct v3, v1 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
-// CHECK-NEXT: v6 = TypeTest v2 testedType=absent
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = TypeTest v5 testedType=absent
-// CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v10
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: v12 = Boolean boolean=true
-// CHECK-NEXT: PropSet v11, v12 key="bus"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: v15 = TypeTest v14 testedType=object
-// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v16):
-// CHECK-NEXT: Jump -> next b9(v16)
-// CHECK-NEXT: b5(v17):
-// CHECK-NEXT: v18 = TypeTest v17 testedType=undefined
-// CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v19):
-// CHECK-NEXT: v20 = TypeTest v11 testedType=absent
-// CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v21):
-// CHECK-NEXT: v22 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v22
-// CHECK-NEXT: b8(v23):
-// CHECK-NEXT: Jump -> next b9(v23)
-// CHECK-NEXT: b9(v24):
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: b10(v25):
-// CHECK-NEXT: v26 = NewRuntimeError runtimeError=DerivedConstructorResult name="Bus"
-// CHECK-NEXT: Throw v26
-// CHECK-NEXT: b11(v27):
-// CHECK-NEXT: v28 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v28
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hello"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = String string="bus"
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

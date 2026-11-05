@@ -1256,6 +1256,49 @@ fn bun_build_computes_less_without_minify_syntax() {
     }
 }
 
+/// Without `--minify-syntax` an `import()` leaves `bun build` computing: to the end of the arguments of the call around it, or of the enum, or of the file.
+const COMPUTED_BEHIND_IMPORT: &[&str] = &[
+    r#"() => import("./b"); v(1 + 2);"#,
+    r#"() => import("./b"); v(~1);"#,
+    r#"() => import("./b"); v(`d${1}`);"#,
+    r#"await import("./b"); v(1 + 2);"#,
+    r#"import("./b").then(f); v(1 + 2);"#,
+    r#"if (false) import("./b"); v(1 + 2);"#,
+    r#"new A(import("./b")); v(1 + 2);"#,
+    r#"f`${import("./b")}`; v(1 + 2);"#,
+    r#"class A { b() { import("./b"); } } v(1 + 2);"#,
+    r#"f(import("./b"), v(1 + 2));"#,
+    r#"f(() => { import("./b"); v(1 + 2); });"#,
+    r#"() => import("./b"); f(import("./b")); v(1 + 2);"#,
+    r#"() => import("./b"); enum E { A = 1 } v(1 + 2);"#,
+];
+
+const NOT_COMPUTED_BESIDE_IMPORT: &[&str] = &[
+    r#"v(1 + 2); () => import("./b");"#,
+    r#"f(import("./b")); v(1 + 2);"#,
+    r#"f?.(import("./b")); v(1 + 2);"#,
+    r#"f(() => { import("./b"); }); v(1 + 2);"#,
+    r#"f(g(import("./b")), v(1 + 2));"#,
+    r#"enum E { A = (import("./b"), 1) } v(1 + 2);"#,
+    r#"enum E { A = (() => { import("./b"); })() } v(1 + 2);"#,
+];
+
+#[test]
+fn bun_build_computes_behind_import() {
+    for (texts, is_computed) in [
+        (COMPUTED_BEHIND_IMPORT, true),
+        (NOT_COMPUTED_BESIDE_IMPORT, false),
+    ] {
+        for &text in texts {
+            analyzed("a.ts", text, |s| {
+                let decisions = &s.analysis.decisions;
+                let is_constant = decisions.is_constant_in_bun_run(&s.hir, probe(s));
+                assert_eq!(is_constant, is_computed, "{text}");
+            });
+        }
+    }
+}
+
 /// Whether `bun build` has a string or a number there, without `--minify-syntax` and with it. It writes nothing for a list, an object, a function or a name that nobody takes.
 /// The build goes by the language, where a name may be in its dead zone and `typeof` of a free name may run a getter: `constant` has no value for most of these.
 const WRITTEN_WITHOUT_WHAT_NOBODY_TAKES: &[(&str, &str, bool, bool)] = &[

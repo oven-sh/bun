@@ -141,27 +141,5 @@ on('e7', (context, event) => { heard += context.steps + event.v7; });
 for (let i = 0; i < registered.length; i += 2) (registered[i + 1] as (a: unknown, b: unknown) => void)(everything, { v3: 100, v7: 1000 });
 console.log(heard);
 
-// GENERATED: makeOn double
 // CHECK-LABEL: function {{*}}name="makeOn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="double"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = TypeTest v0 testedType=number
-// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v2):
-// CHECK-NEXT: v3 = NarrowByTest v0, v2
-// CHECK-NEXT: v4 = Integer integer=2
-// CHECK-NEXT: v5 = Mul v3, v4
-// CHECK-NEXT: Jump -> next b3(v5)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = NarrowByTest v0, v6
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

@@ -18,8 +18,6 @@ pub mod thread_pool;
 pub mod work_pool;
 
 pub mod guarded;
-#[cfg(target_os = "linux")]
-mod huge_pages;
 pub mod io_thread_pool;
 pub mod signal_ring;
 pub mod unbounded_queue;

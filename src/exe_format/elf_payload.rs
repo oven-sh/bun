@@ -13,9 +13,6 @@ use crate::elf_program_headers::{
 use crate::mapped_file::{ReadOnce, TemplateBytes};
 use crate::{align_up, read_struct, write_struct};
 
-/// Every page size is a multiple of it.
-const SHARED_BLOCK_SIZE: u64 = 4096;
-
 pub enum Piece<'a> {
     Bytes(ReadOnce<'a>),
     Zeros(u64),
@@ -164,6 +161,7 @@ struct PayloadPlan {
     address: u64,
     file_offset: u64,
     content_size: u64,
+    aligned_size: u64,
     tail_start: u64,
     tail_end: u64,
     moved_tail_start: u64,
@@ -238,7 +236,7 @@ impl<'a> ElfFile<TemplateBytes<'a>> {
         ];
         pieces.extend(parts.iter().map(|&part| Piece::Bytes(ReadOnce::kept(part))));
         pieces.extend([
-            Piece::Zeros(plan.moved_tail_start - plan.file_offset - plan.content_size),
+            Piece::Zeros(plan.aligned_size - plan.content_size),
             Piece::Bytes(tail),
         ]);
         Ok(pieces)
@@ -308,11 +306,9 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             _ => header_writes.push(header_write(mapping.header_index, mapping.header)),
         }
 
-        // The tail keeps its offset within a block, so a file system that shares blocks between files moves it without copying it.
         let moved_tail_start = mapping
             .file_offset
             .checked_add(aligned_size)
-            .and_then(|start| start.checked_add(tail.start % SHARED_BLOCK_SIZE))
             .filter(|start| start.checked_add(tail.end - tail.start).is_some())
             .ok_or(ElfError::InvalidElfFile)?;
 
@@ -323,6 +319,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             address: mapping.address,
             file_offset: mapping.file_offset,
             content_size,
+            aligned_size,
             tail_start: tail.start,
             tail_end: tail.end,
             moved_tail_start,

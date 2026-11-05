@@ -5,7 +5,7 @@ use bun_sema::bind::ScopeId;
 use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
 
 use super::control::BreakTargetKind;
-use super::{FunctionLowering, commonjs, dispose, module};
+use super::{FunctionLowering, commonjs, dispose, module, scope};
 use crate::ir::BlockId;
 use crate::modules::Member;
 
@@ -19,6 +19,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
+            self.move_environments_put_off(statements.start + index);
             if self.file.decisions().is_dead_stmt(statement) {
                 self.count_statement(statement);
                 continue;
@@ -178,9 +179,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             StmtKind::Break(_) => self.lower_break(statement),
             StmtKind::Continue(_) => self.lower_continue(statement),
             StmtKind::Block(statements) => {
-                let scope = self.enter_own_scope(statement);
+                let own = self.file.bound.own_scope(statement);
+                if own.is_some() {
+                    self.enter_scope_made_by(own, scope::MakerOfScope::HereWhenAskedFor);
+                    self.give_list_to_scope(own, statements);
+                }
                 self.lower_statements(statements);
-                self.leave_own_scope(scope);
+                self.leave_own_scope(own);
             }
             StmtKind::Labeled { body, .. } => self.lower_labeled(statement, body),
             StmtKind::With { object, body } => self.lower_with(statement, object, body),

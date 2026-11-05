@@ -169,7 +169,8 @@ impl FileLowering<'_, '_, '_, '_> {
             || self.inputs.modules.may_be_mocked(own_module)
             || self.inputs.modules.may_be_evicted(own_module)
             || self.inputs.modules.runs_again(self.file)
-            || hir.ids(hir.body).any(assigns_exports);
+            || hir.ids(hir.body).any(assigns_exports)
+            || bound.export_assignments_in_namespaces(hir).next().is_some();
         let mut names_exports = false;
         // `/** @jsx exports.h */`, `import a = module`
         let analysis = &self.compiled.analysis;

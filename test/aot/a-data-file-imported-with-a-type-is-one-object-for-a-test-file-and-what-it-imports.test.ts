@@ -91,7 +91,7 @@ const twoTypes = {
     import { held } from "./below.mjs";
     console.log("text alone:", typeof held);`),
 };
-// TODO: as one program the statement of below.mjs is bound to one form for all the test files: "toml first: string string true".
+// So the loader of the run time links every statement that asks for such a file: parallel-test-runs/types-of-one-file-that-test-files-ask-for.
 for (const [form, words] of [["over two layers", "TestRunLayers:0"]] as const)
   test.concurrent(
     `two test files ask for two types of one file, ${form}`,

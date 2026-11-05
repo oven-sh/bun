@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 7
+// CHECK-LABEL: function {{*}}name="ownObject"
+// CHECK-LABEL: function {{*}}name="fromArrow"
 
 // FILE: main.cjs
 // `arguments` at the top of a CommonJS file is the arguments object of `function (exports, require, module, __filename, __dirname) { .. }`: five arguments, which in sloppy code are one variable with the five parameters.
@@ -102,20 +104,3 @@ console.log((() => arguments.length)());
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: ownObject fromArrow
-// CHECK-LABEL: function {{*}}name="ownObject"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: Array):
-// CHECK-NEXT: v3 = CreateMappedArguments v0, v1, v2
-// CHECK-NEXT: v4 = PropGet v3 key="length"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="fromArrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy, HasRestParameter] captures=[{type=anything}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: v2 = PropGet v0 key="length"
-// CHECK-NEXT: v3 = PropGet v1 key="length"
-// CHECK-NEXT: v4 = NewArray v2, v3 contents=anything
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

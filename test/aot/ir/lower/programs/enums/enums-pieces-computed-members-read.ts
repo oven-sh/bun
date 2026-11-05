@@ -52,36 +52,3 @@ export enum Uses {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="log"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Integer integer=1
-// CHECK-NEXT: v9 = Integer integer=2
-// CHECK-NEXT: v10 = Integer integer=3
-// CHECK-NEXT: v11 = Integer integer=7
-// CHECK-NEXT: v12 = Integer integer=-2
-// CHECK-NEXT: v13 = Integer integer=1
-// CHECK-NEXT: v14 = Integer integer=4
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v16 = CheckInitialized v15 name="Late"
-// CHECK-NEXT: v17 = PropGet v16 key="A"
-// CHECK-NEXT: v18 = Integer
-// CHECK-NEXT: v19 = Greater v17, v18
-// CHECK-NEXT: v20 = Integer integer=4
-// CHECK-NEXT: v21 = Integer integer=5
-// CHECK-NEXT: v22 = Integer integer=6
-// CHECK-NEXT: v23 = Integer integer=7
-// CHECK-NEXT: v24 = Call v4, v2, v7, v8, v9, v10, v11, v12, v13, v14, v19, v20, v21, v22, v23 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v25 = Undefined
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: }

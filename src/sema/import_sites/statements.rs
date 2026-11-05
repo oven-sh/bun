@@ -1,7 +1,7 @@
 use super::import_uses::ImportUses;
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, known};
-use crate::bind::{Bound, Decl, SymbolId};
+use crate::bind::{Bound, Decl, Parent, SymbolId};
 use crate::fold::{FoldError, FoldErrorKind};
 use crate::hir::{
     ExprId, File, Flags, ImportEqualsId, ImportEqualsTarget, ImportId, NodeData, StmtId, StmtKind,
@@ -105,6 +105,25 @@ pub(super) fn scan_statements(
             consults_resolver: true,
             is_host_value: false,
         });
+    }
+    // `namespace N { import a = require("./a") }`: tsc refuses it, and `bun run` loads the file where the body of the namespace runs.
+    for (index, import) in hir.import_equals.iter().enumerate() {
+        if let Parent::Module(namespace) = bound.parent_of_stmt(import.stmt)
+            && bound.makes_namespace_object(hir, namespace)
+            && !import.flags.contains(Flags::AMBIENT)
+            && !decisions.is_dead_stmt(import.stmt)
+            && let Some((kind, spec)) = import_equals_site(hir, ImportEqualsId(index as u32))
+        {
+            result.has_import_equals_require = true;
+            result.sites.push(ImportSite {
+                kind,
+                specifier: ImportSpecifier::Constant(spec),
+                specifier_node: ExprId::NONE,
+                attributes: ExprId::NONE,
+                consults_resolver: true,
+                is_host_value: false,
+            });
+        }
     }
     result
 }

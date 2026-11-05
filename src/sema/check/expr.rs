@@ -4793,6 +4793,16 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// Whether a part of `checkExpression` that resolves more than the type of the expression is run where tsgo reaches it.
+    /// FOR SPEED: with nothing in resolution it can wait for the walk of the file, which resolves the same things.
+    /// A build asks for types (`Requested::Types`, `Requested::EarlyErrors`) and walks next to no file. The first to ask for the
+    /// expression would decide, by what it has in resolution, whether anybody ever runs that part, and which task is the first
+    /// is a matter of timing. So in a build nobody runs it.
+    fn runs_checks_ahead_of_the_walk(&self) -> bool {
+        !matches!(self.expected, Requested::Types | Requested::EarlyErrors)
+            && self.stack.iter().any(|&q| self.is_resolution(q))
+    }
+
     /// `checkSourceElement` for a type node in an expression, run at the point where
     /// `checkExpression` reaches it: `checkAssertion`, `checkSatisfiesExpression`, `resolveCall`,
     /// `checkExpressionWithTypeArguments`, `checkSignatureDeclaration`. It resolves more than
@@ -4814,8 +4824,7 @@ impl<'p, 's> Checker<'p, 's> {
             | TypeNodeKind::NumberLit(_)
             | TypeNodeKind::BigIntLit { .. }
             | TypeNodeKind::BoolLit(_) => return,
-            // FOR SPEED: with nothing in resolution, the rest can wait for the walk.
-            _ => !self.stack.iter().any(|&q| self.is_resolution(q)),
+            _ => !self.runs_checks_ahead_of_the_walk(),
         };
         if only_needs_type {
             self.resolve_type_queries_within(file, node);
@@ -4875,8 +4884,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// resolution. Errors it reports directly are dropped. The walk or the pass runs it again and
     /// reports them.
     fn precheck_with(&mut self, check: impl FnOnce(&mut Self)) {
-        // FOR SPEED: with nothing in resolution, running it later resolves the same things.
-        if self.stack.iter().any(|&q| self.is_resolution(q)) {
+        if self.runs_checks_ahead_of_the_walk() {
             let (reported, requests) =
                 (self.reported.len(), self.reported_iteration_requests.len());
             check(self);

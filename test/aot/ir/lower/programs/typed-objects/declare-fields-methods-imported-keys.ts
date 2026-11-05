@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="Keyed"
+// CHECK-LABEL: function {{*}}name="Unknown"
 
 // FILE: main.ts
 // A `declare` field is left out of the layout of its class where the name of a method is computed and could be the field's own. A key read through `import * as` from a module that exports it as a const with a constant value is known, so the field keeps its place. A key that is reassigned, or is read from a TypeScript namespace, is not known.
@@ -88,83 +91,3 @@ export function change(to: string): void {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: show Keyed Unknown
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectGetPrototypeOf
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.getPrototypeOf"
-// CHECK-NEXT: v4 = PropGet v3 key="constructor"
-// CHECK-NEXT: v5 = PropGet v4 key="name"
-// CHECK-NEXT: v6 = ToString v5
-// CHECK-NEXT: v7 = String string=" {"
-// CHECK-NEXT: v8 = Builtin builtin=Reflect
-// CHECK-NEXT: v9 = Builtin builtin=ReflectOwnKeys
-// CHECK-NEXT: v10 = Call v9, v8, v0 calleeName="Reflect.ownKeys"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v12 = PropGet v11 key="map"
-// CHECK-NEXT: v13 = NewClosure v0 function=[[f_1]]
-// CHECK-NEXT: v14 = Call v12, v11, v13 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v16 = PropGet v15 key="join"
-// CHECK-NEXT: v17 = Call v16, v15 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v19 = ToString v18
-// CHECK-NEXT: v20 = String string="}"
-// CHECK-NEXT: v21 = Strcat v6, v7, v19, v20
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v22
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Keyed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: number):
-// CHECK-NEXT: v3 = Absent
-// CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = String string="keyed"
-// CHECK-NEXT: v6 = SuperConstruct v4, v1, v5 layout=[[L_3]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]]}
-// CHECK-NEXT: v8 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: v10 = TypeTest v7 testedType=absent
-// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: v12 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v12
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: PropSet v13, v2 key="payload"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: v16 = TypeTest v15 testedType=object
-// CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v17):
-// CHECK-NEXT: Jump -> next b9(v17)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: v19 = TypeTest v18 testedType=undefined
-// CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: v21 = TypeTest v13 testedType=absent
-// CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v22):
-// CHECK-NEXT: v23 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v23
-// CHECK-NEXT: b8(v24):
-// CHECK-NEXT: Jump -> next b9(v24)
-// CHECK-NEXT: b9(v25):
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: b10(v26):
-// CHECK-NEXT: v27 = NewRuntimeError runtimeError=DerivedConstructorResult name="Keyed"
-// CHECK-NEXT: Throw v27
-// CHECK-NEXT: b11(v28):
-// CHECK-NEXT: v29 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v29
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Unknown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

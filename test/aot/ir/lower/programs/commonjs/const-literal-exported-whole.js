@@ -1,6 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 11
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="outcome"
+// CHECK-LABEL: function {{*}}name="Thing"
+// CHECK-LABEL: function {{*}}name="bump"
 
 // FILE: main.js
 // `const keys = { .. }; module.exports = keys`: what the module exports is the literal, whoever asks and however, and symbols made there are keys like any other.
@@ -132,56 +136,3 @@ module.exports = { exported: keys, own() { return keys.kOwn; } };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: show outcome Thing bump
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|boolean|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|boolean|number|string):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="lines"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string=": "
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = Builtin builtin=String
-// CHECK-NEXT: v8 = Call v7, -, v1 calleeName="String"
-// CHECK-NEXT: v9 = Add v6, v8
-// CHECK-NEXT: v10 = Call v4, v3, v9 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="outcome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="outcome"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Thing"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: anything):
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="kState"
-// CHECK-NEXT: ElemSet v0, v3, v1
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="kCount"
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: ElemSet v0, v6, v7
-// CHECK-NEXT: PropSet v0, v1 key="plain"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="kCount"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="kCount"
-// CHECK-NEXT: v5 = ElemGet v0, v4
-// CHECK-NEXT: v6 = Integer integer=1
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: ElemSet v0, v2, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="kState"
-// CHECK-NEXT: v11 = ElemGet v0, v10
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

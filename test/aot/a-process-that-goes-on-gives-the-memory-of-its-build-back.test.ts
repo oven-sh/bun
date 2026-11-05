@@ -42,13 +42,7 @@ console.log(JSON.stringify({ before, first, second }));
 
 // Elsewhere a page that was given back counts as resident until the system wants it, a sanitizer has an allocator of its own, and with
 // assertions the allocator writes over what is freed.
-const countsWhatIsGivenBack = isLinux && !isASAN && !isDebug;
-if (!countsWhatIsGivenBack)
-  console.error(
-    "SKIPPED: a-process-that-goes-on-gives-the-memory-of-its-build-back.test.ts: needs a release build without a sanitizer, on Linux",
-  );
-
-test.skipIf(!countsWhatIsGivenBack)("a process that goes on gives the memory of its build back", async () => {
+test.skipIf(!isLinux || isASAN || isDebug)("a process that goes on gives the memory of its build back", async () => {
   using dir = tempDir("aot-memory-of-a-build-goes-back", { "program.ts": program, "build.ts": builder });
   const { stdout, stderr, exitCode } = await run([bunExe(), "build.ts"], String(dir));
   expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });

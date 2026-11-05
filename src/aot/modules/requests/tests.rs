@@ -577,7 +577,7 @@ fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
 }
 
 #[test]
-fn name_that_a_package_json_resolves_stays_linked_beside_a_plugin() {
+fn name_that_a_package_json_resolves_is_left_to_the_loader_beside_a_plugin() {
     let files = [
         (
             "main.mjs",
@@ -594,8 +594,22 @@ fn name_that_a_package_json_resolves_stays_linked_beside_a_plugin() {
     ];
     with_program(&files, |program| {
         let candidates = program.only_candidates("main.mjs");
-        assert_eq!(candidates.len(), 2);
-        assert!(candidates.iter().all(|it| !it.is_left_to_loader));
+        let mut spelled: Vec<(String, bool)> = candidates
+            .iter()
+            .map(|it| {
+                (
+                    program.text_of(it.spelling).to_string(),
+                    it.is_left_to_loader,
+                )
+            })
+            .collect();
+        spelled.sort();
+        // The names of packages are written down for entry points. A folder whose package.json names its main file stays linked.
+        let expected = [("./tool".to_string(), false), ("kit".to_string(), true)];
+        assert_eq!(spelled, expected);
+        let entry_points = program.input.files.entry_points();
+        assert!(entry_points.contains(&program.file("node_modules/kit/start.js")));
+        assert!(!entry_points.contains(&program.file("tool/start.js")));
     });
 }
 

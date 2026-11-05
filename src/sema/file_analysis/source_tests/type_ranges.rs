@@ -249,6 +249,16 @@ const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
     ("a.ts", "let x = <A>{} as B\n(x)", "let x = ({});\n(x)"),
     (
         "a.ts",
+        "x || a + b as number * c; a * b satisfies T ** c; a ** b as T ** c; a < b as any + c; a + b as T as U % c; a - b as T >> c;",
+        "x || (a + b) * c; (a * b) ** c; (a ** b) ** c; (a < b) + c; (a + b) % c; a - b >> c;",
+    ),
+    (
+        "a.ts",
+        "a as T * c; a * b as T + c; a + b as T - c; (a + b) as T * c; a + b as number < c; a + (b as T) * c; a + b as T /* d */ / c;",
+        "a * c; a * b + c; a + b - c; (a + b) * c; a + b < c; a + (b) * c; (a + b) /* d */ / c;",
+    ),
+    (
+        "a.ts",
         "let x = a\ndeclare const d: number\n`${x}`\ntype T = 1\ny()",
         "let x = a\n;\n`${x}`\n\ny()",
     ),

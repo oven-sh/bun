@@ -320,18 +320,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let asked = match file.hir.member_key(access) {
             Some((object, MemberKey::Name(name))) => {
                 let object = file.hir.skip_type_assertions(object);
-                match file.bound.binding(object) {
+                let imported = match file.bound.binding(object) {
                     Binding::Symbol(symbol)
                         if matches!(file.hir[object].kind, ExprKind::Ident(_)) =>
                     {
                         match file.inputs.modules.import_binding(file.file, symbol) {
-                            ImportBinding::Namespace {
-                                module: ModuleRef::File(module),
-                                ..
-                            } => Some((module, name)),
+                            ImportBinding::Namespace { module, .. } => Some(module),
                             _ => None,
                         }
                     }
+                    _ => None,
+                };
+                // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself.
+                let required = || match file.find_view(object) {
+                    Some(View::Namespace(module)) => Some(module),
+                    Some(View::Exports(_)) | None => None,
+                };
+                match imported.or_else(required) {
+                    Some(ModuleRef::File(module)) => Some((module, name)),
                     _ => None,
                 }
             }
@@ -399,7 +405,7 @@ pub(super) fn emit_import_binding(
 
 // A mock that comes before the body of a file has run stands in place of the file. What it answers is the host's to say, at each read: which names it has, what
 // a name that it leaves out reads as, whether the read throws. The host stores its object in a variable of the file, which is empty while no such mock stands.
-fn emit_import_binding_asked(
+pub(super) fn emit_import_binding_asked(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
     name: StringId,

@@ -5339,6 +5339,51 @@ describe("expect()", () => {
         expect(expect.not.closeTo(expected, precision)).toEqual(received);
         expect({ a: received }).toMatchObject({ a: expect.not.closeTo(expected, precision) });
       });
+
+      test("prints the number and the precision it was given", () => {
+        const printed = (/** @type {any} */ matcher) => (isBun ? Bun.inspect(matcher) : matcher.toAsymmetricMatcher());
+        expect(
+          [
+            expect.closeTo(1.5, 2),
+            expect.not.closeTo(1.5, 2),
+            expect.closeTo(1.5, 2.7),
+            expect.not.closeTo(-7.25, 1),
+            expect.closeTo(1, 1.5),
+            expect.closeTo(1e21, 3),
+            expect.closeTo(2 ** 31, 2 ** 32),
+            expect.closeTo(-0, -0),
+            expect.closeTo(NaN, NaN),
+            expect.closeTo(Infinity, -Infinity),
+            expect.not.closeTo(-Infinity, Infinity),
+          ].map(printed),
+        ).toEqual([
+          "NumberCloseTo 1.5 (2 digits)",
+          "NumberNotCloseTo 1.5 (2 digits)",
+          "NumberCloseTo 1.5 (2.7 digits)",
+          "NumberNotCloseTo -7.25 (1 digit)",
+          "NumberCloseTo 1 (1.5 digits)",
+          "NumberCloseTo 1e+21 (3 digits)",
+          "NumberCloseTo 2147483648 (4294967296 digits)",
+          "NumberCloseTo 0 (0 digits)",
+          "NumberCloseTo NaN (NaN digits)",
+          "NumberCloseTo Infinity (-Infinity digits)",
+          "NumberNotCloseTo -Infinity (Infinity digits)",
+        ]);
+      });
+
+      test("a failure prints the number and the precision it was given", () => {
+        const messageOf = (/** @type {() => void} */ assertion) => {
+          try {
+            assertion();
+          } catch (e) {
+            return stripVTControlCharacters(ANY(e).message);
+          }
+        };
+        expect(messageOf(() => expect(1.4).toEqual(expect.closeTo(1, 0.5)))).toContain("NumberCloseTo 1 (0.5 digits)");
+        expect(messageOf(() => expect({ a: 1.5 }).toEqual({ a: expect.not.closeTo(1.5, 2) }))).toContain(
+          "NumberNotCloseTo 1.5 (2 digits)",
+        );
+      });
     });
 
     describe("objects with an asymmetricMatch() method", () => {

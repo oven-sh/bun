@@ -2758,6 +2758,8 @@ pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;
+    /// Tells the formatter whether an older Bun printed this matcher differently. True if it is to print that text.
+    fn amf_like_older_bun(&mut self, differs: bool) -> bool;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
     fn amf_print_as<W: bun_io::Write, const C: bool>(
@@ -2776,6 +2778,14 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_like_older_bun(&mut self, differs: bool) -> bool {
+        if differs && self.like_older_bun.is_some() {
+            return true;
+        }
+        self.same_as_older_bun &= !differs;
+        false
+    }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2797,6 +2807,8 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_like_older_bun(&mut self, _differs: bool) -> bool { false }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2890,32 +2902,31 @@ impl JestPrettyFormat {
             this.amf_add_for_new_line(1);
             writer.write_all(b">");
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            let Some(number_value) = js_ExpectCloseTo::number_value_get_cached(value)
-            else {
+            let Some(numbers) = expect::ExpectCloseTo::numbers(value) else {
                 return Ok(true);
             };
-            let Some(digits_value) = js_ExpectCloseTo::digits_value_get_cached(value)
-            else {
-                return Ok(true);
-            };
-
-            let number = number_value.to_int32();
-            let digits = digits_value.to_int32();
 
             let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not() {
-                this.amf_add_for_new_line(b"NumberNotCloseTo".len());
-                writer.write_all(b"NumberNotCloseTo");
-            } else {
-                this.amf_add_for_new_line(b"NumberCloseTo ".len());
-                writer.write_all(b"NumberCloseTo ");
-            }
+            // Older versions printed both numbers as 32-bit integers, and no space after `NumberNotCloseTo`.
+            let older = expect::CloseToNumbers {
+                number: f64::from(numbers.number as i32),
+                precision: f64::from(numbers.precision as i32),
+            };
+            let like_older_bun = this.amf_like_older_bun(flags.not() || older != numbers);
+            let expect::CloseToNumbers { number, precision } = if like_older_bun { older } else { numbers };
+            let name: &[u8] = match (flags.not(), like_older_bun) {
+                (false, _) => b"NumberCloseTo ",
+                (true, false) => b"NumberNotCloseTo ",
+                (true, true) => b"NumberNotCloseTo",
+            };
+            this.amf_add_for_new_line(name.len());
+            writer.write_all(name);
             writer.print(format_args!(
                 "{} ({} digit{})",
-                number,
-                digits,
-                if digits == 1 { "" } else { "s" },
+                bun_fmt::double(number),
+                bun_fmt::double(precision),
+                if precision == 1.0 { "" } else { "s" },
             ));
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
             let Some(object_value) =

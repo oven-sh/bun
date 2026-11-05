@@ -2488,6 +2488,98 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect([first.exitCode, second.exitCode, read.exitCode]).toEqual([0, 0, 0]);
   });
 
+  // Bun 1.4.4 wrote `older`. It cut both numbers of expect.closeTo() to 32-bit integers, and put no space after
+  // `NumberNotCloseTo`.
+  const closeTo = {
+    older: {
+      number: "NumberCloseTo 1 (2 digits)",
+      precision: "NumberCloseTo 3 (0 digits)",
+      not: "NumberNotCloseTo7 (1 digit)",
+      beyondInt32: "NumberCloseTo 2147483647 (-2147483648 digits)",
+      notANumber: "NumberCloseTo 0 (2 digits)",
+    },
+    newer: {
+      number: "NumberCloseTo 1.5 (2 digits)",
+      precision: "NumberCloseTo 3 (0.5 digits)",
+      not: "NumberNotCloseTo 7 (1 digit)",
+      beyondInt32: "NumberCloseTo 4294967296 (-Infinity digits)",
+      notANumber: "NumberCloseTo NaN (2 digits)",
+    },
+    tests: `
+        const matchers = () => ({ number: expect.closeTo(1.5, 2), precision: expect.closeTo(3, 0.5), not: expect.not.closeTo(7, 1), same: expect.closeTo(3, 0) });
+        test("in a file", () => {
+          expect({ number: 1.5, precision: 3, not: 1, same: 3 }).toMatchSnapshot(matchers());
+          expect(matchers().number).toMatchSnapshot();
+          expect(matchers().precision).toMatchSnapshot();
+          expect(matchers().not).toMatchSnapshot();
+          expect({ class: URL, same: matchers().same }).toMatchSnapshot();
+          expect(expect.closeTo(2 ** 32, -Infinity)).toMatchSnapshot();
+          expect(expect.closeTo(NaN, 2)).toMatchSnapshot();
+        });
+      `,
+    all: ({ number, precision, not }: Record<string, string>) =>
+      `{\n  "not": ${not},\n  "number": ${number},\n  "precision": ${precision},\n  "same": NumberCloseTo 3 (0 digits),\n}`,
+    snap: (printed: Record<string, string>, className: string) =>
+      headers.bun +
+      `\nexports[\`in a file 1\`] = \`\n${closeTo.all(printed)}\n\`;\n` +
+      `\nexports[\`in a file 2\`] = \`${printed.number}\`;\n` +
+      `\nexports[\`in a file 3\`] = \`${printed.precision}\`;\n` +
+      `\nexports[\`in a file 4\`] = \`${printed.not}\`;\n` +
+      `\nexports[\`in a file 5\`] = \`\n{\n  "class": [class ${className}],\n  "same": NumberCloseTo 3 (0 digits),\n}\n\`;\n` +
+      `\nexports[\`in a file 6\`] = \`${printed.beyondInt32}\`;\n` +
+      `\nexports[\`in a file 7\`] = \`${printed.notANumber}\`;\n`,
+  };
+
+  test.each(["bun:test", "vitest"])(
+    "passes when it is what an older Bun wrote for expect.closeTo(), in a test of %j",
+    async module => {
+      const { older, newer } = closeTo;
+      const { log, stderr, exitCode } = await logOf({
+        "a.test.js": `
+          import { test, expect } from ${JSON.stringify(module)};
+          ${closeTo.tests}
+          test("inline", () => {
+            expect(matchers()).toMatchInlineSnapshot(\`\n${closeTo.all(older)}\n\`);
+            expect({ number: 1.5 }).toMatchInlineSnapshot({ number: matchers().number }, \`\n{\n  "number": ${older.number},\n}\n\`);
+            expect(matchers().number).toMatchInlineSnapshot(\`${older.number}\`);
+            expect(matchers().precision).toMatchInlineSnapshot(\`${older.precision}\`);
+            expect(matchers().not).toMatchInlineSnapshot(\`${older.not}\`);
+          });
+          test("but not for another number, or with one of the two as it prints now", () => {
+            const mismatch = "expect(received).toMatchInlineSnapshot(expected)";
+            expect(() => expect(matchers().number).toMatchInlineSnapshot(\`NumberCloseTo 2 (2 digits)\`)).toThrow(mismatch);
+            expect(() => expect(matchers().not).toMatchInlineSnapshot(\`NumberNotCloseTo8 (1 digit)\`)).toThrow(mismatch);
+            expect(() => expect(matchers()).toMatchInlineSnapshot(\`\n${closeTo.all({ ...older, number: newer.number })}\n\`)).toThrow(mismatch);
+          });
+        `,
+        "__snapshots__/a.test.js.snap": closeTo.snap(older, "Function"),
+      });
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+    },
+  );
+
+  test("what an older Bun wrote for expect.closeTo() stays as it is, and --update-snapshots rewrites it once", async () => {
+    const older = closeTo.snap(closeTo.older, "Function");
+    using dir = tempDir("snapshot-older-bun-close-to", {
+      "a.test.js": closeTo.tests,
+      "__snapshots__/a.test.js.snap": older,
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    for (const CI of ["true", "false"]) {
+      const { stderr, exitCode } = await runTests(String(dir), { CI });
+      expect(stderr).toContain(" 7 snapshots, ");
+      expect(snap()).toBe(older);
+      expect(exitCode).toBe(0);
+    }
+
+    const first = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    expect(snap()).toBe(closeTo.snap(closeTo.newer, "URL"));
+    const second = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const read = await runTests(String(dir), { CI: "true" });
+    expect(snap()).toBe(closeTo.snap(closeTo.newer, "URL"));
+    expect([first.exitCode, second.exitCode, read.exitCode]).toEqual([0, 0, 0]);
+  });
+
   test("has the properties that only the class of the object can list, and an older Bun's, which had none of them, passes", async () => {
     const { log, stderr, exitCode } = await logOf({
       "exports.js": `export const a = 1; export const b = "two";`,

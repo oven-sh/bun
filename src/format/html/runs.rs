@@ -2934,13 +2934,15 @@ impl<'a> Scanner<'_, 'a> {
         };
         let value =
             &value_and_rest[..bun_core::strings::index_of_char_usize(value_and_rest, b'"')?];
-        // What may be a reference is for the lexer: one that it does not know is an error.
-        let starts_reference = |&[first, second]: &[u8; 2]| {
-            first == b'&' && (second.is_ascii_alphanumeric() || second == b'#')
-        };
+        // A reference that the lexer does not know is an error.
+        let (mut at, value_end) = (from + len + 2, from + len + 2 + value.len());
+        while let Some(offset) =
+            bun_core::strings::index_of_char_usize(self.text.get(at..value_end)?, b'&')
+        {
+            at = self.reference_end(at + offset)?;
+        }
         // Behind `{{` the lexer looks for `}}` first.
         if bun_core::strings::contains(value, b"{{")
-            || value.array_windows().any(starts_reference)
             || (self.siblings.level + 1) * self.settings.indent_width > self.settings.line_width
         {
             return None;

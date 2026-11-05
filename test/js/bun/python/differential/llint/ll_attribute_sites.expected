@@ -1,5 +1,5 @@
 status: 0
-script: 9052cedb9453deac
+script: da211327d8eb3bca
 ---
 --- every kind after every other
 0 | AttributeError: 'DictWithAttributes' object has no attribute 'a' | AttributeError: 'DictWithAttributes' object has no attribute 'k' | 'DictWithAttributes.m'
@@ -2044,6 +2044,884 @@ class
        <function>
        ('of the instance', ())
        ('of the instance', ('arg',))
+       the argument first
+class whose class has __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+class whose class has __get__ and __set__
+   Ordinary, Ordinary #12, Ordinary #13
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+class whose class has __set__
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary #13, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <class '__main__.ClassThatSets'>
+       <__main__.ClassThatSets object>
+       TypeError: ClassThatSets() takes no arguments
+       the argument first
+list with __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+list with __get__ and __set__
+   Ordinary, Ordinary #12, Ordinary #13
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+tuple with __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+dict with __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+str with __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+int with __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+module with __get__
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+__get__ is a staticmethod
+   Ordinary, Ordinary #12
+       ('plain_function', ['StaticGet', 'Ordinary', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Hook
+       ('plain_function', ['StaticGet', 'Hook', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   HookRaises
+       ('plain_function', ['StaticGet', 'HookRaises', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Own
+       ('plain_function', ['StaticGet', 'Own', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   SameSlots
+       ('plain_function', ['StaticGet', 'SameSlots', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   OfOwner
+       ('plain_function', ['StaticGet', 'OfOwner', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Text
+       ('plain_function', ['StaticGet', 'Text', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Items
+       ('plain_function', ['StaticGet', 'Items', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Short #8, Short #9
+       ('plain_function', ['StaticGet', 'Short', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Number #10
+       ('plain_function', ['StaticGet', 'Number', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   WithMeta #11
+       ('plain_function', ['StaticGet', 'WithMeta', 'Meta'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself
+       ('plain_function', ['StaticGet', 'NoneType', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   WithMeta itself
+       ('plain_function', ['StaticGet', 'NoneType', 'Meta'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+__get__ is a classmethod
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       TypeError: 'classmethod' object is not callable
+       TypeError: 'classmethod' object is not callable
+       TypeError: 'classmethod' object is not callable
+       the attribute first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+__get__ is a partial
+   Ordinary, Ordinary #12
+       ('plain_function', ['int', 'PartialGet', 'Ordinary', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Hook
+       ('plain_function', ['int', 'PartialGet', 'Hook', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   HookRaises
+       ('plain_function', ['int', 'PartialGet', 'HookRaises', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Own
+       ('plain_function', ['int', 'PartialGet', 'Own', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   SameSlots
+       ('plain_function', ['int', 'PartialGet', 'SameSlots', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   OfOwner
+       ('plain_function', ['int', 'PartialGet', 'OfOwner', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Text
+       ('plain_function', ['int', 'PartialGet', 'Text', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Items
+       ('plain_function', ['int', 'PartialGet', 'Items', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Short #8, Short #9
+       ('plain_function', ['int', 'PartialGet', 'Short', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Number #10
+       ('plain_function', ['int', 'PartialGet', 'Number', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   WithMeta #11
+       ('plain_function', ['int', 'PartialGet', 'WithMeta', 'Meta'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself
+       ('plain_function', ['int', 'PartialGet', 'NoneType', 'type'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   WithMeta itself
+       ('plain_function', ['int', 'PartialGet', 'NoneType', 'Meta'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
        the argument first
 None
    Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself

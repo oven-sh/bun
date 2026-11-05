@@ -1,0 +1,2116 @@
+status: 0
+script: 152cb65b0fb22315
+---
+--- f(*p)
+f0 | () ; []  | 'f0'
+f0 | (1,)  | TypeError: f0() takes 0 positional arguments but 1 was given
+f0 | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: f0() takes 0 positional arguments but 2 were given
+f0 | (1, 2, 3)  | TypeError: f0() takes 0 positional arguments but 3 were given
+f0 | 5  | TypeError: Value after * must be an iterable, not int
+f0 | None  | TypeError: Value after * must be an iterable, not NoneType
+f0 | __iter__ raises  | KeyError: 'in __iter__'
+f0 | __next__ raises  | TypeError: in __next__
+f0 | long  | TypeError: f0() takes 0 positional arguments but 40 were given
+f1 | () ; []  | TypeError: f1() missing 1 required positional argument: 'a'
+f1 | (1,)  | ('f1', 1)
+f1 | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: f1() takes 1 positional argument but 2 were given
+f1 | (1, 2, 3)  | TypeError: f1() takes 1 positional argument but 3 were given
+f1 | 5  | TypeError: Value after * must be an iterable, not int
+f1 | None  | TypeError: Value after * must be an iterable, not NoneType
+f1 | __iter__ raises  | KeyError: 'in __iter__'
+f1 | __next__ raises  | TypeError: in __next__
+f1 | long  | TypeError: f1() takes 1 positional argument but 40 were given
+f2 | () ; []  | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | (1,) ; (1, 2) ; [1, 2] ; tuple child ; generator  | ('f2', 1, 2)
+f2 | (1, 2, 3)  | TypeError: f2() takes from 1 to 2 positional arguments but 3 were given
+f2 | tuple with __iter__ ; list with __iter__  | ('f2', 'from', '__iter__')
+f2 | dict  | ('f2', 'x', 'y')
+f2 | str  | ('f2', 'a', 'b')
+f2 | range  | ('f2', 0, 1)
+f2 | only __getitem__  | ('f2', 'item0', 'item1')
+f2 | 5  | TypeError: Value after * must be an iterable, not int
+f2 | None  | TypeError: Value after * must be an iterable, not NoneType
+f2 | __iter__ raises  | KeyError: 'in __iter__'
+f2 | __next__ raises  | TypeError: in __next__
+f2 | long  | TypeError: f2() takes from 1 to 2 positional arguments but 40 were given
+f3 | () ; []  | TypeError: f3() missing 3 required positional arguments: 'a', 'b', and 'c'
+f3 | (1,)  | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | (1, 2, 3)  | ('f3', 1, 2, 3)
+f3 | 5  | TypeError: Value after * must be an iterable, not int
+f3 | None  | TypeError: Value after * must be an iterable, not NoneType
+f3 | __iter__ raises  | KeyError: 'in __iter__'
+f3 | __next__ raises  | TypeError: in __next__
+f3 | long  | TypeError: f3() takes 3 positional arguments but 40 were given
+fv | () ; []  | ('fv', ())
+fv | (1,)  | ('fv', (1))
+fv | (1, 2) ; [1, 2] ; tuple child ; generator  | ('fv', (1, 2))
+fv | (1, 2, 3)  | ('fv', (1, 2, 3))
+fv | tuple with __iter__ ; list with __iter__  | ('fv', ('from', '__iter__'))
+fv | dict  | ('fv', ('x', 'y'))
+fv | str  | ('fv', ('a', 'b'))
+fv | range  | ('fv', (0, 1))
+fv | only __getitem__  | ('fv', ('item0', 'item1'))
+fv | 5  | TypeError: Value after * must be an iterable, not int
+fv | None  | TypeError: Value after * must be an iterable, not NoneType
+fv | __iter__ raises  | KeyError: 'in __iter__'
+fv | __next__ raises  | TypeError: in __next__
+fv | long  | ('fv', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39))
+fk | () ; []  | ('fk', {})
+fk | (1,)  | TypeError: fk() takes 0 positional arguments but 1 was given
+fk | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: fk() takes 0 positional arguments but 2 were given
+fk | (1, 2, 3)  | TypeError: fk() takes 0 positional arguments but 3 were given
+fk | 5  | TypeError: Value after * must be an iterable, not int
+fk | None  | TypeError: Value after * must be an iterable, not NoneType
+fk | __iter__ raises  | KeyError: 'in __iter__'
+fk | __next__ raises  | TypeError: in __next__
+fk | long  | TypeError: fk() takes 0 positional arguments but 40 were given
+fvk | () ; []  | ('fvk', (), {})
+fvk | (1,)  | ('fvk', (1), {})
+fvk | (1, 2) ; [1, 2] ; tuple child ; generator  | ('fvk', (1, 2), {})
+fvk | (1, 2, 3)  | ('fvk', (1, 2, 3), {})
+fvk | tuple with __iter__ ; list with __iter__  | ('fvk', ('from', '__iter__'), {})
+fvk | dict  | ('fvk', ('x', 'y'), {})
+fvk | str  | ('fvk', ('a', 'b'), {})
+fvk | range  | ('fvk', (0, 1), {})
+fvk | only __getitem__  | ('fvk', ('item0', 'item1'), {})
+fvk | 5  | TypeError: Value after * must be an iterable, not int
+fvk | None  | TypeError: Value after * must be an iterable, not NoneType
+fvk | __iter__ raises  | KeyError: 'in __iter__'
+fvk | __next__ raises  | TypeError: in __next__
+fvk | long  | ('fvk', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {})
+favk | () ; []  | TypeError: favk() missing 1 required positional argument: 'a'
+favk | (1,)  | ('favk', 1, (), {})
+favk | (1, 2) ; [1, 2] ; tuple child ; generator  | ('favk', 1, (2), {})
+favk | (1, 2, 3)  | ('favk', 1, (2, 3), {})
+favk | tuple with __iter__ ; list with __iter__  | ('favk', 'from', ('__iter__'), {})
+favk | dict  | ('favk', 'x', ('y'), {})
+favk | str  | ('favk', 'a', ('b'), {})
+favk | range  | ('favk', 0, (1), {})
+favk | only __getitem__  | ('favk', 'item0', ('item1'), {})
+favk | 5  | TypeError: Value after * must be an iterable, not int
+favk | None  | TypeError: Value after * must be an iterable, not NoneType
+favk | __iter__ raises  | KeyError: 'in __iter__'
+favk | __next__ raises  | TypeError: in __next__
+favk | long  | ('favk', 0, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {})
+fko | () ; []  | TypeError: fko() missing 1 required positional argument: 'a'
+fko | (1,)  | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: fko() takes 1 positional argument but 2 were given
+fko | (1, 2, 3)  | TypeError: fko() takes 1 positional argument but 3 were given
+fko | 5  | TypeError: Value after * must be an iterable, not int
+fko | None  | TypeError: Value after * must be an iterable, not NoneType
+fko | __iter__ raises  | KeyError: 'in __iter__'
+fko | __next__ raises  | TypeError: in __next__
+fko | long  | TypeError: fko() takes 1 positional argument but 40 were given
+fpo | () ; []  | TypeError: fpo() missing 1 required positional argument: 'a'
+fpo | (1,) ; (1, 2) ; (1, 2, 3) ; [1, 2] ; tuple child ; generator  | ('fpo', 1, 2, 3)
+fpo | tuple with __iter__ ; list with __iter__  | ('fpo', 'from', '__iter__', 3)
+fpo | dict  | ('fpo', 'x', 'y', 3)
+fpo | str  | ('fpo', 'a', 'b', 3)
+fpo | range  | ('fpo', 0, 1, 3)
+fpo | only __getitem__  | ('fpo', 'item0', 'item1', 3)
+fpo | 5  | TypeError: Value after * must be an iterable, not int
+fpo | None  | TypeError: Value after * must be an iterable, not NoneType
+fpo | __iter__ raises  | KeyError: 'in __iter__'
+fpo | __next__ raises  | TypeError: in __next__
+fpo | long  | TypeError: fpo() takes from 1 to 3 positional arguments but 40 were given
+fpok | () ; []  | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | (1,)  | ('fpok', 1, {})
+fpok | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: fpok() takes 1 positional argument but 2 were given
+fpok | (1, 2, 3)  | TypeError: fpok() takes 1 positional argument but 3 were given
+fpok | 5  | TypeError: Value after * must be an iterable, not int
+fpok | None  | TypeError: Value after * must be an iterable, not NoneType
+fpok | __iter__ raises  | KeyError: 'in __iter__'
+fpok | __next__ raises  | TypeError: in __next__
+fpok | long  | TypeError: fpok() takes 1 positional argument but 40 were given
+lambda | () ; []  | TypeError: <lambda>() missing 1 required positional argument: 'a'
+lambda | (1,) ; (1, 2) ; [1, 2] ; tuple child ; generator  | ('lambda', 1, 2, (), {})
+lambda | (1, 2, 3)  | ('lambda', 1, 2, (3), {})
+lambda | tuple with __iter__ ; list with __iter__  | ('lambda', 'from', '__iter__', (), {})
+lambda | dict  | ('lambda', 'x', 'y', (), {})
+lambda | str  | ('lambda', 'a', 'b', (), {})
+lambda | range  | ('lambda', 0, 1, (), {})
+lambda | only __getitem__  | ('lambda', 'item0', 'item1', (), {})
+lambda | 5  | TypeError: Value after * must be an iterable, not int
+lambda | None  | TypeError: Value after * must be an iterable, not NoneType
+lambda | __iter__ raises  | KeyError: 'in __iter__'
+lambda | __next__ raises  | TypeError: in __next__
+lambda | long  | ('lambda', 0, 1, (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {})
+Made | () ; (1,) ; []  | Made(1, (), {})
+Made | (1, 2) ; [1, 2] ; tuple child ; generator  | Made(1, (2), {})
+Made | (1, 2, 3)  | Made(1, (2, 3), {})
+Made | tuple with __iter__ ; list with __iter__  | Made('from', ('__iter__'), {})
+Made | dict  | Made('x', ('y'), {})
+Made | str  | Made('a', ('b'), {})
+Made | range  | Made(0, (1), {})
+Made | only __getitem__  | Made('item0', ('item1'), {})
+Made | 5  | TypeError: Value after * must be an iterable, not int
+Made | None  | TypeError: Value after * must be an iterable, not NoneType
+Made | __iter__ raises  | KeyError: 'in __iter__'
+Made | __next__ raises  | TypeError: in __next__
+Made | long  | Made(0, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {})
+method | () ; []  | TypeError: Made.method() missing 1 required positional argument: 'a'
+method | (1,) ; (1, 2) ; [1, 2] ; tuple child ; generator  | ('method', 1, 2, {})
+method | (1, 2, 3)  | TypeError: Made.method() takes from 2 to 3 positional arguments but 4 were given
+method | tuple with __iter__ ; list with __iter__  | ('method', 'from', '__iter__', {})
+method | dict  | ('method', 'x', 'y', {})
+method | str  | ('method', 'a', 'b', {})
+method | range  | ('method', 0, 1, {})
+method | only __getitem__  | ('method', 'item0', 'item1', {})
+method | 5  | TypeError: Value after * must be an iterable, not int
+method | None  | TypeError: Value after * must be an iterable, not NoneType
+method | __iter__ raises  | KeyError: 'in __iter__'
+method | __next__ raises  | TypeError: in __next__
+method | long  | TypeError: Made.method() takes from 2 to 3 positional arguments but 41 were given
+cm | () ; []  | ('cm', 'Made', (), {})
+cm | (1,)  | ('cm', 'Made', (1), {})
+cm | (1, 2) ; [1, 2] ; tuple child ; generator  | ('cm', 'Made', (1, 2), {})
+cm | (1, 2, 3)  | ('cm', 'Made', (1, 2, 3), {})
+cm | tuple with __iter__ ; list with __iter__  | ('cm', 'Made', ('from', '__iter__'), {})
+cm | dict  | ('cm', 'Made', ('x', 'y'), {})
+cm | str  | ('cm', 'Made', ('a', 'b'), {})
+cm | range  | ('cm', 'Made', (0, 1), {})
+cm | only __getitem__  | ('cm', 'Made', ('item0', 'item1'), {})
+cm | 5  | TypeError: Value after * must be an iterable, not int
+cm | None  | TypeError: Value after * must be an iterable, not NoneType
+cm | __iter__ raises  | KeyError: 'in __iter__'
+cm | __next__ raises  | TypeError: in __next__
+cm | long  | ('cm', 'Made', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {})
+sm | () ; []  | TypeError: Made.sm() missing 1 required positional argument: 'a'
+sm | (1,) ; (1, 2) ; [1, 2] ; tuple child ; generator  | ('sm', 1, 2)
+sm | (1, 2, 3)  | TypeError: Made.sm() takes from 1 to 2 positional arguments but 3 were given
+sm | tuple with __iter__ ; list with __iter__  | ('sm', 'from', '__iter__')
+sm | dict  | ('sm', 'x', 'y')
+sm | str  | ('sm', 'a', 'b')
+sm | range  | ('sm', 0, 1)
+sm | only __getitem__  | ('sm', 'item0', 'item1')
+sm | 5  | TypeError: Value after * must be an iterable, not int
+sm | None  | TypeError: Value after * must be an iterable, not NoneType
+sm | __iter__ raises  | KeyError: 'in __iter__'
+sm | __next__ raises  | TypeError: in __next__
+sm | long  | TypeError: Made.sm() takes from 1 to 2 positional arguments but 40 were given
+callable object | () ; []  | ('__call__', (), {})
+callable object | (1,)  | ('__call__', (1), {})
+callable object | (1, 2) ; [1, 2] ; tuple child ; generator  | ('__call__', (1, 2), {})
+callable object | (1, 2, 3)  | ('__call__', (1, 2, 3), {})
+callable object | tuple with __iter__ ; list with __iter__  | ('__call__', ('from', '__iter__'), {})
+callable object | dict  | ('__call__', ('x', 'y'), {})
+callable object | str  | ('__call__', ('a', 'b'), {})
+callable object | range  | ('__call__', (0, 1), {})
+callable object | only __getitem__  | ('__call__', ('item0', 'item1'), {})
+callable object | 5  | TypeError: Value after * must be an iterable, not int
+callable object | None  | TypeError: Value after * must be an iterable, not NoneType
+callable object | __iter__ raises  | KeyError: 'in __iter__'
+callable object | __next__ raises  | TypeError: in __next__
+callable object | long  | ('__call__', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {})
+partial | () ; []  | ('favk', 'p', (), {'x': 'from partial'})
+partial | (1,)  | ('favk', 'p', (1), {'x': 'from partial'})
+partial | (1, 2) ; [1, 2] ; tuple child ; generator  | ('favk', 'p', (1, 2), {'x': 'from partial'})
+partial | (1, 2, 3)  | ('favk', 'p', (1, 2, 3), {'x': 'from partial'})
+partial | tuple with __iter__ ; list with __iter__  | ('favk', 'p', ('from', '__iter__'), {'x': 'from partial'})
+partial | dict  | ('favk', 'p', ('x', 'y'), {'x': 'from partial'})
+partial | str  | ('favk', 'p', ('a', 'b'), {'x': 'from partial'})
+partial | range  | ('favk', 'p', (0, 1), {'x': 'from partial'})
+partial | only __getitem__  | ('favk', 'p', ('item0', 'item1'), {'x': 'from partial'})
+partial | 5  | TypeError: Value after * must be an iterable, not int
+partial | None  | TypeError: Value after * must be an iterable, not NoneType
+partial | __iter__ raises  | KeyError: 'in __iter__'
+partial | __next__ raises  | TypeError: in __next__
+partial | long  | ('favk', 'p', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39), {'x': 'from partial'})
+dict | () ; []  | {}
+dict | (1,)  | TypeError: 'int' object is not iterable
+dict | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: dict expected at most 1 argument, got 2
+dict | (1, 2, 3)  | TypeError: dict expected at most 1 argument, got 3
+dict | 5  | TypeError: Value after * must be an iterable, not int
+dict | None  | TypeError: Value after * must be an iterable, not NoneType
+dict | __iter__ raises  | KeyError: 'in __iter__'
+dict | __next__ raises  | TypeError: in __next__
+dict | long  | TypeError: dict expected at most 1 argument, got 40
+int | () ; []  | 0
+int | (1,)  | 1
+int | (1, 2) ; [1, 2] ; tuple child ; generator  | TypeError: int() can't convert non-string with explicit base
+int | (1, 2, 3)  | TypeError: int expected at most 2 arguments, got 3
+int | tuple with __iter__ ; list with __iter__ ; dict ; str ; only __getitem__  | TypeError: 'str' object cannot be interpreted as an integer
+int | range  | ValueError: int() base must be >= 2 and <= 36, or 0
+int | 5  | TypeError: Value after * must be an iterable, not int
+int | None  | TypeError: Value after * must be an iterable, not NoneType
+int | __iter__ raises  | KeyError: 'in __iter__'
+int | __next__ raises  | TypeError: in __next__
+int | long  | TypeError: int expected at most 2 arguments, got 40
+sorted | () ; []  | TypeError: sorted expected 1 argument, got 0
+sorted | (1,)  | TypeError: 'int' object is not iterable
+sorted | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: sorted expected 1 argument, got 2
+sorted | (1, 2, 3)  | TypeError: sorted expected 1 argument, got 3
+sorted | 5  | TypeError: Value after * must be an iterable, not int
+sorted | None  | TypeError: Value after * must be an iterable, not NoneType
+sorted | __iter__ raises  | KeyError: 'in __iter__'
+sorted | __next__ raises  | TypeError: in __next__
+sorted | long  | TypeError: sorted expected 1 argument, got 40
+max | () ; []  | TypeError: max expected at least 1 argument, got 0
+max | (1,)  | TypeError: 'int' object is not iterable
+max | (1, 2) ; [1, 2] ; tuple child ; generator  | 2
+max | (1, 2, 3)  | 3
+max | tuple with __iter__ ; list with __iter__  | 'from'
+max | dict  | 'y'
+max | str  | 'b'
+max | range  | 1
+max | only __getitem__  | 'item1'
+max | 5  | TypeError: Value after * must be an iterable, not int
+max | None  | TypeError: Value after * must be an iterable, not NoneType
+max | __iter__ raises  | KeyError: 'in __iter__'
+max | __next__ raises  | TypeError: in __next__
+max | long  | 39
+str.format | () ; []  | IndexError: Replacement index 0 out of range for positional args tuple
+str.format | (1,) ; (1, 2) ; (1, 2, 3) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__ ; long  | KeyError: 'a'
+str.format | 5  | TypeError: Value after * must be an iterable, not int
+str.format | None  | TypeError: Value after * must be an iterable, not NoneType
+str.format | __iter__ raises  | KeyError: 'in __iter__'
+str.format | __next__ raises  | TypeError: in __next__
+tuple | () ; []  | ()
+tuple | (1,)  | TypeError: 'int' object is not iterable
+tuple | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: tuple expected at most 1 argument, got 2
+tuple | (1, 2, 3)  | TypeError: tuple expected at most 1 argument, got 3
+tuple | 5  | TypeError: Value after * must be an iterable, not int
+tuple | None  | TypeError: Value after * must be an iterable, not NoneType
+tuple | __iter__ raises  | KeyError: 'in __iter__'
+tuple | __next__ raises  | TypeError: in __next__
+tuple | long  | TypeError: tuple expected at most 1 argument, got 40
+SimpleNamespace | () ; []  | namespace()
+SimpleNamespace | (1,)  | TypeError: 'int' object is not iterable
+SimpleNamespace | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: SimpleNamespace expected at most 1 argument, got 2
+SimpleNamespace | (1, 2, 3)  | TypeError: SimpleNamespace expected at most 1 argument, got 3
+SimpleNamespace | 5  | TypeError: Value after * must be an iterable, not int
+SimpleNamespace | None  | TypeError: Value after * must be an iterable, not NoneType
+SimpleNamespace | __iter__ raises  | KeyError: 'in __iter__'
+SimpleNamespace | __next__ raises  | TypeError: in __next__
+SimpleNamespace | long  | TypeError: SimpleNamespace expected at most 1 argument, got 40
+divmod | () ; []  | TypeError: divmod expected 2 arguments, got 0
+divmod | (1,)  | TypeError: divmod expected 2 arguments, got 1
+divmod | (1, 2) ; [1, 2] ; tuple child ; generator  | (0, 1)
+divmod | (1, 2, 3)  | TypeError: divmod expected 2 arguments, got 3
+divmod | tuple with __iter__ ; list with __iter__ ; dict ; str ; only __getitem__  | TypeError: unsupported operand type(s) for divmod(): 'str' and 'str'
+divmod | range  | (0, 0)
+divmod | 5  | TypeError: Value after * must be an iterable, not int
+divmod | None  | TypeError: Value after * must be an iterable, not NoneType
+divmod | __iter__ raises  | KeyError: 'in __iter__'
+divmod | __next__ raises  | TypeError: in __next__
+divmod | long  | TypeError: divmod expected 2 arguments, got 40
+len | () ; []  | TypeError: len() takes exactly one argument (0 given)
+len | (1,)  | TypeError: object of type 'int' has no len()
+len | (1, 2) ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__  | TypeError: len() takes exactly one argument (2 given)
+len | (1, 2, 3)  | TypeError: len() takes exactly one argument (3 given)
+len | 5  | TypeError: Value after * must be an iterable, not int
+len | None  | TypeError: Value after * must be an iterable, not NoneType
+len | __iter__ raises  | KeyError: 'in __iter__'
+len | __next__ raises  | TypeError: in __next__
+len | long  | TypeError: len() takes exactly one argument (40 given)
+not callable | () ; (1,) ; (1, 2) ; (1, 2, 3) ; [] ; [1, 2] ; tuple child ; tuple with __iter__ ; list with __iter__ ; generator ; dict ; str ; range ; only __getitem__ ; long  | TypeError: 'int' object is not callable
+not callable | 5  | TypeError: Value after * must be an iterable, not int
+not callable | None  | TypeError: Value after * must be an iterable, not NoneType
+not callable | __iter__ raises  | KeyError: 'in __iter__'
+not callable | __next__ raises  | TypeError: in __next__
+--- f(**k)
+f0 | {} | 'f0'
+f0 | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; mapping; frozendict; mappingproxy; str child | TypeError: f0() got an unexpected keyword argument 'a'
+f0 | {'b': 1}; OrderedDict | TypeError: f0() got an unexpected keyword argument 'b'
+f0 | {'c': 3, 'a': 1} | TypeError: f0() got an unexpected keyword argument 'c'
+f0 | {'zz': 1}; dict with keys(); str children | TypeError: f0() got an unexpected keyword argument 'zz'
+f0 | long names made at run time | TypeError: f0() got an unexpected keyword argument 'some_name'
+f0 | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+f0 | keys() raises | AttributeError: in keys
+f0 | 5 | TypeError: Value after ** must be a mapping, not int
+f0 | None | TypeError: Value after ** must be a mapping, not NoneType
+f0 | list | TypeError: Value after ** must be a mapping, not list
+f0 | a key that is no str; no str among strs | TypeError: keywords must be strings
+f0 | reverse | TypeError: f0() got an unexpected keyword argument 'reverse'
+f0 | base | TypeError: f0() got an unexpected keyword argument 'base'
+f0 | many | TypeError: f0() got an unexpected keyword argument 'k0'
+f1 | {} | TypeError: f1() missing 1 required positional argument: 'a'
+f1 | {'a': 1}; dict child; frozendict; mappingproxy; str child | ('f1', 1)
+f1 | {'b': 1}; {'a': 1, 'b': 2}; names made at run time; mapping; OrderedDict | TypeError: f1() got an unexpected keyword argument 'b'
+f1 | {'c': 3, 'a': 1} | TypeError: f1() got an unexpected keyword argument 'c'
+f1 | {'zz': 1}; dict with keys(); str children | TypeError: f1() got an unexpected keyword argument 'zz'
+f1 | long names made at run time | TypeError: f1() got an unexpected keyword argument 'some_name'
+f1 | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+f1 | keys() raises | AttributeError: in keys
+f1 | 5 | TypeError: Value after ** must be a mapping, not int
+f1 | None | TypeError: Value after ** must be a mapping, not NoneType
+f1 | list | TypeError: Value after ** must be a mapping, not list
+f1 | a key that is no str; no str among strs | TypeError: keywords must be strings
+f1 | reverse | TypeError: f1() got an unexpected keyword argument 'reverse'
+f1 | base | TypeError: f1() got an unexpected keyword argument 'base'
+f1 | many | TypeError: f1() got an unexpected keyword argument 'k0'
+f2 | {}; {'b': 1} | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; frozendict; mappingproxy; str child | ('f2', 1, 2)
+f2 | {'c': 3, 'a': 1} | TypeError: f2() got an unexpected keyword argument 'c'
+f2 | {'zz': 1}; dict with keys(); str children | TypeError: f2() got an unexpected keyword argument 'zz'
+f2 | long names made at run time | TypeError: f2() got an unexpected keyword argument 'some_name'
+f2 | mapping | ('f2', 'aa', 'bb')
+f2 | OrderedDict | ('f2', 2, 1)
+f2 | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+f2 | keys() raises | AttributeError: in keys
+f2 | 5 | TypeError: Value after ** must be a mapping, not int
+f2 | None | TypeError: Value after ** must be a mapping, not NoneType
+f2 | list | TypeError: Value after ** must be a mapping, not list
+f2 | a key that is no str; no str among strs | TypeError: keywords must be strings
+f2 | reverse | TypeError: f2() got an unexpected keyword argument 'reverse'
+f2 | base | TypeError: f2() got an unexpected keyword argument 'base'
+f2 | many | TypeError: f2() got an unexpected keyword argument 'k0'
+f3 | {} | TypeError: f3() missing 3 required positional arguments: 'a', 'b', and 'c'
+f3 | {'a': 1}; dict child; frozendict; mappingproxy; str child | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | {'b': 1} | TypeError: f3() missing 2 required positional arguments: 'a' and 'c'
+f3 | {'a': 1, 'b': 2}; names made at run time; mapping; OrderedDict | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | {'c': 3, 'a': 1} | TypeError: f3() missing 1 required positional argument: 'b'
+f3 | {'zz': 1}; dict with keys(); str children | TypeError: f3() got an unexpected keyword argument 'zz'
+f3 | long names made at run time | TypeError: f3() got an unexpected keyword argument 'some_name'
+f3 | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+f3 | keys() raises | AttributeError: in keys
+f3 | 5 | TypeError: Value after ** must be a mapping, not int
+f3 | None | TypeError: Value after ** must be a mapping, not NoneType
+f3 | list | TypeError: Value after ** must be a mapping, not list
+f3 | a key that is no str; no str among strs | TypeError: keywords must be strings
+f3 | reverse | TypeError: f3() got an unexpected keyword argument 'reverse'
+f3 | base | TypeError: f3() got an unexpected keyword argument 'base'
+f3 | many | TypeError: f3() got an unexpected keyword argument 'k0'
+fv | {} | ('fv', ())
+fv | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; mapping; frozendict; mappingproxy; str child | TypeError: fv() got an unexpected keyword argument 'a'
+fv | {'b': 1}; OrderedDict | TypeError: fv() got an unexpected keyword argument 'b'
+fv | {'c': 3, 'a': 1} | TypeError: fv() got an unexpected keyword argument 'c'
+fv | {'zz': 1}; dict with keys(); str children | TypeError: fv() got an unexpected keyword argument 'zz'
+fv | long names made at run time | TypeError: fv() got an unexpected keyword argument 'some_name'
+fv | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+fv | keys() raises | AttributeError: in keys
+fv | 5 | TypeError: Value after ** must be a mapping, not int
+fv | None | TypeError: Value after ** must be a mapping, not NoneType
+fv | list | TypeError: Value after ** must be a mapping, not list
+fv | a key that is no str; no str among strs | TypeError: keywords must be strings
+fv | reverse | TypeError: fv() got an unexpected keyword argument 'reverse'
+fv | base | TypeError: fv() got an unexpected keyword argument 'base'
+fv | many | TypeError: fv() got an unexpected keyword argument 'k0'
+fk | {} | ('fk', {})
+fk | {'a': 1}; dict child; frozendict; mappingproxy | ('fk', {'a': 1})
+fk | {'b': 1} | ('fk', {'b': 1})
+fk | {'a': 1, 'b': 2}; names made at run time | ('fk', {'a': 1, 'b': 2})
+fk | {'c': 3, 'a': 1} | ('fk', {'c': 3, 'a': 1})
+fk | {'zz': 1}; dict with keys() | ('fk', {'zz': 1})
+fk | long names made at run time | ('fk', {'some_name': 1, 'a': 2})
+fk | mapping | ('fk', {'a': 'aa', 'b': 'bb'})
+fk | OrderedDict | ('fk', {'b': 1, 'a': 2})
+fk | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+fk | keys() raises | AttributeError: in keys
+fk | 5 | TypeError: Value after ** must be a mapping, not int
+fk | None | TypeError: Value after ** must be a mapping, not NoneType
+fk | list | TypeError: Value after ** must be a mapping, not list
+fk | a key that is no str; no str among strs | TypeError: keywords must be strings
+fk | str child | ('fk', {StrChild 'a': 1})
+fk | str children | ('fk', {StrChild 'zz': 1, 'b': 2})
+fk | reverse | ('fk', {'reverse': True})
+fk | base | ('fk', {'base': 8})
+fk | many | ('fk', {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25': 25, 'k26': 26, 'k27': 27, 'k28
+fvk | {} | ('fvk', (), {})
+fvk | {'a': 1}; dict child; frozendict; mappingproxy | ('fvk', (), {'a': 1})
+fvk | {'b': 1} | ('fvk', (), {'b': 1})
+fvk | {'a': 1, 'b': 2}; names made at run time | ('fvk', (), {'a': 1, 'b': 2})
+fvk | {'c': 3, 'a': 1} | ('fvk', (), {'c': 3, 'a': 1})
+fvk | {'zz': 1}; dict with keys() | ('fvk', (), {'zz': 1})
+fvk | long names made at run time | ('fvk', (), {'some_name': 1, 'a': 2})
+fvk | mapping | ('fvk', (), {'a': 'aa', 'b': 'bb'})
+fvk | OrderedDict | ('fvk', (), {'b': 1, 'a': 2})
+fvk | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+fvk | keys() raises | AttributeError: in keys
+fvk | 5 | TypeError: Value after ** must be a mapping, not int
+fvk | None | TypeError: Value after ** must be a mapping, not NoneType
+fvk | list | TypeError: Value after ** must be a mapping, not list
+fvk | a key that is no str; no str among strs | TypeError: keywords must be strings
+fvk | str child | ('fvk', (), {StrChild 'a': 1})
+fvk | str children | ('fvk', (), {StrChild 'zz': 1, 'b': 2})
+fvk | reverse | ('fvk', (), {'reverse': True})
+fvk | base | ('fvk', (), {'base': 8})
+fvk | many | ('fvk', (), {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25': 25, 'k26': 26, 'k27': 27,
+favk | {}; {'b': 1}; {'zz': 1}; dict with keys(); str children; reverse; base; many | TypeError: favk() missing 1 required positional argument: 'a'
+favk | {'a': 1}; dict child; frozendict; mappingproxy; str child | ('favk', 1, (), {})
+favk | {'a': 1, 'b': 2}; names made at run time | ('favk', 1, (), {'b': 2})
+favk | {'c': 3, 'a': 1} | ('favk', 1, (), {'c': 3})
+favk | long names made at run time | ('favk', 2, (), {'some_name': 1})
+favk | mapping | ('favk', 'aa', (), {'b': 'bb'})
+favk | OrderedDict | ('favk', 2, (), {'b': 1})
+favk | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+favk | keys() raises | AttributeError: in keys
+favk | 5 | TypeError: Value after ** must be a mapping, not int
+favk | None | TypeError: Value after ** must be a mapping, not NoneType
+favk | list | TypeError: Value after ** must be a mapping, not list
+favk | a key that is no str; no str among strs | TypeError: keywords must be strings
+fko | {}; {'b': 1} | TypeError: fko() missing 1 required positional argument: 'a'
+fko | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; mapping; frozendict; mappingproxy; OrderedDict; str child | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | {'c': 3, 'a': 1} | ('fko', 1, 2, 3)
+fko | {'zz': 1}; dict with keys(); str children | TypeError: fko() got an unexpected keyword argument 'zz'
+fko | long names made at run time | TypeError: fko() got an unexpected keyword argument 'some_name'
+fko | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+fko | keys() raises | AttributeError: in keys
+fko | 5 | TypeError: Value after ** must be a mapping, not int
+fko | None | TypeError: Value after ** must be a mapping, not NoneType
+fko | list | TypeError: Value after ** must be a mapping, not list
+fko | a key that is no str; no str among strs | TypeError: keywords must be strings
+fko | reverse | TypeError: fko() got an unexpected keyword argument 'reverse'
+fko | base | TypeError: fko() got an unexpected keyword argument 'base'
+fko | many | TypeError: fko() got an unexpected keyword argument 'k0'
+fpo | {} | TypeError: fpo() missing 1 required positional argument: 'a'
+fpo | {'a': 1}; {'c': 3, 'a': 1}; long names made at run time; dict child; frozendict; mappingproxy; str child | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a'
+fpo | {'b': 1}; str children | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'b'
+fpo | {'a': 1, 'b': 2}; names made at run time; mapping; OrderedDict | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a, b'
+fpo | {'zz': 1}; dict with keys() | TypeError: fpo() got an unexpected keyword argument 'zz'
+fpo | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+fpo | keys() raises | AttributeError: in keys
+fpo | 5 | TypeError: Value after ** must be a mapping, not int
+fpo | None | TypeError: Value after ** must be a mapping, not NoneType
+fpo | list | TypeError: Value after ** must be a mapping, not list
+fpo | a key that is no str; no str among strs | TypeError: keywords must be strings
+fpo | reverse | TypeError: fpo() got an unexpected keyword argument 'reverse'
+fpo | base | TypeError: fpo() got an unexpected keyword argument 'base'
+fpo | many | TypeError: fpo() got an unexpected keyword argument 'k0'
+fpok | {}; {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; str child; str children; reverse; base; many | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+fpok | keys() raises | AttributeError: in keys
+fpok | 5 | TypeError: Value after ** must be a mapping, not int
+fpok | None | TypeError: Value after ** must be a mapping, not NoneType
+fpok | list | TypeError: Value after ** must be a mapping, not list
+fpok | a key that is no str; no str among strs | TypeError: keywords must be strings
+lambda | {}; {'b': 1}; {'zz': 1}; dict with keys(); str children; reverse; base; many | TypeError: <lambda>() missing 1 required positional argument: 'a'
+lambda | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; frozendict; mappingproxy; str child | ('lambda', 1, 2, (), {})
+lambda | {'c': 3, 'a': 1} | ('lambda', 1, 2, (), {'c': 3})
+lambda | long names made at run time | ('lambda', 2, 2, (), {'some_name': 1})
+lambda | mapping | ('lambda', 'aa', 'bb', (), {})
+lambda | OrderedDict | ('lambda', 2, 1, (), {})
+lambda | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+lambda | keys() raises | AttributeError: in keys
+lambda | 5 | TypeError: Value after ** must be a mapping, not int
+lambda | None | TypeError: Value after ** must be a mapping, not NoneType
+lambda | list | TypeError: Value after ** must be a mapping, not list
+lambda | a key that is no str; no str among strs | TypeError: keywords must be strings
+Made | {}; {'a': 1}; dict child; frozendict; mappingproxy; str child | Made(1, (), {})
+Made | {'b': 1} | Made(1, (), {'b': 1})
+Made | {'a': 1, 'b': 2}; names made at run time | Made(1, (), {'b': 2})
+Made | {'c': 3, 'a': 1} | Made(1, (), {'c': 3})
+Made | {'zz': 1}; dict with keys() | Made(1, (), {'zz': 1})
+Made | long names made at run time | Made(2, (), {'some_name': 1})
+Made | mapping | Made('aa', (), {'b': 'bb'})
+Made | OrderedDict | Made(2, (), {'b': 1})
+Made | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+Made | keys() raises | AttributeError: in keys
+Made | 5 | TypeError: Value after ** must be a mapping, not int
+Made | None | TypeError: Value after ** must be a mapping, not NoneType
+Made | list | TypeError: Value after ** must be a mapping, not list
+Made | a key that is no str; no str among strs | TypeError: keywords must be strings
+Made | str children | Made(1, (), {StrChild 'zz': 1, 'b': 2})
+Made | reverse | Made(1, (), {'reverse': True})
+Made | base | Made(1, (), {'base': 8})
+Made | many | Made(1, (), {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25': 25, 'k26': 26, 'k27': 27,
+method | {}; {'b': 1}; {'zz': 1}; dict with keys(); str children; reverse; base; many | TypeError: Made.method() missing 1 required positional argument: 'a'
+method | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; frozendict; mappingproxy; str child | ('method', 1, 2, {})
+method | {'c': 3, 'a': 1} | ('method', 1, 2, {'c': 3})
+method | long names made at run time | ('method', 2, 2, {'some_name': 1})
+method | mapping | ('method', 'aa', 'bb', {})
+method | OrderedDict | ('method', 2, 1, {})
+method | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+method | keys() raises | AttributeError: in keys
+method | 5 | TypeError: Value after ** must be a mapping, not int
+method | None | TypeError: Value after ** must be a mapping, not NoneType
+method | list | TypeError: Value after ** must be a mapping, not list
+method | a key that is no str; no str among strs | TypeError: keywords must be strings
+cm | {} | ('cm', 'Made', (), {})
+cm | {'a': 1}; dict child; frozendict; mappingproxy | ('cm', 'Made', (), {'a': 1})
+cm | {'b': 1} | ('cm', 'Made', (), {'b': 1})
+cm | {'a': 1, 'b': 2}; names made at run time | ('cm', 'Made', (), {'a': 1, 'b': 2})
+cm | {'c': 3, 'a': 1} | ('cm', 'Made', (), {'c': 3, 'a': 1})
+cm | {'zz': 1}; dict with keys() | ('cm', 'Made', (), {'zz': 1})
+cm | long names made at run time | ('cm', 'Made', (), {'some_name': 1, 'a': 2})
+cm | mapping | ('cm', 'Made', (), {'a': 'aa', 'b': 'bb'})
+cm | OrderedDict | ('cm', 'Made', (), {'b': 1, 'a': 2})
+cm | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+cm | keys() raises | AttributeError: in keys
+cm | 5 | TypeError: Value after ** must be a mapping, not int
+cm | None | TypeError: Value after ** must be a mapping, not NoneType
+cm | list | TypeError: Value after ** must be a mapping, not list
+cm | a key that is no str; no str among strs | TypeError: keywords must be strings
+cm | str child | ('cm', 'Made', (), {StrChild 'a': 1})
+cm | str children | ('cm', 'Made', (), {StrChild 'zz': 1, 'b': 2})
+cm | reverse | ('cm', 'Made', (), {'reverse': True})
+cm | base | ('cm', 'Made', (), {'base': 8})
+cm | many | ('cm', 'Made', (), {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25': 25, 'k26': 26, 'k2
+sm | {}; {'b': 1} | TypeError: Made.sm() missing 1 required positional argument: 'a'
+sm | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; frozendict; mappingproxy; str child | ('sm', 1, 2)
+sm | {'c': 3, 'a': 1} | TypeError: Made.sm() got an unexpected keyword argument 'c'
+sm | {'zz': 1}; dict with keys(); str children | TypeError: Made.sm() got an unexpected keyword argument 'zz'
+sm | long names made at run time | TypeError: Made.sm() got an unexpected keyword argument 'some_name'
+sm | mapping | ('sm', 'aa', 'bb')
+sm | OrderedDict | ('sm', 2, 1)
+sm | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+sm | keys() raises | AttributeError: in keys
+sm | 5 | TypeError: Value after ** must be a mapping, not int
+sm | None | TypeError: Value after ** must be a mapping, not NoneType
+sm | list | TypeError: Value after ** must be a mapping, not list
+sm | a key that is no str; no str among strs | TypeError: keywords must be strings
+sm | reverse | TypeError: Made.sm() got an unexpected keyword argument 'reverse'
+sm | base | TypeError: Made.sm() got an unexpected keyword argument 'base'
+sm | many | TypeError: Made.sm() got an unexpected keyword argument 'k0'
+callable object | {} | ('__call__', (), {})
+callable object | {'a': 1}; dict child; frozendict; mappingproxy | ('__call__', (), {'a': 1})
+callable object | {'b': 1} | ('__call__', (), {'b': 1})
+callable object | {'a': 1, 'b': 2}; names made at run time | ('__call__', (), {'a': 1, 'b': 2})
+callable object | {'c': 3, 'a': 1} | ('__call__', (), {'c': 3, 'a': 1})
+callable object | {'zz': 1}; dict with keys() | ('__call__', (), {'zz': 1})
+callable object | long names made at run time | ('__call__', (), {'some_name': 1, 'a': 2})
+callable object | mapping | ('__call__', (), {'a': 'aa', 'b': 'bb'})
+callable object | OrderedDict | ('__call__', (), {'b': 1, 'a': 2})
+callable object | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+callable object | keys() raises | AttributeError: in keys
+callable object | 5 | TypeError: Value after ** must be a mapping, not int
+callable object | None | TypeError: Value after ** must be a mapping, not NoneType
+callable object | list | TypeError: Value after ** must be a mapping, not list
+callable object | a key that is no str; no str among strs | TypeError: keywords must be strings
+callable object | str child | ('__call__', (), {StrChild 'a': 1})
+callable object | str children | ('__call__', (), {StrChild 'zz': 1, 'b': 2})
+callable object | reverse | ('__call__', (), {'reverse': True})
+callable object | base | ('__call__', (), {'base': 8})
+callable object | many | ('__call__', (), {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25': 25, 'k26': 26, 'k27'
+partial | {} | ('favk', 'p', (), {'x': 'from partial'})
+partial | {'a': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; names made at run time; long names made at run time; dict child; mapping; frozendict; mappingproxy; OrderedDict | TypeError: favk() got multiple values for argument 'a'
+partial | {'b': 1} | ('favk', 'p', (), {'x': 'from partial', 'b': 1})
+partial | {'zz': 1}; dict with keys() | ('favk', 'p', (), {'x': 'from partial', 'zz': 1})
+partial | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+partial | keys() raises | AttributeError: in keys
+partial | 5 | TypeError: Value after ** must be a mapping, not int
+partial | None | TypeError: Value after ** must be a mapping, not NoneType
+partial | list | TypeError: Value after ** must be a mapping, not list
+partial | reverse | ('favk', 'p', (), {'x': 'from partial', 'reverse': True})
+partial | base | ('favk', 'p', (), {'x': 'from partial', 'base': 8})
+partial | many | ('favk', 'p', (), {'x': 'from partial', 'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25'
+dict | {} | {}
+dict | {'a': 1}; dict child; frozendict; mappingproxy | {'a': 1}
+dict | {'b': 1} | {'b': 1}
+dict | {'a': 1, 'b': 2}; names made at run time | {'a': 1, 'b': 2}
+dict | {'c': 3, 'a': 1} | {'c': 3, 'a': 1}
+dict | {'zz': 1}; dict with keys() | {'zz': 1}
+dict | long names made at run time | {'some_name': 1, 'a': 2}
+dict | mapping | {'a': 'aa', 'b': 'bb'}
+dict | OrderedDict | {'b': 1, 'a': 2}
+dict | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+dict | keys() raises | AttributeError: in keys
+dict | 5 | TypeError: Value after ** must be a mapping, not int
+dict | None | TypeError: Value after ** must be a mapping, not NoneType
+dict | list | TypeError: Value after ** must be a mapping, not list
+dict | reverse | {'reverse': True}
+dict | base | {'base': 8}
+dict | many | {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'k12': 12, 'k13': 13, 'k14': 14, 'k15': 15, 'k16': 16, 'k17': 17, 'k18': 18, 'k19': 19, 'k20': 20, 'k21': 21, 'k22': 22, 'k23': 23, 'k24': 24, 'k25': 25, 'k26': 26, 'k27': 27, 'k28': 28, 
+int | {} | 0
+int | {'a': 1}; {'a': 1, 'b': 2}; names made at run time; dict child; mapping; frozendict; mappingproxy | TypeError: int() got an unexpected keyword argument 'a'
+int | {'b': 1}; OrderedDict | TypeError: int() got an unexpected keyword argument 'b'
+int | {'c': 3, 'a': 1} | TypeError: int() got an unexpected keyword argument 'c'
+int | {'zz': 1}; dict with keys() | TypeError: int() got an unexpected keyword argument 'zz'
+int | long names made at run time | TypeError: int() got an unexpected keyword argument 'some_name'
+int | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+int | keys() raises | AttributeError: in keys
+int | 5 | TypeError: Value after ** must be a mapping, not int
+int | None | TypeError: Value after ** must be a mapping, not NoneType
+int | list | TypeError: Value after ** must be a mapping, not list
+int | reverse | TypeError: int() got an unexpected keyword argument 'reverse'
+int | base | TypeError: int() missing string argument
+int | many | TypeError: int() takes at most 2 keyword arguments (30 given)
+sorted | {}; {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | TypeError: sorted expected 1 argument, got 0
+sorted | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+sorted | keys() raises | AttributeError: in keys
+sorted | 5 | TypeError: Value after ** must be a mapping, not int
+sorted | None | TypeError: Value after ** must be a mapping, not NoneType
+sorted | list | TypeError: Value after ** must be a mapping, not list
+max | {}; {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | TypeError: max expected at least 1 argument, got 0
+max | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+max | keys() raises | AttributeError: in keys
+max | 5 | TypeError: Value after ** must be a mapping, not int
+max | None | TypeError: Value after ** must be a mapping, not NoneType
+max | list | TypeError: Value after ** must be a mapping, not list
+str.format | {}; {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | IndexError: Replacement index 0 out of range for positional args tuple
+str.format | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+str.format | keys() raises | AttributeError: in keys
+str.format | 5 | TypeError: Value after ** must be a mapping, not int
+str.format | None | TypeError: Value after ** must be a mapping, not NoneType
+str.format | list | TypeError: Value after ** must be a mapping, not list
+tuple | {} | ()
+tuple | {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | TypeError: tuple() takes no keyword arguments
+tuple | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+tuple | keys() raises | AttributeError: in keys
+tuple | 5 | TypeError: Value after ** must be a mapping, not int
+tuple | None | TypeError: Value after ** must be a mapping, not NoneType
+tuple | list | TypeError: Value after ** must be a mapping, not list
+SimpleNamespace | {} | namespace()
+SimpleNamespace | {'a': 1}; dict child; frozendict; mappingproxy | namespace(a=1)
+SimpleNamespace | {'b': 1} | namespace(b=1)
+SimpleNamespace | {'a': 1, 'b': 2}; names made at run time | namespace(a=1, b=2)
+SimpleNamespace | {'c': 3, 'a': 1} | namespace(c=3, a=1)
+SimpleNamespace | {'zz': 1}; dict with keys() | namespace(zz=1)
+SimpleNamespace | long names made at run time | namespace(some_name=1, a=2)
+SimpleNamespace | mapping | namespace(a='aa', b='bb')
+SimpleNamespace | OrderedDict | namespace(b=1, a=2)
+SimpleNamespace | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+SimpleNamespace | keys() raises | AttributeError: in keys
+SimpleNamespace | 5 | TypeError: Value after ** must be a mapping, not int
+SimpleNamespace | None | TypeError: Value after ** must be a mapping, not NoneType
+SimpleNamespace | list | TypeError: Value after ** must be a mapping, not list
+SimpleNamespace | reverse | namespace(reverse=True)
+SimpleNamespace | base | namespace(base=8)
+SimpleNamespace | many | namespace(k0=0, k1=1, k2=2, k3=3, k4=4, k5=5, k6=6, k7=7, k8=8, k9=9, k10=10, k11=11, k12=12, k13=13, k14=14, k15=15, k16=16, k17=17, k18=18, k19=19, k20=20, k21=21, k22=22, k23=23, k24=24, k25=25, k26=26, k27=27, k28=28, k29=29)
+divmod | {} | TypeError: divmod expected 2 arguments, got 0
+divmod | {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | TypeError: divmod() takes no keyword arguments
+divmod | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+divmod | keys() raises | AttributeError: in keys
+divmod | 5 | TypeError: Value after ** must be a mapping, not int
+divmod | None | TypeError: Value after ** must be a mapping, not NoneType
+divmod | list | TypeError: Value after ** must be a mapping, not list
+len | {} | TypeError: len() takes exactly one argument (0 given)
+len | {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | TypeError: len() takes no keyword arguments
+len | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+len | keys() raises | AttributeError: in keys
+len | 5 | TypeError: Value after ** must be a mapping, not int
+len | None | TypeError: Value after ** must be a mapping, not NoneType
+len | list | TypeError: Value after ** must be a mapping, not list
+not callable | {}; {'a': 1}; {'b': 1}; {'a': 1, 'b': 2}; {'c': 3, 'a': 1}; {'zz': 1}; names made at run time; long names made at run time; dict child; dict with keys(); mapping; frozendict; mappingproxy; OrderedDict; reverse; base; many | TypeError: 'int' object is not callable
+not callable | keys() only | TypeError: 'KeysOnly' object is not subscriptable
+not callable | keys() raises | AttributeError: in keys
+not callable | 5 | TypeError: Value after ** must be a mapping, not int
+not callable | None | TypeError: Value after ** must be a mapping, not NoneType
+not callable | list | TypeError: Value after ** must be a mapping, not list
+--- f(*p, **k)
+f0 | () {} | 'f0'
+f0 | () {'a': 1}; () names made at run time; () mapping; () str child; (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: f0() got an unexpected keyword argument 'a'
+f0 | () {'b': 1}; (1,) {'b': 1}; (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: f0() got an unexpected keyword argument 'b'
+f0 | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+f0 | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+f0 | (1,) {} | TypeError: f0() takes 0 positional arguments but 1 was given
+f0 | (1, 2) {}; [1, 2] {}; generator {}; tuple with __iter__ {} | TypeError: f0() takes 0 positional arguments but 2 were given
+f0 | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+f1 | () {} | TypeError: f1() missing 1 required positional argument: 'a'
+f1 | () {'a': 1}; () str child; (1,) {} | ('f1', 1)
+f1 | () {'b': 1}; () names made at run time; () mapping; (1,) {'b': 1}; (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: f1() got an unexpected keyword argument 'b'
+f1 | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+f1 | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+f1 | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: f1() got multiple values for argument 'a'
+f1 | (1, 2) {}; [1, 2] {}; generator {}; tuple with __iter__ {} | TypeError: f1() takes 1 positional argument but 2 were given
+f1 | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+f2 | () {}; () {'b': 1} | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | () {'a': 1}; () names made at run time; () str child; (1,) {}; (1, 2) {}; [1, 2] {}; generator {} | ('f2', 1, 2)
+f2 | () mapping | ('f2', 'aa', 'bb')
+f2 | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+f2 | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+f2 | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: f2() got multiple values for argument 'a'
+f2 | (1,) {'b': 1} | ('f2', 1, 1)
+f2 | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: f2() got multiple values for argument 'b'
+f2 | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+f2 | tuple with __iter__ {} | ('f2', 'from', '__iter__')
+f3 | () {} | TypeError: f3() missing 3 required positional arguments: 'a', 'b', and 'c'
+f3 | () {'a': 1}; () str child; (1,) {} | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | () {'b': 1} | TypeError: f3() missing 2 required positional arguments: 'a' and 'c'
+f3 | () names made at run time; () mapping; (1,) {'b': 1}; (1, 2) {}; [1, 2] {}; generator {}; tuple with __iter__ {} | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+f3 | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+f3 | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: f3() got multiple values for argument 'a'
+f3 | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: f3() got multiple values for argument 'b'
+f3 | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+fv | () {} | ('fv', ())
+fv | () {'a': 1}; () names made at run time; () mapping; () str child; (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: fv() got an unexpected keyword argument 'a'
+fv | () {'b': 1}; (1,) {'b': 1}; (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: fv() got an unexpected keyword argument 'b'
+fv | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+fv | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+fv | (1,) {} | ('fv', (1))
+fv | (1, 2) {}; [1, 2] {}; generator {} | ('fv', (1, 2))
+fv | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+fv | tuple with __iter__ {} | ('fv', ('from', '__iter__'))
+fk | () {} | ('fk', {})
+fk | () {'a': 1} | ('fk', {'a': 1})
+fk | () {'b': 1} | ('fk', {'b': 1})
+fk | () names made at run time | ('fk', {'a': 1, 'b': 2})
+fk | () mapping | ('fk', {'a': 'aa', 'b': 'bb'})
+fk | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+fk | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+fk | () str child | ('fk', {StrChild 'a': 1})
+fk | (1,) {}; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping; (1,) str child | TypeError: fk() takes 0 positional arguments but 1 was given
+fk | (1, 2) {}; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {}; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: fk() takes 0 positional arguments but 2 were given
+fk | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+fvk | () {} | ('fvk', (), {})
+fvk | () {'a': 1} | ('fvk', (), {'a': 1})
+fvk | () {'b': 1} | ('fvk', (), {'b': 1})
+fvk | () names made at run time | ('fvk', (), {'a': 1, 'b': 2})
+fvk | () mapping | ('fvk', (), {'a': 'aa', 'b': 'bb'})
+fvk | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+fvk | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+fvk | () str child | ('fvk', (), {StrChild 'a': 1})
+fvk | (1,) {} | ('fvk', (1), {})
+fvk | (1,) {'a': 1} | ('fvk', (1), {'a': 1})
+fvk | (1,) {'b': 1} | ('fvk', (1), {'b': 1})
+fvk | (1,) names made at run time | ('fvk', (1), {'a': 1, 'b': 2})
+fvk | (1,) mapping | ('fvk', (1), {'a': 'aa', 'b': 'bb'})
+fvk | (1,) str child | ('fvk', (1), {StrChild 'a': 1})
+fvk | (1, 2) {}; [1, 2] {}; generator {} | ('fvk', (1, 2), {})
+fvk | (1, 2) {'a': 1}; [1, 2] {'a': 1}; generator {'a': 1} | ('fvk', (1, 2), {'a': 1})
+fvk | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1} | ('fvk', (1, 2), {'b': 1})
+fvk | (1, 2) names made at run time; [1, 2] names made at run time; generator names made at run time | ('fvk', (1, 2), {'a': 1, 'b': 2})
+fvk | (1, 2) mapping; [1, 2] mapping; generator mapping | ('fvk', (1, 2), {'a': 'aa', 'b': 'bb'})
+fvk | (1, 2) str child; [1, 2] str child; generator str child | ('fvk', (1, 2), {StrChild 'a': 1})
+fvk | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+fvk | tuple with __iter__ {} | ('fvk', ('from', '__iter__'), {})
+fvk | tuple with __iter__ {'a': 1} | ('fvk', ('from', '__iter__'), {'a': 1})
+fvk | tuple with __iter__ {'b': 1} | ('fvk', ('from', '__iter__'), {'b': 1})
+fvk | tuple with __iter__ names made at run time | ('fvk', ('from', '__iter__'), {'a': 1, 'b': 2})
+fvk | tuple with __iter__ mapping | ('fvk', ('from', '__iter__'), {'a': 'aa', 'b': 'bb'})
+fvk | tuple with __iter__ str child | ('fvk', ('from', '__iter__'), {StrChild 'a': 1})
+favk | () {}; () {'b': 1} | TypeError: favk() missing 1 required positional argument: 'a'
+favk | () {'a': 1}; () str child; (1,) {} | ('favk', 1, (), {})
+favk | () names made at run time | ('favk', 1, (), {'b': 2})
+favk | () mapping | ('favk', 'aa', (), {'b': 'bb'})
+favk | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+favk | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+favk | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: favk() got multiple values for argument 'a'
+favk | (1,) {'b': 1} | ('favk', 1, (), {'b': 1})
+favk | (1, 2) {}; [1, 2] {}; generator {} | ('favk', 1, (2), {})
+favk | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1} | ('favk', 1, (2), {'b': 1})
+favk | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+favk | tuple with __iter__ {} | ('favk', 'from', ('__iter__'), {})
+favk | tuple with __iter__ {'b': 1} | ('favk', 'from', ('__iter__'), {'b': 1})
+fko | () {}; () {'b': 1} | TypeError: fko() missing 1 required positional argument: 'a'
+fko | () {'a': 1}; () names made at run time; () mapping; () str child; (1,) {}; (1,) {'b': 1} | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+fko | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+fko | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: fko() got multiple values for argument 'a'
+fko | (1, 2) {}; [1, 2] {}; generator {}; tuple with __iter__ {} | TypeError: fko() takes 1 positional argument but 2 were given
+fko | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: fko() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+fko | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+fpo | () {} | TypeError: fpo() missing 1 required positional argument: 'a'
+fpo | () {'a': 1}; () str child; (1,) {'a': 1}; (1,) str child; (1, 2) {'a': 1}; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] str child; generator {'a': 1}; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ str child | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a'
+fpo | () {'b': 1}; (1,) {'b': 1}; (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'b'
+fpo | () names made at run time; () mapping; (1,) names made at run time; (1,) mapping; (1, 2) names made at run time; (1, 2) mapping; [1, 2] names made at run time; [1, 2] mapping; generator names made at run time; generator mapping; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a, b'
+fpo | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+fpo | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+fpo | (1,) {}; (1, 2) {}; [1, 2] {}; generator {} | ('fpo', 1, 2, 3)
+fpo | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+fpo | tuple with __iter__ {} | ('fpo', 'from', '__iter__', 3)
+fpok | () {}; () {'a': 1}; () {'b': 1}; () names made at run time; () mapping; () str child | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+fpok | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+fpok | (1,) {} | ('fpok', 1, {})
+fpok | (1,) {'a': 1} | ('fpok', 1, {'a': 1})
+fpok | (1,) {'b': 1} | ('fpok', 1, {'b': 1})
+fpok | (1,) names made at run time | ('fpok', 1, {'a': 1, 'b': 2})
+fpok | (1,) mapping | ('fpok', 1, {'a': 'aa', 'b': 'bb'})
+fpok | (1,) str child | ('fpok', 1, {StrChild 'a': 1})
+fpok | (1, 2) {}; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {}; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: fpok() takes 1 positional argument but 2 were given
+fpok | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+lambda | () {}; () {'b': 1} | TypeError: <lambda>() missing 1 required positional argument: 'a'
+lambda | () {'a': 1}; () names made at run time; () str child; (1,) {}; (1, 2) {}; [1, 2] {}; generator {} | ('lambda', 1, 2, (), {})
+lambda | () mapping | ('lambda', 'aa', 'bb', (), {})
+lambda | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+lambda | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+lambda | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: <lambda>() got multiple values for argument 'a'
+lambda | (1,) {'b': 1} | ('lambda', 1, 1, (), {})
+lambda | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: <lambda>() got multiple values for argument 'b'
+lambda | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+lambda | tuple with __iter__ {} | ('lambda', 'from', '__iter__', (), {})
+Made | () {}; () {'a': 1}; () str child; (1,) {} | Made(1, (), {})
+Made | () {'b': 1}; (1,) {'b': 1} | Made(1, (), {'b': 1})
+Made | () names made at run time | Made(1, (), {'b': 2})
+Made | () mapping | Made('aa', (), {'b': 'bb'})
+Made | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+Made | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+Made | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: Made.__init__() got multiple values for argument 'a'
+Made | (1, 2) {}; [1, 2] {}; generator {} | Made(1, (2), {})
+Made | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1} | Made(1, (2), {'b': 1})
+Made | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+Made | tuple with __iter__ {} | Made('from', ('__iter__'), {})
+Made | tuple with __iter__ {'b': 1} | Made('from', ('__iter__'), {'b': 1})
+method | () {}; () {'b': 1} | TypeError: Made.method() missing 1 required positional argument: 'a'
+method | () {'a': 1}; () names made at run time; () str child; (1,) {}; (1, 2) {}; [1, 2] {}; generator {} | ('method', 1, 2, {})
+method | () mapping | ('method', 'aa', 'bb', {})
+method | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+method | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+method | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: Made.method() got multiple values for argument 'a'
+method | (1,) {'b': 1} | ('method', 1, 1, {})
+method | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: Made.method() got multiple values for argument 'b'
+method | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+method | tuple with __iter__ {} | ('method', 'from', '__iter__', {})
+cm | () {} | ('cm', 'Made', (), {})
+cm | () {'a': 1} | ('cm', 'Made', (), {'a': 1})
+cm | () {'b': 1} | ('cm', 'Made', (), {'b': 1})
+cm | () names made at run time | ('cm', 'Made', (), {'a': 1, 'b': 2})
+cm | () mapping | ('cm', 'Made', (), {'a': 'aa', 'b': 'bb'})
+cm | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+cm | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+cm | () str child | ('cm', 'Made', (), {StrChild 'a': 1})
+cm | (1,) {} | ('cm', 'Made', (1), {})
+cm | (1,) {'a': 1} | ('cm', 'Made', (1), {'a': 1})
+cm | (1,) {'b': 1} | ('cm', 'Made', (1), {'b': 1})
+cm | (1,) names made at run time | ('cm', 'Made', (1), {'a': 1, 'b': 2})
+cm | (1,) mapping | ('cm', 'Made', (1), {'a': 'aa', 'b': 'bb'})
+cm | (1,) str child | ('cm', 'Made', (1), {StrChild 'a': 1})
+cm | (1, 2) {}; [1, 2] {}; generator {} | ('cm', 'Made', (1, 2), {})
+cm | (1, 2) {'a': 1}; [1, 2] {'a': 1}; generator {'a': 1} | ('cm', 'Made', (1, 2), {'a': 1})
+cm | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1} | ('cm', 'Made', (1, 2), {'b': 1})
+cm | (1, 2) names made at run time; [1, 2] names made at run time; generator names made at run time | ('cm', 'Made', (1, 2), {'a': 1, 'b': 2})
+cm | (1, 2) mapping; [1, 2] mapping; generator mapping | ('cm', 'Made', (1, 2), {'a': 'aa', 'b': 'bb'})
+cm | (1, 2) str child; [1, 2] str child; generator str child | ('cm', 'Made', (1, 2), {StrChild 'a': 1})
+cm | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+cm | tuple with __iter__ {} | ('cm', 'Made', ('from', '__iter__'), {})
+cm | tuple with __iter__ {'a': 1} | ('cm', 'Made', ('from', '__iter__'), {'a': 1})
+cm | tuple with __iter__ {'b': 1} | ('cm', 'Made', ('from', '__iter__'), {'b': 1})
+cm | tuple with __iter__ names made at run time | ('cm', 'Made', ('from', '__iter__'), {'a': 1, 'b': 2})
+cm | tuple with __iter__ mapping | ('cm', 'Made', ('from', '__iter__'), {'a': 'aa', 'b': 'bb'})
+cm | tuple with __iter__ str child | ('cm', 'Made', ('from', '__iter__'), {StrChild 'a': 1})
+sm | () {}; () {'b': 1} | TypeError: Made.sm() missing 1 required positional argument: 'a'
+sm | () {'a': 1}; () names made at run time; () str child; (1,) {}; (1, 2) {}; [1, 2] {}; generator {} | ('sm', 1, 2)
+sm | () mapping | ('sm', 'aa', 'bb')
+sm | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+sm | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+sm | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; (1, 2) str child; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; [1, 2] str child; generator {'a': 1}; generator names made at run time; generator mapping; generator str child; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping; tuple with __iter__ str child | TypeError: Made.sm() got multiple values for argument 'a'
+sm | (1,) {'b': 1} | ('sm', 1, 1)
+sm | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: Made.sm() got multiple values for argument 'b'
+sm | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+sm | tuple with __iter__ {} | ('sm', 'from', '__iter__')
+callable object | () {} | ('__call__', (), {})
+callable object | () {'a': 1} | ('__call__', (), {'a': 1})
+callable object | () {'b': 1} | ('__call__', (), {'b': 1})
+callable object | () names made at run time | ('__call__', (), {'a': 1, 'b': 2})
+callable object | () mapping | ('__call__', (), {'a': 'aa', 'b': 'bb'})
+callable object | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+callable object | () a key that is no str; (1,) a key that is no str; (1, 2) a key that is no str; [1, 2] a key that is no str; generator a key that is no str; tuple with __iter__ a key that is no str | TypeError: keywords must be strings
+callable object | () str child | ('__call__', (), {StrChild 'a': 1})
+callable object | (1,) {} | ('__call__', (1), {})
+callable object | (1,) {'a': 1} | ('__call__', (1), {'a': 1})
+callable object | (1,) {'b': 1} | ('__call__', (1), {'b': 1})
+callable object | (1,) names made at run time | ('__call__', (1), {'a': 1, 'b': 2})
+callable object | (1,) mapping | ('__call__', (1), {'a': 'aa', 'b': 'bb'})
+callable object | (1,) str child | ('__call__', (1), {StrChild 'a': 1})
+callable object | (1, 2) {}; [1, 2] {}; generator {} | ('__call__', (1, 2), {})
+callable object | (1, 2) {'a': 1}; [1, 2] {'a': 1}; generator {'a': 1} | ('__call__', (1, 2), {'a': 1})
+callable object | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1} | ('__call__', (1, 2), {'b': 1})
+callable object | (1, 2) names made at run time; [1, 2] names made at run time; generator names made at run time | ('__call__', (1, 2), {'a': 1, 'b': 2})
+callable object | (1, 2) mapping; [1, 2] mapping; generator mapping | ('__call__', (1, 2), {'a': 'aa', 'b': 'bb'})
+callable object | (1, 2) str child; [1, 2] str child; generator str child | ('__call__', (1, 2), {StrChild 'a': 1})
+callable object | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping; 5 a key that is no str; 5 str child | TypeError: Value after * must be an iterable, not int
+callable object | tuple with __iter__ {} | ('__call__', ('from', '__iter__'), {})
+callable object | tuple with __iter__ {'a': 1} | ('__call__', ('from', '__iter__'), {'a': 1})
+callable object | tuple with __iter__ {'b': 1} | ('__call__', ('from', '__iter__'), {'b': 1})
+callable object | tuple with __iter__ names made at run time | ('__call__', ('from', '__iter__'), {'a': 1, 'b': 2})
+callable object | tuple with __iter__ mapping | ('__call__', ('from', '__iter__'), {'a': 'aa', 'b': 'bb'})
+callable object | tuple with __iter__ str child | ('__call__', ('from', '__iter__'), {StrChild 'a': 1})
+partial | () {} | ('favk', 'p', (), {'x': 'from partial'})
+partial | () {'a': 1}; () names made at run time; () mapping; (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {'a': 1}; generator names made at run time; generator mapping; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: favk() got multiple values for argument 'a'
+partial | () {'b': 1} | ('favk', 'p', (), {'x': 'from partial', 'b': 1})
+partial | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+partial | (1,) {} | ('favk', 'p', (1), {'x': 'from partial'})
+partial | (1,) {'b': 1} | ('favk', 'p', (1), {'x': 'from partial', 'b': 1})
+partial | (1, 2) {}; [1, 2] {}; generator {} | ('favk', 'p', (1, 2), {'x': 'from partial'})
+partial | (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1} | ('favk', 'p', (1, 2), {'x': 'from partial', 'b': 1})
+partial | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+partial | tuple with __iter__ {} | ('favk', 'p', ('from', '__iter__'), {'x': 'from partial'})
+partial | tuple with __iter__ {'b': 1} | ('favk', 'p', ('from', '__iter__'), {'x': 'from partial', 'b': 1})
+dict | () {} | {}
+dict | () {'a': 1} | {'a': 1}
+dict | () {'b': 1} | {'b': 1}
+dict | () names made at run time | {'a': 1, 'b': 2}
+dict | () mapping | {'a': 'aa', 'b': 'bb'}
+dict | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+dict | (1,) {}; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping | TypeError: 'int' object is not iterable
+dict | (1, 2) {}; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {}; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: dict expected at most 1 argument, got 2
+dict | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+int | () {} | 0
+int | () {'a': 1}; () names made at run time; () mapping; (1,) {'a': 1} | TypeError: int() got an unexpected keyword argument 'a'
+int | () {'b': 1}; (1,) {'b': 1} | TypeError: int() got an unexpected keyword argument 'b'
+int | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+int | (1,) {} | 1
+int | (1,) names made at run time; (1,) mapping; (1, 2) {'a': 1}; (1, 2) {'b': 1}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; generator {'a': 1}; generator {'b': 1}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1} | TypeError: int() takes at most 2 arguments (3 given)
+int | (1, 2) {}; [1, 2] {}; generator {} | TypeError: int() can't convert non-string with explicit base
+int | (1, 2) names made at run time; (1, 2) mapping; [1, 2] names made at run time; [1, 2] mapping; generator names made at run time; generator mapping; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: int() takes at most 2 arguments (4 given)
+int | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+int | tuple with __iter__ {} | TypeError: 'str' object cannot be interpreted as an integer
+sorted | () {}; () {'a': 1}; () {'b': 1}; () names made at run time; () mapping | TypeError: sorted expected 1 argument, got 0
+sorted | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+sorted | (1,) {}; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping | TypeError: 'int' object is not iterable
+sorted | (1, 2) {}; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {}; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: sorted expected 1 argument, got 2
+sorted | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+max | () {}; () {'a': 1}; () {'b': 1}; () names made at run time; () mapping | TypeError: max expected at least 1 argument, got 0
+max | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+max | (1,) {} | TypeError: 'int' object is not iterable
+max | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1, 2) {'a': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {'a': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {'a': 1}; generator names made at run time; generator mapping; tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: max() got an unexpected keyword argument 'a'
+max | (1,) {'b': 1}; (1, 2) {'b': 1}; [1, 2] {'b': 1}; generator {'b': 1}; tuple with __iter__ {'b': 1} | TypeError: max() got an unexpected keyword argument 'b'
+max | (1, 2) {}; [1, 2] {}; generator {} | 2
+max | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+max | tuple with __iter__ {} | 'from'
+str.format | () {}; () {'a': 1}; () {'b': 1}; () names made at run time; () mapping | IndexError: Replacement index 0 out of range for positional args tuple
+str.format | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+str.format | (1,) {}; (1,) {'b': 1}; (1, 2) {}; (1, 2) {'b': 1}; [1, 2] {}; [1, 2] {'b': 1}; generator {}; generator {'b': 1}; tuple with __iter__ {}; tuple with __iter__ {'b': 1} | KeyError: 'a'
+str.format | (1,) {'a': 1}; (1,) names made at run time; (1, 2) {'a': 1}; (1, 2) names made at run time; [1, 2] {'a': 1}; [1, 2] names made at run time; generator {'a': 1}; generator names made at run time | '1 1'
+str.format | (1,) mapping; (1, 2) mapping; [1, 2] mapping; generator mapping | '1 aa'
+str.format | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+str.format | tuple with __iter__ {'a': 1}; tuple with __iter__ names made at run time | 'from 1'
+str.format | tuple with __iter__ mapping | 'from aa'
+tuple | () {} | ()
+tuple | () {'a': 1}; () {'b': 1}; () names made at run time; () mapping; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: tuple() takes no keyword arguments
+tuple | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+tuple | (1,) {} | TypeError: 'int' object is not iterable
+tuple | (1, 2) {}; [1, 2] {}; generator {}; tuple with __iter__ {} | TypeError: tuple expected at most 1 argument, got 2
+tuple | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+SimpleNamespace | () {} | namespace()
+SimpleNamespace | () {'a': 1} | namespace(a=1)
+SimpleNamespace | () {'b': 1} | namespace(b=1)
+SimpleNamespace | () names made at run time | namespace(a=1, b=2)
+SimpleNamespace | () mapping | namespace(a='aa', b='bb')
+SimpleNamespace | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+SimpleNamespace | (1,) {}; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping | TypeError: 'int' object is not iterable
+SimpleNamespace | (1, 2) {}; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {}; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: SimpleNamespace expected at most 1 argument, got 2
+SimpleNamespace | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+divmod | () {} | TypeError: divmod expected 2 arguments, got 0
+divmod | () {'a': 1}; () {'b': 1}; () names made at run time; () mapping; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: divmod() takes no keyword arguments
+divmod | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+divmod | (1,) {} | TypeError: divmod expected 2 arguments, got 1
+divmod | (1, 2) {}; [1, 2] {}; generator {} | (0, 1)
+divmod | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+divmod | tuple with __iter__ {} | TypeError: unsupported operand type(s) for divmod(): 'str' and 'str'
+len | () {} | TypeError: len() takes exactly one argument (0 given)
+len | () {'a': 1}; () {'b': 1}; () names made at run time; () mapping; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: len() takes no keyword arguments
+len | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+len | (1,) {} | TypeError: object of type 'int' has no len()
+len | (1, 2) {}; [1, 2] {}; generator {}; tuple with __iter__ {} | TypeError: len() takes exactly one argument (2 given)
+len | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+not callable | () {}; () {'a': 1}; () {'b': 1}; () names made at run time; () mapping; (1,) {}; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping; (1, 2) {}; (1, 2) {'a': 1}; (1, 2) {'b': 1}; (1, 2) names made at run time; (1, 2) mapping; [1, 2] {}; [1, 2] {'a': 1}; [1, 2] {'b': 1}; [1, 2] names made at run time; [1, 2] mapping; generator {}; generator {'a': 1}; generator {'b': 1}; generator names made at run time; generator mapping; tuple with __iter__ {}; tuple with __iter__ {'a': 1}; tuple with __iter__ {'b': 1}; tuple with __iter__ names made at run time; tuple with __iter__ mapping | TypeError: 'int' object is not callable
+not callable | () 5; (1,) 5; (1, 2) 5; [1, 2] 5; generator 5; 5 5; tuple with __iter__ 5 | TypeError: Value after ** must be a mapping, not int
+not callable | 5 {}; 5 {'a': 1}; 5 {'b': 1}; 5 names made at run time; 5 mapping | TypeError: Value after * must be an iterable, not int
+--- one_star
+f1 | ()  | ('f1', 0)
+f1 | (1,)  | TypeError: f1() takes 1 positional argument but 2 were given
+f1 | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: f1() takes 1 positional argument but 3 were given
+f1 | 5  | TypeError: Value after * must be an iterable, not int
+f2 | ()  | ('f2', 0, 2)
+f2 | (1,)  | ('f2', 0, 1)
+f2 | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: f2() takes from 1 to 2 positional arguments but 3 were given
+f2 | 5  | TypeError: Value after * must be an iterable, not int
+f3 | ()  | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | (1,)  | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | (1, 2) ; [1, 2] ; generator  | ('f3', 0, 1, 2)
+f3 | 5  | TypeError: Value after * must be an iterable, not int
+f3 | tuple with __iter__  | ('f3', 0, 'from', '__iter__')
+fv | ()  | ('fv', (0))
+fv | (1,)  | ('fv', (0, 1))
+fv | (1, 2) ; [1, 2] ; generator  | ('fv', (0, 1, 2))
+fv | 5  | TypeError: Value after * must be an iterable, not int
+fv | tuple with __iter__  | ('fv', (0, 'from', '__iter__'))
+fvk | ()  | ('fvk', (0), {})
+fvk | (1,)  | ('fvk', (0, 1), {})
+fvk | (1, 2) ; [1, 2] ; generator  | ('fvk', (0, 1, 2), {})
+fvk | 5  | TypeError: Value after * must be an iterable, not int
+fvk | tuple with __iter__  | ('fvk', (0, 'from', '__iter__'), {})
+favk | ()  | ('favk', 0, (), {})
+favk | (1,)  | ('favk', 0, (1), {})
+favk | (1, 2) ; [1, 2] ; generator  | ('favk', 0, (1, 2), {})
+favk | 5  | TypeError: Value after * must be an iterable, not int
+favk | tuple with __iter__  | ('favk', 0, ('from', '__iter__'), {})
+fko | ()  | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | (1,)  | TypeError: fko() takes 1 positional argument but 2 were given
+fko | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: fko() takes 1 positional argument but 3 were given
+fko | 5  | TypeError: Value after * must be an iterable, not int
+fpo | ()  | ('fpo', 0, 2, 3)
+fpo | (1,)  | ('fpo', 0, 1, 3)
+fpo | (1, 2) ; [1, 2] ; generator  | ('fpo', 0, 1, 2)
+fpo | 5  | TypeError: Value after * must be an iterable, not int
+fpo | tuple with __iter__  | ('fpo', 0, 'from', '__iter__')
+fpok | ()  | ('fpok', 0, {})
+fpok | (1,)  | TypeError: fpok() takes 1 positional argument but 2 were given
+fpok | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: fpok() takes 1 positional argument but 3 were given
+fpok | 5  | TypeError: Value after * must be an iterable, not int
+Made | ()  | Made(0, (), {})
+Made | (1,)  | Made(0, (1), {})
+Made | (1, 2) ; [1, 2] ; generator  | Made(0, (1, 2), {})
+Made | 5  | TypeError: Value after * must be an iterable, not int
+Made | tuple with __iter__  | Made(0, ('from', '__iter__'), {})
+method | ()  | ('method', 0, 2, {})
+method | (1,)  | ('method', 0, 1, {})
+method | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: Made.method() takes from 2 to 3 positional arguments but 4 were given
+method | 5  | TypeError: Value after * must be an iterable, not int
+partial | ()  | ('favk', 'p', (0), {'x': 'from partial'})
+partial | (1,)  | ('favk', 'p', (0, 1), {'x': 'from partial'})
+partial | (1, 2) ; [1, 2] ; generator  | ('favk', 'p', (0, 1, 2), {'x': 'from partial'})
+partial | 5  | TypeError: Value after * must be an iterable, not int
+partial | tuple with __iter__  | ('favk', 'p', (0, 'from', '__iter__'), {'x': 'from partial'})
+dict | ()  | TypeError: 'int' object is not iterable
+dict | (1,)  | TypeError: dict expected at most 1 argument, got 2
+dict | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: dict expected at most 1 argument, got 3
+dict | 5  | TypeError: Value after * must be an iterable, not int
+callable object | ()  | ('__call__', (0), {})
+callable object | (1,)  | ('__call__', (0, 1), {})
+callable object | (1, 2) ; [1, 2] ; generator  | ('__call__', (0, 1, 2), {})
+callable object | 5  | TypeError: Value after * must be an iterable, not int
+callable object | tuple with __iter__  | ('__call__', (0, 'from', '__iter__'), {})
+--- star_one
+f1 | ()  | ('f1', 0)
+f1 | (1,)  | TypeError: f1() takes 1 positional argument but 2 were given
+f1 | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: f1() takes 1 positional argument but 3 were given
+f1 | 5  | TypeError: Value after * must be an iterable, not int
+f2 | ()  | ('f2', 0, 2)
+f2 | (1,)  | ('f2', 1, 0)
+f2 | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: f2() takes from 1 to 2 positional arguments but 3 were given
+f2 | 5  | TypeError: Value after * must be an iterable, not int
+f3 | ()  | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | (1,)  | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | (1, 2) ; [1, 2] ; generator  | ('f3', 1, 2, 0)
+f3 | 5  | TypeError: Value after * must be an iterable, not int
+f3 | tuple with __iter__  | ('f3', 'from', '__iter__', 0)
+fv | ()  | ('fv', (0))
+fv | (1,)  | ('fv', (1, 0))
+fv | (1, 2) ; [1, 2] ; generator  | ('fv', (1, 2, 0))
+fv | 5  | TypeError: Value after * must be an iterable, not int
+fv | tuple with __iter__  | ('fv', ('from', '__iter__', 0))
+fvk | ()  | ('fvk', (0), {})
+fvk | (1,)  | ('fvk', (1, 0), {})
+fvk | (1, 2) ; [1, 2] ; generator  | ('fvk', (1, 2, 0), {})
+fvk | 5  | TypeError: Value after * must be an iterable, not int
+fvk | tuple with __iter__  | ('fvk', ('from', '__iter__', 0), {})
+favk | ()  | ('favk', 0, (), {})
+favk | (1,)  | ('favk', 1, (0), {})
+favk | (1, 2) ; [1, 2] ; generator  | ('favk', 1, (2, 0), {})
+favk | 5  | TypeError: Value after * must be an iterable, not int
+favk | tuple with __iter__  | ('favk', 'from', ('__iter__', 0), {})
+fko | ()  | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | (1,)  | TypeError: fko() takes 1 positional argument but 2 were given
+fko | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: fko() takes 1 positional argument but 3 were given
+fko | 5  | TypeError: Value after * must be an iterable, not int
+fpo | ()  | ('fpo', 0, 2, 3)
+fpo | (1,)  | ('fpo', 1, 0, 3)
+fpo | (1, 2) ; [1, 2] ; generator  | ('fpo', 1, 2, 0)
+fpo | 5  | TypeError: Value after * must be an iterable, not int
+fpo | tuple with __iter__  | ('fpo', 'from', '__iter__', 0)
+fpok | ()  | ('fpok', 0, {})
+fpok | (1,)  | TypeError: fpok() takes 1 positional argument but 2 were given
+fpok | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: fpok() takes 1 positional argument but 3 were given
+fpok | 5  | TypeError: Value after * must be an iterable, not int
+Made | ()  | Made(0, (), {})
+Made | (1,)  | Made(1, (0), {})
+Made | (1, 2) ; [1, 2] ; generator  | Made(1, (2, 0), {})
+Made | 5  | TypeError: Value after * must be an iterable, not int
+Made | tuple with __iter__  | Made('from', ('__iter__', 0), {})
+method | ()  | ('method', 0, 2, {})
+method | (1,)  | ('method', 1, 0, {})
+method | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: Made.method() takes from 2 to 3 positional arguments but 4 were given
+method | 5  | TypeError: Value after * must be an iterable, not int
+partial | ()  | ('favk', 'p', (0), {'x': 'from partial'})
+partial | (1,)  | ('favk', 'p', (1, 0), {'x': 'from partial'})
+partial | (1, 2) ; [1, 2] ; generator  | ('favk', 'p', (1, 2, 0), {'x': 'from partial'})
+partial | 5  | TypeError: Value after * must be an iterable, not int
+partial | tuple with __iter__  | ('favk', 'p', ('from', '__iter__', 0), {'x': 'from partial'})
+dict | ()  | TypeError: 'int' object is not iterable
+dict | (1,)  | TypeError: dict expected at most 1 argument, got 2
+dict | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: dict expected at most 1 argument, got 3
+dict | 5  | TypeError: Value after * must be an iterable, not int
+callable object | ()  | ('__call__', (0), {})
+callable object | (1,)  | ('__call__', (1, 0), {})
+callable object | (1, 2) ; [1, 2] ; generator  | ('__call__', (1, 2, 0), {})
+callable object | 5  | TypeError: Value after * must be an iterable, not int
+callable object | tuple with __iter__  | ('__call__', ('from', '__iter__', 0), {})
+--- star_star
+f1 | ()  | TypeError: f1() missing 1 required positional argument: 'a'
+f1 | (1,) ; generator  | TypeError: f1() takes 1 positional argument but 2 were given
+f1 | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: f1() takes 1 positional argument but 4 were given
+f1 | 5  | TypeError: Value after * must be an iterable, not int
+f2 | ()  | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | (1,)  | ('f2', 1, 1)
+f2 | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: f2() takes from 1 to 2 positional arguments but 4 were given
+f2 | generator  | ('f2', 1, 2)
+f2 | 5  | TypeError: Value after * must be an iterable, not int
+f3 | ()  | TypeError: f3() missing 3 required positional arguments: 'a', 'b', and 'c'
+f3 | (1,) ; generator  | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: f3() takes 3 positional arguments but 4 were given
+f3 | 5  | TypeError: Value after * must be an iterable, not int
+fv | ()  | ('fv', ())
+fv | (1,)  | ('fv', (1, 1))
+fv | (1, 2) ; [1, 2]  | ('fv', (1, 2, 1, 2))
+fv | generator  | ('fv', (1, 2))
+fv | 5  | TypeError: Value after * must be an iterable, not int
+fv | tuple with __iter__  | ('fv', ('from', '__iter__', 'from', '__iter__'))
+fvk | ()  | ('fvk', (), {})
+fvk | (1,)  | ('fvk', (1, 1), {})
+fvk | (1, 2) ; [1, 2]  | ('fvk', (1, 2, 1, 2), {})
+fvk | generator  | ('fvk', (1, 2), {})
+fvk | 5  | TypeError: Value after * must be an iterable, not int
+fvk | tuple with __iter__  | ('fvk', ('from', '__iter__', 'from', '__iter__'), {})
+favk | ()  | TypeError: favk() missing 1 required positional argument: 'a'
+favk | (1,)  | ('favk', 1, (1), {})
+favk | (1, 2) ; [1, 2]  | ('favk', 1, (2, 1, 2), {})
+favk | generator  | ('favk', 1, (2), {})
+favk | 5  | TypeError: Value after * must be an iterable, not int
+favk | tuple with __iter__  | ('favk', 'from', ('__iter__', 'from', '__iter__'), {})
+fko | ()  | TypeError: fko() missing 1 required positional argument: 'a'
+fko | (1,) ; generator  | TypeError: fko() takes 1 positional argument but 2 were given
+fko | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: fko() takes 1 positional argument but 4 were given
+fko | 5  | TypeError: Value after * must be an iterable, not int
+fpo | ()  | TypeError: fpo() missing 1 required positional argument: 'a'
+fpo | (1,)  | ('fpo', 1, 1, 3)
+fpo | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: fpo() takes from 1 to 3 positional arguments but 4 were given
+fpo | generator  | ('fpo', 1, 2, 3)
+fpo | 5  | TypeError: Value after * must be an iterable, not int
+fpok | ()  | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | (1,) ; generator  | TypeError: fpok() takes 1 positional argument but 2 were given
+fpok | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: fpok() takes 1 positional argument but 4 were given
+fpok | 5  | TypeError: Value after * must be an iterable, not int
+Made | ()  | Made(1, (), {})
+Made | (1,)  | Made(1, (1), {})
+Made | (1, 2) ; [1, 2]  | Made(1, (2, 1, 2), {})
+Made | generator  | Made(1, (2), {})
+Made | 5  | TypeError: Value after * must be an iterable, not int
+Made | tuple with __iter__  | Made('from', ('__iter__', 'from', '__iter__'), {})
+method | ()  | TypeError: Made.method() missing 1 required positional argument: 'a'
+method | (1,)  | ('method', 1, 1, {})
+method | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: Made.method() takes from 2 to 3 positional arguments but 5 were given
+method | generator  | ('method', 1, 2, {})
+method | 5  | TypeError: Value after * must be an iterable, not int
+partial | ()  | ('favk', 'p', (), {'x': 'from partial'})
+partial | (1,)  | ('favk', 'p', (1, 1), {'x': 'from partial'})
+partial | (1, 2) ; [1, 2]  | ('favk', 'p', (1, 2, 1, 2), {'x': 'from partial'})
+partial | generator  | ('favk', 'p', (1, 2), {'x': 'from partial'})
+partial | 5  | TypeError: Value after * must be an iterable, not int
+partial | tuple with __iter__  | ('favk', 'p', ('from', '__iter__', 'from', '__iter__'), {'x': 'from partial'})
+dict | ()  | {}
+dict | (1,) ; generator  | TypeError: dict expected at most 1 argument, got 2
+dict | (1, 2) ; [1, 2] ; tuple with __iter__  | TypeError: dict expected at most 1 argument, got 4
+dict | 5  | TypeError: Value after * must be an iterable, not int
+callable object | ()  | ('__call__', (), {})
+callable object | (1,)  | ('__call__', (1, 1), {})
+callable object | (1, 2) ; [1, 2]  | ('__call__', (1, 2, 1, 2), {})
+callable object | generator  | ('__call__', (1, 2), {})
+callable object | 5  | TypeError: Value after * must be an iterable, not int
+callable object | tuple with __iter__  | ('__call__', ('from', '__iter__', 'from', '__iter__'), {})
+--- keyword_stars
+f1 | {} | ('f1', 'given')
+f1 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f1() got multiple values for keyword argument 'a'
+f1 | {'b': 1} | TypeError: f1() got an unexpected keyword argument 'b'
+f1 | 5 | TypeError: Value after ** must be a mapping, not int
+f1 | a key that is no str | TypeError: keywords must be strings
+f1 | {'zz': 1}; dict with keys() | TypeError: f1() got an unexpected keyword argument 'zz'
+f2 | {} | ('f2', 'given', 2)
+f2 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f2() got multiple values for keyword argument 'a'
+f2 | {'b': 1} | ('f2', 'given', 1)
+f2 | 5 | TypeError: Value after ** must be a mapping, not int
+f2 | a key that is no str | TypeError: keywords must be strings
+f2 | {'zz': 1}; dict with keys() | TypeError: f2() got an unexpected keyword argument 'zz'
+f3 | {} | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f3() got multiple values for keyword argument 'a'
+f3 | {'b': 1} | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | 5 | TypeError: Value after ** must be a mapping, not int
+f3 | a key that is no str | TypeError: keywords must be strings
+f3 | {'zz': 1}; dict with keys() | TypeError: f3() got an unexpected keyword argument 'zz'
+fv | {}; {'b': 1}; {'zz': 1}; dict with keys() | TypeError: fv() got an unexpected keyword argument 'a'
+fv | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fv() got multiple values for keyword argument 'a'
+fv | 5 | TypeError: Value after ** must be a mapping, not int
+fv | a key that is no str | TypeError: keywords must be strings
+fvk | {} | ('fvk', (), {'a': 'given'})
+fvk | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fvk() got multiple values for keyword argument 'a'
+fvk | {'b': 1} | ('fvk', (), {'a': 'given', 'b': 1})
+fvk | 5 | TypeError: Value after ** must be a mapping, not int
+fvk | a key that is no str | TypeError: keywords must be strings
+fvk | {'zz': 1}; dict with keys() | ('fvk', (), {'a': 'given', 'zz': 1})
+favk | {} | ('favk', 'given', (), {})
+favk | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.favk() got multiple values for keyword argument 'a'
+favk | {'b': 1} | ('favk', 'given', (), {'b': 1})
+favk | 5 | TypeError: Value after ** must be a mapping, not int
+favk | a key that is no str | TypeError: keywords must be strings
+favk | {'zz': 1}; dict with keys() | ('favk', 'given', (), {'zz': 1})
+fko | {}; {'b': 1} | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fko() got multiple values for keyword argument 'a'
+fko | 5 | TypeError: Value after ** must be a mapping, not int
+fko | a key that is no str | TypeError: keywords must be strings
+fko | {'zz': 1}; dict with keys() | TypeError: fko() got an unexpected keyword argument 'zz'
+fpo | {}; {'zz': 1}; dict with keys() | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a'
+fpo | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fpo() got multiple values for keyword argument 'a'
+fpo | {'b': 1} | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a, b'
+fpo | 5 | TypeError: Value after ** must be a mapping, not int
+fpo | a key that is no str | TypeError: keywords must be strings
+fpok | {}; {'b': 1}; {'zz': 1}; dict with keys() | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fpok() got multiple values for keyword argument 'a'
+fpok | 5 | TypeError: Value after ** must be a mapping, not int
+fpok | a key that is no str | TypeError: keywords must be strings
+Made | {} | Made('given', (), {})
+Made | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.Made() got multiple values for keyword argument 'a'
+Made | {'b': 1} | Made('given', (), {'b': 1})
+Made | 5 | TypeError: Value after ** must be a mapping, not int
+Made | a key that is no str | TypeError: keywords must be strings
+Made | {'zz': 1}; dict with keys() | Made('given', (), {'zz': 1})
+method | {} | ('method', 'given', 2, {})
+method | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.Made.method() got multiple values for keyword argument 'a'
+method | {'b': 1} | ('method', 'given', 1, {})
+method | 5 | TypeError: Value after ** must be a mapping, not int
+method | a key that is no str | TypeError: keywords must be strings
+method | {'zz': 1}; dict with keys() | ('method', 'given', 2, {'zz': 1})
+partial | {}; {'b': 1}; {'zz': 1}; dict with keys() | TypeError: favk() got multiple values for argument 'a'
+partial | {'a': 1}; names made at run time; mapping | TypeError: functools.partial(<function favk>, 'p', x='from partial') got multiple values for keyword argument 'a'
+partial | 5 | TypeError: Value after ** must be a mapping, not int
+dict | {} | {'a': 'given'}
+dict | {'a': 1}; names made at run time; mapping | TypeError: dict() got multiple values for keyword argument 'a'
+dict | {'b': 1} | {'a': 'given', 'b': 1}
+dict | 5 | TypeError: Value after ** must be a mapping, not int
+dict | {'zz': 1}; dict with keys() | {'a': 'given', 'zz': 1}
+callable object | {} | ('__call__', (), {'a': 'given'})
+callable object | {'a': 1}; names made at run time; mapping; str child | TypeError: Made(1, (), {}) got multiple values for keyword argument 'a'
+callable object | {'b': 1} | ('__call__', (), {'a': 'given', 'b': 1})
+callable object | 5 | TypeError: Value after ** must be a mapping, not int
+callable object | a key that is no str | TypeError: keywords must be strings
+callable object | {'zz': 1}; dict with keys() | ('__call__', (), {'a': 'given', 'zz': 1})
+--- stars_keyword
+f1 | {} | ('f1', 'given')
+f1 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f1() got multiple values for keyword argument 'a'
+f1 | {'b': 1} | TypeError: f1() got an unexpected keyword argument 'b'
+f1 | 5 | TypeError: Value after ** must be a mapping, not int
+f1 | a key that is no str | TypeError: keywords must be strings
+f1 | {'zz': 1}; dict with keys() | TypeError: f1() got an unexpected keyword argument 'zz'
+f2 | {} | ('f2', 'given', 2)
+f2 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f2() got multiple values for keyword argument 'a'
+f2 | {'b': 1} | ('f2', 'given', 1)
+f2 | 5 | TypeError: Value after ** must be a mapping, not int
+f2 | a key that is no str | TypeError: keywords must be strings
+f2 | {'zz': 1}; dict with keys() | TypeError: f2() got an unexpected keyword argument 'zz'
+f3 | {} | TypeError: f3() missing 2 required positional arguments: 'b' and 'c'
+f3 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f3() got multiple values for keyword argument 'a'
+f3 | {'b': 1} | TypeError: f3() missing 1 required positional argument: 'c'
+f3 | 5 | TypeError: Value after ** must be a mapping, not int
+f3 | a key that is no str | TypeError: keywords must be strings
+f3 | {'zz': 1}; dict with keys() | TypeError: f3() got an unexpected keyword argument 'zz'
+fv | {} | TypeError: fv() got an unexpected keyword argument 'a'
+fv | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fv() got multiple values for keyword argument 'a'
+fv | {'b': 1} | TypeError: fv() got an unexpected keyword argument 'b'
+fv | 5 | TypeError: Value after ** must be a mapping, not int
+fv | a key that is no str | TypeError: keywords must be strings
+fv | {'zz': 1}; dict with keys() | TypeError: fv() got an unexpected keyword argument 'zz'
+fvk | {} | ('fvk', (), {'a': 'given'})
+fvk | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fvk() got multiple values for keyword argument 'a'
+fvk | {'b': 1} | ('fvk', (), {'b': 1, 'a': 'given'})
+fvk | 5 | TypeError: Value after ** must be a mapping, not int
+fvk | a key that is no str | TypeError: keywords must be strings
+fvk | {'zz': 1}; dict with keys() | ('fvk', (), {'zz': 1, 'a': 'given'})
+favk | {} | ('favk', 'given', (), {})
+favk | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.favk() got multiple values for keyword argument 'a'
+favk | {'b': 1} | ('favk', 'given', (), {'b': 1})
+favk | 5 | TypeError: Value after ** must be a mapping, not int
+favk | a key that is no str | TypeError: keywords must be strings
+favk | {'zz': 1}; dict with keys() | ('favk', 'given', (), {'zz': 1})
+fko | {}; {'b': 1} | TypeError: fko() missing 1 required keyword-only argument: 'c'
+fko | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fko() got multiple values for keyword argument 'a'
+fko | 5 | TypeError: Value after ** must be a mapping, not int
+fko | a key that is no str | TypeError: keywords must be strings
+fko | {'zz': 1}; dict with keys() | TypeError: fko() got an unexpected keyword argument 'zz'
+fpo | {}; {'zz': 1}; dict with keys() | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a'
+fpo | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fpo() got multiple values for keyword argument 'a'
+fpo | {'b': 1} | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a, b'
+fpo | 5 | TypeError: Value after ** must be a mapping, not int
+fpo | a key that is no str | TypeError: keywords must be strings
+fpok | {}; {'b': 1}; {'zz': 1}; dict with keys() | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fpok() got multiple values for keyword argument 'a'
+fpok | 5 | TypeError: Value after ** must be a mapping, not int
+fpok | a key that is no str | TypeError: keywords must be strings
+Made | {} | Made('given', (), {})
+Made | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.Made() got multiple values for keyword argument 'a'
+Made | {'b': 1} | Made('given', (), {'b': 1})
+Made | 5 | TypeError: Value after ** must be a mapping, not int
+Made | a key that is no str | TypeError: keywords must be strings
+Made | {'zz': 1}; dict with keys() | Made('given', (), {'zz': 1})
+method | {} | ('method', 'given', 2, {})
+method | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.Made.method() got multiple values for keyword argument 'a'
+method | {'b': 1} | ('method', 'given', 1, {})
+method | 5 | TypeError: Value after ** must be a mapping, not int
+method | a key that is no str | TypeError: keywords must be strings
+method | {'zz': 1}; dict with keys() | ('method', 'given', 2, {'zz': 1})
+partial | {}; {'b': 1}; {'zz': 1}; dict with keys() | TypeError: favk() got multiple values for argument 'a'
+partial | {'a': 1}; names made at run time; mapping | TypeError: functools.partial(<function favk>, 'p', x='from partial') got multiple values for keyword argument 'a'
+partial | 5 | TypeError: Value after ** must be a mapping, not int
+dict | {} | {'a': 'given'}
+dict | {'a': 1}; names made at run time; mapping | TypeError: dict() got multiple values for keyword argument 'a'
+dict | {'b': 1} | {'b': 1, 'a': 'given'}
+dict | 5 | TypeError: Value after ** must be a mapping, not int
+dict | {'zz': 1}; dict with keys() | {'zz': 1, 'a': 'given'}
+callable object | {} | ('__call__', (), {'a': 'given'})
+callable object | {'a': 1}; names made at run time; mapping; str child | TypeError: Made(1, (), {}) got multiple values for keyword argument 'a'
+callable object | {'b': 1} | ('__call__', (), {'b': 1, 'a': 'given'})
+callable object | 5 | TypeError: Value after ** must be a mapping, not int
+callable object | a key that is no str | TypeError: keywords must be strings
+callable object | {'zz': 1}; dict with keys() | ('__call__', (), {'zz': 1, 'a': 'given'})
+--- stars_stars
+f1 | {} | TypeError: f1() missing 1 required positional argument: 'a'
+f1 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f1() got multiple values for keyword argument 'a'
+f1 | {'b': 1} | TypeError: __main__.f1() got multiple values for keyword argument 'b'
+f1 | 5 | TypeError: Value after ** must be a mapping, not int
+f1 | a key that is no str | TypeError: __main__.f1() got multiple values for keyword argument '1'
+f1 | {'zz': 1}; dict with keys() | TypeError: __main__.f1() got multiple values for keyword argument 'zz'
+f2 | {} | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f2() got multiple values for keyword argument 'a'
+f2 | {'b': 1} | TypeError: __main__.f2() got multiple values for keyword argument 'b'
+f2 | 5 | TypeError: Value after ** must be a mapping, not int
+f2 | a key that is no str | TypeError: __main__.f2() got multiple values for keyword argument '1'
+f2 | {'zz': 1}; dict with keys() | TypeError: __main__.f2() got multiple values for keyword argument 'zz'
+f3 | {} | TypeError: f3() missing 3 required positional arguments: 'a', 'b', and 'c'
+f3 | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.f3() got multiple values for keyword argument 'a'
+f3 | {'b': 1} | TypeError: __main__.f3() got multiple values for keyword argument 'b'
+f3 | 5 | TypeError: Value after ** must be a mapping, not int
+f3 | a key that is no str | TypeError: __main__.f3() got multiple values for keyword argument '1'
+f3 | {'zz': 1}; dict with keys() | TypeError: __main__.f3() got multiple values for keyword argument 'zz'
+fv | {} | ('fv', ())
+fv | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fv() got multiple values for keyword argument 'a'
+fv | {'b': 1} | TypeError: __main__.fv() got multiple values for keyword argument 'b'
+fv | 5 | TypeError: Value after ** must be a mapping, not int
+fv | a key that is no str | TypeError: __main__.fv() got multiple values for keyword argument '1'
+fv | {'zz': 1}; dict with keys() | TypeError: __main__.fv() got multiple values for keyword argument 'zz'
+fvk | {} | ('fvk', (), {})
+fvk | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fvk() got multiple values for keyword argument 'a'
+fvk | {'b': 1} | TypeError: __main__.fvk() got multiple values for keyword argument 'b'
+fvk | 5 | TypeError: Value after ** must be a mapping, not int
+fvk | a key that is no str | TypeError: __main__.fvk() got multiple values for keyword argument '1'
+fvk | {'zz': 1}; dict with keys() | TypeError: __main__.fvk() got multiple values for keyword argument 'zz'
+favk | {} | TypeError: favk() missing 1 required positional argument: 'a'
+favk | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.favk() got multiple values for keyword argument 'a'
+favk | {'b': 1} | TypeError: __main__.favk() got multiple values for keyword argument 'b'
+favk | 5 | TypeError: Value after ** must be a mapping, not int
+favk | a key that is no str | TypeError: __main__.favk() got multiple values for keyword argument '1'
+favk | {'zz': 1}; dict with keys() | TypeError: __main__.favk() got multiple values for keyword argument 'zz'
+fko | {} | TypeError: fko() missing 1 required positional argument: 'a'
+fko | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fko() got multiple values for keyword argument 'a'
+fko | {'b': 1} | TypeError: __main__.fko() got multiple values for keyword argument 'b'
+fko | 5 | TypeError: Value after ** must be a mapping, not int
+fko | a key that is no str | TypeError: __main__.fko() got multiple values for keyword argument '1'
+fko | {'zz': 1}; dict with keys() | TypeError: __main__.fko() got multiple values for keyword argument 'zz'
+fpo | {} | TypeError: fpo() missing 1 required positional argument: 'a'
+fpo | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fpo() got multiple values for keyword argument 'a'
+fpo | {'b': 1} | TypeError: __main__.fpo() got multiple values for keyword argument 'b'
+fpo | 5 | TypeError: Value after ** must be a mapping, not int
+fpo | a key that is no str | TypeError: __main__.fpo() got multiple values for keyword argument '1'
+fpo | {'zz': 1}; dict with keys() | TypeError: __main__.fpo() got multiple values for keyword argument 'zz'
+fpok | {} | TypeError: fpok() missing 1 required positional argument: 'a'
+fpok | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.fpok() got multiple values for keyword argument 'a'
+fpok | {'b': 1} | TypeError: __main__.fpok() got multiple values for keyword argument 'b'
+fpok | 5 | TypeError: Value after ** must be a mapping, not int
+fpok | a key that is no str | TypeError: __main__.fpok() got multiple values for keyword argument '1'
+fpok | {'zz': 1}; dict with keys() | TypeError: __main__.fpok() got multiple values for keyword argument 'zz'
+Made | {} | Made(1, (), {})
+Made | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.Made() got multiple values for keyword argument 'a'
+Made | {'b': 1} | TypeError: __main__.Made() got multiple values for keyword argument 'b'
+Made | 5 | TypeError: Value after ** must be a mapping, not int
+Made | a key that is no str | TypeError: __main__.Made() got multiple values for keyword argument '1'
+Made | {'zz': 1}; dict with keys() | TypeError: __main__.Made() got multiple values for keyword argument 'zz'
+method | {} | TypeError: Made.method() missing 1 required positional argument: 'a'
+method | {'a': 1}; names made at run time; mapping; str child | TypeError: __main__.Made.method() got multiple values for keyword argument 'a'
+method | {'b': 1} | TypeError: __main__.Made.method() got multiple values for keyword argument 'b'
+method | 5 | TypeError: Value after ** must be a mapping, not int
+method | a key that is no str | TypeError: __main__.Made.method() got multiple values for keyword argument '1'
+method | {'zz': 1}; dict with keys() | TypeError: __main__.Made.method() got multiple values for keyword argument 'zz'
+partial | {} | ('favk', 'p', (), {'x': 'from partial'})
+partial | {'a': 1}; names made at run time; mapping | TypeError: functools.partial(<function favk>, 'p', x='from partial') got multiple values for keyword argument 'a'
+partial | {'b': 1} | TypeError: functools.partial(<function favk>, 'p', x='from partial') got multiple values for keyword argument 'b'
+partial | 5 | TypeError: Value after ** must be a mapping, not int
+partial | {'zz': 1}; dict with keys() | TypeError: functools.partial(<function favk>, 'p', x='from partial') got multiple values for keyword argument 'zz'
+dict | {} | {}
+dict | {'a': 1}; names made at run time; mapping | TypeError: dict() got multiple values for keyword argument 'a'
+dict | {'b': 1} | TypeError: dict() got multiple values for keyword argument 'b'
+dict | 5 | TypeError: Value after ** must be a mapping, not int
+dict | {'zz': 1}; dict with keys() | TypeError: dict() got multiple values for keyword argument 'zz'
+callable object | {} | ('__call__', (), {})
+callable object | {'a': 1}; names made at run time; mapping; str child | TypeError: Made(1, (), {}) got multiple values for keyword argument 'a'
+callable object | {'b': 1} | TypeError: Made(1, (), {}) got multiple values for keyword argument 'b'
+callable object | 5 | TypeError: Value after ** must be a mapping, not int
+callable object | a key that is no str | TypeError: Made(1, (), {}) got multiple values for keyword argument '1'
+callable object | {'zz': 1}; dict with keys() | TypeError: Made(1, (), {}) got multiple values for keyword argument 'zz'
+--- everything
+f1 | () {}; () {'b': 1}; () names made at run time; (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: f1() got an unexpected keyword argument 'zz'
+f1 | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.f1() got multiple values for keyword argument 'zz'
+f2 | () {}; () {'b': 1}; () names made at run time; (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: f2() got an unexpected keyword argument 'zz'
+f2 | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.f2() got multiple values for keyword argument 'zz'
+f3 | () {}; () {'b': 1}; () names made at run time; (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: f3() got an unexpected keyword argument 'zz'
+f3 | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.f3() got multiple values for keyword argument 'zz'
+fv | () {}; () {'b': 1}; () names made at run time; (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: fv() got an unexpected keyword argument 'zz'
+fv | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.fv() got multiple values for keyword argument 'zz'
+fvk | () {} | ('fvk', (0), {'zz': 'given'})
+fvk | () {'b': 1} | ('fvk', (0), {'zz': 'given', 'b': 1})
+fvk | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.fvk() got multiple values for keyword argument 'zz'
+fvk | () names made at run time | ('fvk', (0), {'zz': 'given', 'a': 1, 'b': 2})
+fvk | (1, 2) {}; generator {} | ('fvk', (0, 1, 2), {'zz': 'given'})
+fvk | (1, 2) {'b': 1}; generator {'b': 1} | ('fvk', (0, 1, 2), {'zz': 'given', 'b': 1})
+fvk | (1, 2) names made at run time; generator names made at run time | ('fvk', (0, 1, 2), {'zz': 'given', 'a': 1, 'b': 2})
+favk | () {} | ('favk', 0, (), {'zz': 'given'})
+favk | () {'b': 1} | ('favk', 0, (), {'zz': 'given', 'b': 1})
+favk | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.favk() got multiple values for keyword argument 'zz'
+favk | () names made at run time; (1, 2) names made at run time; generator names made at run time | TypeError: favk() got multiple values for argument 'a'
+favk | (1, 2) {}; generator {} | ('favk', 0, (1, 2), {'zz': 'given'})
+favk | (1, 2) {'b': 1}; generator {'b': 1} | ('favk', 0, (1, 2), {'zz': 'given', 'b': 1})
+fko | () {}; () {'b': 1}; () names made at run time; (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: fko() got an unexpected keyword argument 'zz'
+fko | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.fko() got multiple values for keyword argument 'zz'
+fpo | () {}; (1, 2) {}; generator {} | TypeError: fpo() got an unexpected keyword argument 'zz'
+fpo | () {'b': 1}; (1, 2) {'b': 1}; generator {'b': 1} | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'b'
+fpo | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.fpo() got multiple values for keyword argument 'zz'
+fpo | () names made at run time; (1, 2) names made at run time; generator names made at run time | TypeError: fpo() got some positional-only arguments passed as keyword arguments: 'a, b'
+fpok | () {} | ('fpok', 0, {'zz': 'given'})
+fpok | () {'b': 1} | ('fpok', 0, {'zz': 'given', 'b': 1})
+fpok | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.fpok() got multiple values for keyword argument 'zz'
+fpok | () names made at run time | ('fpok', 0, {'zz': 'given', 'a': 1, 'b': 2})
+fpok | (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: fpok() takes 1 positional argument but 3 were given
+Made | () {} | Made(0, (), {'zz': 'given'})
+Made | () {'b': 1} | Made(0, (), {'zz': 'given', 'b': 1})
+Made | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.Made() got multiple values for keyword argument 'zz'
+Made | () names made at run time; (1, 2) names made at run time; generator names made at run time | TypeError: Made.__init__() got multiple values for argument 'a'
+Made | (1, 2) {}; generator {} | Made(0, (1, 2), {'zz': 'given'})
+Made | (1, 2) {'b': 1}; generator {'b': 1} | Made(0, (1, 2), {'zz': 'given', 'b': 1})
+method | () {} | ('method', 0, 2, {'zz': 'given'})
+method | () {'b': 1} | ('method', 0, 1, {'zz': 'given'})
+method | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: __main__.Made.method() got multiple values for keyword argument 'zz'
+method | () names made at run time; (1, 2) names made at run time; generator names made at run time | TypeError: Made.method() got multiple values for argument 'a'
+method | (1, 2) {}; generator {} | TypeError: Made.method() takes from 2 to 3 positional arguments but 4 were given
+method | (1, 2) {'b': 1}; generator {'b': 1} | TypeError: Made.method() got multiple values for argument 'b'
+partial | () {} | ('favk', 'p', (0), {'x': 'from partial', 'zz': 'given'})
+partial | () {'b': 1} | ('favk', 'p', (0), {'x': 'from partial', 'zz': 'given', 'b': 1})
+partial | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: functools.partial(<function favk>, 'p', x='from partial') got multiple values for keyword argument 'zz'
+partial | () names made at run time; (1, 2) names made at run time; generator names made at run time | TypeError: favk() got multiple values for argument 'a'
+partial | (1, 2) {}; generator {} | ('favk', 'p', (0, 1, 2), {'x': 'from partial', 'zz': 'given'})
+partial | (1, 2) {'b': 1}; generator {'b': 1} | ('favk', 'p', (0, 1, 2), {'x': 'from partial', 'zz': 'given', 'b': 1})
+dict | () {}; () {'b': 1}; () names made at run time | TypeError: 'int' object is not iterable
+dict | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: dict() got multiple values for keyword argument 'zz'
+dict | (1, 2) {}; (1, 2) {'b': 1}; (1, 2) names made at run time; generator {}; generator {'b': 1}; generator names made at run time | TypeError: dict expected at most 1 argument, got 3
+callable object | () {} | ('__call__', (0), {'zz': 'given'})
+callable object | () {'b': 1} | ('__call__', (0), {'zz': 'given', 'b': 1})
+callable object | () {'zz': 1}; (1, 2) {'zz': 1}; generator {'zz': 1} | TypeError: Made(1, (), {}) got multiple values for keyword argument 'zz'
+callable object | () names made at run time | ('__call__', (0), {'zz': 'given', 'a': 1, 'b': 2})
+callable object | (1, 2) {}; generator {} | ('__call__', (0, 1, 2), {'zz': 'given'})
+callable object | (1, 2) {'b': 1}; generator {'b': 1} | ('__call__', (0, 1, 2), {'zz': 'given', 'b': 1})
+callable object | (1, 2) names made at run time; generator names made at run time | ('__call__', (0, 1, 2), {'zz': 'given', 'a': 1, 'b': 2})
+--- f.__call__(*p)
+f2 | ()  | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | (1,) ; (1, 2) ; [1, 2] ; generator  | ('f2', 1, 2)
+f2 | 5  | TypeError: Value after * must be an iterable, not int
+f2 | tuple with __iter__  | ('f2', 'from', '__iter__')
+fv | ()  | ('fv', ())
+fv | (1,)  | ('fv', (1))
+fv | (1, 2) ; [1, 2] ; generator  | ('fv', (1, 2))
+fv | 5  | TypeError: Value after * must be an iterable, not int
+fv | tuple with __iter__  | ('fv', ('from', '__iter__'))
+Made | ()  | TypeError: Made.__call__() missing 1 required positional argument: 'self'
+Made | (1,)  | ('__call__', (), {})
+Made | (1, 2) ; [1, 2] ; generator  | ('__call__', (2), {})
+Made | 5  | TypeError: Value after * must be an iterable, not int
+Made | tuple with __iter__  | ('__call__', ('__iter__'), {})
+callable object | ()  | ('__call__', (), {})
+callable object | (1,)  | ('__call__', (1), {})
+callable object | (1, 2) ; [1, 2] ; generator  | ('__call__', (1, 2), {})
+callable object | 5  | TypeError: Value after * must be an iterable, not int
+callable object | tuple with __iter__  | ('__call__', ('from', '__iter__'), {})
+len | ()  | TypeError: len() takes exactly one argument (0 given)
+len | (1,)  | TypeError: object of type 'int' has no len()
+len | (1, 2) ; [1, 2] ; generator ; tuple with __iter__  | TypeError: len() takes exactly one argument (2 given)
+len | 5  | TypeError: Value after * must be an iterable, not int
+--- f.__call__(*p, **k)
+f2 | () {}; () {'b': 1} | TypeError: f2() missing 1 required positional argument: 'a'
+f2 | () {'a': 1}; () names made at run time; () str child; (1,) {} | ('f2', 1, 2)
+f2 | () mapping | ('f2', 'aa', 'bb')
+f2 | () 5; (1,) 5 | TypeError: Value after ** must be a mapping, not int
+f2 | () a key that is no str; (1,) a key that is no str | TypeError: keywords must be strings
+f2 | (1,) {'a': 1}; (1,) names made at run time; (1,) mapping; (1,) str child | TypeError: f2() got multiple values for argument 'a'
+f2 | (1,) {'b': 1} | ('f2', 1, 1)
+fvk | () {} | ('fvk', (), {})
+fvk | () {'a': 1} | ('fvk', (), {'a': 1})
+fvk | () {'b': 1} | ('fvk', (), {'b': 1})
+fvk | () names made at run time | ('fvk', (), {'a': 1, 'b': 2})
+fvk | () mapping | ('fvk', (), {'a': 'aa', 'b': 'bb'})
+fvk | () 5; (1,) 5 | TypeError: Value after ** must be a mapping, not int
+fvk | () a key that is no str; (1,) a key that is no str | TypeError: keywords must be strings
+fvk | () str child | ('fvk', (), {StrChild 'a': 1})
+fvk | (1,) {} | ('fvk', (1), {})
+fvk | (1,) {'a': 1} | ('fvk', (1), {'a': 1})
+fvk | (1,) {'b': 1} | ('fvk', (1), {'b': 1})
+fvk | (1,) names made at run time | ('fvk', (1), {'a': 1, 'b': 2})
+fvk | (1,) mapping | ('fvk', (1), {'a': 'aa', 'b': 'bb'})
+fvk | (1,) str child | ('fvk', (1), {StrChild 'a': 1})
+Made | () {}; () {'a': 1}; () {'b': 1}; () names made at run time; () mapping; () str child | TypeError: Made.__call__() missing 1 required positional argument: 'self'
+Made | () 5; (1,) 5 | TypeError: Value after ** must be a mapping, not int
+Made | () a key that is no str; (1,) a key that is no str | TypeError: keywords must be strings
+Made | (1,) {} | ('__call__', (), {})
+Made | (1,) {'a': 1} | ('__call__', (), {'a': 1})
+Made | (1,) {'b': 1} | ('__call__', (), {'b': 1})
+Made | (1,) names made at run time | ('__call__', (), {'a': 1, 'b': 2})
+Made | (1,) mapping | ('__call__', (), {'a': 'aa', 'b': 'bb'})
+Made | (1,) str child | ('__call__', (), {StrChild 'a': 1})
+callable object | () {} | ('__call__', (), {})
+callable object | () {'a': 1} | ('__call__', (), {'a': 1})
+callable object | () {'b': 1} | ('__call__', (), {'b': 1})
+callable object | () names made at run time | ('__call__', (), {'a': 1, 'b': 2})
+callable object | () mapping | ('__call__', (), {'a': 'aa', 'b': 'bb'})
+callable object | () 5; (1,) 5 | TypeError: Value after ** must be a mapping, not int
+callable object | () a key that is no str; (1,) a key that is no str | TypeError: keywords must be strings
+callable object | () str child | ('__call__', (), {StrChild 'a': 1})
+callable object | (1,) {} | ('__call__', (1), {})
+callable object | (1,) {'a': 1} | ('__call__', (1), {'a': 1})
+callable object | (1,) {'b': 1} | ('__call__', (1), {'b': 1})
+callable object | (1,) names made at run time | ('__call__', (1), {'a': 1, 'b': 2})
+callable object | (1,) mapping | ('__call__', (1), {'a': 'aa', 'b': 'bb'})
+callable object | (1,) str child | ('__call__', (1), {StrChild 'a': 1})
+dict | () {} | {}
+dict | () {'a': 1} | {'a': 1}
+dict | () {'b': 1} | {'b': 1}
+dict | () names made at run time | {'a': 1, 'b': 2}
+dict | () mapping | {'a': 'aa', 'b': 'bb'}
+dict | () 5; (1,) 5 | TypeError: Value after ** must be a mapping, not int
+dict | (1,) {}; (1,) {'a': 1}; (1,) {'b': 1}; (1,) names made at run time; (1,) mapping | TypeError: 'int' object is not iterable
+--- in which order
+note('f', f2)(*note('p', NotingIterable()), **note('k', NotingMapping())) | ['f', 'p', 'k', 'keys', 'getitem b', 'iter', 'end of iter'] | ('f2', 1, 2)
+note('f', fvk)(note('first', 0), *note('p', NotingIterable()), x=note('x', 1), **note('k', NotingMapping())) | ['f', 'first', 'p', 'iter', 'end of iter', 'x', 'k', 'keys', 'getitem b'] | ('fvk', (0, 1), {'x': 1, 'b': 2})
+note('f', fvk)(*note('p', NotingIterable()), *note('q', NotingIterable())) | ['f', 'p', 'iter', 'end of iter', 'q', 'iter', 'end of iter'] | ('fvk', (1, 1), {})
+note('f', f2)(*note('p', 5), **note('k', 6)) | ['f', 'p', 'k'] | TypeError: Value after ** must be a mapping, not int
+note('f', f2)(0, *note('p', 5), **note('k', 6)) | ['f', 'p'] | TypeError: Value after * must be an iterable, not int
+note('f', f2)(*note('p', NotingIterable()), **note('k', 6)) | ['f', 'p', 'k'] | TypeError: Value after ** must be a mapping, not int
+note('f', f2)(*note('p', 5), **note('k', NotingMapping())) | ['f', 'p', 'k', 'keys', 'getitem b'] | TypeError: Value after * must be an iterable, not int
+note('f', 5)(*note('p', NotingIterable()), **note('k', NotingMapping())) | ['f', 'p', 'k', 'keys', 'getitem b', 'iter', 'end of iter'] | TypeError: 'int' object is not callable
+--- what is after the stars is not changed, nor shared
+[1, 2] {'x': 1} ('fvk', (1, 2), {'x': 1, 'y': 2}) False False False True
+[1, 2] {'x': 1} ('fvk', (1, 2, 3), {'x': 1, 'z': 1})
+('fvk', (1,), {'x': 1}) {'late': 'added while the positional ones were gone through'}
+('fvk', (0, 1), {'late': 'added while the positional ones were gone through'}) {'late': 'added while the positional ones were gone through'}
+('fvk', (1,), {'x': 1}) {'late': 'added while the positional ones were gone through'}
+('fvk', (0, 1), {'late': 'added while the positional ones were gone through'}) {'late': 'added while the positional ones were gone through'}
+--- many names that no parameter has
+0 0 0 [] True False
+taken
+1 1 0 ['name0'] True False
+f2() got an unexpected keyword argument 'name0'
+7 7 21 ['name0', 'name1'] True False
+f2() got an unexpected keyword argument 'name0'
+8 8 28 ['name0', 'name1'] True False
+f2() got an unexpected keyword argument 'name0'
+9 9 36 ['name0', 'name1'] True False
+f2() got an unexpected keyword argument 'name0'
+100 100 4950 ['name0', 'name1'] True False
+f2() got an unexpected keyword argument 'name0'
+3000 3000 4498500 ['name0', 'name1'] True False
+f2() got an unexpected keyword argument 'name0'
+--- keys of classes derived from str say themselves what they are equal to
+str ab ab_kw () | ('ab_kw', 1, {}) []
+str ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+str ab ab_only () | ('ab_only', 1) []
+str ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' []
+str ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+str ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+str ab posonly_kw () | ('posonly_kw', 0, 1, {'ab': 1}) []
+str ab posonly_kw (5,) | ('posonly_kw', 5, 1, {'ab': 1}) []
+str ab partial () | ('ab_kw', 1, {}) []
+str ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+str ab partial () | ('ab_kw', 1, {'x': 1}) []
+str ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+str ab dict () | {'ab': 1} []
+str ab dict (5,) | TypeError: 'int' object is not iterable []
+str ab ab_kw () | ('ab_kw', 1, {}) []
+str ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+str ab ab_only () | ('ab_only', 1) []
+str ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' []
+str ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+str ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+str ab posonly_kw () | ('posonly_kw', 0, 1, {'ab': 1}) []
+str ab posonly_kw (5,) | ('posonly_kw', 5, 1, {'ab': 1}) []
+str ab partial () | ('ab_kw', 1, {}) []
+str ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+str ab partial () | ('ab_kw', 1, {'x': 1}) []
+str ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+str ab dict () | {'ab': 1} []
+str ab dict (5,) | TypeError: 'int' object is not iterable []
+str aa ab_kw () | ('ab_kw', 0, {'aa': 1}) []
+str aa ab_kw (5,) | ('ab_kw', 5, {'aa': 1}) []
+str aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+str aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+str aa posonly () | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+str aa posonly (5,) | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+str aa posonly_kw () | ('posonly_kw', 0, 1, {'aa': 1}) []
+str aa posonly_kw (5,) | ('posonly_kw', 5, 1, {'aa': 1}) []
+str aa partial () | ('ab_kw', 0, {'aa': 1}) []
+str aa partial (5,) | ('ab_kw', 5, {'aa': 1}) []
+str aa partial () | ('ab_kw', 0, {'x': 1, 'aa': 1}) []
+str aa partial (5,) | ('ab_kw', 5, {'x': 1, 'aa': 1}) []
+str aa dict () | {'aa': 1} []
+str aa dict (5,) | TypeError: 'int' object is not iterable []
+str aa ab_kw () | ('ab_kw', 0, {'aa': 1}) []
+str aa ab_kw (5,) | ('ab_kw', 5, {'aa': 1}) []
+str aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+str aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+str aa posonly () | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+str aa posonly (5,) | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+str aa posonly_kw () | ('posonly_kw', 0, 1, {'aa': 1}) []
+str aa posonly_kw (5,) | ('posonly_kw', 5, 1, {'aa': 1}) []
+str aa partial () | ('ab_kw', 0, {'aa': 1}) []
+str aa partial (5,) | ('ab_kw', 5, {'aa': 1}) []
+str aa partial () | ('ab_kw', 0, {'x': 1, 'aa': 1}) []
+str aa partial (5,) | ('ab_kw', 5, {'x': 1, 'aa': 1}) []
+str aa dict () | {'aa': 1} []
+str aa dict (5,) | TypeError: 'int' object is not iterable []
+str bb ab_kw () | ('ab_kw', 0, {'bb': 1}) []
+str bb ab_kw (5,) | ('ab_kw', 5, {'bb': 1}) []
+str bb ab_only () | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? []
+str bb ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? []
+str bb posonly () | ('posonly', 0, 1) []
+str bb posonly (5,) | ('posonly', 5, 1) []
+str bb posonly_kw () | ('posonly_kw', 0, 1, {}) []
+str bb posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+str bb partial () | ('ab_kw', 0, {'bb': 1}) []
+str bb partial (5,) | ('ab_kw', 5, {'bb': 1}) []
+str bb partial () | ('ab_kw', 0, {'x': 1, 'bb': 1}) []
+str bb partial (5,) | ('ab_kw', 5, {'x': 1, 'bb': 1}) []
+str bb dict () | {'bb': 1} []
+str bb dict (5,) | TypeError: 'int' object is not iterable []
+str zz ab_kw () | ('ab_kw', 0, {'zz': 1}) []
+str zz ab_kw (5,) | ('ab_kw', 5, {'zz': 1}) []
+str zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+str zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+str zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' []
+str zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' []
+str zz posonly_kw () | ('posonly_kw', 0, 1, {'zz': 1}) []
+str zz posonly_kw (5,) | ('posonly_kw', 5, 1, {'zz': 1}) []
+str zz partial () | ('ab_kw', 0, {'zz': 1}) []
+str zz partial (5,) | ('ab_kw', 5, {'zz': 1}) []
+str zz partial () | ('ab_kw', 0, {'x': 1, 'zz': 1}) []
+str zz partial (5,) | ('ab_kw', 5, {'x': 1, 'zz': 1}) []
+str zz dict () | {'zz': 1} []
+str zz dict (5,) | TypeError: 'int' object is not iterable []
+str zz ab_kw () | ('ab_kw', 0, {'zz': 1}) []
+str zz ab_kw (5,) | ('ab_kw', 5, {'zz': 1}) []
+str zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+str zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+str zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' []
+str zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' []
+str zz posonly_kw () | ('posonly_kw', 0, 1, {'zz': 1}) []
+str zz posonly_kw (5,) | ('posonly_kw', 5, 1, {'zz': 1}) []
+str zz partial () | ('ab_kw', 0, {'zz': 1}) []
+str zz partial (5,) | ('ab_kw', 5, {'zz': 1}) []
+str zz partial () | ('ab_kw', 0, {'x': 1, 'zz': 1}) []
+str zz partial (5,) | ('ab_kw', 5, {'x': 1, 'zz': 1}) []
+str zz dict () | {'zz': 1} []
+str zz dict (5,) | TypeError: 'int' object is not iterable []
+StrChild ab ab_kw () | ('ab_kw', 1, {}) []
+StrChild ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+StrChild ab ab_only () | ('ab_only', 1) []
+StrChild ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' []
+StrChild ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+StrChild ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+StrChild ab posonly_kw () | ('posonly_kw', 0, 1, {StrChild 'ab': 1}) []
+StrChild ab posonly_kw (5,) | ('posonly_kw', 5, 1, {StrChild 'ab': 1}) []
+StrChild ab partial () | ('ab_kw', 1, {}) []
+StrChild ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+StrChild ab partial () | ('ab_kw', 1, {'x': 1}) []
+StrChild ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+StrChild ab dict () | {StrChild 'ab': 1} []
+StrChild ab dict (5,) | TypeError: 'int' object is not iterable []
+StrChild ab ab_kw () | ('ab_kw', 1, {}) []
+StrChild ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+StrChild ab ab_only () | ('ab_only', 1) []
+StrChild ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' []
+StrChild ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+StrChild ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+StrChild ab posonly_kw () | ('posonly_kw', 0, 1, {StrChild 'ab': 1}) []
+StrChild ab posonly_kw (5,) | ('posonly_kw', 5, 1, {StrChild 'ab': 1}) []
+StrChild ab partial () | ('ab_kw', 1, {}) []
+StrChild ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+StrChild ab partial () | ('ab_kw', 1, {'x': 1}) []
+StrChild ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+StrChild ab dict () | {StrChild 'ab': 1} []
+StrChild ab dict (5,) | TypeError: 'int' object is not iterable []
+StrChild aa ab_kw () | ('ab_kw', 0, {StrChild 'aa': 1}) []
+StrChild aa ab_kw (5,) | ('ab_kw', 5, {StrChild 'aa': 1}) []
+StrChild aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+StrChild aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+StrChild aa posonly () | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+StrChild aa posonly (5,) | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+StrChild aa posonly_kw () | ('posonly_kw', 0, 1, {StrChild 'aa': 1}) []
+StrChild aa posonly_kw (5,) | ('posonly_kw', 5, 1, {StrChild 'aa': 1}) []
+StrChild aa partial () | ('ab_kw', 0, {StrChild 'aa': 1}) []
+StrChild aa partial (5,) | ('ab_kw', 5, {StrChild 'aa': 1}) []
+StrChild aa partial () | ('ab_kw', 0, {'x': 1, StrChild 'aa': 1}) []
+StrChild aa partial (5,) | ('ab_kw', 5, {'x': 1, StrChild 'aa': 1}) []
+StrChild aa dict () | {StrChild 'aa': 1} []
+StrChild aa dict (5,) | TypeError: 'int' object is not iterable []
+StrChild aa ab_kw () | ('ab_kw', 0, {StrChild 'aa': 1}) []
+StrChild aa ab_kw (5,) | ('ab_kw', 5, {StrChild 'aa': 1}) []
+StrChild aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+StrChild aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+StrChild aa posonly () | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+StrChild aa posonly (5,) | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' []
+StrChild aa posonly_kw () | ('posonly_kw', 0, 1, {StrChild 'aa': 1}) []
+StrChild aa posonly_kw (5,) | ('posonly_kw', 5, 1, {StrChild 'aa': 1}) []
+StrChild aa partial () | ('ab_kw', 0, {StrChild 'aa': 1}) []
+StrChild aa partial (5,) | ('ab_kw', 5, {StrChild 'aa': 1}) []
+StrChild aa partial () | ('ab_kw', 0, {'x': 1, StrChild 'aa': 1}) []
+StrChild aa partial (5,) | ('ab_kw', 5, {'x': 1, StrChild 'aa': 1}) []
+StrChild aa dict () | {StrChild 'aa': 1} []
+StrChild aa dict (5,) | TypeError: 'int' object is not iterable []
+StrChild bb ab_kw () | ('ab_kw', 0, {StrChild 'bb': 1}) []
+StrChild bb ab_kw (5,) | ('ab_kw', 5, {StrChild 'bb': 1}) []
+StrChild bb ab_only () | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? []
+StrChild bb ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? []
+StrChild bb posonly () | ('posonly', 0, 1) []
+StrChild bb posonly (5,) | ('posonly', 5, 1) []
+StrChild bb posonly_kw () | ('posonly_kw', 0, 1, {}) []
+StrChild bb posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+StrChild bb partial () | ('ab_kw', 0, {StrChild 'bb': 1}) []
+StrChild bb partial (5,) | ('ab_kw', 5, {StrChild 'bb': 1}) []
+StrChild bb partial () | ('ab_kw', 0, {'x': 1, StrChild 'bb': 1}) []
+StrChild bb partial (5,) | ('ab_kw', 5, {'x': 1, StrChild 'bb': 1}) []
+StrChild bb dict () | {StrChild 'bb': 1} []
+StrChild bb dict (5,) | TypeError: 'int' object is not iterable []
+StrChild zz ab_kw () | ('ab_kw', 0, {StrChild 'zz': 1}) []
+StrChild zz ab_kw (5,) | ('ab_kw', 5, {StrChild 'zz': 1}) []
+StrChild zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+StrChild zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+StrChild zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' []
+StrChild zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' []
+StrChild zz posonly_kw () | ('posonly_kw', 0, 1, {StrChild 'zz': 1}) []
+StrChild zz posonly_kw (5,) | ('posonly_kw', 5, 1, {StrChild 'zz': 1}) []
+StrChild zz partial () | ('ab_kw', 0, {StrChild 'zz': 1}) []
+StrChild zz partial (5,) | ('ab_kw', 5, {StrChild 'zz': 1}) []
+StrChild zz partial () | ('ab_kw', 0, {'x': 1, StrChild 'zz': 1}) []
+StrChild zz partial (5,) | ('ab_kw', 5, {'x': 1, StrChild 'zz': 1}) []
+StrChild zz dict () | {StrChild 'zz': 1} []
+StrChild zz dict (5,) | TypeError: 'int' object is not iterable []
+StrChild zz ab_kw () | ('ab_kw', 0, {StrChild 'zz': 1}) []
+StrChild zz ab_kw (5,) | ('ab_kw', 5, {StrChild 'zz': 1}) []
+StrChild zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+StrChild zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+StrChild zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' []
+StrChild zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' []
+StrChild zz posonly_kw () | ('posonly_kw', 0, 1, {StrChild 'zz': 1}) []
+StrChild zz posonly_kw (5,) | ('posonly_kw', 5, 1, {StrChild 'zz': 1}) []
+StrChild zz partial () | ('ab_kw', 0, {StrChild 'zz': 1}) []
+StrChild zz partial (5,) | ('ab_kw', 5, {StrChild 'zz': 1}) []
+StrChild zz partial () | ('ab_kw', 0, {'x': 1, StrChild 'zz': 1}) []
+StrChild zz partial (5,) | ('ab_kw', 5, {'x': 1, StrChild 'zz': 1}) []
+StrChild zz dict () | {StrChild 'zz': 1} []
+StrChild zz dict (5,) | TypeError: 'int' object is not iterable []
+Never ab ab_kw () | ('ab_kw', 0, {Never 'ab': 1}) []
+Never ab ab_kw (5,) | ('ab_kw', 5, {Never 'ab': 1}) []
+Never ab ab_only () | TypeError: ab_only() got an unexpected keyword argument 'ab' []
+Never ab ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'ab' []
+Never ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+Never ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+Never ab posonly_kw () | ('posonly_kw', 0, 1, {Never 'ab': 1}) []
+Never ab posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'ab': 1}) []
+Never ab partial () | ('ab_kw', 0, {Never 'ab': 1}) []
+Never ab partial (5,) | ('ab_kw', 5, {Never 'ab': 1}) []
+Never ab partial () | ('ab_kw', 0, {'x': 1, Never 'ab': 1}) []
+Never ab partial (5,) | ('ab_kw', 5, {'x': 1, Never 'ab': 1}) []
+Never ab dict () | {Never 'ab': 1} []
+Never ab dict (5,) | TypeError: 'int' object is not iterable []
+Never ab ab_kw () | ('ab_kw', 0, {Never 'ab': 1}) []
+Never ab ab_kw (5,) | ('ab_kw', 5, {Never 'ab': 1}) []
+Never ab ab_only () | TypeError: ab_only() got an unexpected keyword argument 'ab' []
+Never ab ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'ab' []
+Never ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+Never ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? []
+Never ab posonly_kw () | ('posonly_kw', 0, 1, {Never 'ab': 1}) []
+Never ab posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'ab': 1}) []
+Never ab partial () | ('ab_kw', 0, {Never 'ab': 1}) []
+Never ab partial (5,) | ('ab_kw', 5, {Never 'ab': 1}) []
+Never ab partial () | ('ab_kw', 0, {'x': 1, Never 'ab': 1}) []
+Never ab partial (5,) | ('ab_kw', 5, {'x': 1, Never 'ab': 1}) []
+Never ab dict () | {Never 'ab': 1} []
+Never ab dict (5,) | TypeError: 'int' object is not iterable []
+Never aa ab_kw () | ('ab_kw', 0, {Never 'aa': 1}) []
+Never aa ab_kw (5,) | ('ab_kw', 5, {Never 'aa': 1}) []
+Never aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+Never aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+Never aa posonly () | TypeError: posonly() got an unexpected keyword argument 'aa' []
+Never aa posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'aa' []
+Never aa posonly_kw () | ('posonly_kw', 0, 1, {Never 'aa': 1}) []
+Never aa posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'aa': 1}) []
+Never aa partial () | ('ab_kw', 0, {Never 'aa': 1}) []
+Never aa partial (5,) | ('ab_kw', 5, {Never 'aa': 1}) []
+Never aa partial () | ('ab_kw', 0, {'x': 1, Never 'aa': 1}) []
+Never aa partial (5,) | ('ab_kw', 5, {'x': 1, Never 'aa': 1}) []
+Never aa dict () | {Never 'aa': 1} []
+Never aa dict (5,) | TypeError: 'int' object is not iterable []
+Never aa ab_kw () | ('ab_kw', 0, {Never 'aa': 1}) []
+Never aa ab_kw (5,) | ('ab_kw', 5, {Never 'aa': 1}) []
+Never aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+Never aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? []
+Never aa posonly () | TypeError: posonly() got an unexpected keyword argument 'aa' []
+Never aa posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'aa' []
+Never aa posonly_kw () | ('posonly_kw', 0, 1, {Never 'aa': 1}) []
+Never aa posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'aa': 1}) []
+Never aa partial () | ('ab_kw', 0, {Never 'aa': 1}) []
+Never aa partial (5,) | ('ab_kw', 5, {Never 'aa': 1}) []
+Never aa partial () | ('ab_kw', 0, {'x': 1, Never 'aa': 1}) []
+Never aa partial (5,) | ('ab_kw', 5, {'x': 1, Never 'aa': 1}) []
+Never aa dict () | {Never 'aa': 1} []
+Never aa dict (5,) | TypeError: 'int' object is not iterable []
+Never bb ab_kw () | ('ab_kw', 0, {Never 'bb': 1}) []
+Never bb ab_kw (5,) | ('ab_kw', 5, {Never 'bb': 1}) []
+Never bb ab_only () | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? []
+Never bb ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? []
+Never bb posonly () | TypeError: posonly() got an unexpected keyword argument 'bb' []
+Never bb posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'bb' []
+Never bb posonly_kw () | ('posonly_kw', 0, 1, {Never 'bb': 1}) []
+Never bb posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'bb': 1}) []
+Never bb partial () | ('ab_kw', 0, {Never 'bb': 1}) []
+Never bb partial (5,) | ('ab_kw', 5, {Never 'bb': 1}) []
+Never bb partial () | ('ab_kw', 0, {'x': 1, Never 'bb': 1}) []
+Never bb partial (5,) | ('ab_kw', 5, {'x': 1, Never 'bb': 1}) []
+Never bb dict () | {Never 'bb': 1} []
+Never bb dict (5,) | TypeError: 'int' object is not iterable []
+Never zz ab_kw () | ('ab_kw', 0, {Never 'zz': 1}) []
+Never zz ab_kw (5,) | ('ab_kw', 5, {Never 'zz': 1}) []
+Never zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+Never zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+Never zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' []
+Never zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' []
+Never zz posonly_kw () | ('posonly_kw', 0, 1, {Never 'zz': 1}) []
+Never zz posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'zz': 1}) []
+Never zz partial () | ('ab_kw', 0, {Never 'zz': 1}) []
+Never zz partial (5,) | ('ab_kw', 5, {Never 'zz': 1}) []
+Never zz partial () | ('ab_kw', 0, {'x': 1, Never 'zz': 1}) []
+Never zz partial (5,) | ('ab_kw', 5, {'x': 1, Never 'zz': 1}) []
+Never zz dict () | {Never 'zz': 1} []
+Never zz dict (5,) | TypeError: 'int' object is not iterable []
+Never zz ab_kw () | ('ab_kw', 0, {Never 'zz': 1}) []
+Never zz ab_kw (5,) | ('ab_kw', 5, {Never 'zz': 1}) []
+Never zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+Never zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' []
+Never zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' []
+Never zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' []
+Never zz posonly_kw () | ('posonly_kw', 0, 1, {Never 'zz': 1}) []
+Never zz posonly_kw (5,) | ('posonly_kw', 5, 1, {Never 'zz': 1}) []
+Never zz partial () | ('ab_kw', 0, {Never 'zz': 1}) []
+Never zz partial (5,) | ('ab_kw', 5, {Never 'zz': 1}) []
+Never zz partial () | ('ab_kw', 0, {'x': 1, Never 'zz': 1}) []
+Never zz partial (5,) | ('ab_kw', 5, {'x': 1, Never 'zz': 1}) []
+Never zz dict () | {Never 'zz': 1} []
+Never zz dict (5,) | TypeError: 'int' object is not iterable []
+Always ab ab_kw () | ('ab_kw', 1, {}) []
+Always ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+Always ab ab_only () | ('ab_only', 1) []
+Always ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' []
+Always ab posonly () | ('posonly', 0, 1) []
+Always ab posonly (5,) | ('posonly', 5, 1) []
+Always ab posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always ab posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always ab partial () | ('ab_kw', 1, {}) []
+Always ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+Always ab partial () | ('ab_kw', 1, {'x': 1}) []
+Always ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+Always ab dict () | {Always 'ab': 1} []
+Always ab dict (5,) | TypeError: 'int' object is not iterable []
+Always ab ab_kw () | ('ab_kw', 1, {}) []
+Always ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+Always ab ab_only () | ('ab_only', 1) []
+Always ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' []
+Always ab posonly () | ('posonly', 0, 1) []
+Always ab posonly (5,) | ('posonly', 5, 1) []
+Always ab posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always ab posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always ab partial () | ('ab_kw', 1, {}) []
+Always ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+Always ab partial () | ('ab_kw', 1, {'x': 1}) []
+Always ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' []
+Always ab dict () | {Always 'ab': 1} []
+Always ab dict (5,) | TypeError: 'int' object is not iterable []
+Always aa ab_kw () | ('ab_kw', 1, {}) []
+Always aa ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'aa' []
+Always aa ab_only () | ('ab_only', 1) []
+Always aa ab_only (5,) | TypeError: ab_only() got multiple values for argument 'aa' []
+Always aa posonly () | ('posonly', 0, 1) []
+Always aa posonly (5,) | ('posonly', 5, 1) []
+Always aa posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always aa posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always aa partial () | ('ab_kw', 1, {}) []
+Always aa partial (5,) | TypeError: ab_kw() got multiple values for argument 'aa' []
+Always aa partial () | ('ab_kw', 1, {'x': 1}) []
+Always aa partial (5,) | TypeError: ab_kw() got multiple values for argument 'aa' []
+Always aa dict () | {Always 'aa': 1} []
+Always aa dict (5,) | TypeError: 'int' object is not iterable []
+Always aa ab_kw () | ('ab_kw', 1, {}) []
+Always aa ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'aa' []
+Always aa ab_only () | ('ab_only', 1) []
+Always aa ab_only (5,) | TypeError: ab_only() got multiple values for argument 'aa' []
+Always aa posonly () | ('posonly', 0, 1) []
+Always aa posonly (5,) | ('posonly', 5, 1) []
+Always aa posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always aa posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always aa partial () | ('ab_kw', 1, {}) []
+Always aa partial (5,) | TypeError: ab_kw() got multiple values for argument 'aa' []
+Always aa partial () | ('ab_kw', 1, {'x': 1}) []
+Always aa partial (5,) | TypeError: ab_kw() got multiple values for argument 'aa' []
+Always aa dict () | {Always 'aa': 1} []
+Always aa dict (5,) | TypeError: 'int' object is not iterable []
+Always bb ab_kw () | ('ab_kw', 1, {}) []
+Always bb ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'bb' []
+Always bb ab_only () | ('ab_only', 1) []
+Always bb ab_only (5,) | TypeError: ab_only() got multiple values for argument 'bb' []
+Always bb posonly () | ('posonly', 0, 1) []
+Always bb posonly (5,) | ('posonly', 5, 1) []
+Always bb posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always bb posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always bb partial () | ('ab_kw', 1, {}) []
+Always bb partial (5,) | TypeError: ab_kw() got multiple values for argument 'bb' []
+Always bb partial () | ('ab_kw', 1, {'x': 1}) []
+Always bb partial (5,) | TypeError: ab_kw() got multiple values for argument 'bb' []
+Always bb dict () | {Always 'bb': 1} []
+Always bb dict (5,) | TypeError: 'int' object is not iterable []
+Always zz ab_kw () | ('ab_kw', 1, {}) []
+Always zz ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'zz' []
+Always zz ab_only () | ('ab_only', 1) []
+Always zz ab_only (5,) | TypeError: ab_only() got multiple values for argument 'zz' []
+Always zz posonly () | ('posonly', 0, 1) []
+Always zz posonly (5,) | ('posonly', 5, 1) []
+Always zz posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always zz posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always zz partial () | ('ab_kw', 1, {}) []
+Always zz partial (5,) | TypeError: ab_kw() got multiple values for argument 'zz' []
+Always zz partial () | ('ab_kw', 1, {'x': 1}) []
+Always zz partial (5,) | TypeError: ab_kw() got multiple values for argument 'zz' []
+Always zz dict () | {Always 'zz': 1} []
+Always zz dict (5,) | TypeError: 'int' object is not iterable []
+Always zz ab_kw () | ('ab_kw', 1, {}) []
+Always zz ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'zz' []
+Always zz ab_only () | ('ab_only', 1) []
+Always zz ab_only (5,) | TypeError: ab_only() got multiple values for argument 'zz' []
+Always zz posonly () | ('posonly', 0, 1) []
+Always zz posonly (5,) | ('posonly', 5, 1) []
+Always zz posonly_kw () | ('posonly_kw', 0, 1, {}) []
+Always zz posonly_kw (5,) | ('posonly_kw', 5, 1, {}) []
+Always zz partial () | ('ab_kw', 1, {}) []
+Always zz partial (5,) | TypeError: ab_kw() got multiple values for argument 'zz' []
+Always zz partial () | ('ab_kw', 1, {'x': 1}) []
+Always zz partial (5,) | TypeError: ab_kw() got multiple values for argument 'zz' []
+Always zz dict () | {Always 'zz': 1} []
+Always zz dict (5,) | TypeError: 'int' object is not iterable []
+Telling ab ab_kw () | ('ab_kw', 1, {}) [('ab', 'ab')]
+Telling ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab ab_only () | ('ab_only', 1) [('ab', 'ab')]
+Telling ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? [('ab', 'bb'), ('ab', 'aa')]
+Telling ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? [('ab', 'bb'), ('ab', 'aa')]
+Telling ab posonly_kw () | ('posonly_kw', 0, 1, {Telling 'ab': 1}) [('ab', 'bb')]
+Telling ab posonly_kw (5,) | ('posonly_kw', 5, 1, {Telling 'ab': 1}) [('ab', 'bb')]
+Telling ab partial () | ('ab_kw', 1, {}) [('ab', 'ab')]
+Telling ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab partial () | ('ab_kw', 1, {'x': 1}) [('ab', 'ab')]
+Telling ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab dict () | {Telling 'ab': 1} []
+Telling ab dict (5,) | TypeError: 'int' object is not iterable []
+Telling ab ab_kw () | ('ab_kw', 1, {}) [('ab', 'ab')]
+Telling ab ab_kw (5,) | TypeError: ab_kw() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab ab_only () | ('ab_only', 1) [('ab', 'ab')]
+Telling ab ab_only (5,) | TypeError: ab_only() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab posonly () | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? [('ab', 'bb'), ('ab', 'aa')]
+Telling ab posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'ab'. Did you mean 'bb'? [('ab', 'bb'), ('ab', 'aa')]
+Telling ab posonly_kw () | ('posonly_kw', 0, 1, {Telling 'ab': 1}) [('ab', 'bb')]
+Telling ab posonly_kw (5,) | ('posonly_kw', 5, 1, {Telling 'ab': 1}) [('ab', 'bb')]
+Telling ab partial () | ('ab_kw', 1, {}) [('ab', 'ab')]
+Telling ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab partial () | ('ab_kw', 1, {'x': 1}) [('ab', 'ab')]
+Telling ab partial (5,) | TypeError: ab_kw() got multiple values for argument 'ab' [('ab', 'ab')]
+Telling ab dict () | {Telling 'ab': 1} []
+Telling ab dict (5,) | TypeError: 'int' object is not iterable []
+Telling aa ab_kw () | ('ab_kw', 0, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa ab_kw (5,) | ('ab_kw', 5, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? [('aa', 'ab')]
+Telling aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? [('aa', 'ab')]
+Telling aa posonly () | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' [('aa', 'bb'), ('aa', 'aa')]
+Telling aa posonly (5,) | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' [('aa', 'bb'), ('aa', 'aa')]
+Telling aa posonly_kw () | ('posonly_kw', 0, 1, {Telling 'aa': 1}) [('aa', 'bb')]
+Telling aa posonly_kw (5,) | ('posonly_kw', 5, 1, {Telling 'aa': 1}) [('aa', 'bb')]
+Telling aa partial () | ('ab_kw', 0, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa partial (5,) | ('ab_kw', 5, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa partial () | ('ab_kw', 0, {'x': 1, Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa partial (5,) | ('ab_kw', 5, {'x': 1, Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa dict () | {Telling 'aa': 1} []
+Telling aa dict (5,) | TypeError: 'int' object is not iterable []
+Telling aa ab_kw () | ('ab_kw', 0, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa ab_kw (5,) | ('ab_kw', 5, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa ab_only () | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? [('aa', 'ab')]
+Telling aa ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'aa'. Did you mean 'ab'? [('aa', 'ab')]
+Telling aa posonly () | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' [('aa', 'bb'), ('aa', 'aa')]
+Telling aa posonly (5,) | TypeError: posonly() got some positional-only arguments passed as keyword arguments: 'aa' [('aa', 'bb'), ('aa', 'aa')]
+Telling aa posonly_kw () | ('posonly_kw', 0, 1, {Telling 'aa': 1}) [('aa', 'bb')]
+Telling aa posonly_kw (5,) | ('posonly_kw', 5, 1, {Telling 'aa': 1}) [('aa', 'bb')]
+Telling aa partial () | ('ab_kw', 0, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa partial (5,) | ('ab_kw', 5, {Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa partial () | ('ab_kw', 0, {'x': 1, Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa partial (5,) | ('ab_kw', 5, {'x': 1, Telling 'aa': 1}) [('aa', 'ab')]
+Telling aa dict () | {Telling 'aa': 1} []
+Telling aa dict (5,) | TypeError: 'int' object is not iterable []
+Telling bb ab_kw () | ('ab_kw', 0, {Telling 'bb': 1}) [('bb', 'ab')]
+Telling bb ab_kw (5,) | ('ab_kw', 5, {Telling 'bb': 1}) [('bb', 'ab')]
+Telling bb ab_only () | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? [('bb', 'ab')]
+Telling bb ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'bb'. Did you mean 'ab'? [('bb', 'ab')]
+Telling bb posonly () | ('posonly', 0, 1) [('bb', 'bb')]
+Telling bb posonly (5,) | ('posonly', 5, 1) [('bb', 'bb')]
+Telling bb posonly_kw () | ('posonly_kw', 0, 1, {}) [('bb', 'bb')]
+Telling bb posonly_kw (5,) | ('posonly_kw', 5, 1, {}) [('bb', 'bb')]
+Telling bb partial () | ('ab_kw', 0, {Telling 'bb': 1}) [('bb', 'ab')]
+Telling bb partial (5,) | ('ab_kw', 5, {Telling 'bb': 1}) [('bb', 'ab')]
+Telling bb partial () | ('ab_kw', 0, {'x': 1, Telling 'bb': 1}) [('bb', 'ab')]
+Telling bb partial (5,) | ('ab_kw', 5, {'x': 1, Telling 'bb': 1}) [('bb', 'ab')]
+Telling bb dict () | {Telling 'bb': 1} []
+Telling bb dict (5,) | TypeError: 'int' object is not iterable []
+Telling zz ab_kw () | ('ab_kw', 0, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz ab_kw (5,) | ('ab_kw', 5, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' [('zz', 'ab')]
+Telling zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' [('zz', 'ab')]
+Telling zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' [('zz', 'bb'), ('zz', 'aa')]
+Telling zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' [('zz', 'bb'), ('zz', 'aa')]
+Telling zz posonly_kw () | ('posonly_kw', 0, 1, {Telling 'zz': 1}) [('zz', 'bb')]
+Telling zz posonly_kw (5,) | ('posonly_kw', 5, 1, {Telling 'zz': 1}) [('zz', 'bb')]
+Telling zz partial () | ('ab_kw', 0, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz partial (5,) | ('ab_kw', 5, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz partial () | ('ab_kw', 0, {'x': 1, Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz partial (5,) | ('ab_kw', 5, {'x': 1, Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz dict () | {Telling 'zz': 1} []
+Telling zz dict (5,) | TypeError: 'int' object is not iterable []
+Telling zz ab_kw () | ('ab_kw', 0, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz ab_kw (5,) | ('ab_kw', 5, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz ab_only () | TypeError: ab_only() got an unexpected keyword argument 'zz' [('zz', 'ab')]
+Telling zz ab_only (5,) | TypeError: ab_only() got an unexpected keyword argument 'zz' [('zz', 'ab')]
+Telling zz posonly () | TypeError: posonly() got an unexpected keyword argument 'zz' [('zz', 'bb'), ('zz', 'aa')]
+Telling zz posonly (5,) | TypeError: posonly() got an unexpected keyword argument 'zz' [('zz', 'bb'), ('zz', 'aa')]
+Telling zz posonly_kw () | ('posonly_kw', 0, 1, {Telling 'zz': 1}) [('zz', 'bb')]
+Telling zz posonly_kw (5,) | ('posonly_kw', 5, 1, {Telling 'zz': 1}) [('zz', 'bb')]
+Telling zz partial () | ('ab_kw', 0, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz partial (5,) | ('ab_kw', 5, {Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz partial () | ('ab_kw', 0, {'x': 1, Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz partial (5,) | ('ab_kw', 5, {'x': 1, Telling 'zz': 1}) [('zz', 'ab')]
+Telling zz dict () | {Telling 'zz': 1} []
+Telling zz dict (5,) | TypeError: 'int' object is not iterable []
+('fk', {StrChild 'a': 1}) ('fk', {StrChild 'a': 1, StrChild 'b': 2}) ('fk', {'x': 1, StrChild 'b': 2}) ['StrChild']
+('fk', {StrChild 'a': 1, StrChild 'c': 3}) ['StrChild', 'StrChild']
+po2() got some positional-only arguments passed as keyword arguments: 'zzz, zzz'
+po2() got some positional-only arguments passed as keyword arguments: 'zzz, zzz'
+po2() got some positional-only arguments passed as keyword arguments: 'aa, cc'
+po2() got some positional-only arguments passed as keyword arguments: 'aa'
+po2() got an unexpected keyword argument 'x'
+po2() got some positional-only arguments passed as keyword arguments: 'cc'
+{StrChild 'a': 1, 'b': 2}
+{StrChild 'a': 1, 'b': 2}
+{StrChild 'a': 1, 'b': 2}
+{StrChild 'a': 1}
+{StrChild 'a': 1, 'b': 2}
+{StrChild 'a': 1, 'b': 2}
+{StrChild 'a': 1, 'b': 2}
+{StrChild 'a': 1, 'b': 2}
+--- keywords written out, after something that is gone through
+fvk(*changes_the_dict(d), a=1) | ('fvk', (1), {'a': 1}) {'late': 'added while the positional ones were gone through'}
+fvk(*changes_the_dict(d), a=1, **d) | ('fvk', (1), {'a': 1, 'x': 1}) {'late': 'added while the positional ones were gone through'}
+fvk(*range(2), a=1) | ('fvk', (0, 1), {'a': 1}) {'x': 1}
+fvk(*'ab', a=1, b=2) | ('fvk', ('a', 'b'), {'a': 1, 'b': 2}) {'x': 1}
+fvk(*{'k': 1}, a=1) | ('fvk', ('k'), {'a': 1}) {'x': 1}
+fvk(*changes_the_dict(d), **d, a=1) | ('fvk', (1), {'x': 1, 'a': 1}) {'late': 'added while the positional ones were gone through'}
+fvk(*(i for i in (1, 2)), **{}) | ('fvk', (1, 2), {}) {'x': 1}
+fvk(*(i for i in (1, 2)), **{'a': 1}) | ('fvk', (1, 2), {'a': 1}) {'x': 1}
+f2(*range(1), b=5) | ('f2', 0, 5) {'x': 1}
+f2(*range(1), a=5) | f2() got multiple values for argument 'a' {'x': 1}
+--- the lines that a call over several lines is on
+c1 [1, 2, 1, 3, 1] [1, 2, 1, 3, 1] [0, 1, 2, 1, 3, 1]
+c2 [1, 2, 1] [1, 2, 1] [0, 1, 2, 1]
+c3 [1, 2, 1] [1, 2, 1] [0, 1, 2, 1]
+c4 [1, 2, 1, 3, 1, 4, 1] [1, 2, 1, 3, 1, 4, 1] [0, 1, 2, 1, 3, 1, 4, 1]
+c5 [1, 2, 1, 2, 1] [1, 2, 1, 2, 1] [0, 1, 2, 1, 2, 1]
+c6 [1, 2, 1] [1, 2, 1] [0, 1, 2, 1]
+c7 [1] [1] [0, 1]
+c8 [1, 2, 1, 3, 1, 4, 1] [1, 2, 1, 3, 1, 4, 1] [0, 1, 2, 1, 3, 1, 4, 1]
+c9 [1, 2, 1, 4, 1] [1, 2, 3, 1, 4, 5, 1] True
+c10 [2, 4, 1, 5, 1] [2, 4, 1, 5, 1] [0, 2, 4, 1, 5, 1]

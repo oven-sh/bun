@@ -527,6 +527,10 @@ def plain_function(*a):
     return ('plain_function', [type(x).__name__ for x in a])
 
 
+def gives(base, *args, **more):
+    return type(base.__name__.capitalize() + 'Gives', (base,), {'__get__': Gives.__get__, **more})(*args)
+
+
 found = {
     'method of str': str.upper,
     'method of list': list.append,
@@ -575,6 +579,19 @@ found = {
     'partial': functools.partial(plain_function, 1),
     'partialmethod': functools.partialmethod(plain_function, 1),
     'class': Plain,
+    'class whose class has __get__': gives(type, 'ClassThatGives', (), {}),
+    'class whose class has __get__ and __set__': gives(type, 'ClassThatGivesAndSets', (), {}, __set__=lambda *a: None),
+    'class whose class has __set__': type('MetaSets', (type,), {'__set__': lambda *a: None})('ClassThatSets', (), {}),
+    'list with __get__': gives(list, [1]),
+    'list with __get__ and __set__': gives(list, [1], __set__=lambda *a: None),
+    'tuple with __get__': gives(tuple, (1,)),
+    'dict with __get__': gives(dict, {1: 2}),
+    'str with __get__': gives(str, 'text'),
+    'int with __get__': gives(int, 5),
+    'module with __get__': gives(types.ModuleType, 'mod'),
+    '__get__ is a staticmethod': type('StaticGet', (), {'__get__': staticmethod(plain_function)})(),
+    '__get__ is a classmethod': type('ClassGet', (), {'__get__': classmethod(plain_function)})(),
+    '__get__ is a partial': type('PartialGet', (), {'__get__': functools.partial(plain_function, 1)})(),
     'None': None,
     'number': 5,
 }

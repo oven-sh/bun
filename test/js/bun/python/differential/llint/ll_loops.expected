@@ -1,0 +1,909 @@
+status: 0
+script: a86c1c408ec36aca
+---
+--- plain
+[] | []
+[1] | [1]
+[1, 2, 3] | [1, 2, 3]
+floats | [1.5, 2.5]
+ints then a str | [1, 2, 'x']
+floats then None | [1.5, None]
+nested | [[1], (2,), {3: 4}]
+long list | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+() | []
+(1,) | [1]
+(1, 2, 3) | [1, 2, 3]
+long tuple | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+list child | [1, 2]
+list with __iter__ | ['own', '__iter__']
+tuple child | [1, 2]
+tuple with __iter__ | ['own', '__iter__']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2]
+iter(tuple) | [1, 2]
+iter(str) | ['a', 'b']
+iter(range) | [0, 1]
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97, 98]
+iter(bytearray) | [97, 98]
+iter(callable) | [0, 1]
+iter(getitem) | [0, 10, 20]
+reversed(list) | [3, 2, 1]
+reversed([]) | []
+reversed(floats) | [2.5, 1.5]
+reversed(tuple) | [3, 2, 1]
+reversed(range) | [2, 1, 0]
+reversed(dict) | ['b', 'a']
+reversed(list child) | [2, 1]
+str | ['a', 'b']
+'' | []
+bytes | [97, 98]
+range | [0, 1, 2]
+big range | [1180591620717411303424, 1180591620717411303425]
+dict | ['a']
+items | [('a', 1)]
+set | [1]
+frozenset | [1]
+generator | ['g1', 'g2']
+own iterator | [1, 2, 3]
+only __getitem__ | [0, 10, 20]
+enumerate | [(0, 'a'), (1, 'b')]
+zip | [('a', 1), ('b', 2)]
+map | ['1', '2']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 3]
+(1, 2, 3) | [1, 2, 3]
+reversed(list) | [3, 2, 1]
+5 | TypeError: 'int' object is not iterable
+--- with_else
+[] | ['else']
+[1] | [1, 'else']
+[1, 2, 3] | [1, 2, 3, 'else']
+floats | [1.5, 2.5, 'else']
+ints then a str | [1, 2, 'x', 'else']
+floats then None | [1.5, None, 'else']
+nested | [[1], (2,), {3: 4}, 'else']
+long list | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+() | ['else']
+(1,) | [1, 'else']
+(1, 2, 3) | [1, 2, 3, 'else']
+long tuple | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+list child | [1, 2, 'else']
+list with __iter__ | ['own', '__iter__', 'else']
+tuple child | [1, 2, 'else']
+tuple with __iter__ | ['own', '__iter__', 'else']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2, 'else']
+iter(tuple) | [1, 2, 'else']
+iter(str) | ['a', 'b', 'else']
+iter(range) | [0, 1, 'else']
+iter(dict) | ['a', 'else']
+iter(set) | [1, 'else']
+iter(bytes) | [97, 98, 'else']
+iter(bytearray) | [97, 98, 'else']
+iter(callable) | [0, 1, 'else']
+iter(getitem) | [0, 10, 20, 'else']
+reversed(list) | [3, 2, 1, 'else']
+reversed([]) | ['else']
+reversed(floats) | [2.5, 1.5, 'else']
+reversed(tuple) | [3, 2, 1, 'else']
+reversed(range) | [2, 1, 0, 'else']
+reversed(dict) | ['b', 'a', 'else']
+reversed(list child) | [2, 1, 'else']
+str | ['a', 'b', 'else']
+'' | ['else']
+bytes | [97, 98, 'else']
+range | [0, 1, 2, 'else']
+big range | [1180591620717411303424, 1180591620717411303425, 'else']
+dict | ['a', 'else']
+items | [('a', 1), 'else']
+set | [1, 'else']
+frozenset | [1, 'else']
+generator | ['g1', 'g2', 'else']
+own iterator | [1, 2, 3, 'else']
+only __getitem__ | [0, 10, 20, 'else']
+enumerate | [(0, 'a'), (1, 'b'), 'else']
+zip | [('a', 1), ('b', 2), 'else']
+map | ['1', '2', 'else']
+filter | [1, 'else']
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 3, 'else']
+(1, 2, 3) | [1, 2, 3, 'else']
+reversed(list) | [3, 2, 1, 'else']
+5 | TypeError: 'int' object is not iterable
+--- with_break
+[] | ['else']
+[1] | [1]
+[1, 2, 3] | [1]
+floats | [1.5]
+ints then a str | [1]
+floats then None | [1.5]
+nested | [[1]]
+long list | [0]
+() | ['else']
+(1,) | [1]
+(1, 2, 3) | [1]
+long tuple | [0]
+list child | [1]
+list with __iter__ | ['own']
+tuple child | [1]
+tuple with __iter__ | ['own']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1]
+iter(tuple) | [1]
+iter(str) | ['a']
+iter(range) | [0]
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97]
+iter(bytearray) | [97]
+iter(callable) | [0]
+iter(getitem) | [0]
+reversed(list) | [3]
+reversed([]) | ['else']
+reversed(floats) | [2.5]
+reversed(tuple) | [3]
+reversed(range) | [2]
+reversed(dict) | ['b']
+reversed(list child) | [2]
+str | ['a']
+'' | ['else']
+bytes | [97]
+range | [0]
+big range | [1180591620717411303424]
+dict | ['a']
+items | [('a', 1)]
+set | [1]
+frozenset | [1]
+generator | ['g1']
+own iterator | [1]
+only __getitem__ | [0]
+enumerate | [(0, 'a')]
+zip | [('a', 1)]
+map | ['1']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1]
+(1, 2, 3) | [1]
+reversed(list) | [3]
+5 | TypeError: 'int' object is not iterable
+--- with_continue
+[] | []
+[1] | [1]
+[1, 2, 3] | [1, 'odd', 3]
+floats | [1.5, 'odd']
+ints then a str | [1, 'odd', 'x']
+floats then None | [1.5, 'odd']
+nested | [[1], 'odd', {3: 4}]
+long list | [0, 'odd', 2, 'odd', 4, 'odd', 6, 'odd', 8, 'odd', 10, 'odd', 12, 'odd', 14, 'odd', 16, 'odd', 18, 'odd', 20, 'odd', 22, 'odd', 24, 'odd', 26, 'odd', 28, 'odd', 30, 'odd', 32, 'odd', 34, 'odd', 36, 'o
+() | []
+(1,) | [1]
+(1, 2, 3) | [1, 'odd', 3]
+long tuple | [0, 'odd', 2, 'odd', 4, 'odd', 6, 'odd', 8, 'odd', 10, 'odd', 12, 'odd', 14, 'odd', 16, 'odd', 18, 'odd', 20, 'odd', 22, 'odd', 24, 'odd', 26, 'odd', 28, 'odd', 30, 'odd', 32, 'odd', 34, 'odd', 36, 'o
+list child | [1, 'odd']
+list with __iter__ | ['own', 'odd']
+tuple child | [1, 'odd']
+tuple with __iter__ | ['own', 'odd']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 'odd']
+iter(tuple) | [1, 'odd']
+iter(str) | ['a', 'odd']
+iter(range) | [0, 'odd']
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97, 'odd']
+iter(bytearray) | [97, 'odd']
+iter(callable) | [0, 'odd']
+iter(getitem) | [0, 'odd', 20]
+reversed(list) | [3, 'odd', 1]
+reversed([]) | []
+reversed(floats) | [2.5, 'odd']
+reversed(tuple) | [3, 'odd', 1]
+reversed(range) | [2, 'odd', 0]
+reversed(dict) | ['b', 'odd']
+reversed(list child) | [2, 'odd']
+str | ['a', 'odd']
+'' | []
+bytes | [97, 'odd']
+range | [0, 'odd', 2]
+big range | [1180591620717411303424, 'odd']
+dict | ['a']
+items | [('a', 1)]
+set | [1]
+frozenset | [1]
+generator | ['g1', 'odd']
+own iterator | [1, 'odd', 3]
+only __getitem__ | [0, 'odd', 20]
+enumerate | [(0, 'a'), 'odd']
+zip | [('a', 1), 'odd']
+map | ['1', 'odd']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 'odd', 3]
+(1, 2, 3) | [1, 'odd', 3]
+reversed(list) | [3, 'odd', 1]
+5 | TypeError: 'int' object is not iterable
+--- twice
+[] | []
+[1] | [1, 1]
+[1, 2, 3] | [1, 2, 3, 1, 2, 3]
+floats | [1.5, 2.5, 1.5, 2.5]
+ints then a str | [1, 2, 'x', 1, 2, 'x']
+floats then None | [1.5, None, 1.5, None]
+nested | [[1], (2,), {3: 4}, [1], (2,), {3: 4}]
+long list | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+() | []
+(1,) | [1, 1]
+(1, 2, 3) | [1, 2, 3, 1, 2, 3]
+long tuple | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+list child | [1, 2, 1, 2]
+list with __iter__ | ['own', '__iter__', 'own', '__iter__']
+tuple child | [1, 2, 1, 2]
+tuple with __iter__ | ['own', '__iter__', 'own', '__iter__']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2]
+iter(tuple) | [1, 2]
+iter(str) | ['a', 'b']
+iter(range) | [0, 1]
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97, 98]
+iter(bytearray) | [97, 98]
+iter(callable) | [0, 1]
+iter(getitem) | [0, 10, 20]
+reversed(list) | [3, 2, 1]
+reversed([]) | []
+reversed(floats) | [2.5, 1.5]
+reversed(tuple) | [3, 2, 1]
+reversed(range) | [2, 1, 0]
+reversed(dict) | ['b', 'a']
+reversed(list child) | [2, 1]
+str | ['a', 'b', 'a', 'b']
+'' | []
+bytes | [97, 98, 97, 98]
+range | [0, 1, 2, 0, 1, 2]
+big range | [1180591620717411303424, 1180591620717411303425, 1180591620717411303424, 1180591620717411303425]
+dict | ['a', 'a']
+items | [('a', 1), ('a', 1)]
+set | [1, 1]
+frozenset | [1, 1]
+generator | ['g1', 'g2']
+own iterator | [1, 2, 3]
+only __getitem__ | [0, 10, 20, 0, 10, 20]
+enumerate | [(0, 'a'), (1, 'b')]
+zip | [('a', 1), ('b', 2)]
+map | ['1', '2']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 3, 1, 2, 3]
+(1, 2, 3) | [1, 2, 3, 1, 2, 3]
+reversed(list) | [3, 2, 1]
+5 | TypeError: 'int' object is not iterable
+--- nested
+[] | []
+[1] | [(1, 1)]
+[1, 2, 3] | [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3)]
+floats | [(1.5, 1.5), (1.5, 2.5), (2.5, 1.5), (2.5, 2.5)]
+ints then a str | [(1, 1), (1, 2), (1, 'x'), (2, 1), (2, 2), (2, 'x'), ('x', 1), ('x', 2), ('x', 'x')]
+floats then None | [(1.5, 1.5), (1.5, None), (None, 1.5), (None, None)]
+nested | [([1], [1]), ([1], (2,)), ([1], {3: 4}), ((2,), [1]), ((2,), (2,)), ((2,), {3: 4}), ({3: 4}, [1]), ({3: 4}, (2,)), ({3: 4}, {3: 4})]
+long list | [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (0, 9), (0, 10), (0, 11)]
+() | []
+(1,) | [(1, 1)]
+(1, 2, 3) | [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3)]
+long tuple | [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (0, 9), (0, 10), (0, 11)]
+list child | [(1, 1), (1, 2), (2, 1), (2, 2)]
+list with __iter__ | [('own', 'own'), ('own', '__iter__'), ('__iter__', 'own'), ('__iter__', '__iter__')]
+tuple child | [(1, 1), (1, 2), (2, 1), (2, 2)]
+tuple with __iter__ | [('own', 'own'), ('own', '__iter__'), ('__iter__', 'own'), ('__iter__', '__iter__')]
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [(1, 2)]
+iter(tuple) | [(1, 2)]
+iter(str) | [('a', 'b')]
+iter(range) | [(0, 1)]
+iter(dict) | []
+iter(set) | []
+iter(bytes) | [(97, 98)]
+iter(bytearray) | [(97, 98)]
+iter(callable) | [(0, 1)]
+iter(getitem) | [(0, 10), (0, 20)]
+reversed(list) | [(3, 2), (3, 1)]
+reversed([]) | []
+reversed(floats) | [(2.5, 1.5)]
+reversed(tuple) | [(3, 2), (3, 1)]
+reversed(range) | [(2, 1), (2, 0)]
+reversed(dict) | [('b', 'a')]
+reversed(list child) | [(2, 1)]
+str | [('a', 'a'), ('a', 'b'), ('b', 'a'), ('b', 'b')]
+'' | []
+bytes | [(97, 97), (97, 98), (98, 97), (98, 98)]
+range | [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)]
+big range | [(1180591620717411303424, 1180591620717411303424), (1180591620717411303424, 1180591620717411303425), (1180591620717411303425, 1180591620717411303424), (1180591620717411303425, 1180591620717411303425)]
+dict | [('a', 'a')]
+items | [(('a', 1), ('a', 1))]
+set | [(1, 1)]
+frozenset | [(1, 1)]
+generator | [('g1', 'g2')]
+own iterator | [(1, 2), (1, 3)]
+only __getitem__ | [(0, 0), (0, 10), (0, 20), (10, 0), (10, 10), (10, 20), (20, 0), (20, 10), (20, 20)]
+enumerate | [((0, 'a'), (1, 'b'))]
+zip | [(('a', 1), ('b', 2))]
+map | [('1', '2')]
+filter | []
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3)]
+(1, 2, 3) | [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3)]
+reversed(list) | [(3, 2), (3, 1)]
+5 | TypeError: 'int' object is not iterable
+--- comprehension
+[] | []
+[1] | [1]
+[1, 2, 3] | [1, 2, 3]
+floats | [1.5, 2.5]
+ints then a str | [1, 2, 'x']
+floats then None | [1.5, None]
+nested | [[1], (2,), {3: 4}]
+long list | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+() | []
+(1,) | [1]
+(1, 2, 3) | [1, 2, 3]
+long tuple | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+list child | [1, 2]
+list with __iter__ | ['own', '__iter__']
+tuple child | [1, 2]
+tuple with __iter__ | ['own', '__iter__']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2]
+iter(tuple) | [1, 2]
+iter(str) | ['a', 'b']
+iter(range) | [0, 1]
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97, 98]
+iter(bytearray) | [97, 98]
+iter(callable) | [0, 1]
+iter(getitem) | [0, 10, 20]
+reversed(list) | [3, 2, 1]
+reversed([]) | []
+reversed(floats) | [2.5, 1.5]
+reversed(tuple) | [3, 2, 1]
+reversed(range) | [2, 1, 0]
+reversed(dict) | ['b', 'a']
+reversed(list child) | [2, 1]
+str | ['a', 'b']
+'' | []
+bytes | [97, 98]
+range | [0, 1, 2]
+big range | [1180591620717411303424, 1180591620717411303425]
+dict | ['a']
+items | [('a', 1)]
+set | [1]
+frozenset | [1]
+generator | ['g1', 'g2']
+own iterator | [1, 2, 3]
+only __getitem__ | [0, 10, 20]
+enumerate | [(0, 'a'), (1, 'b')]
+zip | [('a', 1), ('b', 2)]
+map | ['1', '2']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 3]
+(1, 2, 3) | [1, 2, 3]
+reversed(list) | [3, 2, 1]
+5 | TypeError: 'int' object is not iterable
+--- set_comprehension
+[] | []
+[1] | ["'1'"]
+[1, 2, 3] | ["'1'", "'2'", "'3'"]
+floats | ["'1.5'", "'2.5'"]
+ints then a str | ['"\'x\'"', "'1'", "'2'"]
+floats then None | ["'1.5'", "'None'"]
+nested | ["'(2,)'", "'[1]'", "'{3: 4}'"]
+long list | ["'0'", "'1'", "'10'", "'11'", "'12'", "'13'", "'14'", "'15'", "'16'", "'17'", "'18'", "'19'", "'2'", "'20'", "'21'", "'22'", "'23'", "'24'", "'25'", "'26'", "'27'", "'28'", "'29'", "'3'", "'30'", "'3
+() | []
+(1,) | ["'1'"]
+(1, 2, 3) | ["'1'", "'2'", "'3'"]
+long tuple | ["'0'", "'1'", "'10'", "'11'", "'12'", "'13'", "'14'", "'15'", "'16'", "'17'", "'18'", "'19'", "'2'", "'20'", "'21'", "'22'", "'23'", "'24'", "'25'", "'26'", "'27'", "'28'", "'29'", "'3'", "'30'", "'3
+list child | ["'1'", "'2'"]
+list with __iter__ | ['"\'__iter__\'"', '"\'own\'"']
+tuple child | ["'1'", "'2'"]
+tuple with __iter__ | ['"\'__iter__\'"', '"\'own\'"']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | ["'1'", "'2'"]
+iter(tuple) | ["'1'", "'2'"]
+iter(str) | ['"\'a\'"', '"\'b\'"']
+iter(range) | ["'0'", "'1'"]
+iter(dict) | ['"\'a\'"']
+iter(set) | ["'1'"]
+iter(bytes) | ["'97'", "'98'"]
+iter(bytearray) | ["'97'", "'98'"]
+iter(callable) | ["'0'", "'1'"]
+iter(getitem) | ["'0'", "'10'", "'20'"]
+reversed(list) | ["'1'", "'2'", "'3'"]
+reversed([]) | []
+reversed(floats) | ["'1.5'", "'2.5'"]
+reversed(tuple) | ["'1'", "'2'", "'3'"]
+reversed(range) | ["'0'", "'1'", "'2'"]
+reversed(dict) | ['"\'a\'"', '"\'b\'"']
+reversed(list child) | ["'1'", "'2'"]
+str | ['"\'a\'"', '"\'b\'"']
+'' | []
+bytes | ["'97'", "'98'"]
+range | ["'0'", "'1'", "'2'"]
+big range | ["'1180591620717411303424'", "'1180591620717411303425'"]
+dict | ['"\'a\'"']
+items | ['"(\'a\', 1)"']
+set | ["'1'"]
+frozenset | ["'1'"]
+generator | ['"\'g1\'"', '"\'g2\'"']
+own iterator | ["'1'", "'2'", "'3'"]
+only __getitem__ | ["'0'", "'10'", "'20'"]
+enumerate | ['"(0, \'a\')"', '"(1, \'b\')"']
+zip | ['"(\'a\', 1)"', '"(\'b\', 2)"']
+map | ['"\'1\'"', '"\'2\'"']
+filter | ["'1'"]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | ["'1'", "'2'", "'3'"]
+(1, 2, 3) | ["'1'", "'2'", "'3'"]
+reversed(list) | ["'1'", "'2'", "'3'"]
+5 | TypeError: 'int' object is not iterable
+--- generator_expression
+[] | []
+[1] | [1]
+[1, 2, 3] | [1, 2, 3]
+floats | [1.5, 2.5]
+ints then a str | [1, 2, 'x']
+floats then None | [1.5, None]
+nested | [[1], (2,), {3: 4}]
+long list | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+() | []
+(1,) | [1]
+(1, 2, 3) | [1, 2, 3]
+long tuple | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+list child | [1, 2]
+list with __iter__ | ['own', '__iter__']
+tuple child | [1, 2]
+tuple with __iter__ | ['own', '__iter__']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2]
+iter(tuple) | [1, 2]
+iter(str) | ['a', 'b']
+iter(range) | [0, 1]
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97, 98]
+iter(bytearray) | [97, 98]
+iter(callable) | [0, 1]
+iter(getitem) | [0, 10, 20]
+reversed(list) | [3, 2, 1]
+reversed([]) | []
+reversed(floats) | [2.5, 1.5]
+reversed(tuple) | [3, 2, 1]
+reversed(range) | [2, 1, 0]
+reversed(dict) | ['b', 'a']
+reversed(list child) | [2, 1]
+str | ['a', 'b']
+'' | []
+bytes | [97, 98]
+range | [0, 1, 2]
+big range | [1180591620717411303424, 1180591620717411303425]
+dict | ['a']
+items | [('a', 1)]
+set | [1]
+frozenset | [1]
+generator | ['g1', 'g2']
+own iterator | [1, 2, 3]
+only __getitem__ | [0, 10, 20]
+enumerate | [(0, 'a'), (1, 'b')]
+zip | [('a', 1), ('b', 2)]
+map | ['1', '2']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 3]
+(1, 2, 3) | [1, 2, 3]
+reversed(list) | [3, 2, 1]
+5 | TypeError: 'int' object is not iterable
+--- unpacked
+[] | []
+[1] | [1]
+[1, 2, 3] | [1, 2, 3]
+floats | [1.5, 2.5]
+ints then a str | [1, 2, 'x']
+floats then None | [1.5, None]
+nested | [[1], (2,), {3: 4}]
+long list | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+() | []
+(1,) | [1]
+(1, 2, 3) | [1, 2, 3]
+long tuple | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 5
+list child | [1, 2]
+list with __iter__ | ['own', '__iter__']
+tuple child | [1, 2]
+tuple with __iter__ | ['own', '__iter__']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2]
+iter(tuple) | [1, 2]
+iter(str) | ['a', 'b']
+iter(range) | [0, 1]
+iter(dict) | ['a']
+iter(set) | [1]
+iter(bytes) | [97, 98]
+iter(bytearray) | [97, 98]
+iter(callable) | [0, 1]
+iter(getitem) | [0, 10, 20]
+reversed(list) | [3, 2, 1]
+reversed([]) | []
+reversed(floats) | [2.5, 1.5]
+reversed(tuple) | [3, 2, 1]
+reversed(range) | [2, 1, 0]
+reversed(dict) | ['b', 'a']
+reversed(list child) | [2, 1]
+str | ['a', 'b']
+'' | []
+bytes | [97, 98]
+range | [0, 1, 2]
+big range | [1180591620717411303424, 1180591620717411303425]
+dict | ['a']
+items | [('a', 1)]
+set | [1]
+frozenset | [1]
+generator | ['g1', 'g2']
+own iterator | [1, 2, 3]
+only __getitem__ | [0, 10, 20]
+enumerate | [(0, 'a'), (1, 'b')]
+zip | [('a', 1), ('b', 2)]
+map | ['1', '2']
+filter | [1]
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 3]
+(1, 2, 3) | [1, 2, 3]
+reversed(list) | [3, 2, 1]
+5 | TypeError: 'int' object is not iterable
+--- returns_from_within
+[] | 'nothing'
+[1] | 1
+[1, 2, 3] | 1
+floats | 1.5
+ints then a str | 1
+floats then None | 1.5
+nested | [1]
+long list | 0
+() | 'nothing'
+(1,) | 1
+(1, 2, 3) | 1
+long tuple | 0
+list child | 1
+list with __iter__ | 'own'
+tuple child | 1
+tuple with __iter__ | 'own'
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | 1
+iter(tuple) | 1
+iter(str) | 'a'
+iter(range) | 0
+iter(dict) | 'a'
+iter(set) | 1
+iter(bytes) | 97
+iter(bytearray) | 97
+iter(callable) | 0
+iter(getitem) | 0
+reversed(list) | 3
+reversed([]) | 'nothing'
+reversed(floats) | 2.5
+reversed(tuple) | 3
+reversed(range) | 2
+reversed(dict) | 'b'
+reversed(list child) | 2
+str | 'a'
+'' | 'nothing'
+bytes | 97
+range | 0
+big range | 1180591620717411303424
+dict | 'a'
+items | ('a', 1)
+set | 1
+frozenset | 1
+generator | 'g1'
+own iterator | 1
+only __getitem__ | 0
+enumerate | (0, 'a')
+zip | ('a', 1)
+map | '1'
+filter | 1
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | 1
+(1, 2, 3) | 1
+reversed(list) | 3
+5 | TypeError: 'int' object is not iterable
+--- in_try
+[] | ['finally']
+[1] | [1, 'finally']
+[1, 2, 3] | [1, 2, 'two', 'finally']
+floats | [1.5, 2.5, 'two', 'finally']
+ints then a str | [1, 2, 'two', 'finally']
+floats then None | [1.5, None, 'two', 'finally']
+nested | [[1], (2,), 'two', 'finally']
+long list | [0, 1, 'two', 'finally']
+() | ['finally']
+(1,) | [1, 'finally']
+(1, 2, 3) | [1, 2, 'two', 'finally']
+long tuple | [0, 1, 'two', 'finally']
+list child | [1, 2, 'two', 'finally']
+list with __iter__ | ['own', '__iter__', 'two', 'finally']
+tuple child | [1, 2, 'two', 'finally']
+tuple with __iter__ | ['own', '__iter__', 'two', 'finally']
+tuple without __iter__ | TypeError: 'TupleNoIter' object is not iterable
+iter(list) | [1, 2, 'two', 'finally']
+iter(tuple) | [1, 2, 'two', 'finally']
+iter(str) | ['a', 'b', 'two', 'finally']
+iter(range) | [0, 1, 'two', 'finally']
+iter(dict) | ['a', 'finally']
+iter(set) | [1, 'finally']
+iter(bytes) | [97, 98, 'two', 'finally']
+iter(bytearray) | [97, 98, 'two', 'finally']
+iter(callable) | [0, 1, 'two', 'finally']
+iter(getitem) | [0, 10, 'two', 'finally']
+reversed(list) | [3, 2, 'two', 'finally']
+reversed([]) | ['finally']
+reversed(floats) | [2.5, 1.5, 'two', 'finally']
+reversed(tuple) | [3, 2, 'two', 'finally']
+reversed(range) | [2, 1, 'two', 'finally']
+reversed(dict) | ['b', 'a', 'two', 'finally']
+reversed(list child) | [2, 1, 'two', 'finally']
+str | ['a', 'b', 'two', 'finally']
+'' | ['finally']
+bytes | [97, 98, 'two', 'finally']
+range | [0, 1, 'two', 'finally']
+big range | [1180591620717411303424, 1180591620717411303425, 'two', 'finally']
+dict | ['a', 'finally']
+items | [('a', 1), 'finally']
+set | [1, 'finally']
+frozenset | [1, 'finally']
+generator | ['g1', 'g2', 'two', 'finally']
+own iterator | [1, 2, 'two', 'finally']
+only __getitem__ | [0, 10, 'two', 'finally']
+enumerate | [(0, 'a'), (1, 'b'), 'two', 'finally']
+zip | [('a', 1), ('b', 2), 'two', 'finally']
+map | ['1', '2', 'two', 'finally']
+filter | [1, 'finally']
+5 | TypeError: 'int' object is not iterable
+None | TypeError: 'NoneType' object is not iterable
+1.5 | TypeError: 'float' object is not iterable
+a class | TypeError: 'type' object is not iterable
+a function | TypeError: 'function' object is not iterable
+__iter__ gives no iterator | TypeError: IterGivesNoIterator.__iter__() must return an iterator, not int
+[1, 2, 3] | [1, 2, 'two', 'finally']
+(1, 2, 3) | [1, 2, 'two', 'finally']
+reversed(list) | [3, 2, 'two', 'finally']
+5 | TypeError: 'int' object is not iterable
+--- iter(y) is y
+[] | False True list_iterator
+[1] | False True list_iterator
+[1, 2, 3] | False True list_iterator
+floats | False True list_iterator
+ints then a str | False True list_iterator
+floats then None | False True list_iterator
+nested | False True list_iterator
+long list | False True list_iterator
+() | False True tuple_iterator
+(1,) | False True tuple_iterator
+(1, 2, 3) | False True tuple_iterator
+long tuple | False True tuple_iterator
+list child | False True list_iterator
+list with __iter__ | False True list_iterator
+tuple child | False True tuple_iterator
+tuple with __iter__ | False True tuple_iterator
+tuple without __iter__ | 'TupleNoIter' object is not iterable
+iter(list) | True True list_iterator
+iter(tuple) | True True tuple_iterator
+iter(str) | True True str_ascii_iterator
+iter(range) | True True range_iterator
+iter(dict) | True True dict_keyiterator
+iter(set) | True True set_iterator
+iter(bytes) | True True bytes_iterator
+iter(bytearray) | True True bytearray_iterator
+iter(callable) | True True callable_iterator
+iter(getitem) | True True iterator
+reversed(list) | True True list_reverseiterator
+reversed([]) | True True list_reverseiterator
+reversed(floats) | True True list_reverseiterator
+reversed(tuple) | True True reversed
+reversed(range) | True True range_iterator
+reversed(dict) | True True dict_reversekeyiterator
+reversed(list child) | True True list_reverseiterator
+str | False True str_ascii_iterator
+'' | False True str_ascii_iterator
+bytes | False True bytes_iterator
+range | False True range_iterator
+big range | False True longrange_iterator
+dict | False True dict_keyiterator
+items | False True dict_itemiterator
+set | False True set_iterator
+frozenset | False True set_iterator
+generator | True True generator
+own iterator | True True OwnIterator
+only __getitem__ | False True iterator
+enumerate | True True enumerate
+zip | True True zip
+map | True True map
+filter | True True filter
+5 | 'int' object is not iterable
+None | 'NoneType' object is not iterable
+1.5 | 'float' object is not iterable
+a class | 'type' object is not iterable
+a function | 'function' object is not iterable
+__iter__ gives no iterator | IterGivesNoIterator.__iter__() must return an iterator, not int
+--- the iterator that a loop has made, if the collector knows of one, is like any other
+looked
+looked
+--- the list changes under the loop
+append until 6 [1, 2, 3] | ([1, 2, 3, 11, 12, 13], [1, 2, 3, 11, 12, 13])
+append until 6 [1] | ([1, 11, 21, 31, 41, 51], [1, 11, 21, 31, 41, 51])
+append until 6 [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 2, 3, 4, 5, 6, 7, 8], [1, 2, 3, 4, 5, 6, 7, 8])
+pop [1, 2, 3] | ([1, 2], [1])
+pop [1] | ([1], [])
+pop [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 2, 3, 4], [1, 2, 3, 4])
+pop(0) [1, 2, 3] | ([1, 3], [3])
+pop(0) [1] | ([1], [])
+pop(0) [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 3, 5, 7], [5, 6, 7, 8])
+clear [1, 2, 3] | ([1], [])
+clear [1] | ([1], [])
+clear [1, 2, 3, 4, 5, 6, 7, 8] | ([1], [])
+insert(0) [1, 2, 3] | ([1, 1, 1, 1, 2, 3], ['new', 'new', 'new', 1, 2, 3])
+insert(0) [1] | ([1, 1, 1, 1, 1, 1], ['new', 'new', 'new', 'new', 'new', 1])
+insert(0) [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 2, 3, 4, 5, 6, 7, 8], [1, 2, 3, 4, 5, 6, 7, 8])
+remove itself [1, 2, 3] | ([1, 3], [2])
+remove itself [1] | ([1], [])
+remove itself [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 3, 5, 7], [2, 4, 6, 8])
+becomes floats [1, 2, 3] | ([1, 2.5, 3.5], [1.5, 2.5, 3.5])
+becomes floats [1] | ([1, 2.5, 3.5], [1.5, 2.5, 3.5])
+becomes floats [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 2.5, 3.5], [1.5, 2.5, 3.5])
+becomes strs [1, 2, 3] | ([1, 'b', 'c'], ['a', 'b', 'c'])
+becomes strs [1] | ([1, 'b', 'c'], ['a', 'b', 'c'])
+becomes strs [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 'b', 'c'], ['a', 'b', 'c'])
+sort reversed [1, 2, 3] | ([1, 2, 1], [3, 2, 1])
+sort reversed [1] | ([1], [1])
+sort reversed [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 7, 6, 5, 4, 3, 2, 1], [8, 7, 6, 5, 4, 3, 2, 1])
+del last two [1, 2, 3] | ([1], [1])
+del last two [1] | ([1], [])
+del last two [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 2, 3], [1, 2])
+extend by itself once [1, 2, 3] | ([1, 2, 3, 1, 2, 3], [1, 2, 3, 1, 2, 3])
+extend by itself once [1] | ([1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1])
+extend by itself once [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 2, 3, 4, 5, 6, 7, 8], [1, 2, 3, 4, 5, 6, 7, 8])
+clear, then refill [1, 2, 3] | ([1, 8, 9, 10], [7, 8, 9, 10])
+clear, then refill [1] | ([1, 8, 9, 10], [7, 8, 9, 10])
+clear, then refill [1, 2, 3, 4, 5, 6, 7, 8] | ([1, 8, 9, 10], [7, 8, 9, 10])
+reversed append until 6 [1, 2, 3] | ([3, 2, 1], [1, 2, 3, 13, 12, 11])
+reversed append until 6 [1] | ([1], [1, 11])
+reversed append until 6 [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 7, 6, 5, 4, 3, 2, 1], [1, 2, 3, 4, 5, 6, 7, 8])
+reversed pop [1, 2, 3] | ([3, 2, 1], [])
+reversed pop [1] | ([1], [])
+reversed pop [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 7, 6, 5, 4, 3, 2, 1], [])
+reversed pop(0) [1, 2, 3] | ([3, 3, 3], [])
+reversed pop(0) [1] | ([1], [])
+reversed pop(0) [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 8, 8, 8, 8, 8, 8, 8], [])
+reversed clear [1, 2, 3] | ([3], [])
+reversed clear [1] | ([1], [])
+reversed clear [1, 2, 3, 4, 5, 6, 7, 8] | ([8], [])
+reversed insert(0) [1, 2, 3] | ([3, 1, 'new'], ['new', 'new', 'new', 1, 2, 3])
+reversed insert(0) [1] | ([1], ['new', 1])
+reversed insert(0) [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 7, 6, 5, 4, 3, 2, 1], [1, 2, 3, 4, 5, 6, 7, 8])
+reversed remove itself [1, 2, 3] | ([3, 2, 1], [])
+reversed remove itself [1] | ([1], [])
+reversed remove itself [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 7, 6, 5, 4, 3, 2, 1], [])
+reversed becomes floats [1, 2, 3] | ([3, 2.5, 1.5], [1.5, 2.5, 3.5])
+reversed becomes floats [1] | ([1], [1.5, 2.5, 3.5])
+reversed becomes floats [1, 2, 3, 4, 5, 6, 7, 8] | ([8], [1.5, 2.5, 3.5])
+reversed becomes strs [1, 2, 3] | ([3, 'b', 'a'], ['a', 'b', 'c'])
+reversed becomes strs [1] | ([1], ['a', 'b', 'c'])
+reversed becomes strs [1, 2, 3, 4, 5, 6, 7, 8] | ([8], ['a', 'b', 'c'])
+reversed sort reversed [1, 2, 3] | ([3, 2, 3], [3, 2, 1])
+reversed sort reversed [1] | ([1], [1])
+reversed sort reversed [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1])
+reversed del last two [1, 2, 3] | ([3], [1])
+reversed del last two [1] | ([1], [])
+reversed del last two [1, 2, 3, 4, 5, 6, 7, 8] | ([8], [1, 2, 3, 4, 5, 6])
+reversed extend by itself once [1, 2, 3] | ([3, 2, 1], [1, 2, 3, 1, 2, 3])
+reversed extend by itself once [1] | ([1], [1, 1])
+reversed extend by itself once [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 7, 6, 5, 4, 3, 2, 1], [1, 2, 3, 4, 5, 6, 7, 8])
+reversed clear, then refill [1, 2, 3] | ([3, 8, 7], [7, 8, 9, 10])
+reversed clear, then refill [1] | ([1], [7, 8, 9, 10])
+reversed clear, then refill [1, 2, 3, 4, 5, 6, 7, 8] | ([8, 7], [7, 8, 9, 10])
+--- once at its end, an iterator stays there
+[1, 2] 0
+[] [] default 0 ([],)
+[]
+1 2
+[3] it had not been told that it was at its end
+[]
+[]
+[]
+[1, 2] [] 0 ((),)
+[]
+[3, 2, 1] [] 0
+[] default
+[2, 1] (([],),)
+4
+[] 0
+[]
+--- the state of an iterator that a loop has left
+list_iterator 2 2 2 (([1, 2, 3, 4],), 2) [3, 4] [3, 4] [3, 4] []
+[3, 4]
+[]
+[]
+tuple_iterator 2 2 2 (((1, 2, 3, 4),), 2) [3, 4] [3, 4] [3, 4] []
+[3, 4]
+[1, 2, 3, 4]
+[]
+list_reverseiterator 3 2 2 (([1, 2, 3, 4],), 1) [2, 1] [2, 1] [2, 1] []
+[3, 2, 1]
+[]
+[4, 3, 2, 1]
+--- does the iterator let go of what it went through
+gone
+after the loop
+[]
+--- many loops, so that cells are made faster than they are collected
+107400000
+400020000 40000
+--- an iterator cannot be derived from
+type 'list_iterator' is not an acceptable base type
+type 'tuple_iterator' is not an acceptable base type
+type 'list_reverseiterator' is not an acceptable base type

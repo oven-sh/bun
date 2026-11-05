@@ -189,8 +189,15 @@ describe("ChildProcess stdio properties", () => {
     // This file is strict mode: a getter-only accessor makes this throw.
     Object.assign(proc, replacements);
     for (const key of keys) expect(proc[key]).toBe(replacements[key]);
-    // Like node, an assigned stream is an own enumerable property.
-    expect(Object.keys(proc)).toEqual(expect.arrayContaining(["stdin", "stdout", "stderr", "stdio"]));
+    // Like node, an assigned stream is an own writable data property.
+    for (const key of ["stdin", "stdout", "stderr", "stdio"] as const) {
+      expect(Object.getOwnPropertyDescriptor(proc, key)).toEqual({
+        value: replacements[key],
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
     proc.connected = false;
     expect(proc.connected).toBe(false);
   });

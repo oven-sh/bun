@@ -1582,15 +1582,14 @@ function sshClient(image: LinuxImage): Tool {
             failIfExists("/usr/sbin/sshd.pam", "the SSH server is still installed"),
           ]
         : [
-            aptPurge([
-              "openssh-server",
-              "openssh-sftp-server",
-              ...(distro === "ubuntu" ? ["ec2-instance-connect"] : []),
-            ]),
+            ...(distro === "ubuntu"
+              ? [comment("Its removal restarts the server, so it goes first."), aptPurge(["ec2-instance-connect"])]
+              : []),
+            aptPurge(["openssh-server", "openssh-sftp-server"]),
           ]),
       failIfExists("/usr/sbin/sshd", "the SSH server is still installed"),
       remove(text`/etc/ssh/${glob("ssh_host_*")}`),
-      comment("cloud-init would make host keys at every boot, and write the server's configuration and restart it."),
+      comment("cloud-init would make the server's host keys and write its configuration."),
       directory("/etc/cloud/cloud.cfg.d"),
       writeFile("/etc/cloud/cloud.cfg.d/99-ssh.cfg", ["ssh_genkeytypes: []", "ssh_pwauth: null"]),
     ],
@@ -2463,12 +2462,7 @@ const failUnlessNotEmpty =
       : [`[ -n ${renderValue(value, c)} ] || { echo ${renderValue(text`bootstrap: ${message}`, c)} >&2; exit 1; }`];
 
 const failIfExists = (path: Value, message: Value): Step =>
-  ifExists(path, [
-    c =>
-      isPowerShell(c)
-        ? [`throw ${renderValue(text`bootstrap: ${message}`, c, true)}`]
-        : [`echo ${renderValue(text`bootstrap: ${message}`, c)} >&2`, "exit 1"],
-  ]);
+  ifExists(path, [c => [`echo ${renderValue(text`bootstrap: ${message}`, c)} >&2`, "exit 1"]]);
 
 const ifExists =
   (path: Value, steps: Step[]): Step =>
@@ -2816,7 +2810,7 @@ const apkAdd =
     `apk add --no-cache --no-interactive --no-progress ${names.join(" ")}`,
   ];
 
-/** Removes the packages with their configuration, and the packages that need them. */
+/** Removes the packages with their configuration. */
 const aptPurge =
   (names: readonly string[]): Step =>
   () => [`apt-get purge --yes ${names.join(" ")}`];

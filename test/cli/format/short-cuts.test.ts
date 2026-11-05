@@ -3773,6 +3773,7 @@ describe("JavaScript and TypeScript in a host", () => {
         '<div class="a b">\n  <p>c</p>\n</div>',
         '<div   class="a  b "><p>c</p></div>',
         '<p style="color: red">a</p>\n<p style="color: red;">b</p>\n<p style="color:red">c</p>\n<p style=" color : red ; ">d</p>',
+        '<div>\n  <p style="color: red;width: 1px;">a</p>\n  <p style="\n    color: red;\n  ">a</p>\n  <p style="color: red; width: 1px">a</p>\n</div>',
         '<img srcset="a.png 1x, b.png 2x" sizes="(min-width: 1px) 2px, 3px" />\n<iframe allow="a; b"></iframe>\n<a onclick="b( )">c</a>',
         "<pre>\n  a\n    b\n</pre>\n<textarea>\n c\n</textarea>",
         "<!-- a\n   b -->\n<p>c</p>",

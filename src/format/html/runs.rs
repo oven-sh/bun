@@ -2987,9 +2987,11 @@ impl<'a> Scanner<'_, 'a> {
             indent_width,
             uses_tabs,
             formats_embedded,
+            has_parent_parser,
             ..
         } = self.settings;
-        let rest = self.text.get(from + 7..).filter(|_| formats_embedded)?;
+        let is_code = formats_embedded && !has_parent_parser;
+        let rest = self.text.get(from + 7..).filter(|_| is_code)?;
         let value = &rest[..bun_core::strings::index_of_char_usize(rest, b'"')?];
         // An empty line between two declarations is kept.
         let skip_space = |mut at: usize| {

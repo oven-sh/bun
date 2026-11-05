@@ -1099,6 +1099,20 @@ pub fn format_for_tests(
     text: &[u8],
     options: &FormatOptions,
 ) -> Result<(Vec<u8>, Option<u32>), FormatFailure> {
+    format_for_tests_with(path, text, options, &mut ScratchForTests::default())
+}
+
+/// What a thread of `bun fmt` keeps from one file to the next.
+#[derive(Default)]
+pub struct ScratchForTests(Scratches);
+
+/// The same with buffers that have been used for other files, as in a run over many files.
+pub fn format_for_tests_with(
+    path: &[u8],
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut ScratchForTests,
+) -> Result<(Vec<u8>, Option<u32>), FormatFailure> {
     let resolved = Resolved {
         options: FormatOptions {
             format_javascript: Some(format_block),
@@ -1115,7 +1129,7 @@ pub fn format_for_tests(
         text,
         &resolved,
         (&Interner::new_in(&names), &names),
-        &mut Scratches::default(),
+        &mut scratch.0,
         false,
     )
     .map_err(|failure| match failure {

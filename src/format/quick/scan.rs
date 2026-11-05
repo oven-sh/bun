@@ -1,3 +1,6 @@
+//! Prettier's little text scanners (src/utilities/skip*.js and friends), over the byte buffer.
+//! The bytes around the source are zeros, so running off either end stops every loop by itself.
+
 use crate::lexer::{C_END, C_START, C_STRIDE};
 use crate::{Bytes, Quick, Words};
 

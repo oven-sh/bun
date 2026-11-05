@@ -1,6 +1,21 @@
+//! The document: what Prettier builds as a tree of objects is here a linear stream of commands in one Int32Array, written
+//! in print order. Printing a node appends to the stream; nothing is allocated and nothing is returned.
+//!
+//!   group(...)            GroupOpen .. GroupClose, with the length in the header so that a reader can skip it
+//!   a doc used twice      written once "detached" (the stream jumps over it) and entered with Call .. Ret
+//!   conditionalGroup      CondOpen, then each state between StateOpen .. StateClose
+//!
+//! Three things that Prettier computes by walking the finished tree are computed here while the stream is written, with
+//! counters that a construct samples when it opens and compares when it closes:
+//!
+//!   propagateBreaks()     `prop_count` counts forced breaks; a group that saw it move is broken
+//!   willBreak(doc)        `wb_count`, sampled by whoever asks
+//!   fits()                `acc_w` is the width of everything written so far if printed flat, so a group knows its flat
+//!                         width when it closes. The printer then rejects a group that is too wide without reading it.
+
 use crate::text::much_larger;
 use crate::width_table::{WIDE, WIDE_WITH_VS16, ZERO};
-use crate::{Quick, Words, zeros};
+use crate::{Quick, R, Words, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -32,20 +47,20 @@ pub(crate) struct Doc {
     pub(crate) es_pos: i32,
     /// What Prettier does with mapDoc() over a finished doc (put expressions in the place of placeholders, escape what a
     /// template literal or an attribute value cannot hold as it is) is done here while the texts are written: a host sets a
-    /// filter before it runs a guest, and every text the guest writes goes through it. See core/filter.ts.
+    /// filter before it runs a guest, and every text the guest writes goes through it. See filter.rs.
     pub(crate) text_filter: i32,
     /// The filter for texts that cannot hold a line ending: fixed texts and slice(). 0 if all the filter does is replaceEndOfLine()
     /// (Markdown around a code block), so that a guest of Markdown writes nearly all of its texts as if there were no filter.
     pub(crate) narrow_filter: i32,
     /// Most texts hold nothing that the filter would change. FILTER_BYTES[c] has the flags of the filters that care about the byte c; a text without such a byte
-    /// is written as if there were no filter, if there is no other filter below this one. passMask: the flags to look for, -1 if every text has to go to the filter.
+    /// is written as if there were no filter, if there is no other filter below this one. pass_mask: the flags to look for, -1 if every text has to go to the filter.
     pub(crate) filter_bytes: Vec<u8>,
     pub(crate) pass_mask: i32,
     /// False while it is known that the doc has no line suffix and will not get one: then a boundary is nothing. A language that knows
     /// (JavaScript: no comment was attached behind a node) says so at the start of a file; whoever writes a line suffix takes it back.
     pub(crate) suffix_possible: bool,
     pub(crate) last_state: i32,
-    /// ----------------------------------------------------------------------------------------------------------- fill
+    // ----------------------------------------------------------------------------------------------------------- fill
     /// FillOpen, then FillItem contents, FillSep separator, FillItem contents .. FillClose
     pub(crate) fill_mark: i32,
     /// How many fills were opened, for those who have to know whether a doc holds one.
@@ -53,7 +68,7 @@ pub(crate) struct Doc {
     /// Where the last fill was opened, or called: whatever was opened before that and is still open has a fill inside. (After a rollback
     /// it can point behind the end, and then says "has a fill" once too often, which costs a short cut and nothing else.)
     pub(crate) last_fill_at: i32,
-    /// ---- docs that are printed once and used by several variants of their parent: node -> detached doc
+    // ---- docs that are printed once and used by several variants of their parent: node -> detached doc
     pub(crate) cache: Vec<i32>,
     pub(crate) cache_mask: i32,
     pub(crate) cache_count: i32,
@@ -151,9 +166,10 @@ pub(crate) mod op {
     pub(crate) const IndentLine: i32 = 29;
     /// [op | kind << 5]                         IndentClose, Line
     pub(crate) const DedentLine: i32 = 30;
+    /// [op | len << 5 | bytes << 13]            a fixed text of one or two bytes, which are in the command: 85 in 100 fixed texts
     pub(crate) const Short: i32 = 31;
 }
-/// Where the doc of a file starts. In front of it stand `Line kind, Ret` for the four kinds of line, see slowStep().
+/// Where the doc of a file starts. In front of it stand `Line kind, Ret` for the four kinds of line, see slow_step().
 pub(crate) const DOC_START: i32 = 8;
 pub(crate) const LINE_SOFT: i32 = 0;
 pub(crate) const LINE_NORMAL: i32 = 1;
@@ -177,6 +193,7 @@ pub(crate) const G_CAN_BREAK: i32 = 64;
 /// groups: printed flat whether it fits or not
 pub(crate) const G_FORCE_FLAT: i32 = 128;
 // Groups: there is a fill inside. A fill measures for itself. In a group that was measured and fits, all its measurements come out
+// as "fits"; in one that is flat because the group around it is (which may be flat only up to a forced line break) they may not.
 pub(crate) const G_HAS_FILL: i32 = 256;
 /// the same in the second word of a detached doc
 pub(crate) const D_HAS_FILL: i32 = 1 << 16;
@@ -248,7 +265,7 @@ impl Quick {
         return self.doc.group_ids;
     }
 }
-/// FILTER_END_OF_LINE of core/holes.ts, and no other flag
+/// FILTER_END_OF_LINE of holes.rs, and no other flag
 pub(crate) const ONLY_END_OF_LINE: i32 = 32;
 impl Quick {
     pub(crate) fn set_text_filter(&mut self, filter: i32) {
@@ -261,9 +278,15 @@ impl Quick {
         self.doc.pass_mask = -1;
     }
 
-    /// After setTextFilter(): texts that hold no byte c with FILTER_BYTES[c] & mask pass by the filter.
+    /// After set_text_filter(): texts that hold no byte c with FILTER_BYTES[c] & mask pass by the filter.
     pub(crate) fn set_filter_pass_mask(&mut self, mask: i32) {
         self.doc.pass_mask = mask;
+    }
+
+    /// Would T[start, end), which has no line break, be written as it is? For those who write it with fitted_text(), which no filter sees.
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn passes_filter(&self, start: i32, end: i32) -> bool {
+        return self.doc.narrow_filter == 0 || self.passes(start, end);
     }
 
     pub(crate) fn passes(&self, start: i32, end: i32) -> bool {
@@ -289,7 +312,7 @@ impl Quick {
         return p < end;
     }
 
-    pub(crate) fn text(&mut self, command: i32) {
+    pub(crate) fn text(&mut self, command: i32) -> R<()> {
         if self.doc.narrow_filter != 0
             && (if (command & 31) == op::Short {
                 self.doc.pass_mask < 0
@@ -317,30 +340,31 @@ impl Quick {
                 if ((command >> 5) & 255) == 2 {
                     self.gen_byte(((command as u32) >> 21) as i32);
                 }
-                self.filter(at, self.text.gen_pos);
+                self.filter(at, self.text.gen_pos)?;
             } else {
                 self.filter(
                     ((command as u32) >> 13) as i32,
                     ((command as u32) >> 13) as i32 + ((command >> 5) & 255),
-                );
+                )?;
             }
-            return;
+            return Ok(());
         }
         self.d.put(self.doc.d_pos, command);
         self.doc.d_pos += 1;
         self.doc.acc_w = self.doc.acc_w + ((command >> 5) & 255) + self.doc.pending;
         self.doc.pending = 0;
+        Ok(())
     }
 
     /// T[start, end): printable ASCII only.
-    pub(crate) fn slice(&mut self, start: i32, end: i32) {
+    pub(crate) fn slice(&mut self, start: i32, end: i32) -> R<()> {
         let len = end - start;
         if len <= 0 {
-            return;
+            return Ok(());
         }
         if self.doc.narrow_filter != 0 && !self.passes(start, end) {
-            self.filter(start, end);
-            return;
+            self.filter(start, end)?;
+            return Ok(());
         }
         let p = self.doc.d_pos;
         self.d.put(p, op::Text | (len << 5));
@@ -348,11 +372,12 @@ impl Quick {
         self.doc.d_pos = p + 2;
         self.doc.acc_w = self.doc.acc_w + len + self.doc.pending;
         self.doc.pending = 0;
+        Ok(())
     }
 
     /// T[start, start + length), printable ASCII, in the place of a doc that would be printed like that if it fits on the line, together
     /// with the `behind` (0 or 1) columns of text that follow it. `length` is not 0. Whoever writes this has guessed that it will. The printer knows: if it does not fit,
-    /// it gives up (Redo), and the file is formatted again with `shortCuts` off.
+    /// it gives up (Redo), and the file is formatted again with `short_cuts` off.
     pub(crate) fn fitted(&mut self, start: i32, length: i32, behind: i32) {
         let p = self.doc.d_pos;
         self.d.put(p, op::Nop | (behind << 5) | (length << 6));
@@ -362,10 +387,22 @@ impl Quick {
         self.doc.pending = 0;
     }
 
-    pub(crate) fn slice_w(&mut self, start: i32, end: i32, width: i32) {
+    /// fitted() for callers that are not hot. (With three more calls of fitted() in the program the compiler stopped putting it into the printer of JavaScript: 19 M
+    /// instructions more for the TypeScript files, which run none of the three.)
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn fitted_text(&mut self, start: i32, length: i32, behind: i32) {
+        let p = self.doc.d_pos;
+        self.d.put(p, op::Nop | (behind << 5) | (length << 6));
+        self.d.put(p + 1, start);
+        self.doc.d_pos = p + 2;
+        self.doc.acc_w = self.doc.acc_w + length + self.doc.pending;
+        self.doc.pending = 0;
+    }
+
+    pub(crate) fn slice_w(&mut self, start: i32, end: i32, width: i32) -> R<()> {
         let len = end - start;
         if len <= 0 {
-            return;
+            return Ok(());
         }
         if self.doc.text_filter != 0
             && (if self.doc.narrow_filter != 0 {
@@ -374,8 +411,8 @@ impl Quick {
                 self.has_line_ending(start, end)
             })
         {
-            self.filter(start, end);
-            return;
+            self.filter(start, end)?;
+            return Ok(());
         }
         let p = self.doc.d_pos;
         self.d.put(p, op::TextW | (len << 5));
@@ -384,18 +421,19 @@ impl Quick {
         self.doc.d_pos = p + 3;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
+        Ok(())
     }
 
-    /// sliceW() for lines that a short cut has put together, at the left margin (guestColumn of core/lang.ts is 0); `width` is that of the last line. A filter that
+    /// slice_w() for lines that a short cut has put together, at the left margin (guest_column of lang.rs is 0); `width` is that of the last line. A filter that
     /// makes literal lines of the line breaks, and nothing else, would give the same output in more commands, so the text passes it by.
-    pub(crate) fn slice_lines_at_margin(&mut self, start: i32, end: i32, width: i32) {
+    pub(crate) fn slice_lines_at_margin(&mut self, start: i32, end: i32, width: i32) -> R<()> {
         if self.doc.narrow_filter != 0 {
-            self.slice_w(start, end, width);
-            return;
+            self.slice_w(start, end, width)?;
+            return Ok(());
         }
         let len = end - start;
         if len <= 0 {
-            return;
+            return Ok(());
         }
         let p = self.doc.d_pos;
         self.d.put(p, op::TextW | (len << 5));
@@ -404,6 +442,7 @@ impl Quick {
         self.doc.d_pos = p + 3;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
+        Ok(())
     }
 }
 pub(crate) const STANDING: i32 = -1 << 30;
@@ -411,8 +450,8 @@ pub(crate) const STANDING: i32 = -1 << 30;
 pub(crate) const STANDING_BELOW: i32 = -1 << 29;
 impl Quick {
     /// Lines of the source that are printed as they stand there: T[start, start + length), with the line breaks and the indentation in it. It starts a line that is indented by `column`
-    /// blanks, says whoever writes this; if the printer finds itself at another column, it moves all the lines, or with `isExact` gives up (Redo). The last line has `lastLength` bytes behind its indentation.
-    /// Only where guestColumn is 0, lines end in "\n" and there is no filter for texts. `column` is below 4096.
+    /// blanks, says whoever writes this; if the printer finds itself at another column, it moves all the lines, or with `is_exact` gives up (Redo). The last line has `last_length` bytes behind its indentation.
+    /// Only where guest_column is 0, lines end in "\n" and there is no filter for texts. `column` is below 4096.
     pub(crate) fn standing(
         &mut self,
         start: i32,
@@ -442,8 +481,9 @@ impl Quick {
     }
 
     /// T[start, end), whatever it holds.
-    pub(crate) fn slice_any(&mut self, start: i32, end: i32) {
-        self.slice_w(start, end, self.text_width(start, end));
+    pub(crate) fn slice_any(&mut self, start: i32, end: i32) -> R<()> {
+        self.slice_w(start, end, self.text_width(start, end))?;
+        Ok(())
     }
 }
 pub(crate) fn doc_in_ranges(table: &[i32], cp: i32) -> bool {
@@ -479,7 +519,7 @@ impl Quick {
                 previous_was_emoji = false;
                 continue;
             }
-            let mut cp: i32;
+            let cp: i32;
             if c < 0xe0 {
                 cp = ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f);
                 p += 2;
@@ -560,6 +600,7 @@ impl Quick {
 }
 // ---------------------------------------------------------------------------------------------------------- lines
 pub(crate) const S_SPACE: i32 = 262207; // S(" ")
+pub(crate) const SPACES_64: i32 = 1; // staticText(" ".repeat(64))
 impl Quick {
     pub(crate) fn softline(&mut self) {
         if self.doc.remove_lines_depth != 0 {
@@ -570,18 +611,19 @@ impl Quick {
         self.doc.line_count += 1;
     }
 
-    pub(crate) fn line(&mut self) {
+    pub(crate) fn line(&mut self) -> R<()> {
         if self.doc.remove_lines_depth != 0 {
-            self.text(S_SPACE);
-            return;
+            self.text(S_SPACE)?;
+            return Ok(());
         }
         self.d.put(self.doc.d_pos, op::Line | (LINE_NORMAL << 5));
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.doc.pending = 1;
+        Ok(())
     }
 
-    /// indentOpen(), softline()
+    /// indent_open(), softline()
     pub(crate) fn indent_softline(&mut self) {
         if self.doc.remove_lines_depth != 0 {
             self.indent_open();
@@ -593,21 +635,22 @@ impl Quick {
         self.doc.line_count += 1;
     }
 
-    /// indentOpen(), line()
-    pub(crate) fn indent_line(&mut self) {
+    /// indent_open(), line()
+    pub(crate) fn indent_line(&mut self) -> R<()> {
         if self.doc.remove_lines_depth != 0 {
             self.indent_open();
-            self.text(S_SPACE);
-            return;
+            self.text(S_SPACE)?;
+            return Ok(());
         }
         self.d
             .put(self.doc.d_pos, op::IndentLine | (LINE_NORMAL << 5));
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.doc.pending = 1;
+        Ok(())
     }
 
-    /// indentOpen(), hardline()
+    /// indent_open(), hardline()
     pub(crate) fn indent_hardline(&mut self) {
         self.d
             .put(self.doc.d_pos, op::IndentLine | (LINE_HARD << 5));
@@ -616,7 +659,7 @@ impl Quick {
         self.break_parent();
     }
 
-    /// indentClose(), softline()
+    /// indent_close(), softline()
     pub(crate) fn dedent_softline(&mut self) {
         if self.doc.remove_lines_depth != 0 {
             self.indent_close();
@@ -628,21 +671,22 @@ impl Quick {
         self.doc.line_count += 1;
     }
 
-    /// indentClose(), line()
-    pub(crate) fn dedent_line(&mut self) {
+    /// indent_close(), line()
+    pub(crate) fn dedent_line(&mut self) -> R<()> {
         if self.doc.remove_lines_depth != 0 {
             self.indent_close();
-            self.text(S_SPACE);
-            return;
+            self.text(S_SPACE)?;
+            return Ok(());
         }
         self.d
             .put(self.doc.d_pos, op::DedentLine | (LINE_NORMAL << 5));
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.doc.pending = 1;
+        Ok(())
     }
 
-    /// indentClose(), hardline()
+    /// indent_close(), hardline()
     pub(crate) fn dedent_hardline(&mut self) {
         self.d
             .put(self.doc.d_pos, op::DedentLine | (LINE_HARD << 5));
@@ -657,6 +701,13 @@ impl Quick {
         self.doc.impure_count += 1;
     }
 
+    /// Hides the forced breaks since `prop_count` had the value `saved` from the groups that are open, as a conditional group does
+    /// with those in it. For a printer that leaves out a conditional group which cannot make any other difference.
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn shield_breaks(&mut self, saved: i32) {
+        self.doc.prop_count = saved;
+    }
+
     pub(crate) fn hardline(&mut self) {
         self.d.put(self.doc.d_pos, op::Line | (LINE_HARD << 5));
         self.doc.d_pos += 1;
@@ -669,6 +720,42 @@ impl Quick {
         self.doc.d_pos += 1;
         self.doc.line_count += 1;
         self.break_parent();
+    }
+
+    pub(crate) fn hardline_without_break(&mut self) {
+        self.d.put(self.doc.d_pos, op::Line | (LINE_HARD << 5));
+        self.doc.d_pos += 1;
+        self.doc.wb_count += 1;
+        self.doc.impure_count += 1;
+    }
+
+    pub(crate) fn literalline_without_break(&mut self) {
+        self.d.put(self.doc.d_pos, op::Line | (LINE_LITERAL << 5));
+        self.doc.d_pos += 1;
+        self.doc.wb_count += 1;
+        self.doc.impure_count += 1;
+    }
+
+    /// replaceEndOfLine(text, literalline or hardline): T[start, end) with a line command for every "\n" in it.
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn slice_lines(&mut self, start: i32, end: i32, hard: bool) -> R<()> {
+        let mut from = start;
+        let mut p = start;
+        while p < end {
+            if self.t.at(p) == 10 {
+                self.reserve();
+                self.slice_any(from, p)?;
+                if hard {
+                    self.hardline();
+                } else {
+                    self.literalline();
+                }
+                from = p + 1;
+            }
+            p += 1;
+        }
+        self.slice_any(from, end)?;
+        Ok(())
     }
 
     /// `cursor`: at most two in a doc.
@@ -757,7 +844,7 @@ impl Quick {
         self.d.put(h, self.d.at(h) | (G_FORCE_FLAT << 5));
     }
 
-    /// For who has written lines that can never break: puts `lineCount` back to what it was before.
+    /// For who has written lines that can never break: puts `line_count` back to what it was before.
     pub(crate) fn set_line_count(&mut self, count: i32) {
         self.doc.line_count = count;
     }
@@ -790,6 +877,33 @@ impl Quick {
         self.doc.d_pos += 1;
     }
 
+    /// align(text, ..): the lines inside start with the ASCII text T[start, start + length). Closed by indent_close().
+    pub(crate) fn align_text_open(&mut self, start: i32, length: i32) {
+        self.d
+            .put(self.doc.d_pos, op::AlignTextOpen | (length << 5));
+        self.d.put(self.doc.d_pos + 1, start);
+        self.doc.d_pos += 2;
+    }
+
+    /// align(" ".repeat(n), ..), which is not align(n, ..): with tabs for indentation these stay spaces. It may replace T, if n > 64.
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn align_spaces_open(&mut self, n: i32) {
+        if n <= 64 {
+            self.align_text_open(SPACES_64, n);
+            return;
+        }
+        // (a tab width of 300, say)
+        self.reserve_gen(n);
+        let at = self.text.gen_pos;
+        self.t.fill_range(32, at, at + n);
+        self.set_gen_pos(at + n);
+        self.align_text_open(at, n);
+    }
+
+    pub(crate) fn mark_as_root_open(&mut self) {
+        self.align_open(ALIGN_MARK_ROOT);
+    }
+
     pub(crate) fn dedent_to_root_open(&mut self) {
         self.align_open(ALIGN_TO_ROOT);
     }
@@ -812,6 +926,10 @@ impl Quick {
         self.d.put(p, op::Nop);
         self.doc.d_pos = p + 1;
         return p;
+    }
+
+    pub(crate) fn patch(&mut self, at: i32, command: i32) {
+        self.d.put(at, command);
     }
 
     // ------------------------------------------------------------------------------------------------------- if-break
@@ -854,7 +972,7 @@ impl Quick {
     }
 
     /// ifBreak(a, b) of two fixed texts; 0 stands for "".
-    pub(crate) fn if_break_text(&mut self, break_text: i32, flat_text: i32, id: i32) {
+    pub(crate) fn if_break_text(&mut self, break_text: i32, flat_text: i32, id: i32) -> R<()> {
         if flat_text == 0
             && id == 0
             && self.doc.narrow_filter == 0
@@ -866,17 +984,18 @@ impl Quick {
                     .put(self.doc.d_pos, (break_text & !31) | op::BreakText);
                 self.doc.d_pos += 1;
             }
-            return;
+            return Ok(());
         }
         let h = self.if_break_open(id);
         if break_text != 0 {
-            self.text(break_text);
+            self.text(break_text)?;
         }
         self.if_break_else(h);
         if flat_text != 0 {
-            self.text(flat_text);
+            self.text(flat_text)?;
         }
         self.if_break_close(h);
+        Ok(())
     }
 
     // ---------------------------------------------------------------------------------------------------- line suffix
@@ -997,6 +1116,11 @@ impl Quick {
         return (self.d.at(h + 1) >> 8) & 255;
     }
 
+    /// True if nothing would be printed.
+    pub(crate) fn doc_is_empty(&self, h: i32) -> bool {
+        return ((self.d.at(h) as u32) >> 5) as i32 == 3;
+    }
+
     // --------------------------------------------------------------------------------------------- conditional groups
     pub(crate) fn cond_open(&mut self) -> i32 {
         let h = self.doc.d_pos;
@@ -1006,11 +1130,11 @@ impl Quick {
         self.doc.es.put(s, self.doc.prop_count);
         // number of states so far
         self.doc.es.put(s + 1, 0);
-        // after the first state: wbCount
+        // after the first state: wb_count
         self.doc.es.put(s + 2, 0);
-        // impureCount
+        // impure_count
         self.doc.es.put(s + 3, 0);
-        // accW
+        // acc_w
         self.doc.es.put(s + 4, 0);
         // pending
         self.doc.es.put(s + 5, 0);
@@ -1036,7 +1160,7 @@ impl Quick {
     pub(crate) fn state_close(&mut self, h: i32) {
         let p = self.doc.d_pos;
         let s = self.doc.es_pos - 9;
-        // chain the StateCloses through their payload until condClose knows the end
+        // chain the StateCloses through their payload until cond_close knows the end
         self.d.put(p, self.doc.es.at(s + 8));
         self.doc.es.put(s + 8, p);
         self.doc.d_pos = p + 1;
@@ -1146,7 +1270,7 @@ impl Quick {
     /// fill(join(line, words)) as one command, [FillOpen | length << 5] [start] [length | behind << 24], where the words are those of
     /// T[start, end): printable ASCII, one blank between two words and none at either end; two words at least, less than 16 MB.
     /// `behind`: the width (up to 255) of the text that follows the last word, which belongs to the last item of the fill.
-    /// Only while `shortCuts` is on, no filter is set and lines are lines: where the end of a line takes more than a line feed and blanks
+    /// Only while `short_cuts` is on, no filter is set and lines are lines: where the end of a line takes more than a line feed and blanks
     /// (a comment waits for it, another end of line, a prefix), the printer gives up, and the file is formatted again.
     pub(crate) fn words(&mut self, start: i32, end: i32, behind: i32) {
         let p = self.doc.d_pos;
@@ -1180,6 +1304,12 @@ impl Quick {
         self.d.put(p + 2, op::Ret);
         self.doc.d_pos = p + 3;
         return p + 1;
+    }
+
+    /// Forgets everything written since `at`. The counters are the caller's business: see Checkpoint.
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn truncate(&mut self, at: i32) {
+        self.doc.d_pos = at;
     }
 
     // A printer that may have to start over samples the state with checkpoint() and goes back with rollback().

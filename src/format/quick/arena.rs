@@ -1,10 +1,24 @@
+//! The syntax trees of all languages live in one Int32Array arena. A node is an offset into it.
+//!
+//!   N[n + 0]  kind (8 bits) | flags (16 bits) | operator or sub-kind (8 bits)
+//!   N[n + 1]  start   offset into the text buffer
+//!   N[n + 2]  end     offset into the text buffer (what Prettier calls locEnd)
+//!   N[n + 3]  parent
+//!   N[n + 4..] fields: first the single children, then the lists, then plain numbers
+//!
+//! A list is an offset too: N[l] is the length and N[l + 1 + i] the i-th item. Offset 0 holds a 0, so 0 is at once
+//! "no node" and "the empty list". Children are made before their parents, so a subtree is contiguous memory.
+//!
+//! What a kind or a flag means is the business of each language. The arena only grows while a file is formatted: a
+//! language that is embedded in another one appends its tree behind the host's.
+
 use crate::text::much_larger;
 use crate::{Quick, Words, zeros};
 
 pub(crate) struct Arena {
     pub(crate) n_pos: i32,
     pub(crate) n_cap: i32,
-    /// ---- lists are collected on a side stack while their items are parsed
+    // ---- lists are collected on a side stack while their items are parsed
     pub(crate) ls: Vec<i32>,
     pub(crate) ls_pos: i32,
 }
@@ -53,7 +67,7 @@ impl Quick {
         }
     }
 
-    /// Forgets the nodes that were made since nPos was `mark`. Nobody may know them.
+    /// Forgets the nodes that were made since n_pos was `mark`. Nobody may know them.
     pub(crate) fn truncate_ast(&mut self, mark: i32) {
         self.arena.n_pos = mark;
     }

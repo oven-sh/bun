@@ -8,12 +8,10 @@
 //! escapes for what a template cannot hold as it is) happens while the guest writes: every text goes through the filter
 //! that the printer of the template has set (`holes.rs`). So a guest must not split a placeholder over two texts.
 
-use crate::doc::{
-    ALIGN_MARK_ROOT, G_CAN_BREAK, G_WILL_BREAK, LINE_HARD, LINE_LITERAL, op,
-};
+use crate::doc::{G_CAN_BREAK, G_WILL_BREAK, op};
 use crate::holes::FILTER_QUOT;
 use crate::lang::lang;
-use crate::{Quick, R, Words, why};
+use crate::{Quick, R, Stop, Words, why};
 use std::any::Any;
 
 /// The language of a text in a template: one of Prettier's parsers.
@@ -63,8 +61,6 @@ pub(crate) struct State {
     guests: Option<Box<dyn Guests>>,
     /// The text of the running guest. What the guest reads cannot be in the buffer that it writes to.
     text: Vec<u8>,
-    /// Prettier's `__onHtmlRoot`: how many children the root of the last markup has.
-    pub(crate) top_level_count: i32,
     /// Where the template starts whose text is the next guest.
     pub(crate) template_at: i32,
 }
@@ -74,7 +70,6 @@ impl State {
         Self {
             guests: None,
             text: Vec::new(),
-            top_level_count: 0,
             template_at: 0,
         }
     }
@@ -93,6 +88,7 @@ impl Quick {
 
     pub(crate) fn is_registered(&self, language: i32) -> bool {
         match (&self.guest.guests, Guest::of(language)) {
+            _ if self.has_no_guests() => false,
             (Some(guests), Some(guest)) => guests.knows(guest),
             // `embed()` refuses the file.
             (None, _) => true,
@@ -108,7 +104,7 @@ impl Quick {
             return Ok(false);
         };
         let Some(mut guests) = self.guest.guests.take() else {
-            return Err(self.stop(why::RARE));
+            return Err(self.stop(why::GUEST));
         };
         let mut text = std::mem::take(&mut self.guest.text);
         text.clear();
@@ -121,17 +117,22 @@ impl Quick {
             source_at: start,
             dollar_at: -1,
             is_uncertain: false,
+            has_stopped: false,
             q: self,
         };
         let answer = match (guests.format(guest, &text, &mut sink), sink.is_uncertain) {
             (Answer::Written, true) => Answer::Refused,
             (answer, _) => answer,
         };
+        let has_stopped = sink.has_stopped;
         while self.holes.level > level {
             self.pop();
         }
         self.guest.text = text;
         self.guest.guests = Some(guests);
+        if has_stopped {
+            return Err(Stop);
+        }
         match answer {
             Answer::Written => {
                 self.commit(mark);
@@ -141,7 +142,7 @@ impl Quick {
                 self.rollback(mark);
                 Ok(false)
             }
-            Answer::Refused => Err(self.stop(why::RARE)),
+            Answer::Refused => Err(self.stop(why::GUEST)),
         }
     }
 }
@@ -179,6 +180,8 @@ pub struct Sink<'q> {
     dollar_at: i32,
     /// Two texts in a row are one text for Prettier, and the filter would have had to see them as one.
     is_uncertain: bool,
+    /// The work has stopped, and `Quick::why` says why.
+    has_stopped: bool,
 }
 
 impl Sink<'_> {
@@ -203,6 +206,10 @@ impl Sink<'_> {
             });
         }
         columns
+    }
+
+    fn note(&mut self, written: R<()>) {
+        self.has_stopped |= written.is_err();
     }
 
     /// `${` is escaped in a template. The filter sees one text at a time.
@@ -240,21 +247,25 @@ impl Sink<'_> {
             [] => {}
             [first] if (0x20..0x7f).contains(&first) => {
                 self.q.reserve();
-                self.q
+                let written = self
+                    .q
                     .text(op::Short | (1 << 5) | (i32::from(first) << 13));
+                self.note(written);
             }
             [first, second]
                 if (0x20..0x7f).contains(&first) && (0x20..0x7f).contains(&second) =>
             {
                 self.q.reserve();
-                self.q.text(
+                let written = self.q.text(
                     op::Short | (2 << 5) | (i32::from(first) << 13) | (i32::from(second) << 21),
                 );
+                self.note(written);
             }
             _ => {
                 let (start, end) = self.place(text);
                 self.q.reserve();
-                self.q.slice_any(start, end);
+                let written = self.q.slice_any(start, end);
+                self.note(written);
             }
         }
         self.note_ends(text, from);
@@ -265,7 +276,8 @@ impl Sink<'_> {
         let from = self.q.doc.d_pos;
         let (start, end) = self.place(text);
         self.q.reserve();
-        self.q.slice_w(start, end, width);
+        let written = self.q.slice_w(start, end, width);
+        self.note(written);
         self.note_ends(text, from);
     }
 
@@ -277,7 +289,8 @@ impl Sink<'_> {
         loop {
             let at = crate::Bytes::index_of(self.q.t.sub(0, end), 10, from);
             self.q.reserve();
-            self.q.slice_any(from, if at < 0 { end } else { at });
+            let written = self.q.slice_any(from, if at < 0 { end } else { at });
+            self.note(written);
             if at < 0 {
                 return self.note_ends(text, written_from);
             }
@@ -292,7 +305,8 @@ impl Sink<'_> {
 
     pub fn line(&mut self) {
         self.q.reserve();
-        self.q.line();
+        let written = self.q.line();
+        self.note(written);
     }
 
     pub fn softline(&mut self) {
@@ -310,22 +324,16 @@ impl Sink<'_> {
         self.q.literalline();
     }
 
-    fn line_without_break(&mut self, kind: i32) {
-        self.q.reserve();
-        self.q.d.put(self.q.doc.d_pos, op::Line | (kind << 5));
-        self.q.doc.d_pos += 1;
-        self.q.doc.wb_count += 1;
-        self.q.doc.impure_count += 1;
-    }
-
     /// `hardlineWithoutBreak`
     pub fn hardline_without_break(&mut self) {
-        self.line_without_break(LINE_HARD);
+        self.q.reserve();
+        self.q.hardline_without_break();
     }
 
     /// `literallineWithoutBreak`
     pub fn literalline_without_break(&mut self) {
-        self.line_without_break(LINE_LITERAL);
+        self.q.reserve();
+        self.q.literalline_without_break();
     }
 
     pub fn break_parent(&mut self) {
@@ -368,10 +376,7 @@ impl Sink<'_> {
     pub fn align_text_open(&mut self, text: &[u8]) {
         let (start, end) = self.place(text);
         self.q.reserve();
-        let at = self.q.doc.d_pos;
-        self.q.d.put(at, op::AlignTextOpen | ((end - start) << 5));
-        self.q.d.put(at + 1, start);
-        self.q.doc.d_pos = at + 2;
+        self.q.align_text_open(start, end - start);
     }
 
     pub fn dedent_open(&mut self) {
@@ -386,7 +391,7 @@ impl Sink<'_> {
 
     pub fn mark_as_root_open(&mut self) {
         self.q.reserve();
-        self.q.align_open(ALIGN_MARK_ROOT);
+        self.q.mark_as_root_open();
     }
 
     pub fn indent_if_break_open(&mut self, id: GroupId, negate: bool) {
@@ -492,7 +497,7 @@ impl Sink<'_> {
 
     /// True if nothing is printed for it.
     pub fn is_empty(&self, detached: Detached) -> bool {
-        ((self.q.d.at(detached.0) as u32) >> 5) == 3
+        self.q.doc_is_empty(detached.0)
     }
 
     pub fn checkpoint(&mut self) -> Open {
@@ -519,6 +524,6 @@ impl Sink<'_> {
 
     /// Prettier's `__onHtmlRoot`: how many children the root of the markup has.
     pub fn set_top_level_count(&mut self, count: i32) {
-        self.q.guest.top_level_count = count;
+        self.q.set_top_level_count(count);
     }
 }

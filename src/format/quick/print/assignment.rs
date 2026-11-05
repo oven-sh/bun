@@ -1,3 +1,9 @@
+//! Everything of the form `left operator right` (assignment.js).
+//!
+//! Prettier prints the left side, looks at the doc, picks a layout and then wraps both sides. Here the left side is
+//! already in the stream by then, so the two groups that most layouts put around it are opened beforehand and the ones
+//! that the layout does not want are cancelled.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{F_CHAIN, F_EXT, F_SHORTHAND, FN_TYPE_PARAMETERS, k};
 use crate::print::core::ARG_LAYOUT_SHIFT;
@@ -131,48 +137,49 @@ impl Quick {
         return length;
     }
 
-    pub(crate) fn is_lone_short_argument(&self, n: i32) -> bool {
+    pub(crate) fn is_lone_short_argument(&self, n: i32) -> R<bool> {
+        self.stack()?;
         if self.has_comment(n) {
-            return false;
+            return Ok(false);
         }
         // (a quarter of the width)
         let threshold = self.options.print_width;
         let k = self.n.at(n) & 0xff;
         if k == k::ThisExpression {
-            return true;
+            return Ok(true);
         }
         if k == k::Identifier {
-            return self.utf16_length(self.n.at(n + 1), self.n.at(n + 2)) * 4 <= threshold;
+            return Ok(self.utf16_length(self.n.at(n + 1), self.n.at(n + 2)) * 4 <= threshold);
         }
         if self.is_signed_numeric_literal(n) && !self.has_comment(self.n.at(n + 4)) {
-            return true;
+            return Ok(true);
         }
         if k == k::RegExpLiteral {
             let mut e = self.n.at(n + 2);
             while self.t.at(e - 1) != 47 {
                 e -= 1;
             }
-            return self.utf16_length(self.n.at(n + 1) + 1, e - 1) * 4 <= threshold;
+            return Ok(self.utf16_length(self.n.at(n + 1) + 1, e - 1) * 4 <= threshold);
         }
         if k == k::StringLiteral {
-            return self.printed_string_length(n) * 4 <= threshold;
+            return Ok(self.printed_string_length(n) * 4 <= threshold);
         }
         if k == k::TemplateLiteral {
             if self.n.at(self.n.at(n + 5)) != 0 {
-                return false;
+                return Ok(false);
             }
             let quasi = self.n.at(self.n.at(n + 4) + 1);
             if self.utf16_length(self.n.at(quasi + 1), self.n.at(quasi + 2)) * 4 > threshold {
-                return false;
+                return Ok(false);
             }
             let mut p = self.n.at(quasi + 1);
             while p < self.n.at(quasi + 2) {
                 if self.t.at(p) == 10 {
-                    return false;
+                    return Ok(false);
                 }
                 p += 1;
             }
-            return true;
+            return Ok(true);
         }
         if k == k::UnaryExpression {
             return self.is_lone_short_argument(self.n.at(n + 4));
@@ -183,10 +190,12 @@ impl Quick {
             && (self.n.at(self.n.at(n + 4)) & 0xff) == k::Identifier
         {
             let callee = self.n.at(n + 4);
-            return (self.utf16_length(self.n.at(callee + 1), self.n.at(callee + 2)) + 2) * 4
-                <= threshold;
+            return Ok(
+                (self.utf16_length(self.n.at(callee + 1), self.n.at(callee + 2)) + 2) * 4
+                    <= threshold,
+            );
         }
-        return is_literal_kind(k);
+        return Ok(is_literal_kind(k));
     }
 
     pub(crate) fn is_call_expression_with_complex_type_arguments(&mut self, n: i32) -> R<bool> {
@@ -221,7 +230,8 @@ impl Quick {
             if k == k::CallExpression {
                 let args = self.n.at(n + 5);
                 let count = self.n.at(args);
-                if !(count == 0 || (count == 1 && self.is_lone_short_argument(self.n.at(args + 1))))
+                if !(count == 0
+                    || (count == 1 && self.is_lone_short_argument(self.n.at(args + 1))?))
                 {
                     return Ok(false);
                 }
@@ -266,8 +276,7 @@ impl Quick {
                     }
                 }
                 k::ConditionalType => {
-                    if !self.options.experimental_ternaries
-                        && !self.is_generic(self.n.at(right + 4))
+                    if !self.is_generic(self.n.at(right + 4))
                         && !self.is_generic(self.n.at(right + 5))
                     {
                         break 's0;
@@ -275,15 +284,10 @@ impl Quick {
                     return Ok(true);
                 }
                 k::ConditionalExpression => {
-                    if !self.options.experimental_ternaries {
-                        let test = self.n.at(right + 4);
-                        return Ok(
-                            self.is_binaryish(test) && !self.should_inline_logical_expression(test)
-                        );
-                    }
-                    return Ok((self.n.at(self.n.at(right + 5)) & 0xff)
-                        == k::ConditionalExpression
-                        || (self.n.at(self.n.at(right + 6)) & 0xff) == k::ConditionalExpression);
+                    let test = self.n.at(right + 4);
+                    return Ok(
+                        self.is_binaryish(test) && !self.should_inline_logical_expression(test)
+                    );
                 }
                 k::ClassExpression => {
                     return Ok(self.n.at(self.n.at(right + 7)) > 0);
@@ -481,7 +485,7 @@ impl Quick {
         Ok(())
     }
 
-    /// `operatorA` and `operatorB` are printed one after the other; `operatorB` may be 0.
+    /// `operator_a` and `operator_b` are printed one after the other; `operator_b` may be 0.
     pub(crate) fn print_assignment(
         &mut self,
         n: i32,
@@ -509,27 +513,27 @@ impl Quick {
         if !has_outer {
             self.group_cancel(outer);
         }
-        self.text(operator_a);
+        self.text(operator_a)?;
         if operator_b != 0 {
-            self.text(operator_b);
+            self.text(operator_b)?;
         }
         let args = layout << ARG_LAYOUT_SHIFT;
         match layout {
             LAYOUT_BREAK_AFTER_OPERATOR => {
                 let g = self.group_open();
-                self.indent_line();
+                self.indent_line()?;
                 self.print_node(right, args)?;
                 self.indent_close();
                 self.group_close(g);
             }
             LAYOUT_NEVER_BREAK_AFTER_OPERATOR => {
-                self.text(SPACE);
+                self.text(SPACE)?;
                 self.print_node(right, args)?;
             }
             LAYOUT_FLUID => {
                 let id = self.new_group_id();
                 let g = self.group_open();
-                self.indent_line();
+                self.indent_line()?;
                 self.indent_close();
                 self.group_close_with(g, false, id);
                 self.line_suffix_boundary();
@@ -538,17 +542,17 @@ impl Quick {
                 self.indent_close();
             }
             LAYOUT_BREAK_LHS => {
-                self.text(SPACE);
+                self.text(SPACE)?;
                 let g = self.group_open();
                 self.print_node(right, args)?;
                 self.group_close(g);
             }
             LAYOUT_CHAIN => {
-                self.line();
+                self.line()?;
                 self.print_node(right, args)?;
             }
             LAYOUT_CHAIN_TAIL => {
-                self.indent_line();
+                self.indent_line()?;
                 self.print_node(right, args)?;
                 self.indent_close();
             }

@@ -1,3 +1,6 @@
+//! The words that mean something to TypeScript or Flow in some places. The lexer does not know them: they are names to it,
+//! and plain JavaScript pays nothing for them. The parsers of the two languages ask word_at() where such a word can stand.
+
 use crate::{Quick, Words};
 
 #[allow(non_upper_case_globals)]
@@ -39,6 +42,7 @@ pub(crate) mod w {
     pub(crate) const Undefined: i32 = 37;
     pub(crate) const Unique: i32 = 38;
     pub(crate) const Unknown: i32 = 39;
+    // Flow
     pub(crate) const Bool: i32 = 40;
     pub(crate) const Checks: i32 = 41;
     pub(crate) const Component: i32 = 42;

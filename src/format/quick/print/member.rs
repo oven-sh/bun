@@ -1,3 +1,5 @@
+//! Member expressions (member.js).
+
 use crate::ast::{F_COMPUTED, F_OPTIONAL, k};
 use crate::doc::LABEL_MEMBER_CHAIN;
 use crate::print::statics::{DOT, LBRACKET, QUESTION_DOT, RBRACKET};
@@ -12,28 +14,28 @@ impl Quick {
                 QUESTION_DOT
             } else {
                 DOT
-            });
+            })?;
             self.print(property)?;
             return Ok(());
         }
         if (self.n.at(property) & 0xff) == k::NumericLiteral {
             if (head & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT);
+                self.text(QUESTION_DOT)?;
             }
-            self.text(LBRACKET);
+            self.text(LBRACKET)?;
             self.print(property)?;
-            self.text(RBRACKET);
+            self.text(RBRACKET)?;
             return Ok(());
         }
         let g = self.group_open();
         if (head & F_OPTIONAL) != 0 {
-            self.text(QUESTION_DOT);
+            self.text(QUESTION_DOT)?;
         }
-        self.text(LBRACKET);
+        self.text(LBRACKET)?;
         self.indent_softline();
         self.print(property)?;
         self.dedent_softline();
-        self.text(RBRACKET);
+        self.text(RBRACKET)?;
         self.group_close(g);
         Ok(())
     }
@@ -76,9 +78,8 @@ impl Quick {
         while (self.n.at(stripped_object) & 0xff) == k::NonNullExpression {
             stripped_object = self.n.at(stripped_object + 4);
         }
-        let should_inline = fk == k::BindExpression
-            || (fk == k::AssignmentExpression
-                && (self.n.at(self.n.at(first_non_member + 4)) & 0xff) != k::Identifier)
+        let should_inline = (fk == k::AssignmentExpression
+            && (self.n.at(self.n.at(first_non_member + 4)) & 0xff) != k::Identifier)
             || (self.n.at(n) & F_COMPUTED) != 0
             || ((self.n.at(object) & 0xff) == k::Identifier
                 && (self.n.at(self.n.at(n + 5)) & 0xff) == k::Identifier

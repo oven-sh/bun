@@ -1,3 +1,5 @@
+//! needsParentheses (src/language-js/parentheses/*.js). A node knows its parent, so this is a function of the node alone.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_AWAIT, F_CHAIN, F_COMPUTED, F_ESCAPE, F_EXTENDS_BOUND, F_EXTRA, F_OPTIONAL, F_PAREN,
@@ -66,7 +68,8 @@ impl Quick {
             && self.is_decorator_member_expression(self.n.at(n + 4));
     }
 
-    pub(crate) fn should_wrap_function_for_export_default(&mut self, n: i32) -> R<bool> {
+    pub(crate) fn should_wrap_function_for_export_default(&self, n: i32) -> R<bool> {
+        self.stack()?;
         let k = self.n.at(n) & 0xff;
         let parent_is_export = (self.n.at(self.n.at(n + 3)) & 0xff) == k::ExportDefaultDeclaration;
         if k == k::FunctionExpression || k == k::ClassExpression {
@@ -75,7 +78,7 @@ impl Quick {
         if !self.has_naked_left_side(n) || (!parent_is_export && self.needs_parens(n)?) {
             return Ok(false);
         }
-        return Ok(self.should_wrap_function_for_export_default(self.get_left_side_child(n))?);
+        return self.should_wrap_function_for_export_default(self.get_left_side_child(n));
     }
 
     pub(crate) fn is_in_for_statement_initializer(&self, mut n: i32) -> bool {
@@ -128,7 +131,7 @@ impl Quick {
             && self.t.at(p + 4) == 83;
     }
 
-    pub(crate) fn identifier_needs_parens(&mut self, n: i32) -> R<bool> {
+    pub(crate) fn identifier_needs_parens(&self, n: i32) -> R<bool> {
         let len = self.n.at(n + 2) - self.n.at(n + 1);
         if (self.n.at(n) & F_PAREN) != 0
             && len > 30
@@ -145,12 +148,12 @@ impl Quick {
             {
                 return Ok(false);
             }
-            return Ok(self.is_async_with_escapes(self.n.at(n + 1), self.n.at(n + 2))?);
+            return self.is_async_with_escapes(self.n.at(n + 1), self.n.at(n + 2));
         }
         return Ok(self.identifier_needs_parens_behind(n));
     }
 
-    pub(crate) fn is_async_with_escapes(&mut self, _start: i32, _end: i32) -> R<bool> {
+    pub(crate) fn is_async_with_escapes(&self, _start: i32, _end: i32) -> R<bool> {
         Err(self.stop(why::RARE))
     }
 
@@ -470,7 +473,7 @@ impl Quick {
             || pk == k::NullableType;
     }
 
-    pub(crate) fn needs_parens(&mut self, n: i32) -> R<bool> {
+    pub(crate) fn needs_parens(&self, n: i32) -> R<bool> {
         let head = self.n.at(n);
         let k = head & 0xff;
         if MAY_NEED_PARENS.at(k) == 0 {
@@ -493,21 +496,17 @@ impl Quick {
         {
             return Ok(false);
         }
-        return Ok(self.needs_parens_slow(n, head, parent, ph)?);
+        return self.needs_parens_slow(n, head, parent, ph);
     }
 
-    pub(crate) fn needs_parens_slow(&mut self, n: i32, head: i32, parent: i32, ph: i32) -> R<bool> {
+    pub(crate) fn needs_parens_slow(&self, n: i32, head: i32, parent: i32, ph: i32) -> R<bool> {
         let k = head & 0xff;
         let pk = ph & 0xff;
         if parent == 0 {
             return Ok(false);
         }
         // to avoid an unexpected `}}` in an interpolation
-        if k == k::ObjectExpression
-            || k == k::FunctionExpression
-            || k == k::ClassExpression
-            || k == k::DoExpression
-        {
+        if k == k::ObjectExpression || k == k::FunctionExpression || k == k::ClassExpression {
             let top = self.climb_left_spine(n);
             let tp = self.n.at(top + 3);
             let tk = self.n.at(tp) & 0xff;
@@ -609,7 +608,7 @@ impl Quick {
                         return Ok(o == ((ph as u32) >> SUB_SHIFT) as i32
                             && (o == tk::Add || o == tk::Sub));
                     }
-                    k::BindExpression | k::TaggedTemplateExpression | k::NonNullExpression => {
+                    k::TaggedTemplateExpression | k::NonNullExpression => {
                         return Ok(true);
                     }
                     k::MemberExpression | k::NewExpression | k::CallExpression => {
@@ -637,7 +636,7 @@ impl Quick {
                         return Ok(o == ((ph as u32) >> SUB_SHIFT) as i32
                             && (o == tk::Add || o == tk::Sub));
                     }
-                    k::BindExpression | k::TaggedTemplateExpression | k::NonNullExpression => {
+                    k::TaggedTemplateExpression | k::NonNullExpression => {
                         return Ok(true);
                     }
                     k::MemberExpression | k::NewExpression | k::CallExpression => {
@@ -692,7 +691,6 @@ impl Quick {
                     k::TaggedTemplateExpression
                     | k::JSXSpreadAttribute
                     | k::SpreadElement
-                    | k::BindExpression
                     | k::AwaitExpression
                     | k::UpdateExpression
                     | k::TypeAssertion
@@ -718,7 +716,7 @@ impl Quick {
                             if is_binary_cast(k) {
                                 return Ok(true);
                             }
-                            // getPrecedence(undefined) is undefined, and no comparison with it holds
+                            // get_precedence(undefined) is undefined, and no comparison with it holds
                             if k == k::TypeAssertion {
                                 return Ok(is_bitwise_operator(((ph as u32) >> SUB_SHIFT) as i32));
                             }
@@ -797,7 +795,6 @@ impl Quick {
                     k::TaggedTemplateExpression
                     | k::JSXSpreadAttribute
                     | k::SpreadElement
-                    | k::BindExpression
                     | k::AwaitExpression
                     | k::UpdateExpression
                     | k::TypeAssertion
@@ -892,7 +889,6 @@ impl Quick {
                     | k::UnaryExpression
                     | k::LogicalExpression
                     | k::SpreadElement
-                    | k::BindExpression
                     | k::AsExpression
                     | k::SatisfiesExpression
                     | k::NonNullExpression => {
@@ -919,7 +915,6 @@ impl Quick {
                     | k::UnaryExpression
                     | k::LogicalExpression
                     | k::SpreadElement
-                    | k::BindExpression
                     | k::AsExpression
                     | k::SatisfiesExpression
                     | k::NonNullExpression => {
@@ -974,27 +969,11 @@ impl Quick {
                         return Ok(false);
                     }
                 }
-                if pk == k::NGChainedExpression || pk == k::JsExpressionRoot {
-                    return Ok(false);
-                }
                 return Ok(true);
-            }
-            k::NGPipeExpression => {
-                return Ok(!(pk == k::NGRoot
-                    || pk == k::NGMicrosyntaxExpression
-                    || (pk == k::ObjectProperty && (head & F_PAREN) == 0)
-                    || pk == k::ArrayExpression
-                    || (pk == k::CallExpression && self.n.at(parent + 4) != n)
-                    || (pk == k::NGPipeExpression && self.n.at(parent + 5) == n)
-                    || (pk == k::MemberExpression
-                        && (ph & F_CHAIN) == 0
-                        && self.n.at(parent + 5) == n)
-                    || pk == k::AssignmentExpression));
             }
             k::ConditionalExpression => {
                 match pk {
-                    k::NGPipeExpression
-                    | k::TaggedTemplateExpression
+                    k::TaggedTemplateExpression
                     | k::UnaryExpression
                     | k::SpreadElement
                     | k::BinaryExpression
@@ -1012,9 +991,7 @@ impl Quick {
                         return Ok(self.n.at(parent + 4) == n);
                     }
                     k::ConditionalExpression => {
-                        return Ok(
-                            !self.options.experimental_ternaries && self.n.at(parent + 4) == n
-                        );
+                        return Ok(self.n.at(parent + 4) == n);
                     }
                     _ => {}
                 }
@@ -1045,8 +1022,7 @@ impl Quick {
                     | k::InstantiationExpression => {
                         return Ok(self.n.at(parent + 4) == n);
                     }
-                    k::BindExpression
-                    | k::TaggedTemplateExpression
+                    k::TaggedTemplateExpression
                     | k::UnaryExpression
                     | k::LogicalExpression
                     | k::AwaitExpression
@@ -1088,9 +1064,7 @@ impl Quick {
                         return Ok(true);
                     }
                 }
-                if (pk == k::NewExpression && self.n.at(parent + 4) == n)
-                    || (pk == k::BindExpression && self.n.at(parent + 5) == n)
-                {
+                if pk == k::NewExpression && self.n.at(parent + 4) == n {
                     let mut object = n;
                     while object != 0 {
                         let oh = self.n.at(object);
@@ -1105,7 +1079,6 @@ impl Quick {
                                 return Ok(true);
                             }
                             k::MemberExpression
-                            | k::BindExpression
                             | k::TaggedTemplateExpression
                             | k::NonNullExpression => {
                                 object = self.n.at(object + 4);
@@ -1120,9 +1093,7 @@ impl Quick {
             }
             // fallthrough
             k::TaggedTemplateExpression | k::ImportExpression => {
-                if (pk == k::NewExpression && self.n.at(parent + 4) == n)
-                    || (pk == k::BindExpression && self.n.at(parent + 5) == n)
-                {
+                if pk == k::NewExpression && self.n.at(parent + 4) == n {
                     let mut object = n;
                     while object != 0 {
                         let oh = self.n.at(object);
@@ -1137,7 +1108,6 @@ impl Quick {
                                 return Ok(true);
                             }
                             k::MemberExpression
-                            | k::BindExpression
                             | k::TaggedTemplateExpression
                             | k::NonNullExpression => {
                                 object = self.n.at(object + 4);
@@ -1149,15 +1119,6 @@ impl Quick {
                     }
                 }
                 return Ok(false);
-            }
-            k::BindExpression => {
-                return Ok(((pk == k::BindExpression || pk == k::NewExpression)
-                    && (if pk == k::BindExpression {
-                        self.n.at(parent + 5) == n
-                    } else {
-                        self.n.at(parent + 4) == n
-                    }))
-                    || (pk == k::MemberExpression && self.n.at(parent + 4) == n));
             }
             k::InstantiationExpression => {
                 return Ok(pk == k::MemberExpression && self.n.at(parent + 4) == n);
@@ -1201,7 +1162,6 @@ impl Quick {
                     | k::BinaryExpression
                     | k::ConditionalExpression
                     | k::ExpressionStatement
-                    | k::JsExpressionRoot
                     | k::JSXAttribute
                     | k::JSXElement
                     | k::JSXExpressionContainer

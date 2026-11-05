@@ -7,6 +7,7 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
+bun_core.workspace = true
 
 [features]
 # Keeps what each stage leaves behind. For tools, never for a build that ships.

@@ -1,3 +1,6 @@
+//! Flow: types, declarations, components, hooks, enums, records and `match`. The tree is the one that flow-parser builds, as
+//! far as Prettier looks at it, with the kinds of TypeScript wherever Prettier prints the two alike.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     EB_BIGINT, EB_BOOLEAN, EB_NONE, EB_NUMBER, EB_STRING, EB_SYMBOL, F_ASYNC, F_CHAIN, F_CONST,
@@ -42,7 +45,7 @@ impl Quick {
     }
 
     /// Called where syntax starts that flow-parser knows and Babel does not.
-    pub(crate) fn not_in_babel(&mut self) -> R<()> {
+    pub(crate) fn not_in_babel(&self) -> R<()> {
         if self.mode.is_babel_flow {
             return Err(self.unexpected());
         }
@@ -66,6 +69,7 @@ impl Quick {
     }
 
     pub(crate) fn flow_parse_type(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         let type_ = self.flow_parse_union()?;
         if self.parse_flow.flow_no_conditional_types == 0 && self.lexer.tok == tk::Extends {
@@ -167,7 +171,7 @@ impl Quick {
 
     /// What stands behind the `=>` of a function type: a type or a type guard.
     pub(crate) fn flow_parse_return_type_of_function_type(&mut self) -> R<i32> {
-        return Ok(self.flow_parse_type_or_guard()?);
+        return self.flow_parse_type_or_guard();
     }
 
     pub(crate) fn flow_parse_type_or_guard(&mut self) -> R<i32> {
@@ -219,10 +223,11 @@ impl Quick {
             }
             self.rewind(m);
         }
-        return Ok(self.flow_parse_type()?);
+        return self.flow_parse_type();
     }
 
     pub(crate) fn flow_parse_prefix(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         if self.lexer.tok == tk::Question {
             self.next()?;
@@ -248,7 +253,7 @@ impl Quick {
                 ));
             }
             if w == w::Renders && self.flow_next_starts_type()? {
-                return Ok(self.flow_parse_renders()?);
+                return self.flow_parse_renders();
             }
             if w == w::Infer && self.peek()? == tk::Name {
                 self.not_in_babel()?;
@@ -287,7 +292,7 @@ impl Quick {
                 return Ok(self.node1(k::InferType, start, self.lexer.prev_end, parameter));
             }
         }
-        return Ok(self.flow_parse_postfix()?);
+        return self.flow_parse_postfix();
     }
 
     pub(crate) fn flow_next_starts_type(&mut self) -> R<bool> {
@@ -378,7 +383,7 @@ impl Quick {
         return Ok(type_);
     }
 
-    pub(crate) fn flow_parse_qualified(&mut self, kind_of_first: i32) -> R<i32> {
+    pub(crate) fn flow_parse_qualified(&mut self, _kind_of_first: i32) -> R<i32> {
         let start = self.lexer.tok_start;
         let mut name = if self.is_word() {
             self.parse_ident_name()?
@@ -457,7 +462,7 @@ impl Quick {
         return Ok(self.node2(k::FunctionTypeParam, start, self.lexer.prev_end, 0, type_));
     }
 
-    /// The parameters of a function type up to the `)`, which stays. Those on the list stack from `listMark` on come first.
+    /// The parameters of a function type up to the `)`, which stays. Those on the list stack from `list_mark` on come first.
     pub(crate) fn flow_parse_function_type_params(&mut self, list_mark: i32) -> R<i32> {
         let saved = self.parse_flow.no_anon_function_type;
         let saved_conditional = self.parse_flow.flow_no_conditional_types;
@@ -483,7 +488,7 @@ impl Quick {
         return Ok(self.list_finish(list_mark));
     }
 
-    /// `<T>(params): returnType`, the type of a method or of a declared function. `start` is where the node starts.
+    /// `<T>(params): return_type`, the type of a method or of a declared function. `start` is where the node starts.
     pub(crate) fn flow_parse_methodish_type(&mut self, start: i32, kind: i32) -> R<i32> {
         let type_parameters = if self.lexer.tok == tk::Lt {
             self.ts_parse_type_parameters()?
@@ -509,7 +514,7 @@ impl Quick {
     }
 
     pub(crate) fn flow_parse_variance(&mut self) -> R<i32> {
-        let mut which: i32 = 0;
+        let which: i32;
         if self.lexer.tok == tk::Add {
             which = VA_PLUS;
         } else if self.lexer.tok == tk::Sub {
@@ -557,7 +562,7 @@ impl Quick {
         if self.lexer.tok != tk::Add && self.lexer.tok != tk::Sub && self.word() != w::Writeonly {
             return Ok(0);
         }
-        return Ok(self.flow_parse_variance()?);
+        return self.flow_parse_variance();
     }
 
     pub(crate) fn is_keyword_token(&mut self, t: i32) -> R<bool> {
@@ -638,7 +643,7 @@ impl Quick {
                     let id = self.parse_ident_name()?;
                     self.expect(tk::BracketR)?;
                     self.expect(tk::BracketR)?;
-                    let mut value: i32;
+                    let value: i32;
                     if self.lexer.tok == tk::Lt || self.lexer.tok == tk::ParenL {
                         head |= F_METHOD;
                         value = self.flow_parse_methodish_type(member_start, k::FunctionType)?;
@@ -767,7 +772,7 @@ impl Quick {
                         self.next()?;
                     }
                 }
-                let mut key: i32;
+                let key: i32;
                 if self.lexer.tok == tk::At {
                     // @@iterator
                     let key_start = self.lexer.tok_start;
@@ -790,7 +795,7 @@ impl Quick {
                         }
                     };
                 }
-                let mut value: i32;
+                let value: i32;
                 if self.lexer.tok == tk::Lt || self.lexer.tok == tk::ParenL {
                     if method == M_METHOD {
                         head |= F_METHOD;
@@ -1066,20 +1071,20 @@ impl Quick {
         let start = self.lexer.tok_start;
         match self.lexer.tok {
             tk::BraceL => {
-                return Ok(self.flow_parse_object_type(k::TypeLiteral, false, false)?);
+                return self.flow_parse_object_type(k::TypeLiteral, false, false);
             }
             tk::BracketL => {
-                return Ok(self.flow_parse_tuple()?);
+                return self.flow_parse_tuple();
             }
             tk::Lt => {
                 let type_parameters = self.ts_parse_type_parameters()?;
                 self.expect(tk::ParenL)?;
-                return Ok(self.flow_finish_function_type(
+                return self.flow_finish_function_type(
                     start,
                     type_parameters,
                     self.arena.ls_pos,
                     k::FunctionType,
-                )?);
+                );
             }
             tk::ParenL => {
                 {
@@ -1112,12 +1117,7 @@ impl Quick {
                             self.list_push(v0);
                         }
                     }
-                    return Ok(self.flow_finish_function_type(
-                        start,
-                        0,
-                        list_mark,
-                        k::FunctionType,
-                    )?);
+                    return self.flow_finish_function_type(start, 0, list_mark, k::FunctionType);
                 }
             }
             tk::String => {
@@ -1157,54 +1157,54 @@ impl Quick {
                 }
             }
             tk::Void => {
-                return Ok(self.flow_keyword(type_keyword::Void)?);
+                return self.flow_keyword(type_keyword::Void);
             }
             tk::Null => {
-                return Ok(self.flow_keyword(type_keyword::Null)?);
+                return self.flow_keyword(type_keyword::Null);
             }
             tk::This => {
-                return Ok(self.flow_keyword(type_keyword::This)?);
+                return self.flow_keyword(type_keyword::This);
             }
             tk::Mul => {
-                return Ok(self.flow_keyword(type_keyword::All)?);
+                return self.flow_keyword(type_keyword::All);
             }
             tk::Typeof => {
-                return Ok(self.flow_parse_typeof()?);
+                return self.flow_parse_typeof();
             }
             tk::Name => {
                 match self.word() {
                     w::Any => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Any)?);
+                        return self.flow_keyword_or_generic(type_keyword::Any);
                     }
                     w::Bool | w::Boolean => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Boolean)?);
+                        return self.flow_keyword_or_generic(type_keyword::Boolean);
                     }
                     w::Mixed => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Mixed)?);
+                        return self.flow_keyword_or_generic(type_keyword::Mixed);
                     }
                     w::Empty => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Empty)?);
+                        return self.flow_keyword_or_generic(type_keyword::Empty);
                     }
                     w::Number => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Number)?);
+                        return self.flow_keyword_or_generic(type_keyword::Number);
                     }
                     w::String => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::String)?);
+                        return self.flow_keyword_or_generic(type_keyword::String);
                     }
                     w::Symbol => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Symbol)?);
+                        return self.flow_keyword_or_generic(type_keyword::Symbol);
                     }
                     w::Bigint => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::BigInt)?);
+                        return self.flow_keyword_or_generic(type_keyword::BigInt);
                     }
                     w::Never => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Never)?);
+                        return self.flow_keyword_or_generic(type_keyword::Never);
                     }
                     w::Undefined => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Undefined)?);
+                        return self.flow_keyword_or_generic(type_keyword::Undefined);
                     }
                     w::Unknown => {
-                        return Ok(self.flow_keyword_or_generic(type_keyword::Unknown)?);
+                        return self.flow_keyword_or_generic(type_keyword::Unknown);
                     }
                     w::Interface => {
                         let after = self.peek()?;
@@ -1233,7 +1233,7 @@ impl Quick {
                         let after = self.peek()?;
                         if after == tk::ParenL || after == tk::Lt {
                             self.next()?;
-                            return Ok(self.flow_parse_component_type(start)?);
+                            return self.flow_parse_component_type(start);
                         }
                     }
                     w::Hook => {
@@ -1248,22 +1248,22 @@ impl Quick {
                                 0
                             };
                             self.expect(tk::ParenL)?;
-                            return Ok(self.flow_finish_function_type(
+                            return self.flow_finish_function_type(
                                 hook_start,
                                 type_parameters,
                                 self.arena.ls_pos,
                                 k::HookTypeAnnotation,
-                            )?);
+                            );
                         }
                     }
                     _ => {}
                 }
-                return Ok(self.flow_parse_generic()?);
+                return self.flow_parse_generic();
             }
             _ => {}
         }
         if self.is_word() {
-            return Ok(self.flow_parse_generic()?);
+            return self.flow_parse_generic();
         }
         return Err(self.unexpected());
     }
@@ -1271,9 +1271,9 @@ impl Quick {
     pub(crate) fn flow_keyword_or_generic(&mut self, which: i32) -> R<i32> {
         let after = self.peek()?;
         if after == tk::Dot || after == tk::Lt {
-            return Ok(self.flow_parse_generic()?);
+            return self.flow_parse_generic();
         }
-        return Ok(self.flow_keyword(which)?);
+        return self.flow_keyword(which);
     }
 
     pub(crate) fn flow_parse_type_parameter(&mut self) -> R<i32> {
@@ -1361,7 +1361,7 @@ impl Quick {
         return Ok(self.node1(k::Predicate, start, self.lexer.prev_end, value));
     }
 
-    /// `: type`, `: type %checks`, `: %checks` behind the parameters of a function; `isArrow`: of an arrow function.
+    /// `: type`, `: type %checks`, `: %checks` behind the parameters of a function; `is_arrow`: of an arrow function.
     pub(crate) fn flow_parse_return_type(&mut self, is_arrow: bool) -> R<i32> {
         let start = self.lexer.tok_start;
         self.expect(tk::Colon)?;
@@ -1384,7 +1384,7 @@ impl Quick {
         return Ok(annotation);
     }
 
-    /// Runs flowParseType() as at the start of an annotation: nothing of the context around it matters.
+    /// Runs flow_parse_type() as at the start of an annotation: nothing of the context around it matters.
     pub(crate) fn flow_parse_type_fresh(&mut self) -> R<i32> {
         let saved = self.parse_flow.no_anon_function_type;
         let saved_conditional = self.parse_flow.flow_no_conditional_types;
@@ -1520,7 +1520,7 @@ impl Quick {
             return Ok(0);
         }
         self.next()?;
-        return Ok(self.flow_parse_heritage_list()?);
+        return self.flow_parse_heritage_list();
     }
 
     /// The current token is `enum`.
@@ -1687,7 +1687,7 @@ impl Quick {
         self.not_in_babel()?;
         self.next()?;
         let id = self.parse_ident_name()?;
-        return Ok(self.parse_method_rest(k::HookDeclaration | flags, start, id, 0)?);
+        return self.parse_method_rest(k::HookDeclaration | flags, start, id, 0);
     }
 
     /// `name<T>(params): type`, as a name with the type of a function for its annotation.
@@ -1737,48 +1737,44 @@ impl Quick {
     pub(crate) fn flow_parse_declared(&mut self, start: i32, modifiers: i32) -> R<i32> {
         match self.lexer.tok {
             tk::Class => {
-                return Ok(self.flow_parse_interfaceish(start, k::DeclareClass, modifiers)?);
+                return self.flow_parse_interfaceish(start, k::DeclareClass, modifiers);
             }
             tk::Function => {
-                return Ok(self.flow_parse_declare_function(start, modifiers)?);
+                return self.flow_parse_declare_function(start, modifiers);
             }
             tk::Var => {
-                return Ok(self.flow_parse_declare_variable(start, V_VAR, modifiers)?);
+                return self.flow_parse_declare_variable(start, V_VAR, modifiers);
             }
             tk::Const => {
                 self.not_in_babel()?;
-                return Ok(self.flow_parse_declare_variable(start, V_CONST, modifiers)?);
+                return self.flow_parse_declare_variable(start, V_CONST, modifiers);
             }
             _ => {}
         }
         if self.is_kw(kw::Let) {
             self.not_in_babel()?;
-            return Ok(self.flow_parse_declare_variable(start, V_LET, modifiers)?);
+            return self.flow_parse_declare_variable(start, V_LET, modifiers);
         }
         match self.word() {
             w::Type => {
-                return Ok(self.flow_parse_type_alias(start, modifiers)?);
+                return self.flow_parse_type_alias(start, modifiers);
             }
             w::Opaque => {
-                return Ok(self.flow_parse_opaque_type(start, modifiers)?);
+                return self.flow_parse_opaque_type(start, modifiers);
             }
             w::Interface => {
-                return Ok(self.flow_parse_interfaceish(
-                    start,
-                    k::InterfaceDeclaration,
-                    modifiers,
-                )?);
+                return self.flow_parse_interfaceish(start, k::InterfaceDeclaration, modifiers);
             }
             w::Enum => {
                 self.not_in_babel()?;
-                return Ok(self.flow_parse_enum(start, modifiers)?);
+                return self.flow_parse_enum(start, modifiers);
             }
             w::Component => {
-                return Ok(self.flow_parse_component(
+                return self.flow_parse_component(
                     start,
                     k::DeclareComponent,
                     modifiers << SUB_SHIFT,
-                )?);
+                );
             }
             w::Hook => {
                 self.not_in_babel()?;
@@ -1802,7 +1798,7 @@ impl Quick {
         self.next()?;
         let declare = MOD_DECLARE << SUB_SHIFT;
         if self.eat(tk::Default)? {
-            let mut declaration: i32;
+            let declaration: i32;
             if self.lexer.tok == tk::Class
                 || self.lexer.tok == tk::Function
                 || (self.word() == w::Component && self.peek()? == tk::Name)
@@ -1850,7 +1846,7 @@ impl Quick {
             while self.lexer.tok != tk::BraceR {
                 let spec_start = self.lexer.tok_start;
                 let local = self.parse_ident_name()?;
-                let mut exported: i32;
+                let exported: i32;
                 if self.is_kw(kw::As) {
                     self.next()?;
                     exported = self.parse_ident_name()?;
@@ -1908,7 +1904,7 @@ impl Quick {
     }
 
     /// Babel: "Only declares and type imports are allowed inside declare module."
-    pub(crate) fn flow_check_declare_module_body(&mut self, body: i32) -> R<()> {
+    pub(crate) fn flow_check_declare_module_body(&self, body: i32) -> R<()> {
         let list = self.n.at(body + 5);
         let mut i: i32 = 1;
         while i <= self.n.at(list) {
@@ -1945,7 +1941,7 @@ impl Quick {
             self.rewind(m);
             return Ok(0);
         }
-        let mut result: i32 = 0;
+        let result: i32;
         if self.lexer.tok == tk::Export {
             result = self.flow_parse_declare_export(start)?;
         } else if self.word() == w::Module {
@@ -2219,6 +2215,7 @@ impl Quick {
     }
 
     pub(crate) fn flow_parse_match_primary(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         match self.lexer.tok {
             tk::String => {
@@ -2268,7 +2265,7 @@ impl Quick {
                 return Ok(pattern);
             }
             tk::BraceL => {
-                return Ok(self.flow_parse_match_object(k::MatchObjectPattern)?);
+                return self.flow_parse_match_object(k::MatchObjectPattern);
             }
             tk::BracketL => {
                 self.next()?;
@@ -2294,7 +2291,7 @@ impl Quick {
             _ => {}
         }
         if self.is_match_binding_start()? {
-            return Ok(self.flow_parse_match_binding()?);
+            return self.flow_parse_match_binding();
         }
         if self.lexer.tok == tk::Name
             && self.lexer.tok_end - self.lexer.tok_start == 1
@@ -2481,45 +2478,45 @@ impl Quick {
             w::Type => {
                 let v0 = self.peek()?;
                 if self.is_word_token(v0)? {
-                    return Ok(self.flow_parse_type_alias(start, 0)?);
+                    return self.flow_parse_type_alias(start, 0);
                 }
             }
             w::Opaque => {
                 if self.peek_is_word(w::Type)? {
-                    return Ok(self.flow_parse_opaque_type(start, 0)?);
+                    return self.flow_parse_opaque_type(start, 0);
                 }
             }
             w::Interface => {
                 let v1 = self.peek()?;
                 if self.is_word_token(v1)? {
-                    return Ok(self.flow_parse_interfaceish(start, k::InterfaceDeclaration, 0)?);
+                    return self.flow_parse_interfaceish(start, k::InterfaceDeclaration, 0);
                 }
             }
             w::Declare => {
-                return Ok(self.flow_parse_declare(start)?);
+                return self.flow_parse_declare(start);
             }
             w::Enum => {
                 if self.peek()? == tk::Name {
-                    return Ok(self.flow_parse_enum(start, 0)?);
+                    return self.flow_parse_enum(start, 0);
                 }
             }
             w::Component => {
                 if self.peek_on_same_line()? == tk::Name {
-                    return Ok(self.flow_parse_component(start, k::ComponentDeclaration, 0)?);
+                    return self.flow_parse_component(start, k::ComponentDeclaration, 0);
                 }
             }
             w::Hook => {
                 if self.peek_on_same_line()? == tk::Name {
-                    return Ok(self.flow_parse_hook(start, 0)?);
+                    return self.flow_parse_hook(start, 0);
                 }
             }
             w::Record => {
                 if self.peek_on_same_line()? == tk::Name {
-                    return Ok(self.flow_parse_record(start)?);
+                    return self.flow_parse_record(start);
                 }
             }
             w::Match => {
-                return Ok(self.flow_try_parse_match(true)?);
+                return self.flow_try_parse_match(true);
             }
             w::Async => {
                 // async component
@@ -2530,18 +2527,14 @@ impl Quick {
                     && self.peek_on_same_line()? == tk::Name
                 {
                     self.unmark(m);
-                    return Ok(self.flow_parse_component(
-                        start,
-                        k::ComponentDeclaration,
-                        F_ASYNC,
-                    )?);
+                    return self.flow_parse_component(start, k::ComponentDeclaration, F_ASYNC);
                 }
                 if self.lexer.tok_nl == 0
                     && self.word() == w::Hook
                     && self.peek_on_same_line()? == tk::Name
                 {
                     self.unmark(m);
-                    return Ok(self.flow_parse_hook(start, F_ASYNC)?);
+                    return self.flow_parse_hook(start, F_ASYNC);
                 }
                 self.rewind(m);
             }
@@ -2576,7 +2569,7 @@ impl Quick {
         if self.word() == w::Declare || self.word() == w::Match {
             return Ok(0);
         }
-        return Ok(self.flow_parse_statement(self.lexer.tok_start)?);
+        return self.flow_parse_statement(self.lexer.tok_start);
     }
 
     /// The kind of an import, if `type` or `typeof` stands behind `import` as a keyword: skips it. Else 0.

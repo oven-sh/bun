@@ -1,3 +1,13 @@
+//! Turns the command stream into bytes. The algorithm is Prettier's printDocToString, on another data structure:
+//!
+//! - The stream is read front to back. Where Prettier pushes the children of a doc on a stack of commands, here the only
+//!   stack holds what a closing command has to restore: the mode for a group, the indentation for an indent, the return
+//!   address for a call.
+//! - "The rest of the commands", which fits() needs, is simply what follows in the stream. fits() reads on past the end
+//!   of the group and takes the modes of the enclosing groups from that stack, without popping.
+//! - A group whose contents are "pure" carries its flat width, so whether it fits is one comparison plus a look at
+//!   the few commands up to the next possible line break.
+
 use crate::doc::{
     ALIGN_BIAS, ALIGN_MARK_ROOT, ALIGN_TO_ROOT, G_BREAK, G_END_PENDING, G_FORCE_FLAT, G_HAS_FILL,
     G_PURE, LINE_HARD, LINE_LITERAL, LINE_NORMAL, STANDING_BELOW, op,
@@ -23,7 +33,7 @@ pub(crate) struct Printer {
     pub(crate) it_pos: i32,
     pub(crate) ib: Vec<u8>,
     pub(crate) ib_pos: i32,
-    /// ---- the state of the printer, where printDoc() and slowStep() hand it to each other
+    // ---- the state of the printer, where print_doc() and slow_step() hand it to each other
     /// the command to read next
     pub(crate) x_pc: i32,
     /// bytes written
@@ -41,10 +51,10 @@ pub(crate) struct Printer {
     pub(crate) cursor_positions: Vec<i32>,
     pub(crate) cursor_count: i32,
     pub(crate) x_stub: i32,
-    /// slowStep() is called from inside a group that is printed flat without a look at the column
+    /// slow_step() is called from inside a group that is printed flat without a look at the column
     pub(crate) x_all_flat: bool,
     pub(crate) words_pos: i32,
-    /// ---- printDocToString() in the middle of the work
+    // ---- printDocToString() in the middle of the work
     pub(crate) printed_start: i32,
     pub(crate) printed_end: i32,
 }
@@ -100,12 +110,12 @@ pub(crate) const IT_CHILD: i32 = 8;
 pub(crate) const IT_ALIGN_N: i32 = 9;
 pub(crate) const IT_ALIGN_CHILD: i32 = 10;
 // With align("> ", ..) around, the indentation starts with the bytes IB[prefix, prefix + length); the tabs and spaces
-// follow. IT_SPACES is then HUGE, which sends printDoc() to slowStep(), and IT_REAL_SPACES has the number.
+// follow. IT_SPACES is then HUGE, which sends print_doc() to slow_step(), and IT_REAL_SPACES has the number.
 pub(crate) const IT_PREFIX: i32 = 11;
 pub(crate) const IT_PREFIX_LEN: i32 = 12;
 pub(crate) const IT_PREFIX_WIDTH: i32 = 13;
 pub(crate) const IT_REAL_SPACES: i32 = 14;
-// More than the output buffer ever holds (see growOut()): "is there room for the indentation?" is what sends printDoc() there.
+// More than the output buffer ever holds (see grow_out()): "is there room for the indentation?" is what sends print_doc() there.
 pub(crate) const HUGE: i32 = 1 << 30;
 impl Quick {
     /// `from`: the record whose prefix the new one starts with; -1 for none.
@@ -126,7 +136,7 @@ impl Quick {
         let r = self.printer.it_pos;
         self.printer.it_pos = r + IT_STRIDE;
         let mut width: i32;
-        let mut spaces: i32;
+        let spaces: i32;
         if self.options.use_tabs {
             width = flushed * self.options.tab_width + last_spaces;
             self.printer.it.put(r + IT_TABS, flushed);
@@ -309,7 +319,7 @@ impl Quick {
     /// Does what starts at `pc` fit into `rem` columns, up to the first possible line break?
     ///
     /// `depth0` is 1 if `pc` stands inside a construct that the printer has not entered yet (the group that is being
-    /// measured); `outerMode` is then the mode behind its end. With `limit` >= 0 nothing behind `limit` counts.
+    /// measured); `outer_mode` is then the mode behind its end. With `limit` >= 0 nothing behind `limit` counts.
     pub(crate) fn fits(
         &mut self,
         mut pc: i32,
@@ -643,7 +653,7 @@ pub(crate) const WAIT_SUFFIX: i32 = 1;
 pub(crate) const WAIT_CURSOR: i32 = 2;
 impl Quick {
     /// For whoever finds out in another way that a short cut should not have been taken.
-    pub(crate) fn redo(&mut self) -> Stop {
+    pub(crate) fn redo(&self) -> Stop {
         return self.stop(why::REDO);
     }
 
@@ -655,8 +665,8 @@ impl Quick {
     /// Prints the stream from `start` to the next End. `stub` is where `Line(hard) Ret` stands.
     ///
     /// This function handles the commands that need no call: texts, lines, closings, groups whose fate is clear. Whatever
-    /// needs more (measuring with fits(), growing a buffer, comments at the end of a line, fill) goes to slowStep(), through
-    /// the variables above. That call is the only one in here, which is the point: with the thirty-odd calls of slowStep() in
+    /// needs more (measuring with fits(), growing a buffer, comments at the end of a line, fill) goes to slow_step(), through
+    /// the variables above. That call is the only one in here, which is the point: with the thirty-odd calls of slow_step() in
     /// the same function, the compiler kept every variable of the loop on the stack.
     ///
     /// Every number that comes out of an array is sealed with `| 0`: the function is too large for the compiler to keep a
@@ -763,8 +773,8 @@ impl Quick {
                         }
                         op::IndentLine | op::DedentLine => {
                             {
-                                // Whatever could send the line to slowStep() is looked at first: there the command starts from the beginning.
-                                let mut target: i32;
+                                // Whatever could send the line to slow_step() is looked at first: there the command starts from the beginning.
+                                let target: i32;
                                 if (w & 31) == op::IndentLine {
                                     target = self.printer.it.at(ind + IT_CHILD);
                                     if target == 0 || sp >= st_limit {
@@ -1444,7 +1454,7 @@ impl Quick {
         return p - start;
     }
 
-    /// Prints the words of the command at pc. Returns how far the output has come; the column is in wordsPos.
+    /// Prints the words of the command at pc. Returns how far the output has come; the column is in words_pos.
     /// A fill puts [line, word] on the line if it fits, so a line takes all the words up to the last blank that is not behind its edge.
     pub(crate) fn print_words(&mut self, pc: i32, mut o: i32, mut pos: i32, ind: i32) -> R<i32> {
         let length = ((self.d.at(pc) as u32) >> 5) as i32;
@@ -1771,7 +1781,7 @@ impl Quick {
                     }
                     remeasure = 0;
                     let rem = width - pos;
-                    let mut ok: bool;
+                    let ok: bool;
                     if (flags & G_PURE) != 0 && (waiting & WAIT_SUFFIX) == 0 {
                         let gw = self.d.at(pc + 2);
                         ok = gw <= rem
@@ -1834,7 +1844,7 @@ impl Quick {
                                     break;
                                 }
                                 let sf = self.d.at(target) >> 5;
-                                let mut ok: bool;
+                                let ok: bool;
                                 if (sf & G_PURE) != 0 && (waiting & WAIT_SUFFIX) == 0 {
                                     let sw = self.d.at(target + 2);
                                     ok = sw <= rem
@@ -1895,7 +1905,7 @@ impl Quick {
                     pc += 2;
                 }
                 op::IndentIfBreakOpen => {
-                    // make the indentation; printDoc() takes it from there
+                    // make the indentation; print_doc() takes it from there
                     self.make_indent(ind);
                 }
                 op::SuffixOpen => {
@@ -2089,8 +2099,8 @@ impl Quick {
         self.printer.out_length = 0;
     }
 
-    /// Prints a detached doc (detachOpen() .. detachClose()) for a line of `width` columns, while the stream is still being
-    /// written. The result is the generated text T[printedStart, printedEnd). It may replace T: read T again.
+    /// Prints a detached doc (detach_open() .. detach_close()) for a line of `width` columns, while the stream is still being
+    /// written. The result is the generated text T[printed_start, printed_end). It may replace T: read T again.
     pub(crate) fn print_to_text(&mut self, doc: i32, width: i32) -> R<()> {
         self.reserve();
         let p = self.doc.d_pos;

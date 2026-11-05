@@ -436,9 +436,8 @@ describe("ipc mode advanced", () => {
   );
 });
 
-// getIPCInstance error path: closing a channel that was opened and then turned
-// out to be unusable queues an _onAfterIPCClosed task that holds the SendQueue.
-// Freeing the instance has to cancel that task first.
+// get_ipc_instance error path: no socket comes of the descriptor, so
+// get_ipc_instance detaches the queue and drops its ref, which frees it.
 it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

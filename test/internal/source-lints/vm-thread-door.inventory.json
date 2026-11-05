@@ -136,9 +136,6 @@
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
       "napi_async_work"
-    ],
-    "unsafe impl Sync": [
-      "napi_node_version"
     ]
   },
   "src/runtime/node/fs_events.rs": {
@@ -238,10 +235,5 @@
   },
   "src/runtime/webcore/s3/simple_request.rs": {
     "HTTPThread::schedule": 1
-  },
-  "src/sql_jsc/jsc.rs": {
-    "unsafe impl Send": [
-      "SSLConfig"
-    ]
   }
 }

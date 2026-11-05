@@ -638,9 +638,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // warnings about non-string import paths will be omitted inside try blocks.
     pub(crate) await_target: Option<js_ast::ExprData>,
 
-    pub(crate) to_expr_wrapper_namespace: Binding2ExprWrapperNamespace,
-    pub(crate) to_expr_wrapper_hoisted: Binding2ExprWrapperHoisted,
-
     // This helps recognize the "import().catch()" pattern. We also try to avoid
     // warning about this just like the "try { await import() }" pattern.
     pub(crate) then_catch_chain: ThenCatchChain,
@@ -723,11 +720,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub(crate) decorator_class_name: Option<&'a [u8]>,
 }
-
-// `binding::ToExprWrapper` type-erases `*P` (which is generic over
-// `<'a, TYPESCRIPT, J, SCAN_ONLY>`). Wired in `prepare_for_visit_pass`.
-pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
-pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -3278,29 +3270,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
-        {
-            // The wrapper stores only the arena and a non-capturing
-            // fn-pointer trampoline; the `*mut P` context is supplied *at call
-            // time* (see `Binding::to_expr`) so the raw pointer's provenance is
-            // a child of the live `&mut P` at the call site rather than a stale
-            // tag captured here. The transposer shims need no wiring at all —
-            // call sites invoke `P::maybe_transpose_if_*` etc. directly.
-            self.to_expr_wrapper_namespace =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: `ctx` was derived from the caller's live `&mut P`
-                    // immediately before `Binding::to_expr`; no other `&mut P`
-                    // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_namespace(loc, ref_)
-                });
-            self.to_expr_wrapper_hoisted =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_hoisting(loc, ref_)
-                });
-        }
-
         {
             // Compact `scopes_in_order` (parse pass leaves None holes from
             // popAndDiscardScope) into a dense bump-slice for the visit pass.
@@ -9604,9 +9573,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// The Binding2ExprWrapper self-referential helpers are
-// seeded with arena-unit placeholders inside the struct literal; the real `*P`
-// back-pointer is wired lazily by the call sites.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Construct a `P` in place at `out`.
     ///
@@ -9619,19 +9585,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// single `out.write(Self { .. })` so there is no stack temporary `Self`
     /// to relocate.
     ///
-    /// On `Ok(())`, `*out` is fully initialized and the caller owns dropping
-    /// it (e.g. via `assume_init`); on `Err`, `*out` is left untouched.
+    /// Returns the initialized `*out`; the caller owns dropping it.
     /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
     /// alignment/writability precondition a type guarantee, so this fn is safe.
-    pub fn init(
-        out: &mut core::mem::MaybeUninit<Self>,
+    pub fn init<'o>(
+        out: &'o mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
-    ) -> Result<(), crate::Error> {
+    ) -> &'o mut Self {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
         // transpiler showed
@@ -9752,9 +9717,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_multiple_args: false,
                 has_catch: false,
             },
-            // Wired in `prepare_for_visit_pass` (self moves on return).
-            to_expr_wrapper_namespace: bun_ast::binding::ToExprWrapper::dangling(),
-            to_expr_wrapper_hoisted: bun_ast::binding::ToExprWrapper::dangling(),
             source,
             macro_: MacroState::init(),
             current_scope: scope,
@@ -9894,16 +9856,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
-        });
+        })
 
         // The transposer recursion lives as inherent `P::maybe_transpose_if_*` methods
-        // called directly (no stored `*mut P`), and `Binding2ExprWrapper`
-        // receives its `*mut P` per-call from the live `&mut P` at the call
-        // site — `prepare_for_visit_pass` only wires the arena/trampoline.
+        // called directly (no stored `*mut P`).
         //
         // For SCAN_ONLY, the caller (Parser) moves the `ScanPassResult`'s containers in afterwards.
-
-        Ok(())
     }
 }
 

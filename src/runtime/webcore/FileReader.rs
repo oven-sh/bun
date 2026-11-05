@@ -130,11 +130,11 @@ impl Lazy {
         let mut is_nonblocking = false;
         #[cfg(unix)]
         let mut caller_stat: Option<sys::Stat> = None;
-        // A write-only fd is not reopened for reading: reads on it fail, as on the caller's fd.
+        // A write-only fd is not a terminal to read: reads on it fail, as on the caller's fd.
         #[cfg(unix)]
         let readable = |fd: Fd| {
-            sys::get_fcntl_flags(fd)
-                .is_ok_and(|flags| (flags & libc::O_ACCMODE as isize) != libc::O_WRONLY as isize)
+            !sys::get_fcntl_flags(fd)
+                .is_ok_and(|flags| (flags & libc::O_ACCMODE as isize) == libc::O_WRONLY as isize)
         };
 
         let fd: Fd = match &file.pathlike {
@@ -235,9 +235,9 @@ impl Lazy {
         #[cfg(unix)]
         {
             if file.is_atty.unwrap_or(false)
-                || (fd.stdio_tag().is_some() && sys::isatty(fd))
+                || (fd.stdio_tag().is_some() && readable(fd) && sys::isatty(fd))
                 || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
-                        if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
+                        if pl_fd.stdio_tag().is_some() && readable(*pl_fd) && sys::isatty(*pl_fd)))
             {
                 file.is_atty = Some(true);
             }

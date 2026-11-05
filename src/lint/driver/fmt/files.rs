@@ -216,6 +216,18 @@ impl Kind {
         if path.ends_with(b".vue") {
             return Some(Kind::Html(bun_format::html::Parser::Vue));
         }
+        // Nor like these.
+        if path.ends_with(b"ss") {
+            const STYLE_SHEETS: [(&[u8], bun_format::css::Parser); 3] = [
+                (b".css", bun_format::css::Parser::Css),
+                (b".scss", bun_format::css::Parser::Scss),
+                (b".less", bun_format::css::Parser::Less),
+            ];
+            let found = STYLE_SHEETS.iter().find(|it| path.ends_with(it.0));
+            if let Some((_, parser)) = found {
+                return Some(Kind::Css(*parser));
+            }
+        }
         // Prettier's `getLanguageByFileName` compares the lowercased name.
         let lowered;
         let name = match paths::basename(path) {

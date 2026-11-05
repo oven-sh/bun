@@ -6070,6 +6070,54 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
+  test("a name that ends with .css, .scss or .less is a style sheet, whatever another language goes by is in front of that", async () => {
+    const text = "@a:b;\n$c:(d:e);\n";
+    const asCss = "@a:b;\n$c: (d: e);\n";
+    const asScss = "@a:b;\n$c: (\n  d: e,\n);\n";
+    const asLess = "@a: b;\n$c: (d: e);\n";
+    const kinds: Record<string, string> = {
+      "a.css": asCss,
+      ".css": asCss,
+      "A.CSS": asCss,
+      "a.Css": asCss,
+      "a.wxss": asCss,
+      "a.pcss": asCss,
+      "a.postcss": asCss,
+      "a.scss": asScss,
+      ".scss": asScss,
+      "A.SCSS": asScss,
+      "a.less": asLess,
+      ".less": asLess,
+      "A.LESS": asLess,
+      "package.json.css": asCss,
+      "a.json.scss": asScss,
+      ".babelrc.less": asLess,
+      "a.js.css": asCss,
+      "a.ts.scss": asScss,
+      "a.js.flow.less": asLess,
+      "a.start.frag.css": asCss,
+      "Jakefile.scss": asScss,
+      "a.vue.less": asLess,
+      "a.yaml.css": asCss,
+      "a.md.scss": asScss,
+      "a.html.less": asLess,
+      "a.less.css": asCss,
+      "a.css.scss": asScss,
+      "a.scss.less": asLess,
+      "b.css/c.scss": asScss,
+      "b.css/d.less": asLess,
+      "a.css.md": text,
+      "a.cssx": text,
+      "a.css~": text,
+      "acss": text,
+      "less": text,
+    };
+    const names = Object.keys(kinds);
+    const result = await format(Object.fromEntries(names.map(name => [name, text])), [], { reads: names });
+    expect(result.files).toEqual(kinds);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("formats files under an .oxfmtrc.json like oxfmt, even if the run starts above it", async () => {
     const files = {
       "a.ts": "let a = // comment\n{\n  b: 1\n}\n",

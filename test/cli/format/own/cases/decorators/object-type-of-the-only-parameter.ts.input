@@ -1,0 +1,6 @@
+class A {
+  create(@Body() body: { name: string; email: string; password: string; role: string; team: string }) {}
+  update(@Body() @Valid() [first]: { name: string; email: string; password: string; role: string; team: string }) {}
+  remove(@Body() body?: { name: string; email: string; password: string; role: string; team: string }) {}
+  both(@Param("id") id: string, @Body() body: { name: string; email: string; password: string; role: string }) {}
+}

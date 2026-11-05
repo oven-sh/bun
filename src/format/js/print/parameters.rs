@@ -317,6 +317,11 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             f,
             [group(&FormatDecorators::from_param(param)), group(&content)]
         );
+    } else if is_hug_parameter && type_breaks_with_decorators(param) {
+        write!(
+            f,
+            group(&format_args!(FormatDecorators::from_param(param), content))
+        );
     } else {
         write!(
             f,
@@ -326,6 +331,13 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             ))
         );
     }
+}
+
+/// `a(⏎@b⏎c: {⏎d;⏎},⏎) {}`: the object type of an only parameter is no group in Prettier's `printObject`, with
+/// decorators or without.
+fn type_breaks_with_decorators(param: Param<'_>) -> bool {
+    !matches!(param.pat().kind(), PatKind::Object(_))
+        && (param.ty()).is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_)))
 }
 
 /// ```ts

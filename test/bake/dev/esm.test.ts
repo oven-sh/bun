@@ -873,13 +873,8 @@ devTest("browser console forwarding does not make console.error throw", {
       hookCalls: 18,
     });
     await c.expectMessage("second call");
-    // The line of console.log is on the other pipe of the dev server, so it can arrive before
-    // or after "done". waitForLine starts after the last line that it matched, so it can miss
-    // a line that arrived before.
-    while (!forwardedLines(dev).some(line => line.startsWith("second call"))) await once(dev.output, "line");
-    const lines = forwardedLines(dev);
-    expect(lines.filter(line => line.startsWith("second call"))).toEqual(["second call Second { b: 2 }"]);
-    expect(lines.filter(line => !line.startsWith("second call"))).toEqual([
+    const secondCall = () => forwardedLines(dev).filter(line => line.startsWith("second call"));
+    expect(forwardedLines(dev).filter(line => !line.startsWith("second call"))).toEqual([
       "revoked Proxy Set { [threw while printing] }",
       "Proxy of a Map [threw while printing]",
       "total failed RangeError: no items",
@@ -890,6 +885,14 @@ devTest("browser console forwarding does not make console.error throw", {
       "custom inspect function that logs an error text of the function",
       "done",
     ]);
+    // The line of console.log is on the other pipe of the dev server, so it can arrive before
+    // or after "done". waitForLine starts after the last line that it matched, so it can miss
+    // a line that arrived before. This wait looks at every line, and it ends when the dev
+    // server exits.
+    const exited = new AbortController();
+    dev.output.once("close", () => exited.abort(new Error("the dev server exited")));
+    while (secondCall().length === 0) await once(dev.output, "line", { signal: exited.signal });
+    expect(secondCall()).toEqual(["second call Second { b: 2 }"]);
   },
 });
 

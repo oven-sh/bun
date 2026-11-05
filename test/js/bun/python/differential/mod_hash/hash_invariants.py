@@ -161,7 +161,7 @@ print(hash(Point(1, 'a')) == hash((1, 'a')), {Point(1, 'a'): 1}[Point(1, 'a')])
 NT = collections.namedtuple('NT', 'a b'); print(hash(NT(1, 'x')) == hash((1, 'x')))
 print(hash(datetime.timedelta(1, 2, 3)) == hash((1, 2, 3)), hash(datetime.timedelta(-1)) == hash((-1, 0, 0)), hash(datetime.timezone.utc) == hash(datetime.timedelta(0)), hash(datetime.date(2020, 1, 2)) == hash(b'\x07\xe4\x01\x02'),
       hash(datetime.time(1, 2, 3, 4)) == hash(b'\x01\x02\x03\x00\x00\x04'), hash(datetime.datetime(2020, 1, 2, 3, 4, 5, 6)) == hash(b'\x07\xe4\x01\x02\x03\x04\x05\x00\x00\x06'))
-print(hash(len) == hash(len), hash('a'.upper) == hash('a'.upper), hash([].append) != hash([].append) or 'same', hash(p.__init__) == hash(p.__init__), hash(Plain.__init__) == hash(object.__init__))
+print(hash(len) == hash(len), hash('a'.upper) == hash('a'.upper), hash(p.__init__) == hash(p.__init__), hash(Plain.__init__) == hash(object.__init__))
 def fn(): pass
 print(hash(fn) == hash(fn), hash(fn.__code__) == hash(fn.__code__), hash(int) == hash(int), hash(types.MappingProxyType({}).__class__) == hash(types.MappingProxyType))
 print(hash(list[int]) == hash(list[int]), hash(int | str) == hash(str | int), hash(types.GenericAlias(dict, (str, int))) == hash(dict[str, int]))

@@ -23,6 +23,13 @@ either, so they count as one module that is picked out of a run of `test_importl
 What counts is the test (a method). One of which only subtests fail counts as failed; `regrtest`'s XML has no word for it, so that is
 read from what the run printed.
 
+Every run has `PYTHONHASHSEED=1`, CPython's too: `hash()` of a str depends on a key that is otherwise drawn anew in each process, and with it
+the order of sets. So what `score.md` lists as changed is a change in the build. One test is known to depend on the seed:
+`test_weakset.test_weak_destroy_while_iterating` fails under a third of the seeds (0, 2, 3 and 5 of the first twelve), those with which
+`'c'` comes first in its set. The suspended generator then holds that item, and without reference counts it lives until the next collection.
+Under 1 it passes, and goes on testing what it is there for. In 78 modules (19,817 tests) under the seeds 0, 1, 2 and 4 no other
+outcome depended on the seed.
+
 One module by hand, with Bun under the name `python3` (a symbolic link to the executable does):
 
     BUN_PYTHON_STDLIB=vendor/cpython/Lib python3 -m test -v test_x

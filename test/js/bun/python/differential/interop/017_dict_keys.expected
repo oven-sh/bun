@@ -1,0 +1,27 @@
+status: 0
+oracle: none
+---
+true
+true 0
+0 1,2,3,4,5,6,7,8 1,2,3,4,5,6,7,8 true,true,true,true,true,true,true,true undefined undefined false undefined
+false
+1 1,2,3,4,5,6,7,8 1,2,3,4,5,6,7,8 true,true,true,true,true,true,true,true undefined undefined false undefined
+false
+py js 1 2 3 true false false 8 8
+{'a': 'py', 'b': 'js', '😀': 5, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx': 6, '': 7, '10': 8, 'fresh1': 1, 'fresh2': 2}
+0 1,2,3,4,5,6,7,8 1,2,3,4,5,6,7,8 true,true,true,true,true,true,true,true undefined undefined false undefined
+false
+1 1,2,3,4,5,6,7,8 1,2,3,4,5,6,7,8 true,true,true,true,true,true,true,true undefined undefined false undefined
+false
+py js 1 2 3 true false false 8 8
+{'a': 'py', 'b': 'js', '😀': 5, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx': 6, '': 7, '10': 8, 'fresh1': 1, 'fresh2': 2}
+0 1,2,3,4,5,6,7,8 1,2,3,4,5,6,7,8 true,true,true,true,true,true,true,true undefined undefined false undefined
+false
+1 1,2,3,4,5,6,7,8 1,2,3,4,5,6,7,8 true,true,true,true,true,true,true,true undefined undefined false undefined
+false
+py js 1 2 3 true false false 8 8
+{'a': 'py', 'b': 'js', '😀': 5, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx': 6, '': 7, '10': 8, 'fresh1': 1, 'fresh2': 2}
+0,1,2,3,4,5,6,7 true false false false 0,1,2,3,4,5,6,7 true 8
+0,1,2,3,4,5,6,7 true false false false 0,1,2,3,4,5,6,7 true 8
+0,1,2,3,4,5,6,7 true false false false 0,1,2,3,4,5,6,7 true 8
+300 300 300 name299 true

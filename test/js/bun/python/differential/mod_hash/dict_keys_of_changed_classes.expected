@@ -1,0 +1,358 @@
+status: 0
+script: 4f90e7ed27ad4db2
+---
+concatenation
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+literal
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+join
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+short concatenation
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+slice
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+repeated
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+wide
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+format
+  taken away: fromkeys(set) False False no no ['S'] 1
+  taken away: fromkeys(frozenset) False False no no ['S'] 1
+  taken away: dict(dict) False False no no ['S'] 1
+  taken away: copy False False no no ['S'] 1
+  taken away: update False False no no ['S'] 1
+  taken away: | False False no no ['S'] 1
+  taken away: ** False False no no ['S'] 1
+  taken away: set(dict) False False None None ['S'] 1
+  taken away: set(set) False False None None ['S'] 1
+  taken away: set | set False False None None ['S'] 1
+  taken away: frozenset(dict) False False None None ['S'] 1
+  taken away: the dict itself False False no no ['S'] 1
+  taken away: the set itself False False None None ['S'] 1
+  taken away: into a dict of strs 3 ['S', 'str', 'str'] True True bool bool 3 3
+  taken away: by a loop True True None None ['S'] 1
+  given: fromkeys(set) False True no None ['T'] 1
+  given: copy False True no 1 ['T'] 1
+  given: update False True no 1 ['T'] 1
+  given: set(dict) False True None None ['T'] 1
+  given: the dict itself False True no 1 ['T'] 1
+  given: the set itself False True None None ['T'] 1
+  given: by a loop True False None no ['T'] 1
+  __eq__ given: fromkeys(set) True False None no ['U'] 1
+  __eq__ given: copy True False 1 no ['U'] 1
+  __eq__ given: update True False 1 no ['U'] 1
+  __eq__ given: set(dict) True False None None ['U'] 1
+  __eq__ given: the set itself True False None None ['U'] 1
+  __eq__ given: by a loop True False None no ['U'] 1
+  __class__: fromkeys(set) False False no no ['W'] 1
+  __class__: copy False False no no ['W'] 1
+  __class__: update False False no no ['W'] 1
+  __class__: set(dict) False False None None ['W'] 1
+  __class__: the dict itself False False no no ['W'] 1
+  __class__: the set itself False False None None ['W'] 1
+  __class__: by a loop True True None None ['W'] 1
+  __class__ back: fromkeys(set) False True no None ['V'] 1
+  __class__ back: copy False True no 1 ['V'] 1
+  __class__ back: update False True no 1 ['V'] 1
+  __class__ back: set(dict) False True None None ['V'] 1
+  __class__ back: the dict itself False True no 1 ['V'] 1
+  __class__ back: the set itself False True None None ['V'] 1
+  __class__ back: by a loop True False None no ['V'] 1
+False None True 2 2
+False None True 2 2
+False None True 2 2
+small hash, concatenation 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, literal 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, join 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, short concatenation 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, slice 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, repeated 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, wide 1 3 ['H5', 'str', 'str'] bool bool True True
+small hash, format 1 3 ['H5', 'str', 'str'] bool bool True True

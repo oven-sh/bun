@@ -1,0 +1,876 @@
+status: 0
+script: c44009b53097d7b8
+---
+intersection stops | ha ha | [Ka]
+intersection stops 2 | ha hb ea:b ha hc ea:c eb:c hb ea:b ea:b | [Ka, Kb]
+intersection_update | ha ha | [Ka]
+intersection dict | ha ha hb ea:b ha | [Ka]
+& sets | ha ha hb ea:b hc ea:c eb:c | [Ka]
+& sets 2 | ha hb ea:b hc ea:c eb:c ha | [Ka]
+isdisjoint list | ha hb ea:b ha | False
+dict(d, **kw) False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2), ('b', 3)]
+DD(d, **kw) False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2), ('b', 3)]
+update(**kw) False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2), ('b', 3)]
+update(d, **kw) False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2), ('b', 3)]
+__init__(**kw) False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2)]
+| False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2)]
+{**d, **e} False | elike_a:a hlike_a | [(Klike_a, 1), ('a', 2)]
+f(**d) into **kw |  | [('a', 2)]
+dict(d, **kw) True | elike_a:a hlike_a | [(Klike_a, 2), ('b', 3)]
+DD(d, **kw) True | elike_a:a hlike_a | [(Klike_a, 2), ('b', 3)]
+update(**kw) True | elike_a:a hlike_a | [(Klike_a, 2), ('b', 3)]
+update(d, **kw) True | elike_a:a hlike_a | [(Klike_a, 2), ('b', 3)]
+__init__(**kw) True | elike_a:a hlike_a | [(Klike_a, 2)]
+| True | elike_a:a hlike_a | [(Klike_a, 2)]
+{**d, **e} True | elike_a:a hlike_a | [(Klike_a, 2)]
+f(**d) into **kw |  | [('a', 2)]
+f(**d) | ea:b ea:c eb:c | TypeError
+f(z=1, **d) | ea:b ea:b ea:c eb:c ea:c eb:c | TypeError
+f(**{}, **d) | ea:b ea:c eb:c | TypeError
+f(**{"z": 1}, **d) | ea:b ea:b ea:c eb:c ea:c eb:c | TypeError
+dict(**d) | ea:b ea:c eb:c | TypeError
+len(**d) | ea:b ea:c eb:c | TypeError
+{**d} | ea:b ea:c eb:c | [(Ka, 1), (Kb, 2), (Kc, 3)]
+{"z": 1, **d} | ea:b ea:c eb:c | [('z', 1), (Ka, 1), (Kb, 2), (Kc, 3)]
+dict(d) | ea:b ea:c eb:c | [(Ka, 1), (Kb, 2), (Kc, 3)]
+dict(dict) |  | [(Ka, 1), (Kb, 2)]
+dict().update(dict) |  | [(Ka, 1), (Kb, 2)]
+dict(DD) |  | [(Ka, 1), (Kb, 2)]
+dict().update(DD) |  | [(Ka, 1), (Kb, 2)]
+dict(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+dict().update(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+dict(pairs) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+dict().update(pairs) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+dict(items) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+dict().update(items) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+DD(dict) |  | [(Ka, 1), (Kb, 2)]
+DD().update(dict) |  | [(Ka, 1), (Kb, 2)]
+DD(DD) |  | [(Ka, 1), (Kb, 2)]
+DD().update(DD) |  | [(Ka, 1), (Kb, 2)]
+DD(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+DD().update(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+DD(pairs) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+DD().update(pairs) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+DD(items) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+DD().update(items) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+OrderedDict(dict) | hp hq | [(Kp, 1), (Kq, 2)]
+OrderedDict().update(dict) | hp hq | [(Kp, 1), (Kq, 2)]
+OrderedDict(DD) | hp hp hq hq | [(Kp, 1), (Kq, 2)]
+OrderedDict().update(DD) | hp hp hq hq | [(Kp, 1), (Kq, 2)]
+OrderedDict(OrderedDict) | hp hp hp hq hq hq | [(Kp, 1), (Kq, 2)]
+OrderedDict().update(OrderedDict) | hp hp hp hq hq hq | [(Kp, 1), (Kq, 2)]
+OrderedDict(pairs) | hp hq | [(Kp, 1), (Kq, 2)]
+OrderedDict().update(pairs) | hp hq | [(Kp, 1), (Kq, 2)]
+OrderedDict(items) | hp hq | [(Kp, 1), (Kq, 2)]
+OrderedDict().update(items) | hp hq | [(Kp, 1), (Kq, 2)]
+Counter(dict) |  | [(Ka, 1), (Kb, 2)]
+Counter().update(dict) |  | [(Ka, 1), (Kb, 2)]
+Counter(DD) |  | [(Ka, 1), (Kb, 2)]
+Counter().update(DD) |  | [(Ka, 1), (Kb, 2)]
+Counter(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+Counter().update(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+defaultdict(dict) |  | [(Ka, 1), (Kb, 2)]
+defaultdict().update(dict) |  | [(Ka, 1), (Kb, 2)]
+defaultdict(DD) |  | [(Ka, 1), (Kb, 2)]
+defaultdict().update(DD) |  | [(Ka, 1), (Kb, 2)]
+defaultdict(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+defaultdict().update(OrderedDict) | ha hb ea:b ha ha hb ea:b hb ea:b | [(Ka, 1), (Kb, 2)]
+defaultdict(pairs) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+defaultdict().update(pairs) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+defaultdict(items) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+defaultdict().update(items) | ha hb ea:b | [(Ka, 1), (Kb, 2)]
+dict.fromkeys(set) | ea:b | [(Ka, None), (Kb, None)]
+set(set) |  | [Ka, Kb]
+frozenset(set) |  | [Ka, Kb]
+set().union(set) |  | [Ka, Kb]
+{c} - set | hc ea:c eb:c | [Kc]
+{c} ^ set | hc ea:c eb:c ea:c eb:c | [Ka, Kb, Kc]
+{a, c} & set | ha hc ea:c ea:b ec:b | [Ka]
+{a}.issubset(set) | ha | True
+{a, b, c}.issuperset(set) | ha hb ea:b hc ea:c eb:c ea:b | True
+dict.fromkeys(frozenset) | ea:b | [(Ka, None), (Kb, None)]
+set(frozenset) |  | [Ka, Kb]
+frozenset(frozenset) |  | [Ka, Kb]
+set().union(frozenset) |  | [Ka, Kb]
+{c} - frozenset | hc ea:c eb:c | [Kc]
+{c} ^ frozenset | hc ea:c eb:c ea:c eb:c | [Ka, Kb, Kc]
+{a, c} & frozenset | ha hc ea:c ea:b ec:b | [Ka]
+{a}.issubset(frozenset) | ha | True
+{a, b, c}.issuperset(frozenset) | ha hb ea:b hc ea:c eb:c ea:b | True
+dict.fromkeys(dict) | ea:b | [(Ka, None), (Kb, None)]
+set(dict) | ea:b | [Ka, Kb]
+frozenset(dict) | ea:b | [Ka, Kb]
+set().union(dict) | ea:b | [Ka, Kb]
+{c} - dict | hc ea:c eb:c | [Kc]
+{c} ^ dict | hc ea:b ea:c eb:c ea:c eb:c | [Ka, Kb, Kc]
+{a, c} & dict | ha hc ea:c ha hb ea:b ec:b | [Ka]
+{a}.issubset(dict) | ha ha | True
+{a, b, c}.issuperset(dict) | ha hb ea:b hc ea:c eb:c ha hb ea:b | True
+dict.fromkeys(keys) | ha hb ea:b | [(Ka, None), (Kb, None)]
+set(keys) | ha hb ea:b | [Ka, Kb]
+frozenset(keys) | ha hb ea:b | [Ka, Kb]
+set().union(keys) | ha hb ea:b | [Ka, Kb]
+{c} - keys | hc ha ec:a hb ec:b | [Kc]
+{c} ^ keys | hc ha hb ea:b ea:c eb:c ea:c eb:c | [Ka, Kb, Kc]
+{a, c} & keys | ha hc ea:c ha hb ea:b ec:b | [Ka]
+{a}.issubset(keys) | ha ha | True
+{a, b, c}.issuperset(keys) | ha hb ea:b hc ea:c eb:c ha hb ea:b | True
+dict.fromkeys(list) | ha hb ea:b | [(Ka, None), (Kb, None)]
+set(list) | ha hb ea:b | [Ka, Kb]
+frozenset(list) | ha hb ea:b | [Ka, Kb]
+set().union(list) | ha hb ea:b | [Ka, Kb]
+{c} - list | hc ha ec:a hb ec:b | [Kc]
+{c} ^ list | hc ha hb ea:b ea:c eb:c ea:c eb:c | [Ka, Kb, Kc]
+{a, c} & list | ha hc ea:c ha hb ea:b ec:b | [Ka]
+{a}.issubset(list) | ha ha | True
+{a, b, c}.issuperset(list) | ha hb ea:b hc ea:c eb:c ha hb ea:b | True
+dict.fromkeys(OrderedDict) | ha ha hb ea:b hb ea:b | [(Ka, None), (Kb, None)]
+set(OrderedDict) | ha ha hb ea:b hb ea:b | [Ka, Kb]
+frozenset(OrderedDict) | ha ha hb ea:b hb ea:b | [Ka, Kb]
+set().union(OrderedDict) | ha ha hb ea:b hb ea:b | [Ka, Kb]
+{c} - OrderedDict | hc ha ha ec:a hb ea:b hb ec:b | [Kc]
+{c} ^ OrderedDict | hc ha ha hb ea:b hb ea:b ea:c eb:c ea:c eb:c | [Ka, Kb, Kc]
+{a, c} & OrderedDict | ha hc ea:c ha ha hb ea:b hb ea:b ec:b | [Ka]
+{a}.issubset(OrderedDict) | ha ha ha | True
+{a, b, c}.issuperset(OrderedDict) | ha hb ea:b hc ea:c eb:c ha ha hb ea:b hb ea:b | True
+fromkeys(set of 2) | e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 | 2
+fromkeys(list of 2) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 | 2
+fromkeys(set of 3) | e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e0:1 | 3
+fromkeys(list of 3) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 h2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e1:2 | 3
+fromkeys(set of 4) | e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e3:0 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e3:1 e0:1 | 4
+fromkeys(list of 4) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 h2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e1:2 h3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e1:3 e2:3 | 4
+fromkeys(set of 5) | e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:3 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e2:0 e3:0 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e2:1 e3:1 e0:1 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e2:4 e3:4 e0:4 e1:4 | 5
+fromkeys(list of 5) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 h2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e1:2 h3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e1:3 e2:3 h4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e1:4 e2:4 e3:4 | 5
+fromkeys(set of 6) | e2:3 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e0:1 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e0:5 e1:5 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e0:4 e1:4 e5:4 | 6
+fromkeys(list of 6) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 h2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e1:2 h3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e1:3 e2:3 h4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e1:4 e2:4 e3:4 h5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e1:5 e2:5 e3:5 e4:5 | 6
+fromkeys(set of 7) | e2:3 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e0:1 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e0:5 e1:5 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e0:6 e1:6 e5:6 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e0:4 e1:4 e5:4 e6:4 | 7
+fromkeys(list of 7) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 h2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e1:2 h3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e1:3 e2:3 h4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e1:4 e2:4 e3:4 h5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e1:5 e2:5 e3:5 e4:5 h6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e2:6 e3:6 e4:6 e5:6 | 7
+fromkeys(set of 8) | e2:3 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e3:0 e2:0 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e3:1 e2:1 e0:1 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e3:5 e2:5 e0:5 e1:5 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e3:6 e2:6 e0:6 e1:6 e5:6 e2:7 e3:7 e2:7 e3:7 e2:7 e3:7 e2:7 e3:7 e2:7 e3:7 e2:7 e3:7 e2:7 e0:7 e1:7 e5:7 e6:7 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e3:4 e2:4 e0:4 e1:4 e5:4 e6:4 e7:4 | 8
+fromkeys(list of 8) | h0 h1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 e0:1 h2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e0:2 e1:2 h3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e0:3 e1:3 e2:3 h4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e0:4 e1:4 e2:4 e3:4 h5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e0:5 e1:5 e2:5 e3:5 e4:5 h6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e1:6 e0:6 e2:6 e3:6 e4:6 e5:6 h7 e0:7 e1:7 e0:7 e1:7 e0:7 e1:7 e0:7 e1:7 e0:7 e1:7 e0:7 e1:7 e0:7 e2:7 e3:7 e4:7 e5:7 e6:7 | 8
+hash(frozendict) | hva hvb | int
+hash(frozendict) again |  | True
+as a key |  | 1
+of an equal one | ha hb ea:b hva hvb | True
+of strs |  | True
+with a value that has no hash |  | TypeError
+items ^ items, fickle |  | KeyError
+keys ^ view, same key equal value | hax ea:ax | []
+keys | view, same key equal value | hax ea:ax | [Ka]
+keys & view, same key equal value | hax ea:ax hax | [Kax]
+keys - view, same key equal value | hax ea:ax | []
+keys r- view, same key equal value | ha eax:a | []
+keys isdisjoint view, same key equal value | hax ea:ax | False
+keys <= view, same key equal value | ha eax:a | True
+keys < view, same key equal value |  | False
+keys == view, same key equal value | ha eax:a | True
+keys >= view, same key equal value | hax ea:ax | True
+keys ^ set, same key equal value | ea:ax | []
+keys | set, same key equal value | ea:ax | [Ka]
+keys & set, same key equal value | ha eax:a | [Ka]
+keys - set, same key equal value | ea:ax | []
+keys r- set, same key equal value | ha eax:a | []
+keys isdisjoint set, same key equal value | hax ea:ax | False
+keys <= set, same key equal value | ha eax:a | True
+keys < set, same key equal value |  | False
+keys == set, same key equal value | ha eax:a | True
+keys >= set, same key equal value | hax ea:ax | True
+keys ^ frozenset, same key equal value | ea:ax | []
+keys | frozenset, same key equal value | ea:ax | [Ka]
+keys & frozenset, same key equal value | hax ea:ax hax | [Kax]
+keys - frozenset, same key equal value | ea:ax | []
+keys r- frozenset, same key equal value | ha eax:a | []
+keys isdisjoint frozenset, same key equal value | hax ea:ax | False
+keys <= frozenset, same key equal value | ha eax:a | True
+keys < frozenset, same key equal value |  | False
+keys == frozenset, same key equal value | ha eax:a | True
+keys >= frozenset, same key equal value | hax ea:ax | True
+keys ^ list, same key equal value | hax ea:ax | []
+keys | list, same key equal value | hax ea:ax | [Ka]
+keys & list, same key equal value | hax ea:ax hax | [Kax]
+keys - list, same key equal value | hax ea:ax | []
+keys r- list, same key equal value | hax ha eax:a | []
+keys isdisjoint list, same key equal value | hax ea:ax | False
+keys <= list, same key equal value |  | TypeError
+keys < list, same key equal value |  | TypeError
+keys == list, same key equal value |  | False
+keys >= list, same key equal value |  | TypeError
+items ^ view, same key equal value | ea:ax ea:ax | []
+items | view, same key equal value | ha hax ea:ax | [(Ka, 1)]
+items & view, same key equal value | hax ea:ax hax | [(Kax, 1)]
+items - view, same key equal value | ha hax ea:ax | []
+items r- view, same key equal value | hax ha eax:a | []
+items isdisjoint view, same key equal value | hax ea:ax | False
+items <= view, same key equal value | ha eax:a | True
+items < view, same key equal value |  | False
+items == view, same key equal value | ha eax:a | True
+items >= view, same key equal value | hax ea:ax | True
+items ^ set, same key equal value | ha ea:ax | []
+items | set, same key equal value | ha ea:ax | [(Ka, 1)]
+items & set, same key equal value | ha eax:a | [(Ka, 1)]
+items - set, same key equal value | ha ea:ax | []
+items r- set, same key equal value | ha eax:a | []
+items isdisjoint set, same key equal value | hax ea:ax | False
+items <= set, same key equal value | ha eax:a | True
+items < set, same key equal value |  | False
+items == set, same key equal value | ha eax:a | True
+items >= set, same key equal value | hax ea:ax | True
+items ^ frozenset, same key equal value | ha ea:ax | []
+items | frozenset, same key equal value | ha ea:ax | [(Ka, 1)]
+items & frozenset, same key equal value | hax ea:ax | [(Kax, 1)]
+items - frozenset, same key equal value | ha ea:ax | []
+items r- frozenset, same key equal value | ha eax:a | []
+items isdisjoint frozenset, same key equal value | hax ea:ax | False
+items <= frozenset, same key equal value | ha eax:a | True
+items < frozenset, same key equal value |  | False
+items == frozenset, same key equal value | ha eax:a | True
+items >= frozenset, same key equal value | hax ea:ax | True
+items ^ list, same key equal value | ha hax ea:ax | []
+items | list, same key equal value | ha ea:ax | [(Ka, 1)]
+items & list, same key equal value | hax ea:ax | [(Kax, 1)]
+items - list, same key equal value | ha ea:ax | []
+items r- list, same key equal value | ha eax:a | []
+items isdisjoint list, same key equal value | hax ea:ax | False
+items <= list, same key equal value |  | TypeError
+items < list, same key equal value |  | TypeError
+items == list, same key equal value |  | False
+items >= list, same key equal value |  | TypeError
+keys ^ view, same key other value | hax ea:ax | []
+keys | view, same key other value | hax ea:ax | [Ka]
+keys & view, same key other value | hax ea:ax hax | [Kax]
+keys - view, same key other value | hax ea:ax | []
+keys r- view, same key other value | ha eax:a | []
+keys isdisjoint view, same key other value | hax ea:ax | False
+keys <= view, same key other value | ha eax:a | True
+keys < view, same key other value |  | False
+keys == view, same key other value | ha eax:a | True
+keys >= view, same key other value | hax ea:ax | True
+keys ^ set, same key other value | ea:ax | []
+keys | set, same key other value | ea:ax | [Ka]
+keys & set, same key other value | ha eax:a | [Ka]
+keys - set, same key other value | ea:ax | []
+keys r- set, same key other value | ha eax:a | []
+keys isdisjoint set, same key other value | hax ea:ax | False
+keys <= set, same key other value | ha eax:a | True
+keys < set, same key other value |  | False
+keys == set, same key other value | ha eax:a | True
+keys >= set, same key other value | hax ea:ax | True
+keys ^ frozenset, same key other value | ea:ax | []
+keys | frozenset, same key other value | ea:ax | [Ka]
+keys & frozenset, same key other value | hax ea:ax hax | [Kax]
+keys - frozenset, same key other value | ea:ax | []
+keys r- frozenset, same key other value | ha eax:a | []
+keys isdisjoint frozenset, same key other value | hax ea:ax | False
+keys <= frozenset, same key other value | ha eax:a | True
+keys < frozenset, same key other value |  | False
+keys == frozenset, same key other value | ha eax:a | True
+keys >= frozenset, same key other value | hax ea:ax | True
+keys ^ list, same key other value | hax ea:ax | []
+keys | list, same key other value | hax ea:ax | [Ka]
+keys & list, same key other value | hax ea:ax hax | [Kax]
+keys - list, same key other value | hax ea:ax | []
+keys r- list, same key other value | hax ha eax:a | []
+keys isdisjoint list, same key other value | hax ea:ax | False
+keys <= list, same key other value |  | TypeError
+keys < list, same key other value |  | TypeError
+keys == list, same key other value |  | False
+keys >= list, same key other value |  | TypeError
+items ^ view, same key other value | ea:ax hax ha | [(Ka, 1), (Kax, 2)]
+items | view, same key other value | ha hax | [(Ka, 1), (Kax, 2)]
+items & view, same key other value | hax ea:ax | []
+items - view, same key other value | ha hax | [(Ka, 1)]
+items r- view, same key other value | hax ha | [(Kax, 2)]
+items isdisjoint view, same key other value | hax ea:ax | True
+items <= view, same key other value | ha eax:a | False
+items < view, same key other value |  | False
+items == view, same key other value | ha eax:a | False
+items >= view, same key other value | hax ea:ax | False
+items ^ set, same key other value | ha | [(Ka, 1), (Kax, 2)]
+items | set, same key other value | ha | [(Ka, 1), (Kax, 2)]
+items & set, same key other value | ha | []
+items - set, same key other value | ha | [(Ka, 1)]
+items r- set, same key other value | ha | [(Kax, 2)]
+items isdisjoint set, same key other value | hax ea:ax | True
+items <= set, same key other value | ha | False
+items < set, same key other value |  | False
+items == set, same key other value | ha | False
+items >= set, same key other value | hax ea:ax | False
+items ^ frozenset, same key other value | ha | [(Ka, 1), (Kax, 2)]
+items | frozenset, same key other value | ha | [(Ka, 1), (Kax, 2)]
+items & frozenset, same key other value | hax ea:ax | []
+items - frozenset, same key other value | ha | [(Ka, 1)]
+items r- frozenset, same key other value | ha | [(Kax, 2)]
+items isdisjoint frozenset, same key other value | hax ea:ax | True
+items <= frozenset, same key other value | ha | False
+items < frozenset, same key other value |  | False
+items == frozenset, same key other value | ha | False
+items >= frozenset, same key other value | hax ea:ax | False
+items ^ list, same key other value | ha hax | [(Ka, 1), (Kax, 2)]
+items | list, same key other value | ha | [(Ka, 1), (Kax, 2)]
+items & list, same key other value | hax ea:ax | []
+items - list, same key other value | ha | [(Ka, 1)]
+items r- list, same key other value | ha | [(Kax, 2)]
+items isdisjoint list, same key other value | hax ea:ax | True
+items <= list, same key other value |  | TypeError
+items < list, same key other value |  | TypeError
+items == list, same key other value |  | False
+items >= list, same key other value |  | TypeError
+keys ^ view, other keys | hb ea:b ea:b | [Ka, Kb]
+keys | view, other keys | hb ea:b | [Ka, Kb]
+keys & view, other keys | hb ea:b | []
+keys - view, other keys | hb ea:b | [Ka]
+keys r- view, other keys | ha eb:a | [Kb]
+keys isdisjoint view, other keys | hb ea:b | True
+keys <= view, other keys | ha eb:a | False
+keys < view, other keys |  | False
+keys == view, other keys | ha eb:a | False
+keys >= view, other keys | hb ea:b | False
+keys ^ set, other keys | ea:b ea:b | [Ka, Kb]
+keys | set, other keys | ea:b | [Ka, Kb]
+keys & set, other keys | ha eb:a | []
+keys - set, other keys | ea:b | [Ka]
+keys r- set, other keys | ha eb:a | [Kb]
+keys isdisjoint set, other keys | hb ea:b | True
+keys <= set, other keys | ha eb:a | False
+keys < set, other keys |  | False
+keys == set, other keys | ha eb:a | False
+keys >= set, other keys | hb ea:b | False
+keys ^ frozenset, other keys | ea:b ea:b | [Ka, Kb]
+keys | frozenset, other keys | ea:b | [Ka, Kb]
+keys & frozenset, other keys | hb ea:b | []
+keys - frozenset, other keys | ea:b | [Ka]
+keys r- frozenset, other keys | ha eb:a | [Kb]
+keys isdisjoint frozenset, other keys | hb ea:b | True
+keys <= frozenset, other keys | ha eb:a | False
+keys < frozenset, other keys |  | False
+keys == frozenset, other keys | ha eb:a | False
+keys >= frozenset, other keys | hb ea:b | False
+keys ^ list, other keys | hb ea:b ea:b | [Ka, Kb]
+keys | list, other keys | hb ea:b | [Ka, Kb]
+keys & list, other keys | hb ea:b | []
+keys - list, other keys | hb ea:b | [Ka]
+keys r- list, other keys | hb ha eb:a | [Kb]
+keys isdisjoint list, other keys | hb ea:b | True
+keys <= list, other keys |  | TypeError
+keys < list, other keys |  | TypeError
+keys == list, other keys |  | False
+keys >= list, other keys |  | TypeError
+items ^ view, other keys | ea:b hb ha eb:a eb:a | [(Ka, 1), (Kb, 1)]
+items | view, other keys | ha hb ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items & view, other keys | hb ea:b | []
+items - view, other keys | ha hb ea:b ea:b | [(Ka, 1)]
+items r- view, other keys | hb ha eb:a eb:a | [(Kb, 1)]
+items isdisjoint view, other keys | hb ea:b | True
+items <= view, other keys | ha eb:a | False
+items < view, other keys |  | False
+items == view, other keys | ha eb:a | False
+items >= view, other keys | hb ea:b | False
+items ^ set, other keys | ha ea:b ea:b ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items | set, other keys | ha ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items & set, other keys | ha eb:a eb:a | []
+items - set, other keys | ha ea:b ea:b | [(Ka, 1)]
+items r- set, other keys | ha eb:a eb:a | [(Kb, 1)]
+items isdisjoint set, other keys | hb ea:b | True
+items <= set, other keys | ha eb:a eb:a | False
+items < set, other keys |  | False
+items == set, other keys | ha eb:a eb:a | False
+items >= set, other keys | hb ea:b | False
+items ^ frozenset, other keys | ha ea:b ea:b ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items | frozenset, other keys | ha ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items & frozenset, other keys | hb ea:b | []
+items - frozenset, other keys | ha ea:b ea:b | [(Ka, 1)]
+items r- frozenset, other keys | ha eb:a eb:a | [(Kb, 1)]
+items isdisjoint frozenset, other keys | hb ea:b | True
+items <= frozenset, other keys | ha eb:a eb:a | False
+items < frozenset, other keys |  | False
+items == frozenset, other keys | ha eb:a eb:a | False
+items >= frozenset, other keys | hb ea:b | False
+items ^ list, other keys | ha hb ea:b ea:b ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items | list, other keys | ha ea:b ea:b | [(Kb, 1), (Ka, 1)]
+items & list, other keys | hb ea:b | []
+items - list, other keys | ha ea:b ea:b | [(Ka, 1)]
+items r- list, other keys | ha eb:a eb:a | [(Kb, 1)]
+items isdisjoint list, other keys | hb ea:b | True
+items <= list, other keys |  | TypeError
+items < list, other keys |  | TypeError
+items == list, other keys |  | False
+items >= list, other keys |  | TypeError
+keys ^ view, two and two | ea:b hbx hc ebx:c ea:bx eb:bx ea:c ea:c | [Ka, Kc]
+keys | view, two and two | ea:b hbx ea:bx eb:bx hc ea:c eb:c | [Ka, Kb, Kc]
+keys & view, two and two | hbx ea:bx eb:bx hbx hc ea:c eb:c | [Kbx]
+keys - view, two and two | ea:b hbx ea:bx eb:bx hc ea:c | [Ka]
+keys r- view, two and two | ebx:c ha ebx:a ec:a hb ebx:b | [Kc]
+keys isdisjoint view, two and two | hbx ea:bx eb:bx | False
+keys <= view, two and two | ha ebx:a ec:a | False
+keys < view, two and two |  | False
+keys == view, two and two | ha ebx:a ec:a | False
+keys >= view, two and two | hbx ea:bx eb:bx hc ea:c eb:c | False
+keys ^ set, two and two | ea:b ea:bx eb:bx ea:c ea:c | [Ka, Kc]
+keys | set, two and two | ea:b ea:bx eb:bx ea:c eb:c | [Ka, Kb, Kc]
+keys & set, two and two | ha ebx:a ec:a hb ebx:b | [Kb]
+keys - set, two and two | ea:b ea:bx eb:bx ea:c | [Ka]
+keys r- set, two and two | ha ebx:a ec:a hb ebx:b | [Kc]
+keys isdisjoint set, two and two | hbx ea:bx eb:bx | False
+keys <= set, two and two | ha ebx:a ec:a | False
+keys < set, two and two |  | False
+keys == set, two and two | ha ebx:a ec:a | False
+keys >= set, two and two | hbx ea:bx eb:bx hc ea:c eb:c | False
+keys ^ frozenset, two and two | ea:b ea:bx eb:bx ea:c ea:c | [Ka, Kc]
+keys | frozenset, two and two | ea:b ea:bx eb:bx ea:c eb:c | [Ka, Kb, Kc]
+keys & frozenset, two and two | hbx ea:bx eb:bx hbx hc ea:c eb:c | [Kbx]
+keys - frozenset, two and two | ea:b ea:bx eb:bx ea:c | [Ka]
+keys r- frozenset, two and two | ha ebx:a ec:a hb ebx:b | [Kc]
+keys isdisjoint frozenset, two and two | hbx ea:bx eb:bx | False
+keys <= frozenset, two and two | ha ebx:a ec:a | False
+keys < frozenset, two and two |  | False
+keys == frozenset, two and two | ha ebx:a ec:a | False
+keys >= frozenset, two and two | hbx ea:bx eb:bx hc ea:c eb:c | False
+keys ^ list, two and two | ea:b hbx hc ebx:c ea:bx eb:bx ea:c ea:c | [Ka, Kc]
+keys | list, two and two | ea:b hbx ea:bx eb:bx hc ea:c eb:c | [Ka, Kb, Kc]
+keys & list, two and two | hbx ea:bx eb:bx hbx hc ea:c eb:c | [Kbx]
+keys - list, two and two | ea:b hbx ea:bx eb:bx hc ea:c | [Ka]
+keys r- list, two and two | hbx hc ebx:c ha ebx:a ec:a hb ebx:b | [Kc]
+keys isdisjoint list, two and two | hbx ea:bx eb:bx | False
+keys <= list, two and two |  | TypeError
+keys < list, two and two |  | TypeError
+keys == list, two and two |  | False
+keys >= list, two and two |  | TypeError
+items ^ view, two and two | ea:bx eb:bx ea:bx eb:bx ea:c hc ha | [(Ka, 1), (Kc, 3)]
+items | view, two and two | ha hb hbx eb:bx hc | [(Ka, 1), (Kb, 2), (Kc, 3)]
+items & view, two and two | hbx ea:bx eb:bx hbx hc ea:c eb:c | [(Kbx, 2)]
+items - view, two and two | ha hb hbx eb:bx hc | [(Ka, 1)]
+items r- view, two and two | hbx hc ha hb ebx:b | [(Kc, 3)]
+items isdisjoint view, two and two | hbx ea:bx eb:bx | False
+items <= view, two and two | ha ebx:a ec:a | False
+items < view, two and two |  | False
+items == view, two and two | ha ebx:a ec:a | False
+items >= view, two and two | hbx ea:bx eb:bx hc ea:c eb:c | False
+items ^ set, two and two | ha hb eb:bx | [(Ka, 1), (Kc, 3)]
+items | set, two and two | ha hb eb:bx | [(Ka, 1), (Kb, 2), (Kc, 3)]
+items & set, two and two | ha hb ebx:b | [(Kb, 2)]
+items - set, two and two | ha hb eb:bx | [(Ka, 1)]
+items r- set, two and two | ha hb ebx:b | [(Kc, 3)]
+items isdisjoint set, two and two | hbx ea:bx eb:bx | False
+items <= set, two and two | ha | False
+items < set, two and two |  | False
+items == set, two and two | ha | False
+items >= set, two and two | hbx ea:bx eb:bx hc ea:c eb:c | False
+items ^ frozenset, two and two | ha hb eb:bx | [(Ka, 1), (Kc, 3)]
+items | frozenset, two and two | ha hb eb:bx | [(Ka, 1), (Kb, 2), (Kc, 3)]
+items & frozenset, two and two | hbx ea:bx eb:bx hc ea:c eb:c | [(Kbx, 2)]
+items - frozenset, two and two | ha hb eb:bx | [(Ka, 1)]
+items r- frozenset, two and two | ha hb ebx:b | [(Kc, 3)]
+items isdisjoint frozenset, two and two | hbx ea:bx eb:bx | False
+items <= frozenset, two and two | ha | False
+items < frozenset, two and two |  | False
+items == frozenset, two and two | ha | False
+items >= frozenset, two and two | hbx ea:bx eb:bx hc ea:c eb:c | False
+items ^ list, two and two | ha hb hbx hc eb:bx | [(Ka, 1), (Kc, 3)]
+items | list, two and two | ha hb eb:bx | [(Ka, 1), (Kb, 2), (Kc, 3)]
+items & list, two and two | hbx ea:bx eb:bx hc ea:c eb:c | [(Kbx, 2)]
+items - list, two and two | ha hb eb:bx | [(Ka, 1)]
+items r- list, two and two | ha hb ebx:b | [(Kc, 3)]
+items isdisjoint list, two and two | hbx ea:bx eb:bx | False
+items <= list, two and two |  | TypeError
+items < list, two and two |  | TypeError
+items == list, two and two |  | False
+items >= list, two and two |  | TypeError
+keys ^ view, values that log | hax ea:ax | []
+keys | view, values that log | hax ea:ax | [Ka]
+keys & view, values that log | hax ea:ax hax | [Kax]
+keys - view, values that log | hax ea:ax | []
+keys r- view, values that log | ha eax:a | []
+keys isdisjoint view, values that log | hax ea:ax | False
+keys <= view, values that log | ha eax:a | True
+keys < view, values that log |  | False
+keys == view, values that log | ha eax:a | True
+keys >= view, values that log | hax ea:ax | True
+keys ^ set, values that log | ea:ax | []
+keys | set, values that log | ea:ax | [Ka]
+keys & set, values that log | ha eax:a | [Ka]
+keys - set, values that log | ea:ax | []
+keys r- set, values that log | ha eax:a | []
+keys isdisjoint set, values that log | hax ea:ax | False
+keys <= set, values that log | ha eax:a | True
+keys < set, values that log |  | False
+keys == set, values that log | ha eax:a | True
+keys >= set, values that log | hax ea:ax | True
+keys ^ frozenset, values that log | ea:ax | []
+keys | frozenset, values that log | ea:ax | [Ka]
+keys & frozenset, values that log | hax ea:ax hax | [Kax]
+keys - frozenset, values that log | ea:ax | []
+keys r- frozenset, values that log | ha eax:a | []
+keys isdisjoint frozenset, values that log | hax ea:ax | False
+keys <= frozenset, values that log | ha eax:a | True
+keys < frozenset, values that log |  | False
+keys == frozenset, values that log | ha eax:a | True
+keys >= frozenset, values that log | hax ea:ax | True
+keys ^ list, values that log | hax ea:ax | []
+keys | list, values that log | hax ea:ax | [Ka]
+keys & list, values that log | hax ea:ax hax | [Kax]
+keys - list, values that log | hax ea:ax | []
+keys r- list, values that log | hax ha eax:a | []
+keys isdisjoint list, values that log | hax ea:ax | False
+keys <= list, values that log |  | TypeError
+keys < list, values that log |  | TypeError
+keys == list, values that log |  | False
+keys >= list, values that log |  | TypeError
+items ^ view, values that log | ea:ax ev1:v1x ea:ax | []
+items | view, values that log | ha hv1 hax hv1x ea:ax ev1:v1x | [(Ka, Kv1)]
+items & view, values that log | hax ea:ax ev1:v1x hax hv1x | [(Kax, Kv1x)]
+items - view, values that log | ha hv1 hax hv1x ea:ax ev1:v1x | []
+items r- view, values that log | hax hv1x ha hv1 eax:a ev1x:v1 | []
+items isdisjoint view, values that log | hax ea:ax ev1:v1x | False
+items <= view, values that log | ha eax:a ev1x:v1 | True
+items < view, values that log |  | False
+items == view, values that log | ha eax:a ev1x:v1 | True
+items >= view, values that log | hax ea:ax ev1:v1x | True
+items ^ set, values that log | ha hv1 ea:ax ev1:v1x | []
+items | set, values that log | ha hv1 ea:ax ev1:v1x | [(Ka, Kv1)]
+items & set, values that log | ha hv1 eax:a ev1x:v1 | [(Ka, Kv1)]
+items - set, values that log | ha hv1 ea:ax ev1:v1x | []
+items r- set, values that log | ha hv1 eax:a ev1x:v1 | []
+items isdisjoint set, values that log | hax ea:ax ev1:v1x | False
+items <= set, values that log | ha hv1 eax:a ev1x:v1 | True
+items < set, values that log |  | False
+items == set, values that log | ha hv1 eax:a ev1x:v1 | True
+items >= set, values that log | hax ea:ax ev1:v1x | True
+items ^ frozenset, values that log | ha hv1 ea:ax ev1:v1x | []
+items | frozenset, values that log | ha hv1 ea:ax ev1:v1x | [(Ka, Kv1)]
+items & frozenset, values that log | hax ea:ax ev1:v1x | [(Kax, Kv1x)]
+items - frozenset, values that log | ha hv1 ea:ax ev1:v1x | []
+items r- frozenset, values that log | ha hv1 eax:a ev1x:v1 | []
+items isdisjoint frozenset, values that log | hax ea:ax ev1:v1x | False
+items <= frozenset, values that log | ha hv1 eax:a ev1x:v1 | True
+items < frozenset, values that log |  | False
+items == frozenset, values that log | ha hv1 eax:a ev1x:v1 | True
+items >= frozenset, values that log | hax ea:ax ev1:v1x | True
+items ^ list, values that log | ha hv1 hax hv1x ea:ax ev1:v1x | []
+items | list, values that log | ha hv1 ea:ax ev1:v1x | [(Ka, Kv1)]
+items & list, values that log | hax ea:ax ev1:v1x | [(Kax, Kv1x)]
+items - list, values that log | ha hv1 ea:ax ev1:v1x | []
+items r- list, values that log | ha hv1 eax:a ev1x:v1 | []
+items isdisjoint list, values that log | hax ea:ax ev1:v1x | False
+items <= list, values that log |  | TypeError
+items < list, values that log |  | TypeError
+items == list, values that log |  | False
+items >= list, values that log |  | TypeError
+keys ^ view, values that log, unequal | hax ea:ax | []
+keys | view, values that log, unequal | hax ea:ax | [Ka]
+keys & view, values that log, unequal | hax ea:ax hax | [Kax]
+keys - view, values that log, unequal | hax ea:ax | []
+keys r- view, values that log, unequal | ha eax:a | []
+keys isdisjoint view, values that log, unequal | hax ea:ax | False
+keys <= view, values that log, unequal | ha eax:a | True
+keys < view, values that log, unequal |  | False
+keys == view, values that log, unequal | ha eax:a | True
+keys >= view, values that log, unequal | hax ea:ax | True
+keys ^ set, values that log, unequal | ea:ax | []
+keys | set, values that log, unequal | ea:ax | [Ka]
+keys & set, values that log, unequal | ha eax:a | [Ka]
+keys - set, values that log, unequal | ea:ax | []
+keys r- set, values that log, unequal | ha eax:a | []
+keys isdisjoint set, values that log, unequal | hax ea:ax | False
+keys <= set, values that log, unequal | ha eax:a | True
+keys < set, values that log, unequal |  | False
+keys == set, values that log, unequal | ha eax:a | True
+keys >= set, values that log, unequal | hax ea:ax | True
+keys ^ frozenset, values that log, unequal | ea:ax | []
+keys | frozenset, values that log, unequal | ea:ax | [Ka]
+keys & frozenset, values that log, unequal | hax ea:ax hax | [Kax]
+keys - frozenset, values that log, unequal | ea:ax | []
+keys r- frozenset, values that log, unequal | ha eax:a | []
+keys isdisjoint frozenset, values that log, unequal | hax ea:ax | False
+keys <= frozenset, values that log, unequal | ha eax:a | True
+keys < frozenset, values that log, unequal |  | False
+keys == frozenset, values that log, unequal | ha eax:a | True
+keys >= frozenset, values that log, unequal | hax ea:ax | True
+keys ^ list, values that log, unequal | hax ea:ax | []
+keys | list, values that log, unequal | hax ea:ax | [Ka]
+keys & list, values that log, unequal | hax ea:ax hax | [Kax]
+keys - list, values that log, unequal | hax ea:ax | []
+keys r- list, values that log, unequal | hax ha eax:a | []
+keys isdisjoint list, values that log, unequal | hax ea:ax | False
+keys <= list, values that log, unequal |  | TypeError
+keys < list, values that log, unequal |  | TypeError
+keys == list, values that log, unequal |  | False
+keys >= list, values that log, unequal |  | TypeError
+items ^ view, values that log, unequal | ea:ax ev1:v2 hax hv2 ha hv1 eax:a ev2:v1 | [(Ka, Kv1), (Kax, Kv2)]
+items | view, values that log, unequal | ha hv1 hax hv2 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items & view, values that log, unequal | hax ea:ax ev1:v2 | []
+items - view, values that log, unequal | ha hv1 hax hv2 ea:ax ev1:v2 | [(Ka, Kv1)]
+items r- view, values that log, unequal | hax hv2 ha hv1 eax:a ev2:v1 | [(Kax, Kv2)]
+items isdisjoint view, values that log, unequal | hax ea:ax ev1:v2 | True
+items <= view, values that log, unequal | ha eax:a ev2:v1 | False
+items < view, values that log, unequal |  | False
+items == view, values that log, unequal | ha eax:a ev2:v1 | False
+items >= view, values that log, unequal | hax ea:ax ev1:v2 | False
+items ^ set, values that log, unequal | ha hv1 ea:ax ev1:v2 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items | set, values that log, unequal | ha hv1 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items & set, values that log, unequal | ha hv1 eax:a ev2:v1 | []
+items - set, values that log, unequal | ha hv1 ea:ax ev1:v2 | [(Ka, Kv1)]
+items r- set, values that log, unequal | ha hv1 eax:a ev2:v1 | [(Kax, Kv2)]
+items isdisjoint set, values that log, unequal | hax ea:ax ev1:v2 | True
+items <= set, values that log, unequal | ha hv1 eax:a ev2:v1 | False
+items < set, values that log, unequal |  | False
+items == set, values that log, unequal | ha hv1 eax:a ev2:v1 | False
+items >= set, values that log, unequal | hax ea:ax ev1:v2 | False
+items ^ frozenset, values that log, unequal | ha hv1 ea:ax ev1:v2 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items | frozenset, values that log, unequal | ha hv1 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items & frozenset, values that log, unequal | hax ea:ax ev1:v2 | []
+items - frozenset, values that log, unequal | ha hv1 ea:ax ev1:v2 | [(Ka, Kv1)]
+items r- frozenset, values that log, unequal | ha hv1 eax:a ev2:v1 | [(Kax, Kv2)]
+items isdisjoint frozenset, values that log, unequal | hax ea:ax ev1:v2 | True
+items <= frozenset, values that log, unequal | ha hv1 eax:a ev2:v1 | False
+items < frozenset, values that log, unequal |  | False
+items == frozenset, values that log, unequal | ha hv1 eax:a ev2:v1 | False
+items >= frozenset, values that log, unequal | hax ea:ax ev1:v2 | False
+items ^ list, values that log, unequal | ha hv1 hax hv2 ea:ax ev1:v2 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items | list, values that log, unequal | ha hv1 ea:ax ev1:v2 | [(Kax, Kv2), (Ka, Kv1)]
+items & list, values that log, unequal | hax ea:ax ev1:v2 | []
+items - list, values that log, unequal | ha hv1 ea:ax ev1:v2 | [(Ka, Kv1)]
+items r- list, values that log, unequal | ha hv1 eax:a ev2:v1 | [(Kax, Kv2)]
+items isdisjoint list, values that log, unequal | hax ea:ax ev1:v2 | True
+items <= list, values that log, unequal |  | TypeError
+items < list, values that log, unequal |  | TypeError
+items == list, values that log, unequal |  | False
+items >= list, values that log, unequal |  | TypeError
+keys ^ view, empty left | ha | [Ka]
+keys | view, empty left | ha | [Ka]
+keys & view, empty left |  | []
+keys - view, empty left | ha | []
+keys r- view, empty left |  | [Ka]
+keys isdisjoint view, empty left |  | True
+keys <= view, empty left |  | True
+keys < view, empty left |  | True
+keys == view, empty left |  | False
+keys >= view, empty left |  | False
+keys ^ set, empty left |  | [Ka]
+keys | set, empty left |  | [Ka]
+keys & set, empty left |  | []
+keys - set, empty left |  | []
+keys r- set, empty left |  | [Ka]
+keys isdisjoint set, empty left |  | True
+keys <= set, empty left |  | True
+keys < set, empty left |  | True
+keys == set, empty left |  | False
+keys >= set, empty left |  | False
+keys ^ frozenset, empty left |  | [Ka]
+keys | frozenset, empty left |  | [Ka]
+keys & frozenset, empty left | ha | []
+keys - frozenset, empty left |  | []
+keys r- frozenset, empty left |  | [Ka]
+keys isdisjoint frozenset, empty left |  | True
+keys <= frozenset, empty left |  | True
+keys < frozenset, empty left |  | True
+keys == frozenset, empty left |  | False
+keys >= frozenset, empty left |  | False
+keys ^ list, empty left | ha | [Ka]
+keys | list, empty left | ha | [Ka]
+keys & list, empty left | ha | []
+keys - list, empty left | ha | []
+keys r- list, empty left | ha | [Ka]
+keys isdisjoint list, empty left | ha | True
+keys <= list, empty left |  | TypeError
+keys < list, empty left |  | TypeError
+keys == list, empty left |  | False
+keys >= list, empty left |  | TypeError
+items ^ view, empty left | ha | [(Ka, 1)]
+items | view, empty left | ha | [(Ka, 1)]
+items & view, empty left |  | []
+items - view, empty left | ha | []
+items r- view, empty left | ha | [(Ka, 1)]
+items isdisjoint view, empty left |  | True
+items <= view, empty left |  | True
+items < view, empty left |  | True
+items == view, empty left |  | False
+items >= view, empty left |  | False
+items ^ set, empty left |  | [(Ka, 1)]
+items | set, empty left |  | [(Ka, 1)]
+items & set, empty left |  | []
+items - set, empty left |  | []
+items r- set, empty left |  | [(Ka, 1)]
+items isdisjoint set, empty left |  | True
+items <= set, empty left |  | True
+items < set, empty left |  | True
+items == set, empty left |  | False
+items >= set, empty left |  | False
+items ^ frozenset, empty left |  | [(Ka, 1)]
+items | frozenset, empty left |  | [(Ka, 1)]
+items & frozenset, empty left | ha | []
+items - frozenset, empty left |  | []
+items r- frozenset, empty left |  | [(Ka, 1)]
+items isdisjoint frozenset, empty left |  | True
+items <= frozenset, empty left |  | True
+items < frozenset, empty left |  | True
+items == frozenset, empty left |  | False
+items >= frozenset, empty left |  | False
+items ^ list, empty left | ha | [(Ka, 1)]
+items | list, empty left |  | [(Ka, 1)]
+items & list, empty left | ha | []
+items - list, empty left |  | []
+items r- list, empty left |  | [(Ka, 1)]
+items isdisjoint list, empty left | ha | True
+items <= list, empty left |  | TypeError
+items < list, empty left |  | TypeError
+items == list, empty left |  | False
+items >= list, empty left |  | TypeError
+keys ^ view, empty right |  | [Ka]
+keys | view, empty right |  | [Ka]
+keys & view, empty right |  | []
+keys - view, empty right |  | [Ka]
+keys r- view, empty right | ha | []
+keys isdisjoint view, empty right |  | True
+keys <= view, empty right |  | False
+keys < view, empty right |  | False
+keys == view, empty right |  | False
+keys >= view, empty right |  | True
+keys ^ set, empty right |  | [Ka]
+keys | set, empty right |  | [Ka]
+keys & set, empty right |  | []
+keys - set, empty right |  | [Ka]
+keys r- set, empty right | ha | []
+keys isdisjoint set, empty right |  | True
+keys <= set, empty right |  | False
+keys < set, empty right |  | False
+keys == set, empty right |  | False
+keys >= set, empty right |  | True
+keys ^ frozenset, empty right |  | [Ka]
+keys | frozenset, empty right |  | [Ka]
+keys & frozenset, empty right |  | []
+keys - frozenset, empty right |  | [Ka]
+keys r- frozenset, empty right | ha | []
+keys isdisjoint frozenset, empty right |  | True
+keys <= frozenset, empty right |  | False
+keys < frozenset, empty right |  | False
+keys == frozenset, empty right |  | False
+keys >= frozenset, empty right |  | True
+keys ^ list, empty right |  | [Ka]
+keys | list, empty right |  | [Ka]
+keys & list, empty right |  | []
+keys - list, empty right |  | [Ka]
+keys r- list, empty right | ha | []
+keys isdisjoint list, empty right |  | True
+keys <= list, empty right |  | TypeError
+keys < list, empty right |  | TypeError
+keys == list, empty right |  | False
+keys >= list, empty right |  | TypeError
+items ^ view, empty right | ha | [(Ka, 1)]
+items | view, empty right | ha | [(Ka, 1)]
+items & view, empty right |  | []
+items - view, empty right | ha | [(Ka, 1)]
+items r- view, empty right | ha | []
+items isdisjoint view, empty right |  | True
+items <= view, empty right |  | False
+items < view, empty right |  | False
+items == view, empty right |  | False
+items >= view, empty right |  | True
+items ^ set, empty right | ha | [(Ka, 1)]
+items | set, empty right | ha | [(Ka, 1)]
+items & set, empty right |  | []
+items - set, empty right | ha | [(Ka, 1)]
+items r- set, empty right | ha | []
+items isdisjoint set, empty right |  | True
+items <= set, empty right |  | False
+items < set, empty right |  | False
+items == set, empty right |  | False
+items >= set, empty right |  | True
+items ^ frozenset, empty right | ha | [(Ka, 1)]
+items | frozenset, empty right | ha | [(Ka, 1)]
+items & frozenset, empty right |  | []
+items - frozenset, empty right | ha | [(Ka, 1)]
+items r- frozenset, empty right | ha | []
+items isdisjoint frozenset, empty right |  | True
+items <= frozenset, empty right |  | False
+items < frozenset, empty right |  | False
+items == frozenset, empty right |  | False
+items >= frozenset, empty right |  | True
+items ^ list, empty right | ha | [(Ka, 1)]
+items | list, empty right | ha | [(Ka, 1)]
+items & list, empty right |  | []
+items - list, empty right | ha | [(Ka, 1)]
+items r- list, empty right | ha | []
+items isdisjoint list, empty right |  | True
+items <= list, empty right |  | TypeError
+items < list, empty right |  | TypeError
+items == list, empty right |  | False
+items >= list, empty right |  | TypeError
+keys ^ view, three | ea:b ea:c eb:c hcx hbx ecx:bx hd ecx:d ebx:d ea:cx eb:cx ec:cx ea:bx eb:bx ea:d ea:d | [Ka, Kd]
+keys | view, three | ea:b ea:c eb:c hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d eb:d ec:d | [Ka, Kd, Kb, Kc]
+keys & view, three | hcx ea:cx eb:cx ec:cx hcx hbx ea:bx eb:bx hbx ecx:bx hd ea:d eb:d ec:d | [Kcx, Kbx]
+keys - view, three | ea:b ea:c eb:c hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d | [Ka]
+keys r- view, three | ecx:bx ecx:d ebx:d ha ecx:a ebx:a ed:a hb ecx:b ebx:b hc ecx:c | [Kd]
+keys isdisjoint view, three | hcx ea:cx eb:cx ec:cx | False
+keys <= view, three | ha ecx:a ebx:a ed:a | False
+keys < view, three |  | False
+keys == view, three | ha ecx:a ebx:a ed:a | False
+keys >= view, three | hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d eb:d ec:d | False
+keys ^ set, three | ea:b ea:c eb:c ea:cx eb:cx ec:cx ea:bx eb:bx ea:d ea:d | [Ka, Kd]
+keys | set, three | ea:b ea:c eb:c ea:cx eb:cx ec:cx ea:bx eb:bx ea:d eb:d ec:d | [Ka, Kb, Kc, Kd]
+keys & set, three | ha ecx:a ebx:a ed:a hb ecx:b ebx:b hc ecx:c eb:c | [Kb, Kc]
+keys - set, three | ea:b ea:c eb:c ea:cx eb:cx ec:cx ea:bx eb:bx ea:d | [Ka]
+keys r- set, three | ha ecx:a ebx:a ed:a hb ecx:b ebx:b hc ecx:c | [Kd]
+keys isdisjoint set, three | hcx ea:cx eb:cx ec:cx | False
+keys <= set, three | ha ecx:a ebx:a ed:a | False
+keys < set, three |  | False
+keys == set, three | ha ecx:a ebx:a ed:a | False
+keys >= set, three | hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d eb:d ec:d | False
+keys ^ frozenset, three | ea:b ea:c eb:c ea:cx eb:cx ec:cx ea:bx eb:bx ea:d ea:d | [Ka, Kd]
+keys | frozenset, three | ea:b ea:c eb:c ea:cx eb:cx ec:cx ea:bx eb:bx ea:d eb:d ec:d | [Ka, Kb, Kc, Kd]
+keys & frozenset, three | hcx ea:cx eb:cx ec:cx hcx hbx ea:bx eb:bx hbx ecx:bx hd ea:d eb:d ec:d | [Kcx, Kbx]
+keys - frozenset, three | ea:b ea:c eb:c ea:cx eb:cx ec:cx ea:bx eb:bx ea:d | [Ka]
+keys r- frozenset, three | ha ecx:a ebx:a ed:a hb ecx:b ebx:b hc ecx:c | [Kd]
+keys isdisjoint frozenset, three | hcx ea:cx eb:cx ec:cx | False
+keys <= frozenset, three | ha ecx:a ebx:a ed:a | False
+keys < frozenset, three |  | False
+keys == frozenset, three | ha ecx:a ebx:a ed:a | False
+keys >= frozenset, three | hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d eb:d ec:d | False
+keys ^ list, three | ea:b ea:c eb:c hcx hbx ecx:bx hd ecx:d ebx:d ea:cx eb:cx ec:cx ea:bx eb:bx ea:d ea:d | [Ka, Kd]
+keys | list, three | ea:b ea:c eb:c hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d eb:d ec:d | [Ka, Kd, Kb, Kc]
+keys & list, three | hcx ea:cx eb:cx ec:cx hcx hbx ea:bx eb:bx hbx ecx:bx hd ea:d eb:d ec:d | [Kcx, Kbx]
+keys - list, three | ea:b ea:c eb:c hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d | [Ka]
+keys r- list, three | hcx hbx ecx:bx hd ecx:d ebx:d ha ecx:a ebx:a ed:a hb ecx:b ebx:b hc ecx:c | [Kd]
+keys isdisjoint list, three | hcx ea:cx eb:cx ec:cx | False
+keys <= list, three |  | TypeError
+keys < list, three |  | TypeError
+keys == list, three |  | False
+keys >= list, three |  | TypeError
+items ^ view, three | ea:cx eb:cx ec:cx ea:cx eb:cx ec:cx ea:bx eb:bx hbx ea:d eb:d hd ha hb | [(Kbx, 0), (Ka, 1), (Kb, 2), (Kd, 4)]
+items | view, three | ha hb hc hcx ec:cx hbx hd | [(Kb, 2), (Ka, 1), (Kd, 4), (Kbx, 0), (Kc, 3)]
+items & view, three | hcx ea:cx eb:cx ec:cx hcx hbx ea:bx eb:bx hd ea:d eb:d ec:d | [(Kcx, 3)]
+items - view, three | ha hb hc hcx ec:cx hbx hd | [(Ka, 1), (Kb, 2)]
+items r- view, three | hcx hbx hd ha hb hc ecx:c | [(Kbx, 0), (Kd, 4)]
+items isdisjoint view, three | hcx ea:cx eb:cx ec:cx | False
+items <= view, three | ha ecx:a ebx:a ed:a | False
+items < view, three |  | False
+items == view, three | ha ecx:a ebx:a ed:a | False
+items >= view, three | hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx | False
+items ^ set, three | ha hb hc ec:cx | [(Kb, 2), (Ka, 1), (Kd, 4), (Kbx, 0)]
+items | set, three | ha hb hc ec:cx | [(Kb, 2), (Kbx, 0), (Ka, 1), (Kc, 3), (Kd, 4)]
+items & set, three | ha hb hc ecx:c | [(Kc, 3)]
+items - set, three | ha hb hc ec:cx | [(Ka, 1), (Kb, 2)]
+items r- set, three | ha hb hc ecx:c | [(Kbx, 0), (Kd, 4)]
+items isdisjoint set, three | hbx ea:bx eb:bx hcx ea:cx eb:cx ec:cx | False
+items <= set, three | ha | False
+items < set, three |  | False
+items == set, three | ha | False
+items >= set, three | hbx ea:bx eb:bx | False
+items ^ frozenset, three | ha hb hc ec:cx | [(Kb, 2), (Ka, 1), (Kd, 4), (Kbx, 0)]
+items | frozenset, three | ha hb hc ec:cx | [(Kb, 2), (Kbx, 0), (Ka, 1), (Kc, 3), (Kd, 4)]
+items & frozenset, three | hbx ea:bx eb:bx hcx ea:cx eb:cx ec:cx hd ea:d eb:d ec:d | [(Kcx, 3)]
+items - frozenset, three | ha hb hc ec:cx | [(Ka, 1), (Kb, 2)]
+items r- frozenset, three | ha hb hc ecx:c | [(Kbx, 0), (Kd, 4)]
+items isdisjoint frozenset, three | hbx ea:bx eb:bx hcx ea:cx eb:cx ec:cx | False
+items <= frozenset, three | ha | False
+items < frozenset, three |  | False
+items == frozenset, three | ha | False
+items >= frozenset, three | hbx ea:bx eb:bx | False
+items ^ list, three | ha hb hc hcx hbx hd ec:cx | [(Kb, 2), (Ka, 1), (Kd, 4), (Kbx, 0)]
+items | list, three | ha hb hc ec:cx | [(Kb, 2), (Ka, 1), (Kd, 4), (Kbx, 0), (Kc, 3)]
+items & list, three | hcx ea:cx eb:cx ec:cx hbx ea:bx eb:bx hd ea:d eb:d ec:d | [(Kcx, 3)]
+items - list, three | ha hb hc ec:cx | [(Ka, 1), (Kb, 2)]
+items r- list, three | ha hb hc ecx:c | [(Kbx, 0), (Kd, 4)]
+items isdisjoint list, three | hcx ea:cx eb:cx ec:cx | False
+items <= list, three |  | TypeError
+items < list, three |  | TypeError
+items == list, three |  | False
+items >= list, three |  | TypeError

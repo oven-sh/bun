@@ -1,0 +1,159 @@
+status: 0
+script: ae3a27d0e03f9d4c
+---
+hash 1
+  dict [True, 1, 1]
+  dict among ints [True, 1, 1]
+  subclass of dict [True, 1, 1]
+  OrderedDict [True, 1, 1]
+  defaultdict [True, 1, 1]
+  Counter [True, 1, 1]
+  mappingproxy [True, 1, 1]
+  keys [True]
+  items [True]
+  set [True, 1, 1, 0, 0, 0, 1, True, False, True, True, True, True]
+  set among ints [True, 1, 1, 2, 0, 2, 3, True, False, True, False, False, False]
+  subclass of set [True, 1, 1, 0, 0, 0, 1, True, False, True, True, True, True]
+  frozenset [True, 1, 1, 0, 0, 0, 1, True, False, True, True, True, True]
+  frozenset among ints [True, 1, 1, 2, 0, 2, 3, True, False, True, False, False, False]
+  frozenset of a set [True, 1, 1, 0, 0, 0, 1, True, False, True, True, True, True]
+  subclass of frozenset [True, 1, 1, 0, 0, 0, 1, True, False, True, True, True, True]
+  dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  dict among ints setdefault 1 3 store None 3 pop 6 2 del KeyError 2
+  subclass of dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  OrderedDict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  defaultdict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  Counter setdefault 1 1 store None 1 pop 6 0 del None 0
+  set discard None 0 add None 1 remove None 0
+  set among ints discard None 2 add None 3 remove None 2
+  subclass of set discard None 0 add None 1 remove None 0
+hash 9
+  dict [True, 1, 1]
+  dict among ints [True, 1, 1]
+  subclass of dict [True, 1, 1]
+  OrderedDict [True, 1, 1]
+  defaultdict [True, 1, 1]
+  Counter [True, 1, 1]
+  mappingproxy [True, 1, 1]
+  keys [True]
+  items [True]
+  set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  set among ints [False, 0, 0, 3, 1, 4, 4, False, True, False, False, False, False]
+  subclass of set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  frozenset [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  frozenset among ints [True, 1, 1, 3, 0, 2, 4, True, False, True, False, False, False]
+  frozenset of a set [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  subclass of frozenset [True, 0, 0, 1, 1, 0, 2, False, True, False, False, False, False]
+  dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  dict among ints setdefault 1 3 store None 3 pop 6 2 del KeyError 2
+  subclass of dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  OrderedDict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  defaultdict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  Counter setdefault 1 1 store None 1 pop 6 0 del None 0
+  set discard None 1 add None 2 remove None 1
+  set among ints discard None 3 add None 4 remove None 3
+  subclass of set discard None 1 add None 2 remove None 1
+hash 17
+  dict [True, 1, 1]
+  dict among ints [True, 1, 1]
+  subclass of dict [True, 1, 1]
+  OrderedDict [True, 1, 1]
+  defaultdict [True, 1, 1]
+  Counter [True, 1, 1]
+  mappingproxy [True, 1, 1]
+  keys [True]
+  items [True]
+  set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  set among ints [False, 0, 0, 3, 1, 4, 4, False, True, False, False, False, False]
+  subclass of set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  frozenset [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  frozenset among ints [True, 1, 1, 3, 0, 2, 4, True, False, True, False, False, False]
+  frozenset of a set [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  subclass of frozenset [True, 0, 0, 1, 1, 0, 2, False, True, False, False, False, False]
+  dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  dict among ints setdefault 1 3 store None 3 pop 6 2 del KeyError 2
+  subclass of dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  OrderedDict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  defaultdict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  Counter setdefault 1 1 store None 1 pop 6 0 del None 0
+  set discard None 1 add None 2 remove None 1
+  set among ints discard None 3 add None 4 remove None 3
+  subclass of set discard None 1 add None 2 remove None 1
+hash 1099511627777
+  dict [True, 1, 1]
+  dict among ints [True, 1, 1]
+  subclass of dict [True, 1, 1]
+  OrderedDict [True, 1, 1]
+  defaultdict [True, 1, 1]
+  Counter [True, 1, 1]
+  mappingproxy [True, 1, 1]
+  keys [True]
+  items [True]
+  set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  set among ints [False, 0, 0, 3, 1, 4, 4, False, True, False, False, False, False]
+  subclass of set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  frozenset [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  frozenset among ints [True, 1, 1, 3, 0, 2, 4, True, False, True, False, False, False]
+  frozenset of a set [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  subclass of frozenset [True, 0, 0, 1, 1, 0, 2, False, True, False, False, False, False]
+  dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  dict among ints setdefault 1 3 store None 3 pop 6 2 del KeyError 2
+  subclass of dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  OrderedDict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  defaultdict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  Counter setdefault 1 1 store None 1 pop 6 0 del None 0
+  set discard None 1 add None 2 remove None 1
+  set among ints discard None 3 add None 4 remove None 3
+  subclass of set discard None 1 add None 2 remove None 1
+hash 2
+  dict [False, None, 'KeyError']
+  dict among ints [False, None, 'KeyError']
+  subclass of dict [False, None, 'KeyError']
+  OrderedDict [False, None, 'KeyError']
+  defaultdict [False, None, 0]
+  Counter [False, None, 0]
+  mappingproxy [False, None, 'KeyError']
+  keys [False]
+  items [False]
+  set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  set among ints [False, 0, 0, 3, 1, 4, 4, False, True, False, False, False, False]
+  subclass of set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  frozenset [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  frozenset among ints [False, 0, 0, 3, 1, 4, 4, False, True, False, False, False, False]
+  frozenset of a set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  subclass of frozenset [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  dict setdefault 5 2 store None 2 pop 6 1 del KeyError 1
+  dict among ints setdefault 5 4 store None 4 pop 6 3 del KeyError 3
+  subclass of dict setdefault 5 2 store None 2 pop 6 1 del KeyError 1
+  OrderedDict setdefault 5 2 store None 2 pop 6 1 del KeyError 1
+  defaultdict setdefault 0 2 store None 2 pop 6 1 del KeyError 1
+  Counter setdefault 5 2 store None 2 pop 6 1 del None 1
+  set discard None 1 add None 2 remove None 1
+  set among ints discard None 3 add None 4 remove None 3
+  subclass of set discard None 1 add None 2 remove None 1
+hash -7
+  dict [True, 1, 1]
+  dict among ints [True, 1, 1]
+  subclass of dict [True, 1, 1]
+  OrderedDict [True, 1, 1]
+  defaultdict [True, 1, 1]
+  Counter [True, 1, 1]
+  mappingproxy [True, 1, 1]
+  keys [True]
+  items [True]
+  set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  set among ints [False, 0, 0, 3, 1, 4, 4, False, True, False, False, False, False]
+  subclass of set [False, 0, 0, 1, 1, 2, 2, False, True, False, False, False, False]
+  frozenset [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  frozenset among ints [True, 1, 1, 3, 0, 2, 4, True, False, True, False, False, False]
+  frozenset of a set [True, 1, 0, 1, 0, 0, 2, True, False, True, False, False, True]
+  subclass of frozenset [True, 0, 0, 1, 1, 0, 2, False, True, False, False, False, False]
+  dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  dict among ints setdefault 1 3 store None 3 pop 6 2 del KeyError 2
+  subclass of dict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  OrderedDict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  defaultdict setdefault 1 1 store None 1 pop 6 0 del KeyError 0
+  Counter setdefault 1 1 store None 1 pop 6 0 del None 0
+  set discard None 1 add None 2 remove None 1
+  set among ints discard None 3 add None 4 remove None 3
+  subclass of set discard None 1 add None 2 remove None 1

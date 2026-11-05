@@ -1,0 +1,20 @@
+status: 0
+script: b3ebe581fd09f912
+---
+o_update 3000 d8e3eca0b0aa3cc2 []
+o_ior 3000 d8e3eca0b0aa3cc2 []
+o_init 3000 d8e3eca0b0aa3cc2 []
+all 8000 52f50145d21a58e6 []
+c_copy []
+c_dict []
+c_copy_module []
+c_deepcopy []
+c_comprehension []
+c_ordered []
+c_counter []
+c_derived []
+c_zip []
+c_defaultdict []
+c_chainmap []
+sets and dicts []
+Counter []

@@ -1,0 +1,30 @@
+status: 0
+script: 6a8744409dc63295
+---
+str []
+bytes []
+int []
+float []
+complex []
+tuple []
+range []
+slice []
+frozenset []
+object []
+method []
+ReferenceType []
+date []
+time []
+datetime []
+timedelta []
+timezone []
+NoneType []
+mappingproxy []
+slice True True
+slice stop True True
+mappingproxy True True
+method True True
+tuple True True
+weakref True True
+slice and tuple True True
+all True False

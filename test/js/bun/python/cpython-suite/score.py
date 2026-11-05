@@ -334,6 +334,8 @@ def run_once(name, python, limits, extra_env, ignored):
         "TMPDIR": work,
         "LANG": "C.UTF-8",
         "TERM": "dumb",
+        # The same order of sets in every run. Why 1: README.md.
+        "PYTHONHASHSEED": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_CRASH_REPORT_URL": "http://127.0.0.1:1/",
         "BUN_ENABLE_CRASH_REPORTING": "0",

@@ -1,0 +1,150 @@
+status: 0
+script: 6c34c6fbeb0bb5ed
+source: d5bd674d5db82c1e
+---
+{125000: (125000, 0, 124999, 62499, False, None), 250000: (250000, 0, 249999, 124999, False, None), 375000: (375000, 0, 374999, 187499, False, None), 500000: (500000, 0, 499999, 249999, False, None), 625000: (625000, 0, 624999, 312499, False, None), 750000: (750000, 0, 749999, 374999, False, None)}
+all(d[key(i)] == i for i in range(N)) => True
+sum(key(i) in d for i in range(N, N + 1000)) => 0
+next(iter(d)) => key0
+next(reversed(d)) => key749999
+list(d)[699_046:699_054] => ['key699046', 'key699047', 'key699048', 'key699049', 'key699050', 'key699051', 'key699052', 'key699053']
+list(d) == [key(i) for i in range(N)] => True
+list(d.values()) == list(range(N)) => True
+d[S('key7')] => 7
+d.get(S('nope')) => None
+len(d) => 375000
+key(0) in d => False
+d[key(1)] => 1
+sum(key(i) in d for i in range(1000)) => 500
+next(iter(d)) => key1
+d.popitem() => ('key749999', 749999)
+len(d) => 562499
+d[key(4)] => -4
+d[key(1)] => 1
+key(2) in d => False
+list(d)[-1] => key749996
+list(d)[:2] => ['key1', 'key3']
+e == d => True
+len(e) => 562499
+e[key(4)] => -4
+list(e)[:2] == list(d)[:2] => True
+dict(d) == e => True
+{**d} == e => True
+(d | {'x': 1})['x'] => 1
+len(d | e) => 562499
+len(f) => 562499
+f[key(1)] => None
+key(2) in f => False
+f.keys() == d.keys() => True
+len(s) => 562499
+key(1) in s => True
+key(2) in s => False
+s == d.keys() => True
+len(s & e.keys()) => 562499
+len(s - f.keys()) => 0
+len(dict.fromkeys(s)) => 562499
+pickle.loads(pickle.dumps(d)) == d => True
+len(collections.OrderedDict(d)) => 562499
+collections.Counter(d)[key(4)] => -4
+len({k: v for k, v in d.items()}) => 562499
+e => {'a': 1}
+'a' in e => True
+key(1) in e => False
+len(g) => 750000
+g[0] => 0
+g[3] => 3
+g[key(1)] => 1
+g.get(key(3)) => None
+g.get(1) => None
+g[749_997.0] => 749997
+g[S(key(1))] => 1
+all(g[key(i) if i % 3 else i] == i for i in range(N)) => True
+len(h) => 750000
+h[key(5)] => 5
+h[S(key(5))] => 5
+key(N) in h => False
+type(next(iter(h))).__name__ => S
+all(h[key(i)] == i for i in range(0, N, 7)) => True
+count [count=349526, popped=1000, fill=function] => 349526
+popped [count=349526, popped=1000, fill=function] => 1000
+len(d) [count=349526, popped=1000, fill=function] => 600000
+lost [count=349526, popped=1000, fill=function] => 0
+len(list(d)) [count=349526, popped=1000, fill=function] => 600000
+next(iter(d)) [count=349526, popped=1000, fill=function] => key0
+next(reversed(d)) [count=349526, popped=1000, fill=function] => key599999
+'a0' in d [count=349526, popped=1000, fill=function] => False
+count [count=349526, popped=1000, fill=function] => 349526
+popped [count=349526, popped=1000, fill=function] => 1000
+len(d) [count=349526, popped=1000, fill=function] => 600000
+lost [count=349526, popped=1000, fill=function] => 0
+len(list(d)) [count=349526, popped=1000, fill=function] => 600000
+next(iter(d)) [count=349526, popped=1000, fill=function] => key0
+next(reversed(d)) [count=349526, popped=1000, fill=function] => key599999
+'a0' in d [count=349526, popped=1000, fill=function] => False
+count [count=349526, popped=1000, fill=function] => 349526
+popped [count=349526, popped=1000, fill=function] => 1000
+len(d) [count=349526, popped=1000, fill=function] => 600000
+lost [count=349526, popped=1000, fill=function] => 0
+len(list(d)) [count=349526, popped=1000, fill=function] => 600000
+next(iter(d)) [count=349526, popped=1000, fill=function] => key0
+next(reversed(d)) [count=349526, popped=1000, fill=function] => key599999
+'a0' in d [count=349526, popped=1000, fill=function] => False
+count [count=349526, popped=349526, fill=function] => 349526
+popped [count=349526, popped=349526, fill=function] => 349526
+len(d) [count=349526, popped=349526, fill=function] => 600000
+lost [count=349526, popped=349526, fill=function] => 0
+len(list(d)) [count=349526, popped=349526, fill=function] => 600000
+next(iter(d)) [count=349526, popped=349526, fill=function] => key0
+next(reversed(d)) [count=349526, popped=349526, fill=function] => key599999
+'a0' in d [count=349526, popped=349526, fill=function] => False
+count [count=174763, popped=10, fill=function] => 174763
+popped [count=174763, popped=10, fill=function] => 10
+len(d) [count=174763, popped=10, fill=function] => 600000
+lost [count=174763, popped=10, fill=function] => 0
+len(list(d)) [count=174763, popped=10, fill=function] => 600000
+next(iter(d)) [count=174763, popped=10, fill=function] => key0
+next(reversed(d)) [count=174763, popped=10, fill=function] => key599999
+'a0' in d [count=174763, popped=10, fill=function] => False
+count [count=699051, popped=1000, fill=function] => 699051
+popped [count=699051, popped=1000, fill=function] => 1000
+len(d) [count=699051, popped=1000, fill=function] => 600000
+lost [count=699051, popped=1000, fill=function] => 0
+len(list(d)) [count=699051, popped=1000, fill=function] => 600000
+next(iter(d)) [count=699051, popped=1000, fill=function] => key0
+next(reversed(d)) [count=699051, popped=1000, fill=function] => key599999
+'a0' in d [count=699051, popped=1000, fill=function] => False
+len(c) => 600000
+sum(k not in c for k in other) => 0
+c[key(7)] => 7
+len(d) [d=dict] => 100
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(d) [d=dict] => 100
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(d) [d=dict] => 100
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(d) [d=dict] => 100
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(d) [d=dict] => 101
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(d) [d=dict] => 100
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(d) [d=dict] => 100
+sum(key(i) not in d for i in range(100)) [d=dict] => 0
+key(100) in d [d=dict] => False
+list(d)[-1] [d=dict] => key99
+len(big) => 101
+big[key(N)] => 750000
+big[key(5)] => 5
+sum(key(i) not in big for i in range(100)) => 0

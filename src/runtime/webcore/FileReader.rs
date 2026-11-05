@@ -130,19 +130,25 @@ impl Lazy {
         let mut is_nonblocking = false;
         #[cfg(unix)]
         let mut caller_stat: Option<sys::Stat> = None;
-        // A write-only fd is not a terminal to read: reads on it fail, as on the caller's fd.
+        // A write-only terminal is not reopened for reading: the read fails as it does on the fd itself.
         #[cfg(unix)]
-        let readable = |fd: Fd| {
-            !sys::get_fcntl_flags(fd)
+        let write_only = |fd: Fd| {
+            sys::get_fcntl_flags(fd)
                 .is_ok_and(|flags| (flags & libc::O_ACCMODE as isize) == libc::O_WRONLY as isize)
         };
+        #[cfg(unix)]
+        let unreadable =
+            |fd: Fd| sys::Error::from_code(sys::Errno::EBADF, sys::Tag::read).with_fd(fd);
 
         let fd: Fd = match &file.pathlike {
             PathOrFileDescriptor::Fd(pl_fd) => {
                 if pl_fd.stdio_tag().is_some() {
                     'brk: {
                         #[cfg(unix)]
-                        if readable(*pl_fd) {
+                        {
+                            if sys::isatty(*pl_fd) && write_only(*pl_fd) {
+                                return Err(unreadable(*pl_fd));
+                            }
                             let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
                             if rc > -1 {
                                 is_nonblocking = true;
@@ -162,7 +168,10 @@ impl Lazy {
                         };
                         let is_tty = sys::S::ISCHR(stat.st_mode as _) && sys::isatty(*pl_fd);
                         caller_stat = Some(stat);
-                        if is_tty && readable(*pl_fd) {
+                        if is_tty && write_only(*pl_fd) {
+                            return Err(unreadable(*pl_fd));
+                        }
+                        if is_tty {
                             file.is_atty = Some(true);
                             let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
                             if rc > -1 {
@@ -235,9 +244,9 @@ impl Lazy {
         #[cfg(unix)]
         {
             if file.is_atty.unwrap_or(false)
-                || (fd.stdio_tag().is_some() && readable(fd) && sys::isatty(fd))
+                || (fd.stdio_tag().is_some() && sys::isatty(fd))
                 || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
-                        if pl_fd.stdio_tag().is_some() && readable(*pl_fd) && sys::isatty(*pl_fd)))
+                        if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
             {
                 file.is_atty = Some(true);
             }

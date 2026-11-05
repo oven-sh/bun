@@ -592,7 +592,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A write-only fd is not reopened for reading: the read fails, as it does on the fd itself.
+  // A write-only fd is not reopened for reading: the read fails with EBADF, as it does on the fd itself.
   test("a write-only terminal fd does not read the terminal", async () => {
     let wrote = false;
     const { lines, exitCode } = await runInTerminal(
@@ -611,7 +611,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         }
       },
     );
-    expect(lines.filter(line => line !== "a")).toEqual(["ready", "error ESPIPE"]);
+    expect(lines.filter(line => line !== "a")).toEqual(["ready", "error EBADF"]);
     expect(exitCode).toBe(0);
   });
 

@@ -2882,6 +2882,21 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\ndeclare function f(a: string): B<{| aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number |}>;\n",
     ],
+    // White space that isn't a blank, a tab or a line break: at the end of a comment that stands alone on its line, ..
+    ["a.ts", "", "first();\n// c\u00a0\ni;\n"],
+    ["a.ts", "", "first();\n/**\n * e\u3000\n */\ni;\n"],
+    ["a.ts", "", "first(); // c\u00a0\ni;\n"],
+    // .. between tokens, ..
+    ["a.ts", "", "a(/* c */\ufeff/* c */ b);\n"],
+    ["a.ts", "", "function f() /* c */\u3000{}\n"],
+    ["a.js", "", "x1\f;\n\ny();\n"],
+    ["a.js", "", "foo = {\n  a\u00a0,\n\n  b,\n};\n"],
+    // .. on a line that is empty but for it.
+    ["a.js", "", "a = {\n  b: [],\n\u000b\n  d,\n};\n"],
+    // U+2028 and U+2029 are line breaks in some places.
+    ["a.ts", "", "var\u2028x;\n"],
+    ["a.tsx", "", "x = <a>\u2029</a>;\n"],
+    ["a.ts", "", "first();\nglobal\u2028{}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

@@ -94,6 +94,15 @@ pub(crate) mod why {
     pub(crate) const GUEST: i32 = 8;
 }
 
+/// What is left to the long way: `Quick::failed_at` has the number, for those who count.
+pub(crate) mod rare {
+    /// An object type in the return type decides how the only parameter is laid out.
+    pub(crate) const RETURN_TYPE: i32 = 1;
+    /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
+    /// U+2028 or U+2029 anywhere, a "\r" without a "\n", bytes that are not UTF-8.
+    pub(crate) const ODD_BYTES: i32 = 2;
+}
+
 /// Reads and writes that have an answer for every index: a read beyond the end gives 0, a write there does nothing.
 pub(crate) trait Words {
     type Item;
@@ -406,6 +415,13 @@ impl Quick {
     pub(crate) fn stop(&self, why: i32) -> Stop {
         self.why.set(why);
         Stop
+    }
+
+    /// `which` is one of [`rare`].
+    #[cold]
+    pub(crate) fn rare(&self, which: i32) -> Stop {
+        self.failed_at.set(which);
+        self.stop(why::RARE)
     }
 
     /// Whoever calls itself, directly or not, asks first whether there is room for that.

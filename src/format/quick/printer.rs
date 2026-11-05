@@ -14,7 +14,7 @@ use crate::doc::{
 };
 use crate::options::{EOL_CR, EOL_CRLF, EOL_LF};
 use crate::text::much_larger;
-use crate::{Bytes, Quick, R, Stop, Words, why, zeros};
+use crate::{Bytes, Quick, R, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Printer {
     pub(crate) out: Vec<u8>,
@@ -1808,7 +1808,7 @@ impl Quick {
                     }
                     if !ok && (flags & G_STAYS_EXPANDED) != 0 {
                         // The long way goes back and lays out the parameters as it will the next time.
-                        return Err(self.stop(why::RARE));
+                        return Err(self.rare(rare::RETURN_TYPE));
                     }
                     self.printer.st.put(sp, mode);
                     sp += 1;

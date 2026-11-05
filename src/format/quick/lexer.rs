@@ -3,7 +3,7 @@
 
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
-use crate::{Bytes, Quick, R, Words, zeros};
+use crate::{Bytes, Quick, R, Words, rare, zeros};
 
 pub(crate) struct Lexer {
     // ---- state
@@ -417,6 +417,14 @@ impl Quick {
         return shift + 12;
     }
 
+    /// The byte at `p`, which is not a printable character of ASCII, is neither a tab nor part of a character that is printed:
+    /// comments are trimmed, line by line, and measured.
+    #[cold]
+    pub(crate) fn is_odd_in_comment(&self, p: i32) -> bool {
+        let c = self.t.at(p);
+        if c < 128 { c != 9 } else { self.unicode_space(p) != 0 }
+    }
+
     pub(crate) fn unicode_space(&self, p: i32) -> i32 {
         let a = self.t.at(p);
         let b = self.t.at(p + 1);
@@ -502,6 +510,9 @@ impl Quick {
                             {
                                 break;
                             }
+                            if self.is_odd_in_comment(p) {
+                                return Err(self.rare(rare::ODD_BYTES));
+                            }
                             flags = 0;
                         }
                         p += 1;
@@ -564,6 +575,9 @@ impl Quick {
                             } else if e == 0 && p >= self.text.src_end {
                                 return Err(self.fail(start));
                             }
+                            if self.is_odd_in_comment(p) {
+                                return Err(self.rare(rare::ODD_BYTES));
+                            }
                             flags &= !CF_PLAIN;
                         }
                         p += 1;
@@ -576,17 +590,9 @@ impl Quick {
                 } else {
                     break;
                 }
-            } else if c == 11 || c == 12 {
-                p += 1;
-            } else if c >= 128 {
-                let w = self.unicode_space(p);
-                if w == 0 {
-                    break;
-                }
-                if w > 16 {
-                    nl = 1;
-                }
-                p += w & 15;
+            } else if c == 11 || c == 12 || (c >= 128 && self.unicode_space(p) != 0) {
+                // Whether it ends a line, is part of an empty one or of a comment's text is asked in too many places.
+                return Err(self.rare(rare::ODD_BYTES));
             } else {
                 break;
             }
@@ -907,6 +913,9 @@ impl Quick {
             } else if c < 32 || c >= 127 {
                 if c == 10 || c == 13 || (c == 0 && p >= self.text.src_end) {
                     return Err(self.fail(start));
+                }
+                if c < 128 && c != 9 {
+                    return Err(self.rare(rare::ODD_BYTES));
                 }
                 flags |= F_SLOW_TEXT;
             }
@@ -1286,6 +1295,9 @@ impl Quick {
             } else if c == 47 && !in_class {
                 break;
             } else if c < 32 || c >= 127 {
+                if c < 128 && c != 9 {
+                    return Err(self.rare(rare::ODD_BYTES));
+                }
                 flags |= F_SLOW_TEXT;
             }
             p += 1;
@@ -1321,6 +1333,9 @@ impl Quick {
             if c < 32 || c >= 127 {
                 if c == 0 && p >= self.text.src_end {
                     return Err(self.fail(from));
+                }
+                if c < 128 && c != 9 && c != 10 {
+                    return Err(self.rare(rare::ODD_BYTES));
                 }
                 flags |= F_SLOW_TEXT;
             }
@@ -1376,6 +1391,9 @@ impl Quick {
                         } else if d < 32 || d >= 127 {
                             if d == 0 && q >= self.text.src_end {
                                 return Err(self.fail(p));
+                            }
+                            if d < 128 && d != 9 && d != 10 {
+                                return Err(self.rare(rare::ODD_BYTES));
                             }
                             flags |= F_SLOW_TEXT;
                         } else if d == 38 {
@@ -1475,6 +1493,9 @@ impl Quick {
             if d < 32 || d >= 127 {
                 if d == 0 && q >= self.text.src_end {
                     return Err(self.fail(p));
+                }
+                if d < 128 && d != 9 && d != 10 {
+                    return Err(self.rare(rare::ODD_BYTES));
                 }
                 flags |= F_SLOW_TEXT;
             } else if (d == 62 || d == 125) && !self.lexer.lenient_jsx_text {

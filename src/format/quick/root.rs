@@ -8,11 +8,12 @@ use crate::options::{
     WHITESPACE_CSS, WHITESPACE_IGNORE,
 };
 use crate::text::SRC_BASE;
-use crate::{Bytes, Quick, R, Stop, Words, why};
+use crate::{Bytes, Quick, R, Stop, Words, rare, why};
+use bun_core::strings;
 
 impl Quick {
     /// Turns "\r\n" and "\r" into "\n" in place. Returns the new length.
-    pub(crate) fn normalize_end_of_line(&mut self, length: i32) -> i32 {
+    pub(crate) fn normalize_end_of_line(&mut self, length: i32) -> R<i32> {
         let end = SRC_BASE + length;
         // The buffer is as large as the largest file so far: a "\r" behind the text keeps the search from running through all of it.
         self.t.put(end, 13);
@@ -21,7 +22,7 @@ impl Quick {
             if self.options.end_of_line == EOL_AUTO {
                 self.set_end_of_line(EOL_LF);
             }
-            return length;
+            return Ok(length);
         }
         if self.options.end_of_line == EOL_AUTO {
             // the first line ending decides
@@ -49,9 +50,10 @@ impl Quick {
                     },
                     10,
                 );
-                if self.t.at(r + 1) == 10 {
-                    r += 1;
+                if self.t.at(r + 1) != 10 {
+                    return Err(self.rare(rare::ODD_BYTES));
                 }
+                r += 1;
             } else {
                 self.t.put(
                     {
@@ -64,7 +66,7 @@ impl Quick {
             }
             r += 1;
         }
-        return w - SRC_BASE;
+        return Ok(w - SRC_BASE);
     }
 }
 
@@ -198,6 +200,14 @@ impl Default for Options {
     }
 }
 
+/// Bytes that are not UTF-8, or a line break that only JavaScript knows: what counts as a line differs from place to place.
+#[cold]
+fn is_odd_beyond_ascii(text: &[u8]) -> bool {
+    !strings::is_valid_utf8(text)
+        || strings::contains(text, b"\xe2\x80\xa8")
+        || strings::contains(text, b"\xe2\x80\xa9")
+}
+
 /// A file that is longer is refused, so that sums of positions stay far from the largest number.
 const LONGEST_FILE: usize = 1 << 28;
 
@@ -273,6 +283,11 @@ impl Quick {
         let mut length = text.len() as i32;
         self.why.set(why::NONE);
         self.stack_check = bun_core::StackCheck::init();
+        if let Some(first) = strings::first_non_ascii(text)
+            && is_odd_beyond_ascii(text.get(first as usize..).unwrap_or(&[]))
+        {
+            return Err(self.rare(rare::ODD_BYTES));
+        }
         self.set_options(options, dialect);
         self.source_buffer(length, 0);
         self.t.set_all(text, SRC_BASE);
@@ -288,7 +303,7 @@ impl Quick {
                 .move_within(SRC_BASE, SRC_BASE + 3, SRC_BASE + length);
             length -= 3;
         }
-        length = self.normalize_end_of_line(length);
+        length = self.normalize_end_of_line(length)?;
         if options.no_short_cuts {
             return self.format_normalized(length, language);
         }
@@ -354,6 +369,7 @@ impl Quick {
     }
 
     /// Where the syntax error is, from the start of the text (without the byte order mark, and with "\n" at the ends of the lines).
+    /// For something rare: which of them.
     pub fn failed_at(&self) -> i32 {
         self.failed_at.get()
     }

@@ -208,9 +208,8 @@ void GCPerformanceEntries::callListeners()
             JSC::profiledCall(realm, ProfilingReason::API, listener, callData, jsUndefined(), arguments);
             if (auto* exception = scope.exception()) [[unlikely]] {
                 // The tick that runs this task takes a termination, and the report of an error can end with one.
-                if (m_vm.hasPendingTerminationException())
+                if (!scope.tryClearException())
                     return;
-                scope.clearException();
                 Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(realm, exception);
                 if (scope.exception()) [[unlikely]]
                     return;

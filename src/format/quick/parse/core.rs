@@ -479,7 +479,7 @@ impl Quick {
         self.reset_typed();
         self.parse.known_blocks_count = 0;
         self.parse.refused_at = 0;
-        self.parse.list_depth = 0;
+        self.parse.list_depth = self.options.indentation;
         // (a syntax error can have left these as they were)
         self.parse.lexer_stays = false;
         self.parse.cases_depth = -1;

@@ -106,6 +106,26 @@ pub struct Scratch {
     document: crate::Scratch,
     /// What has read the last text that was one run, and what it has written.
     runs: Option<(runs::Runs, Vec<u8>)>,
+    scripts: Scripts,
+}
+
+impl Scratch {
+    /// What the scripts that go the quick way keep from one to the next.
+    pub fn quick_way(&self) -> &crate::js::quick::Scratch {
+        &self.scripts.quick
+    }
+
+    pub fn quick_way_mut(&mut self) -> &mut crate::js::quick::Scratch {
+        &mut self.scripts.quick
+    }
+}
+
+/// For the scripts that go the quick way.
+#[derive(Default)]
+pub(crate) struct Scripts {
+    pub(crate) quick: crate::js::quick::Scratch,
+    /// The last one, formatted.
+    pub(crate) formatted: Vec<u8>,
 }
 
 /// The `options` that Prettier's functions receive.
@@ -356,6 +376,7 @@ pub(crate) fn write_document(
         None,
         Flavor::Prettier,
         None,
+        &mut Scripts::default(),
         f,
         None,
     )
@@ -384,6 +405,7 @@ pub(crate) fn write_document_to_quick<'w, 'f>(
         None,
         Flavor::Prettier,
         None,
+        &mut Scripts::default(),
         f,
         Some(quick),
     )
@@ -403,6 +425,7 @@ fn write_document_with_cursor<'w, 'f>(
     cursor_offset: Option<u32>,
     script_flavor: Flavor,
     found: Option<(runs::Runs, Vec<u8>)>,
+    scripts: &mut Scripts,
     f: &'w mut Formatter<'f>,
     quick: Option<writer::ToQuick<'w, 'f>>,
 ) -> Result<DocumentSummary, FormatError> {
@@ -455,10 +478,12 @@ fn write_document_with_cursor<'w, 'f>(
         has_tsx_script: None,
         cursor,
         css_scratch: Default::default(),
+        scripts: std::mem::take(scripts),
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
     let has_wrong_short_cut = printer.has_wrong_short_cut;
+    *scripts = std::mem::take(&mut printer.scripts);
     let unwritten = printer.out.unwritten();
     printer.out.finish();
     match is_nested_too_deeply {
@@ -523,6 +548,7 @@ fn format_angular_expression(
             has_tsx_script: None,
             cursor: Cursor::Nowhere,
             css_scratch: Default::default(),
+            scripts: Default::default(),
         };
         let in_html = InHtml {
             root,
@@ -715,9 +741,11 @@ fn format_once(
                     has_tsx_script: None,
                     cursor: Cursor::Nowhere,
                     css_scratch: Default::default(),
+                    scripts: std::mem::take(&mut scratch.scripts),
                 };
                 printer.print_front_matter_and_run(&text[..front_matter_len], whole);
                 has_wrong_short_cut = printer.has_wrong_short_cut || printer.is_nested_too_deeply;
+                scratch.scripts = std::mem::take(&mut printer.scripts);
                 printer.out.finish();
             });
             return root
@@ -753,6 +781,7 @@ fn format_once(
                 cursor_offset,
                 script_flavor,
                 found.take(),
+                &mut scratch.scripts,
                 f,
                 None,
             )

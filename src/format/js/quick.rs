@@ -32,8 +32,8 @@ pub enum Reason {
     Options,
     /// A parser or a kind of file that it doesn't know.
     Language,
-    /// Code in Markdown in which a text may have a line break, or which may be nothing but JSX.
-    InMarkdown,
+    /// Code in HTML that the long way reads in another way than a file.
+    InHtml,
     /// A comment may say that something stays as it is written.
     IgnoreComment,
     /// The text isn't UTF-8.
@@ -54,7 +54,7 @@ impl Reason {
     pub const ALL: [Reason; 12] = [
         Reason::Options,
         Reason::Language,
-        Reason::InMarkdown,
+        Reason::InHtml,
         Reason::IgnoreComment,
         Reason::NotUtf8,
         Reason::SyntaxError,
@@ -95,14 +95,30 @@ pub struct Counts {
 }
 
 /// What lives from one text to the next.
-#[derive(Default)]
 pub struct Scratch {
     quick: Option<Box<quick::Quick>>,
+    /// See `block_stands`.
+    credit: i32,
     /// Kept only if somebody has asked for them.
     pub counts: Option<Box<Counts>>,
 }
 
+impl Default for Scratch {
+    fn default() -> Scratch {
+        Scratch {
+            quick: None,
+            credit: 8,
+            counts: None,
+        }
+    }
+}
+
 impl Scratch {
+    /// Forgets what is known from the texts that have been formatted, as at the start of a run.
+    pub fn forget_other_files(&mut self) {
+        self.credit = 8;
+    }
+
     #[cold]
     fn refuse(&mut self, reason: Reason, text: &[u8]) -> Refused {
         if let Some(counts) = &mut self.counts
@@ -115,8 +131,9 @@ impl Scratch {
 }
 
 /// The options as the quick way takes them, or `None` if it isn't to be asked with these. Every field is named: a new
-/// option doesn't compile until someone has said what it means here.
-fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
+/// option doesn't compile until someone has said what it means here. With `is_host`, the options are those of a text of
+/// HTML, for the scripts in it.
+fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<quick::Options> {
     let FormatOptions {
         indent_style,
         indent_width,
@@ -151,8 +168,9 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
         // `pragma::before_parsing` has looked at them.
         require_pragma: _,
         check_ignore_pragma: _,
-        // `may_differ_in_markdown`
+        // `format`
         is_in_markdown: _,
+        is_at_margin: _,
         is_mdx_jsx,
         is_mdx_es_syntax,
         html_template_depth,
@@ -175,11 +193,11 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
         && range_start.is_none()
         && range_end.is_none()
         && cursor_offset.is_none()
-        && !insert_pragma
+        // A pragma goes to the top of the host. Where the doctype of HTML in a template is asked about, the host isn't.
+        && (is_host || (!insert_pragma && !is_in_html_file))
         && !is_mdx_jsx
         && !is_mdx_es_syntax
         && *html_template_depth == 0
-        && !is_in_html_file
         && *in_html == InHtml::default()
         && !flavor.is_oxfmt()
         && sort_imports.is_none()
@@ -220,6 +238,9 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
             == EmbeddedLanguageFormatting::Auto,
         html_whitespace_sensitivity_ignore: *html_whitespace_sensitivity
             == HtmlWhitespaceSensitivity::Ignore,
+        is_in_markdown: false,
+        marks_line_breaks_in_texts: false,
+        indentation: 0,
         no_short_cuts: false,
     })
 }
@@ -258,17 +279,12 @@ fn language_of(code: &Code<'_>, options: &FormatOptions) -> Option<quick::Langua
     })
 }
 
-/// See `FormatOptions::is_in_markdown`: true if a text in `code` may have a line break in it (a template, a comment, a
-/// string), or if `code` may be nothing but JSX.
-fn may_differ_in_markdown(code: &Code<'_>) -> bool {
-    let text = code.text;
+/// True if `code` may be nothing but JSX. See `FormatOptions::is_in_markdown`.
+fn may_be_jsx(code: &Code<'_>) -> bool {
     let can_have_jsx = ![&b".ts"[..], b".mts", b".cts"]
         .iter()
         .any(|end| ends_with_ignore_ascii_case(code.path, end));
-    strings::contains_char(text, b'`')
-        || strings::contains_char(text, b'\\')
-        || strings::contains(text, b"/*")
-        || (can_have_jsx && strings::contains_char(text, b'<'))
+    can_have_jsx && strings::contains_char(code.text, b'<')
 }
 
 /// Puts `code`, formatted, in the place of what `out` held. If it's refused, `out` is empty.
@@ -278,15 +294,136 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), Refused> {
-    let Some(quick_options) = options_for(options, code.text) else {
+    let Some(mut quick_options) = options_for(options, code.text, false) else {
         return Err(scratch.refuse(Reason::Options, code.text));
     };
     let Some(language) = language_of(&code, options) else {
         return Err(scratch.refuse(Reason::Language, code.text));
     };
-    if options.is_in_markdown && may_differ_in_markdown(&code) {
-        return Err(scratch.refuse(Reason::InMarkdown, code.text));
+    if options.is_in_markdown {
+        quick_options.is_in_markdown = may_be_jsx(&code);
+        quick_options.marks_line_breaks_in_texts = !options.is_at_margin;
     }
+    let mut dialect = quick::Dialect::of_name(language, code.path);
+    // In a declaration file, too, `await` is a name outside of async functions.
+    dialect.common_js |= [&b".d.ts"[..], b".d.mts"]
+        .iter()
+        .any(|end| ends_with_ignore_ascii_case(code.path, end));
+    let file = Some((options, code.path));
+    format_as(code.text, dialect, &quick_options, file, scratch, out)
+}
+
+/// All that is in a `<script>` of HTML or Vue.
+#[derive(Copy, Clone)]
+pub(crate) struct Script<'c> {
+    pub(crate) text: &'c [u8],
+    pub(crate) is_typescript: bool,
+    /// It's known to be no module.
+    pub(crate) is_no_module: bool,
+    /// By how many levels the host indents it.
+    pub(crate) indentation: u32,
+}
+
+/// The same for a script in a text of HTML with `options`, which is printed between two forced line breaks. The lines of
+/// the result are indented, but for the first.
+pub(crate) fn format_script(
+    script: Script<'_>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    let text = script.text;
+    let Some(of_host) = options_for(options, b"", true) else {
+        return Err(scratch.refuse(Reason::Options, text));
+    };
+    let name = options.filepath.as_deref().unwrap_or_default();
+    // In a host nothing is Flow, `<!--` can start a comment, and a byte order mark is white space. What only a module
+    // has is an error elsewhere.
+    if strings::contains_char(text, b'\r')
+        || text.starts_with(b"\xEF\xBB\xBF")
+        || strings::contains(text, b"<!--")
+        || strings::contains(text, b"-->")
+        || bun_lint::linter::is_flow_file(text, name)
+        || (script.is_no_module
+            && (strings::contains(text, b"import") || strings::contains(text, b"export")))
+    {
+        return Err(scratch.refuse(Reason::InHtml, text));
+    }
+    let quick_options = quick::Options {
+        end_of_line: quick::EndOfLine::Lf,
+        indentation: i32::try_from(script.indentation).unwrap_or(i32::MAX),
+        ..of_host
+    };
+    let dialect = quick::Dialect {
+        language: match script.is_typescript {
+            true => quick::Language::TypeScript,
+            false => quick::Language::JavaScript,
+        },
+        // The name of the host doesn't say whether TypeScript has JSX.
+        jsx: (!script.is_typescript).then_some(true),
+        common_js: script.is_no_module,
+        module_only: false,
+        declaration_file: false,
+        name_ends_in_ts: name.ends_with(b".ts"),
+        name_ends_in_js_flow: false,
+    };
+    format_as(text, dialect, &quick_options, None, scratch, out)
+}
+
+/// True if [`format`] leaves a code block of Markdown with `options` as it is written: `text`, without the line break at
+/// its end, in the file at `path`, at the left margin. No is always a valid answer.
+pub(crate) fn block_stands(
+    path: &[u8],
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+) -> bool {
+    // Where the code has never been formatted, or the options ask for another layout than it has, the answer is no
+    // again and again, and to ask isn't free. So after some of them in a row, most blocks aren't asked about.
+    if scratch.credit <= 0 {
+        scratch.credit -= 1;
+        if scratch.credit > -16 {
+            return false;
+        }
+        scratch.credit = 2;
+    }
+    let stands = match options_for(options, b"", true) {
+        Some(of_host) if !strings::contains(text, b"prettier-ignore") => {
+            let quick_options = quick::Options {
+                end_of_line: quick::EndOfLine::Lf,
+                ..of_host
+            };
+            let language = match is_typescript(path) {
+                true => quick::Language::TypeScript,
+                false => quick::Language::JavaScript,
+            };
+            let dialect = quick::Dialect::of_name(language, path);
+            let quick = scratch.quick.get_or_insert_default();
+            quick::stands(text, dialect, &quick_options, quick)
+        }
+        _ => false,
+    };
+    match stands {
+        true => scratch.credit = (scratch.credit + 2).min(16),
+        false => scratch.credit -= 1,
+    }
+    stands
+}
+
+/// `file`: the options and the name for what is in a template in another language.
+fn format_as(
+    text: &[u8],
+    dialect: quick::Dialect,
+    quick_options: &quick::Options,
+    file: Option<(&FormatOptions, &[u8])>,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    let code = Code {
+        path: b"",
+        text,
+        is_flow: false,
+    };
     // What is printed around code that stays as it is written (parentheses, semicolons, the comment itself) is where
     // the long way corrects Prettier most often.
     if strings::contains(code.text, b"prettier-ignore") {
@@ -296,23 +433,24 @@ pub fn format(
     if !strings::is_valid_utf8(code.text) {
         return Err(scratch.refuse(Reason::NotUtf8, code.text));
     }
-    let quick = scratch.quick.get_or_insert_with(|| {
-        let mut quick = Box::<quick::Quick>::default();
-        quick.lend_guests(Some(Box::<QuickGuests>::default()));
-        quick
-    });
-    if quick_options.embedded_language_formatting_auto
-        && let Some(guests) = quick.guests_mut()
-        && let Some(guests) = (guests as &mut dyn std::any::Any).downcast_mut::<QuickGuests>()
-    {
-        guests.start_file(options, code.path);
+    let quick = scratch.quick.get_or_insert_default();
+    match file {
+        Some((options, path)) => {
+            if quick.guests_mut().is_none() {
+                quick.lend_guests(Some(Box::<QuickGuests>::default()));
+            }
+            if quick_options.embedded_language_formatting_auto
+                && let Some(guests) = quick.guests_mut()
+                && let Some(guests) =
+                    (guests as &mut dyn std::any::Any).downcast_mut::<QuickGuests>()
+            {
+                guests.start_file(options, path);
+            }
+        }
+        // Without them, a template that may be in another language is refused.
+        None => _ = quick.lend_guests(None),
     }
-    let mut dialect = quick::Dialect::of_name(language, code.path);
-    // In a declaration file, too, `await` is a name outside of async functions.
-    dialect.common_js |= [&b".d.ts"[..], b".d.mts"]
-        .iter()
-        .any(|end| ends_with_ignore_ascii_case(code.path, end));
-    if quick::format(code.text, dialect, &quick_options, quick, out).is_err() {
+    if quick::format(code.text, dialect, quick_options, quick, out).is_err() {
         let reason = match quick.why() {
             1 => Reason::SyntaxError,
             5 => Reason::TooLong,

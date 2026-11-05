@@ -78,7 +78,9 @@ mod parse {
 }
 
 pub use guest::{Answer, Detached, GroupId, Guest, Guests, Open, Sink};
-pub use root::{Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format};
+pub use root::{
+    Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format, stands,
+};
 use std::cell::Cell;
 
 /// The work has stopped; `Quick::why` says why.

@@ -5980,14 +5980,15 @@ bool Process::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     return true;
 }
 
-extern "C" EncodedJSValue Process__getDefaultCwd(JSGlobalObject* globalObject)
+extern "C" EncodedJSValue Process__getCachedDefaultCwd(JSGlobalObject* globalObject)
 {
     auto* process = defaultGlobalObject(globalObject)->processObject();
     if (process->m_isCwdObservable)
         return JSValue::encode(jsUndefined());
     if (auto* cached = process->cachedCwd())
         return JSValue::encode(cached);
-    return JSValue::encode(getCachedCwd(globalObject));
+    // Cache misses use the resolver's slow path, which can fetch cwd or throw.
+    return JSValue::encode(jsUndefined());
 }
 
 extern "C" bool Process__isCwdObservable(JSGlobalObject* globalObject)

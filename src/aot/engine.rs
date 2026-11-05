@@ -66,8 +66,7 @@ bun_core::impl_zeroable!(CompileOptions);
 
 fn default_record() -> CompileOptions {
     let mut record: CompileOptions = zeroed();
-    // SAFETY: the engine writes one `CompileOptions` through the pointer before it returns.
-    unsafe { Bun__AOT__initializeOptions(&raw mut record) };
+    Bun__AOT__initializeOptions(&mut record);
     record
 }
 
@@ -440,7 +439,7 @@ static REGION_THREADS: HostThreadPool = HostThreadPool {
 // Nothing compares these with `src/jsc/bindings/BunAOTCompile.h` and `standalone/engine_stubs.rs`: all three list the same parameters in the same order.
 unsafe extern "C" {
     #[cfg(not(test))]
-    fn Bun__AOT__initializeOptions(options: *mut CompileOptions);
+    safe fn Bun__AOT__initializeOptions(options: &mut CompileOptions);
     #[cfg(not(test))]
     fn Bun__AOT__applyOptionWord(
         options: *mut CompileOptions,

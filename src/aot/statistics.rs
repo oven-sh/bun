@@ -77,20 +77,16 @@ fn process_info() -> ProcessInfo {
     if !bun_alloc::USE_MIMALLOC {
         return ProcessInfo::default();
     }
-    let unused = core::ptr::null_mut();
-    // SAFETY: it writes a number through each pointer that is not null.
-    unsafe {
-        bun_alloc::mimalloc::mi_process_info(
-            unused,
-            &raw mut user,
-            &raw mut system,
-            &raw mut resident,
-            &raw mut peak,
-            unused,
-            unused,
-            unused,
-        );
-    }
+    bun_alloc::mimalloc::mi_process_info(
+        None,
+        Some(&mut user),
+        Some(&mut system),
+        Some(&mut resident),
+        Some(&mut peak),
+        None,
+        None,
+        None,
+    );
     ProcessInfo {
         cpu: Duration::from_millis((user + system) as u64),
         in_kernel: Duration::from_millis(system as u64),

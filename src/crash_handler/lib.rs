@@ -2536,19 +2536,16 @@ mod draft {
             let mut current_commit: usize = 0;
             let mut peak_commit: usize = 0;
             let mut page_faults: usize = 0;
-            // SAFETY: all out-pointers are valid
-            unsafe {
-                bun_alloc::mimalloc::mi_process_info(
-                    &raw mut elapsed_msecs,
-                    &raw mut user_msecs,
-                    &raw mut system_msecs,
-                    &raw mut current_rss,
-                    &raw mut peak_rss,
-                    &raw mut current_commit,
-                    &raw mut peak_commit,
-                    &raw mut page_faults,
-                );
-            }
+            bun_alloc::mimalloc::mi_process_info(
+                Some(&mut elapsed_msecs),
+                Some(&mut user_msecs),
+                Some(&mut system_msecs),
+                Some(&mut current_rss),
+                Some(&mut peak_rss),
+                Some(&mut current_commit),
+                Some(&mut peak_commit),
+                Some(&mut page_faults),
+            );
             writeln!(
                 writer,
                 "Elapsed: {}ms | User: {}ms | Sys: {}ms",
@@ -3900,10 +3897,13 @@ mod draft {
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) -> ! {
-        bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
         // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
         // This function never returns, so the string outlives every read on this thread.
-        let name_bytes: &'static [u8] = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+        unsupported_uv_function(unsafe { bun_core::ffi::cstr(name) }.to_bytes())
+    }
+
+    pub fn unsupported_uv_function(name_bytes: &'static [u8]) -> ! {
+        bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(Some(name_bytes)));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();

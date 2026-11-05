@@ -5,7 +5,7 @@ use bun_options_types::aot_options::ExplainSet;
 use bun_removable_features::{Feature, TrimFeature};
 
 use super::ResultSection as Section;
-use super::testing::{Sections, bytes_of, with_result, with_result_to_write};
+use super::testing::{Sections, with_result, with_result_to_write};
 use super::*;
 use crate::ir::generated::{Architecture, CheckSet, StatisticId};
 
@@ -16,14 +16,11 @@ const REFUSAL: &[u8] = b"the engine knows no such word";
 
 // A test program links no engine. In a test build `engine.rs` calls the two fakes where Bun calls the engine's functions with the same parameters.
 
-/// SAFETY: `options` is valid for the write of one `CompileOptions`.
-pub(super) unsafe fn fake_initialize_options(options: *mut CompileOptions) {
-    let defaults = CompileOptions {
+pub(super) fn fake_initialize_options(options: &mut CompileOptions) {
+    *options = CompileOptions {
         size: size_of::<CompileOptions>() as u32,
         ..zeroed()
     };
-    // SAFETY: the caller's promise.
-    unsafe { options.write(defaults) };
 }
 
 /// Knows only `check=Validate`. Like the engine, it leaves the record unchanged when it refuses a word, writes as much of the sentence as fits, and returns the sentence's whole length.
@@ -467,7 +464,7 @@ fn sections_are_read_as_typed_elements() {
     let module = offset_of!(AccessCountRecord, module);
     let access_counts = [4, 9].map(|word| patched_record::<AccessCountRecord>(&[(module, word)]));
     let sections = Sections::new()
-        .with(Section::Statistics, bytes_of(&statistics))
+        .with(Section::Statistics, bun_core::slice_as_bytes(&statistics))
         .with(Section::EntryModuleIds, &entry_module_ids)
         .with(Section::AccessCounts, &access_counts.concat());
     with_result(&sections, |result| {

@@ -20,11 +20,6 @@ pub(super) fn to_words(bytes: &[u8]) -> Vec<u64> {
     bytes.chunks(8).map(to_word).collect()
 }
 
-pub(super) fn bytes_of(words: &[u64]) -> &[u8] {
-    // SAFETY: every byte of an initialized `u64` is initialized, and the slice ends with `words`.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words)) }
-}
-
 fn bytes_of_records<T: ResultRecord>(records: &[T]) -> &[u8] {
     // SAFETY: an abi record has no padding (its generated assertions fix its size and every offset), so every byte is initialized, and the slice ends with `records`.
     unsafe { core::slice::from_raw_parts(records.as_ptr().cast::<u8>(), size_of_val(records)) }
@@ -42,7 +37,7 @@ impl Sections {
             words: Section::ALL.map(|_| Vec::new()),
             lengths: [0; Section::COUNT],
         };
-        empty.with(Section::Statistics, bytes_of(&[0; StatisticId::COUNT]))
+        empty.with(Section::Statistics, bun_core::slice_as_bytes(&[0u64; StatisticId::COUNT]))
     }
 
     pub(super) fn with(mut self, section: Section, bytes: &[u8]) -> Sections {
@@ -58,7 +53,9 @@ impl Sections {
     fn as_bytes(&self) -> [BunAOTBytes; Section::COUNT] {
         Section::ALL.map(|section| {
             let index = section as usize;
-            BunAOTBytes::from_slice(&bytes_of(&self.words[index])[..self.lengths[index]])
+            BunAOTBytes::from_slice(
+                &bun_core::slice_as_bytes(&self.words[index])[..self.lengths[index]],
+            )
         })
     }
 }

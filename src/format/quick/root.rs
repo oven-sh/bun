@@ -91,6 +91,10 @@ pub struct Dialect {
     pub jsx: Option<bool>,
     /// A .cjs or .cts file: `await` is a name outside of async functions.
     pub common_js: bool,
+    /// A .mjs or .mts file: `await` is no name anywhere.
+    pub module_only: bool,
+    /// A .d.ts, .d.mts or .d.cts file.
+    pub declaration_file: bool,
     /// The name of the file ends in ".ts": `<T,>() => 1` needs no comma.
     pub name_ends_in_ts: bool,
     /// The name of the file ends in ".js.flow": JavaScript is read as Flow.
@@ -121,6 +125,8 @@ impl Dialect {
                 None
             },
             common_js: ends_with_one_of(&[b".cjs", b".cts"]),
+            module_only: ends_with_one_of(&[b".mjs", b".mts"]),
+            declaration_file: ends_with_one_of(&[b".d.ts", b".d.mts", b".d.cts"]),
             name_ends_in_ts: name.ends_with(b".ts"),
             name_ends_in_js_flow: name.ends_with(b".js.flow"),
         }

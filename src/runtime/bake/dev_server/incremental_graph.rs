@@ -315,6 +315,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_css_files: Vec<u64>,
     /// Client side: files bundled again in this bundle only because a CSS module they import changed. One whose
     /// code comes out the same (the edit changed no name) is not sent: sent, it would run again, or reload the page.
+    /// Filled by `invalidate`, before the bundle starts (and `reset` runs); emptied when it ends.
     pub(crate) css_module_importers: ArrayHashMap<u32, ()>,
 }
 
@@ -441,7 +442,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 self.current_css_files.clear();
-                self.css_module_importers.clear_retaining_capacity();
             }
             Side::Server => {
                 // `Box<[u8]>` drops on clear; ditto `Shared` in source_maps.

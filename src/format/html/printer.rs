@@ -3,7 +3,7 @@
 use super::ast::{Attribute, Flags, Id, Kind, StartTagComment, Tree};
 use super::cursor::{Cursor, Target};
 use super::js::SourceType;
-use super::runs::Code;
+use super::runs::{Code, Language};
 use super::tag::Tags;
 use super::utilities::{
     html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag, is_text_like,
@@ -155,9 +155,13 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 self.out.start_indent();
             }
             self.out.hardline();
-            let (parser, source_type): (&[u8], _) = match code.is_style {
-                true => (b"css", SourceType::Unknown),
-                false => (b"babel", SourceType::Script),
+            let (parser, source_type): (&[u8], _) = match code.language {
+                Language::Script => (b"babel", SourceType::Script),
+                Language::JavaScript => (b"babel", SourceType::Unknown),
+                Language::TypeScript => (b"typescript", SourceType::Unknown),
+                Language::Css => (b"css", SourceType::Unknown),
+                Language::Scss => (b"scss", SourceType::Unknown),
+                Language::Less => (b"less", SourceType::Unknown),
             };
             let attempt = self.out.start_attempt();
             let is_written = self.text_to_doc(
@@ -166,9 +170,10 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 source_type,
             );
             // What cannot be formatted is printed as it is written, which is not for here.
-            self.has_wrong_short_cut |= !self.out.end_attempt(attempt, is_written) || indents == 0;
-            // The end tag is a level further out. The line break in front of it is written with it.
-            if indents > 0 {
+            self.has_wrong_short_cut |=
+                !self.out.end_attempt(attempt, is_written) || u32::from(code.tag_level) < level;
+            // The line break in front of the end tag is written with it.
+            while indents > u32::from(code.tag_level).saturating_sub(level) {
                 self.out.end_indent();
                 indents -= 1;
             }

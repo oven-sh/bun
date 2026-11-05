@@ -1,6 +1,7 @@
 "use strict";
 
-const ObjectDefineProperty = Object.defineProperty;
+// Object lists a member from when it is first read, and loading this module has always read these two in this order.
+const { keys: _ObjectKeys, defineProperty: ObjectDefineProperty } = Object;
 
 const customPromisify = Symbol.for("nodejs.util.promisify.custom");
 const compose = require("internal/streams/compose");

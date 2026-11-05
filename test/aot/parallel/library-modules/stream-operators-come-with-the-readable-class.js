@@ -1,5 +1,5 @@
-// With node:net alone, Readable.prototype has no map(), filter() and so on. They arrive with all of node:stream, which the first pipe() that looks at
-// process.stdout loads. Each way is a process of its own.
+// With node:net alone, Readable.prototype has map(), filter() and so on: the module of the class defines them. They do not wait for node:stream, which
+// the first pipe() that looks at process.stdout loads. Each way is a process of its own.
 const ways = {
   "nothing"() {},
   "console.log"() {

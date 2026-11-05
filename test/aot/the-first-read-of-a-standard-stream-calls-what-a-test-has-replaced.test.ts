@@ -14,7 +14,7 @@ function runsAsPlain(title: string, expected: string, body: string) {
       import { spyOn, test } from "bun:test";
       ${sayOf(name)}
       const keys = Object.keys;
-      const nonsense = () => ["nonsense"];
+      const nonsense = () => undefined;
       test("${name}", () => {
         try {${body.replaceAll("console.log(", "say(")}
         } catch (error) {

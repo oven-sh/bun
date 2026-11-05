@@ -1835,27 +1835,45 @@ Readable.wrap = function (src, options?) {
 };
 
 // Node defines the operators below in lib/stream.js. Here a user of this class may never load node:stream.
-Stream.Readable = Readable as $Node.ReadableConstructor;
-
-// Function.length of each operator. internal/streams/operators loads when one is first called.
 type Operators = typeof import("internal/streams/operators").default;
-const streamOperatorLengths = { drop: 1, filter: 2, flatMap: 2, map: 2, take: 1 } satisfies Record<
-  keyof Operators["streamReturningOperators"],
-  number
->;
-const promiseOperatorLengths = { every: 1, forEach: 2, reduce: 3, toArray: 1, some: 1, find: 2 } satisfies Record<
-  keyof Operators["promiseReturningOperators"],
-  number
->;
+// Function.length of each operator. internal/streams/operators loads when one is first called.
+type Lengths<Kind extends keyof Operators> = Record<keyof Operators[Kind], number> & { __proto__: null };
+const streamOperatorLengths = {
+  __proto__: null,
+  drop: 1,
+  filter: 2,
+  flatMap: 2,
+  map: 2,
+  take: 1,
+} satisfies Lengths<"streamReturningOperators">;
+const promiseOperatorLengths = {
+  __proto__: null,
+  every: 1,
+  forEach: 2,
+  reduce: 3,
+  toArray: 1,
+  some: 1,
+  find: 2,
+} satisfies Lengths<"promiseReturningOperators">;
+type Operator = (this: $Node.Readable, ...args: any[]) => any;
 let operators: Operators | undefined;
 
-function installOperator(key: string, length: number, call: (this: $Node.Readable, args: unknown[]) => unknown) {
-  function fn(this: $Node.Readable, ...args: unknown[]) {
+function installOperator(key: string, length: number, returnsPromise: boolean) {
+  let op: Operator | undefined;
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    return call.$call(this, args);
-  }
+    if (returnsPromise) {
+      return Promise.$resolve().then(() => {
+        op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key] as Operator;
+        return op.$apply(this, args);
+      });
+    }
+    op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key] as Operator;
+    // node:stream sets Stream.Readable when it loads.
+    return (Stream.Readable ?? Readable).from(op.$apply(this, args));
+  };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
   ObjectDefineProperty(Readable.prototype, key, {
@@ -1866,24 +1884,7 @@ function installOperator(key: string, length: number, call: (this: $Node.Readabl
     writable: true,
   });
 }
-
-const streamOperatorKeys = ObjectKeys(streamOperatorLengths) as (keyof typeof streamOperatorLengths)[];
-for (let i = 0; i < streamOperatorKeys.length; i++) {
-  const key = streamOperatorKeys[i];
-  let op: ((this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown>) | undefined;
-  installOperator(key, streamOperatorLengths[key], function (args) {
-    op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
-    return Stream.Readable.from(op.$apply(this, args));
-  });
-}
-const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths) as (keyof typeof promiseOperatorLengths)[];
-for (let i = 0; i < promiseOperatorKeys.length; i++) {
-  const key = promiseOperatorKeys[i];
-  let op: ((this: $Node.Readable, ...args: any[]) => Promise<unknown>) | undefined;
-  installOperator(key, promiseOperatorLengths[key], function (args) {
-    op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];
-    return op.$apply(this, args);
-  });
-}
+for (const key in streamOperatorLengths) installOperator(key, streamOperatorLengths[key], false);
+for (const key in promiseOperatorLengths) installOperator(key, promiseOperatorLengths[key], true);
 
 export default Readable as $Node.ReadableConstructor;

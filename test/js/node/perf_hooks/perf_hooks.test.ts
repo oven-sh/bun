@@ -1,3 +1,4 @@
+import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
@@ -1196,9 +1197,8 @@ describe("gc entries", () => {
 
   // node:perf_hooks sets its own function. The tests of the built-in functions call the setter with every kind of value.
   test("what native code calls for each collection is a function", () => {
-    const { setGCPerformanceEntryListener } = require("bun:internal-for-testing");
     for (const listener of [{}, null, 1, "emitGCEntry"]) {
-      expect(() => setGCPerformanceEntryListener(listener)).toThrow(
+      expect(() => internalForTesting.setGCPerformanceEntryListener(listener)).toThrow(
         new TypeError("The listener must be a function or undefined"),
       );
     }
@@ -1342,7 +1342,7 @@ describe("gc entries", () => {
             setImmediate(resolve).unref();
             await promise;
             clearInterval(keepAlive);
-          }, 2000);
+          });
         `,
       });
       expect(output).toContain("unhandled on purpose");

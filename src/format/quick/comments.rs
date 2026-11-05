@@ -493,6 +493,23 @@ impl Quick {
         {
             return false;
         }
+        // behind a line comment and the `)` of parentheses that go
+        if c.h_is_block
+            && before == 41
+            && i > self.lexer.c_base
+            && (self.lexer.c.at((i - 1) * C_STRIDE + C_FLAGS) & CF_BLOCK) == 0
+            && {
+                let mut p = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
+                let mut closes = false;
+                while is_blank(self.t.at(p)) || self.t.at(p) == 41 {
+                    closes |= self.t.at(p) == 41;
+                    p += 1;
+                }
+                closes && p == c.h_start
+            }
+        {
+            return false;
+        }
         // what may be a type cast of JSDoc, where it is printed with parentheses of its own
         if c.h_is_block
             && behind == 40
@@ -537,7 +554,15 @@ impl Quick {
                     && !(behind == 123 && form != MID_BLOCK && before != 40 && before != 44)
             }
             // behind a modifier, the key or the value; behind a word of an import or an export
-            k::ClassProperty | k::PropertySignature => !is_part_of_word(before),
+            // (behind the value of a field with a private name: a node of another type in Babel's tree, which fewer rules are for)
+            k::ClassProperty | k::PropertySignature => {
+                !is_part_of_word(before)
+                    && (self.mode.is_type_script
+                        || c.h_following != 0
+                        || (self.n.at(self.n.at(c.h_enclosing + 4)) & 0xff) != k::PrivateName)
+            }
+            // where an element is left out
+            k::ArrayExpression => !(behind == 44 && (before == 44 || before == 91)),
             // .. or behind the braces, or all there is in them
             k::ImportDeclaration | k::ExportNamedDeclaration | k::ExportAllDeclaration => {
                 !is_part_of_word(before) && before != 125 && !(before == 123 && behind == 125)
@@ -632,7 +657,7 @@ impl Quick {
                 ((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & M_MASK == M_METHOD
             }
             // between the name and the type arguments
-            k::TypeReference => behind != 60,
+            k::TypeReference | k::Heritage => behind != 60,
             // next to the `in` or the `of`
             k::ForInStatement | k::ForOfStatement => {
                 !(form == END_LINE && (is_part_of_word(before) || behind == 105 || behind == 111))

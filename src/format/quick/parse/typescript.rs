@@ -242,7 +242,7 @@ impl Quick {
                 return Err(self.text_refuse());
             }
             // `A<B<>>`, `(a: B<>)`: the long way takes `B<>` for a simple type
-            if matches!(self.t.at(self.lexer.tok_start + 1), 62 | 41) {
+            if matches!(self.t.at(self.blanks(self.lexer.tok_start + 1)), 62 | 41) {
                 return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
         }

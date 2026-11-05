@@ -1574,11 +1574,8 @@ impl Quick {
                         }
                         self.lexer.tok_flags |= F_SLOW_TEXT;
                         let length = self.character_length(q);
-                        // (in Flow the long way reads ASCII only behind a `-`)
-                        if length == 0
-                            || !self.is_in_name(q, q == p)
-                            || (has_hyphen && self.mode.is_flow)
-                        {
+                        // (behind a `-` one of the long way's parsers reads ASCII only: the one for Flow, and for what the other one rejects)
+                        if length == 0 || !self.is_in_name(q, q == p) || has_hyphen {
                             return Err(self.text_refuse());
                         }
                         q += length;

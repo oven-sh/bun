@@ -448,29 +448,30 @@ impl Quick {
                     || self.dialect.declaration_file
                     || self.parse.needs_module
                     || self.parse.place.scope == SCOPE_STATIC_BLOCK
-                    || self.is_operator_for_type_script()
+                    || self.may_be_operator_for_type_script()
                     // `await ** a`
                     || (self.parse.typed == TYPED_TS && {
                         let p = self.next_char_index(self.lexer.tok_end);
                         self.t.at(p) == 42 && self.t.at(p + 1) == 42
                     })
             }
-            kw::Yield => self.parse.in_generator != 0 || self.is_operator_for_type_script(),
+            kw::Yield => self.parse.in_generator != 0 || self.may_be_operator_for_type_script(),
             _ => false,
         }
     }
 
     /// The current token is `await` or `yield`. TypeScript's parser takes it for the operator wherever a word, a number or a string follows on its line.
-    /// (Behind a block comment anything may follow.)
     fn is_operator_for_type_script(&self) -> bool {
-        let p = self.blanks(self.lexer.tok_end);
-        let c = self.t.at(p);
+        let c = self.t.at(self.blanks(self.lexer.tok_end));
         self.parse.typed == TYPED_TS
-            && ((CT.at(c) & C_ID_PART) != 0
-                || c == 34
-                || c == 39
-                || c == 92
-                || (c == 47 && self.t.at(p + 1) == 42))
+            && ((CT.at(c) & C_ID_PART) != 0 || c == 34 || c == 39 || c == 92)
+    }
+
+    /// .. or a block comment, behind which anything may follow.
+    fn may_be_operator_for_type_script(&self) -> bool {
+        let p = self.blanks(self.lexer.tok_end);
+        self.is_operator_for_type_script()
+            || (self.parse.typed == TYPED_TS && self.t.at(p) == 47 && self.t.at(p + 1) == 42)
     }
 
     /// A name that is bound or read.
@@ -3794,6 +3795,10 @@ impl Quick {
                 self.parse.no_in = 0;
                 let is_async = self.is_kw(kw::Async);
                 let n = self.parse_maybe_assign()?;
+                // (Flow: the long way does not take `[(a: B)]` for a short key)
+                if (self.n.at(n) & 0xff) == k::TypeCastExpression {
+                    return Err(self.rare(rare::FLOW));
+                }
                 // `[async a => 1]`: a modifier and a name make an index signature for TypeScript's parser, which reads every file first
                 if is_async && self.is_bare_arrow(n) {
                     return Err(self.text_refuse());
@@ -4010,6 +4015,15 @@ impl Quick {
         self.parse.no_in = saved_no_in;
         self.expect(tk::Colon)?;
         let alternate = self.parse_maybe_assign()?;
+        // `a ? () => (b) : c => d`: TypeScript's parser, and the long way in JavaScript too, takes `(b): c => d` for an arrow function
+        // with a return type where it is the body of what can only be an arrow function.
+        if self.parse.typed == 0
+            && (self.n.at(alternate) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
+            && (self.n.at(consequent) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
+            && self.ends_with_parentheses(consequent)
+        {
+            return Err(self.rare(rare::OTHER));
+        }
         return Ok(self.node3(
             k::ConditionalExpression,
             start,
@@ -5376,6 +5390,7 @@ impl Quick {
                 break;
             }
             self.set_pos(self.lexer.pos);
+            let comments = self.lexer.c_count;
             self.next()?;
             let saved_no_in = self.parse.no_in;
             self.parse.no_in = 0;
@@ -5385,6 +5400,9 @@ impl Quick {
                 // (with braces in it Prettier breaks the parameters of a function whose return type it is part of)
                 if self.has_byte_in_range(123, from, self.lexer.prev_end) {
                     return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
+                if self.lexer.c_count != comments {
+                    return Err(self.rare(rare::COMMENT));
                 }
                 hole
             } else {
@@ -6847,10 +6865,16 @@ impl Quick {
             if self.lexer.tok != tk::BraceR {
                 return Err(self.unexpected());
             }
-            // (with something behind it on its line: the long way keeps a blank there that Prettier writes as `{" "}`, and what
-            // fits on the line is counted in two ways)
+            // (with something before or behind it on its line: the long way keeps a blank there that Prettier writes as `{" "}`,
+            // gives it no line of its own behind a word, and what fits on the line is counted in two ways)
             let behind = self.t.at(self.lexer.tok_end);
-            if behind != 10 && !(behind == 60 && self.t.at(self.lexer.tok_end + 1) == 47) {
+            let mut before = start - 1;
+            while matches!(self.t.at(before), 32 | 9) {
+                before -= 1;
+            }
+            if (behind != 10 && !(behind == 60 && self.t.at(self.lexer.tok_end + 1) == 47))
+                || !matches!(self.t.at(before), 10 | 62)
+            {
                 return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
             return Ok(self.node1(k::JSXSpreadChild, start, self.lexer.tok_end, expression));

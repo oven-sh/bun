@@ -1421,6 +1421,9 @@ impl Quick {
                         }
                         op::FillSep => {
                             mode = self.printer.st.at(sp - 1);
+                            if mode == BREAK && self.printer.st.at(sp - 2) == FLAT {
+                                break 's2;
+                            }
                             pc += 1;
                             continue 'l1;
                         }
@@ -2097,6 +2100,11 @@ impl Quick {
                 }
                 op::FillSep => {
                     mode = self.printer.st.at(sp - 1);
+                    // What is filled breaks where it is full, also in something that is printed flat: a state of a conditional group but the
+                    // last. The long way prints all of that flat.
+                    if mode == BREAK && self.printer.st.at(sp - 2) == FLAT {
+                        return Err(self.rare(rare::BROKEN));
+                    }
                     pc += 1;
                 }
                 op::FillClose => {

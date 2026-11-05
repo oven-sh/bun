@@ -220,7 +220,11 @@ impl Quick {
             }
             if self.lexer.tok == tk::Name || self.lexer.tok == tk::This {
                 let name = self.identifier()?;
-                if self.word() == w::Is && self.lexer.tok_nl == 0 {
+                // (on the next line: a guard for some parsers, a name for others)
+                if self.word() == w::Is && self.lexer.tok_nl != 0 {
+                    return Err(self.text_refuse());
+                }
+                if self.word() == w::Is {
                     self.not_in_babel()?;
                     self.next()?;
                     self.unmark(m);
@@ -958,9 +962,14 @@ impl Quick {
                     }
                 } else if self.lexer.tok == tk::Name
                     && (self.word() == w::Readonly || self.word() == w::Writeonly)
-                    && self.peek()? == tk::Name
                 {
-                    variance = self.flow_parse_variance()?;
+                    let after = self.peek()?;
+                    if after == tk::Name {
+                        variance = self.flow_parse_variance()?;
+                    } else if after == tk::BracketL {
+                        // (`[readonly []]`: the long way takes the word for a variance and drops it)
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
+                    }
                 }
                 let mut is_labeled = variance != 0;
                 if !is_labeled && self.is_word() {

@@ -3357,8 +3357,10 @@ impl Quick {
         let n = self.next_char_index(s);
         let d = self.t.at(n);
         if (CC.at(d) & ID_START) != 0 {
-            // in, instanceof; `with` behind an import
-            if (d == 105 && self.t.at(n + 1) == 110) || (d == 119 && self.t.at(n + 1) == 105) {
+            // in, instanceof; `is` behind a type; `with` behind an import
+            if (d == 105 && matches!(self.t.at(n + 1), 110 | 115))
+                || (d == 119 && self.t.at(n + 1) == 105)
+            {
                 return self.no(refusal::NoSemicolon);
             }
         } else if d != 125

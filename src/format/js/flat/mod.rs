@@ -457,7 +457,18 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
                 let end = strings::index_of_char_usize(tail, b'\n').unwrap_or(tail.len());
                 tail.get(end..).unwrap_or_default()
             }
-            _ => return !starts_line && rest.starts_with(b"/*"),
+            _ if !rest.starts_with(b"/*") => return false,
+            _ if !starts_line => return true,
+            // `a;⏎/* b */;`: the `;` is an empty statement, which isn't printed, and the comment follows `a;` on its line.
+            // `a⏎/* b */,`: the comment is printed before the comma.
+            _ => {
+                let end = strings::index_of(rest, b"*/").map_or(rest.len(), |at| at + 2);
+                let mut behind = rest.get(end..).unwrap_or_default();
+                while let [b' ' | b'\t', tail @ ..] = behind {
+                    behind = tail;
+                }
+                return matches!(behind, [b';' | b',', ..]);
+            }
         };
     }
 }

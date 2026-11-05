@@ -4492,6 +4492,8 @@ describe("TypeScript that the long way rejects", () => {
     });
   }
   expectRejected("a.ts", [
+    // await, a block comment and what is no word, in a namespace
+    'module a{await/**/{""(){}}}',
     // a test of a case that ends with parentheses where an arrow function could stand
     "switch($){case()=>(a):{if(b){c}}}",
     "switch($){case a=(b):{if(b){c}}}",
@@ -5812,6 +5814,36 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", "for(e=class{e=n\nin\na};;){}\n"],
     // A comment in an index signature without a parameter.
     ["a.ts", "--print-width=131", "`${class<a>{a():c\n[/**/]}}`\n"],
+    // Flow: `is` on the line behind the name that a function type returns.
+    ["a.js.flow", "", "const d:()=>d\nis\ne\n"],
+    ["a.js.flow", "", "type a=(d)=>d\nis\ne\n"],
+    ["a.js", "", "//@flow\nconst\nd:()=>d\nis\n"],
+    ["a.js", "--print-width=69", "//@flow\nclass\no{e:()=>a\nis}\n"],
+    // A comment in the value of a field with a private name.
+    ["a.cjs", "", "class e{#l=([]/**/)}\n"],
+    // What is filled breaks in something that is printed flat.
+    ["a.cjs", "--print-width=9", "a(()=>{(o())},+[1,23])\n"],
+    // Comments: where an element of an array is left out, behind a line comment and a `)`, in a template literal type.
+    ["a.mjs", "--print-width=88", "d=/**/[(h).l,//\n,/**/ /**/]\n"],
+    ["a.jsx", "--print-width=32", "u(([]//\n)/**/ /**/)\n"],
+    ["a.ts", "--print-width=47", "{type a=`${(unique//\nsymbol)}`}\n"],
+    // A block comment on the next line, before a `;` or a `,`.
+    ["a.d.ts", "--print-width=20", "const{}=a?.();\n/**/;/**/;(l)\n"],
+    ["a.jsx", "--print-width=14", "({\na,[[]]:b\n/**/,/**/\nb})\n"],
+    // Flow: `readonly` before a bracket in a tuple, `a<>` and a blank before a `)`.
+    ["a.js", "--print-width=48", "//@flow\ntype a=[([])&e<{a:T}>,readonly[]]\n"],
+    ["a.js", "--print-width=12", "//@flow\nasync function f(){(async()=>{if(a){c<(a<> )>(r())}else{t()}})}\n"],
+    // TypeScript: `await` is a name in a namespace, also before a block comment.
+    ["a.mts", "", "module a{await/**/(b)}\n"],
+    ["a.ts", "--print-width=38", 'module""{e=(await/**/``)as e}\n'],
+    // A conditional expression in the parentheses of a cast of JSDoc, before a call or a member.
+    ["a.js", "--print-width=13", "await/**@type*/(a?class{}((e)):o)()\n"],
+    ["a.js", "--print-width=13", "x=/**@type*/(aaaa?bbbb:cccc).d\n"],
+    // A spread between tags behind a word.
+    ["a.js", "--print-width=63", '<a>v{...it("",()=>{k})}</a>\n'],
+    // Flow: a cast as a computed key, a comment before the type arguments of what is implemented.
+    ["a.js", "--print-width=25 --tab-width=8", "//@flow\nif(d){({[(1:y)]:d})}\n"],
+    ["a.js", "--print-width=81", "//@flow\nclass a extends o implements a\n//\n<>{static{export default{}}}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {
@@ -6058,6 +6090,10 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "function f() {\n  break\u00a0;\n}\n",
   ]);
   expectRejected("a.js.flow", "a.js.flow", [
+    // `is` on the line behind the name that a function type returns, and nothing behind it
+    "const d:()=>d\nis",
+    "type a=()=>d\nis",
+    "declare function f(d):d\nis",
     // a backslash in the word behind what may be the type parameters of a function
     "x=<div>\\</div>",
     "f(<div>a\\</div>)",
@@ -6214,6 +6250,11 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "component A(@a b) {}\n",
   ]);
   expectRejected("a.mjs", "a.mjs", [
+    // parentheses as the body of an arrow function before the `:` of a conditional expression and another arrow function
+    "h?()=>({}):d=>(t)",
+    "h?()=>(a):d=>t",
+    "h?()=>()=>(a):d=>t",
+    "h?async()=>(a):d=>t",
     // await in the value of a field, in an object on several lines
     'class a{\na={\n"":await a}}',
     // default
@@ -6278,6 +6319,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "const a = <b.c-d />;\n",
   ]);
   expectRejected("a.cjs", "a.cjs", [
+    // a name of JSX that goes on beyond ASCII behind a `-`, in what is parsed a second time
+    "export default{a(){return{a:c=>{(<a é-文><b></b></a>)}}}}",
     // using
     "using a = b;\n",
   ]);

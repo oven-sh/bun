@@ -450,8 +450,7 @@ fn message_with_type_and_level_(
     })
 }
 
-/// Set once a `process.stdout` or `process.stderr` stream exists whose `write`
-/// user code can replace. Process-wide: a spurious `true` only runs the per-VM lookup.
+/// Set once a stream exists whose `write` user code can replace.
 static STDIO_WRITE_STREAM_EXISTS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -462,8 +461,7 @@ pub extern "C" fn Bun__Console__onStdioWriteStreamCreated() {
 }
 
 unsafe extern "C" {
-    /// `BunProcess.cpp`: the stream for `fd` when its `write` is no longer the
-    /// one Bun installed, otherwise the empty value. Runs no user code, cannot throw.
+    /// `BunProcess.cpp`. The stream for `fd` once its `write` was replaced, else empty. Runs no user code.
     safe fn Bun__Process__stdioStreamWithReplacedWrite(global: &JSGlobalObject, fd: i32)
     -> JSValue;
 }
@@ -477,9 +475,7 @@ fn replaced_stdio_write_stream(global: &JSGlobalObject, use_stderr: bool) -> JSV
     Bun__Process__stdioStreamWithReplacedWrite(global, if use_stderr { 2 } else { 1 })
 }
 
-/// Runs `f` against the sink this console message belongs on: the native
-/// buffered writer, or one call of a replaced `process.std{out,err}.write`
-/// with the whole message, as node's `kWriteToConsole` does.
+/// Runs `f` on the native writer, or on a buffer handed to a replaced `process.std{out,err}.write`.
 fn with_console_sink<R>(
     global: &JSGlobalObject,
     use_stderr: bool,
@@ -494,8 +490,7 @@ fn with_console_sink<R>(
 
     let stream = replaced_stdio_write_stream(global, use_stderr);
     let console: *mut ConsoleObject = vm_console(global);
-    // SAFETY: see [`vm_console`]. A raw deref, so no `&mut ConsoleObject` is
-    // held across `f`, which can re-enter JS.
+    // SAFETY: see [`vm_console`]. A raw deref: `f` can re-enter JS.
     let native: &mut bun_core::io::Writer = unsafe {
         if use_stderr {
             (*console).error_writer()

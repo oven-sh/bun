@@ -4087,8 +4087,7 @@ void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue
     Bun__Console__onStdioWriteStreamCreated();
 }
 
-// The `write` the stream has now, read with getDirect so no user code runs. Empty when no object on
-// the chain has a direct `write`.
+// The `write` the stream has now, read with getDirect so no user code runs. Empty if none is direct.
 JSValue Process::resolveStdioWrite(JSC::VM& vm, unsigned slot)
 {
     const Identifier& name = WebCore::builtinNames(vm).writePublicName();

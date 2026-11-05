@@ -1,5 +1,5 @@
 status: 0
-script: 178386cfcb72b709
+script: 352e0d34511bafda
 ---
     ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 2
 write 14 14 | closed: True
@@ -43,23 +43,137 @@ a descriptor xyz | closed: True
     ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
     ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
 in an expression 6 ['xyz', 'xyz', 'xyz'] | closed: True
+-- the other methods that keep nothing
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 24
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 25
+unbuffered readline b'one\n' | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 26
+unbuffered readlines [b'one\n', b'two\n'] | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 28
+unbuffered readinto 3 bytearray(b'one') | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 29
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 29
+readinto 3 2 bytearray(b'oon') | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 31
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 31
+read1, peek b'one\ntwo\n' b'one' | closed: True
+r -1
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 34
+seek 1 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 35
+tell 0 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 36
+flush None | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 37
+fileno True | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 38
+isatty False | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 39
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 39
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 39
+what it can do True False True | closed: True
+rb -1
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 34
+seek 1 | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 35
+tell 0 | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 36
+flush None | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 37
+fileno True | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 38
+isatty False | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 39
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 39
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 39
+what it can do True False True | closed: True
+rb 0
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 34
+seek 1 | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 35
+tell 0 | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 36
+flush None | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 37
+fileno True | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 38
+isatty False | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 39
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 39
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 39
+what it can do True False True | closed: True
+r+ -1
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 34
+seek 1 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 35
+tell 0 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 36
+flush None | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 37
+fileno True | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 38
+isatty False | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 39
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 39
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 39
+what it can do True True True | closed: True
+r+b -1
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 34
+seek 1 | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 35
+tell 0 | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 36
+flush None | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 37
+fileno True | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 38
+isatty False | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 39
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 39
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 39
+what it can do True True True | closed: True
+ab -1
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 34
+seek 1 | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 35
+tell 8 | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 36
+flush None | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 37
+fileno True | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 38
+isatty False | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 39
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 39
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 39
+what it can do False True True | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r+' encoding='utf-8'> | line 40
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 40
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb+' closefd=True> | line 40
+truncate 5 4 3 3 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 41
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P2' mode='w' encoding='utf-8'> | line 41
+two in one call None 3 | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 42
+    ResourceWarning unclosed file <_io.BufferedWriter name='P2'> | line 42
+two in one call 3 3 | closed: True
 -- the use raises
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 23
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 46
 TypeError argument should be integer or None, not 'str' | closed: True
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 23
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 46
 UnsupportedOperation not writable | closed: True
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 23
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 46
 TypeError write() argument must be str, not int | closed: True
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 23
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 46
 UnsupportedOperation not readable | closed: True
-    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 23
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 46
 TypeError a bytes-like object is required, not 'str' | closed: True
-    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 28
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 30
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 51
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 53
 UnicodeDecodeError invalid start byte | closed: True
 -- an argument is worked out in between
   meanwhile | closed: False
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 42
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 65
 write(f()) 4 4 | closed: True
 the argument raises | closed: True
 -- many
@@ -67,9 +181,9 @@ the argument raises | closed: True
 -- somebody else holds it
 a variable 2999 | closed: False
 a bound method 2999 | closed: False
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 63
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 86
 found by gc.get_objects() 4 1 False | closed: False
 with seen | closed: False
 a class of the program b'seen' False | closed: False
-    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 89
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 112
 os._exit() written | closed: True

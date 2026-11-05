@@ -47,6 +47,29 @@ show("keywords", open(file=p, mode="r", encoding="latin-1").read(2))
 show("a descriptor", open(os.open(p, os.O_RDONLY)).read())
 show("in an expression", len(open(p).read()) + len(open(p).read()), [open(p).read() for i in range(3)])
 
+print("-- the other methods that keep nothing")
+q = p + "2"
+open(p, "w").write("one\ntwo\n")
+show("unbuffered readline", open(p, "rb", 0).readline())
+show("unbuffered readlines", open(p, "rb", 0).readlines())
+target = bytearray(3)
+show("unbuffered readinto", open(p, "rb", 0).readinto(target), target)
+show("readinto", open(p, "rb").readinto(target), open(p, "rb").readinto1(memoryview(target)[1:]), target)
+target.clear()   # The view has gone with the call.
+show("read1, peek", open(p, "rb").read1(), open(p, "rb").peek()[:3])
+for mode, buffering in (("r", -1), ("rb", -1), ("rb", 0), ("r+", -1), ("r+b", -1), ("ab", -1)):
+    print(mode, buffering)
+    show("seek", open(p, mode, buffering).seek(1))
+    show("tell", open(p, mode, buffering).tell())
+    show("flush", open(p, mode, buffering).flush())
+    show("fileno", open(p, mode, buffering).fileno() == free)
+    show("isatty", open(p, mode, buffering).isatty())
+    show("what it can do", open(p, mode, buffering).readable(), open(p, mode, buffering).writable(), open(p, mode, buffering).seekable())
+show("truncate", open(p, "r+").truncate(5), open(p, "r+b").truncate(4), open(p, "r+b", 0).truncate(3), os.path.getsize(p))
+show("two in one call", open(q, "w").writelines(open(p)), os.path.getsize(q))
+show("two in one call", open(q, "wb").write(open(p, "rb").read()), os.path.getsize(q))
+os.remove(q)
+
 print("-- the use raises")
 for use in (lambda: open(p).read("x"), lambda: open(p).write("x"), lambda: open(p, "w").write(1), lambda: open(p, "w").read(), lambda: open(p, "wb").write("x")):
     try:

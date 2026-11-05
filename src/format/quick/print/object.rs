@@ -219,7 +219,11 @@ impl Quick {
         let key = self.n.at(member + 4);
         if (self.n.at(member) & F_COMPUTED) != 0 {
             self.text(LBRACKET);
+            // Whoever asks whether the key is one short text (isObjectPropertyWithShortKey) has to see the boundaries in it.
+            let possible = self.doc.suffix_possible;
+            self.doc.suffix_possible = true;
             self.print(key)?;
+            self.doc.suffix_possible = possible;
             self.text(RBRACKET);
             return Ok(());
         }

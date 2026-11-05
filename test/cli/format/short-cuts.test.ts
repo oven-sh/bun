@@ -3523,6 +3523,12 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js", "", "const {\n  A\n  ,\n\n  B,\n} = c;\n"],
     ["a.js", "", "foo = {a\n\n  ,\n  b: 'b'};\n"],
     ["a.js.flow", "", "type A = {|\n  a: number\n  ,\n\n  b: boolean,\n|};\n"],
+    // A member expression as a computed key is no plain text: what follows it is measured anew.
+    [
+      "a.ts",
+      "--tab-width=64",
+      "export const rate = {\n  a() {\n    return {\n      [user.id]: user,\n    };\n  },\n};\n",
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

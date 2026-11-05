@@ -251,8 +251,10 @@ print(len(suspended))
 });
 
 // It takes seconds of work for the difference to show, which these builds would make minutes.
-test.skipIf(isDebug || isASAN || isWindows)("idle threads do not collect again and again beside a thread that works", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+test.skipIf(isDebug || isASAN || isWindows)(
+  "idle threads do not collect again and again beside a thread that works",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(`
 import argparse, collections, gc, hashlib, inspect, io, os, select, threading, tokenize
 
 def full_collections_during(work):
@@ -287,11 +289,12 @@ threading.Thread(target=waits, daemon=True).start()
 threading.Thread(target=select.select, args=([os.pipe()[0]], [], []), daemon=True).start()
 print(full_collections_during(tokenizes), full_collections_during(hashes))
 `);
-  expect(stderr).toBe("");
-  const [whileTokenizing, whileHashing] = stdout.trim().split(" ").map(Number);
-  // A handful: the engine's own, and those of the idle threads, which come less and less often. One every 50 ms or so was 20 and more
-  // while tokenizing, and anything up to that while hashing.
-  expect(whileTokenizing).toBeLessThan(10);
-  expect(whileHashing).toBeLessThan(5);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const [whileTokenizing, whileHashing] = stdout.trim().split(" ").map(Number);
+    // A handful: the engine's own, and those of the idle threads, which come less and less often. One every 50 ms or so was 20 and more
+    // while tokenizing, and anything up to that while hashing.
+    expect(whileTokenizing).toBeLessThan(10);
+    expect(whileHashing).toBeLessThan(5);
+    expect(exitCode).toBe(0);
+  },
+);

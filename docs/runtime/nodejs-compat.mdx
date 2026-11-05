@@ -149,8 +149,6 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
-Heap usage statistics include allocations since the most recent garbage collection. `process.memoryUsage()` and `Worker.getHeapStatistics()` use the same measurement.
-
 🟡 `writeHeapSnapshot`, `getHeapSnapshot`, `getHeapStatistics`, `getHeapSpaceStatistics`, `GCProfiler` and `startupSnapshot` are implemented. The heap statistics describe JavaScriptCore's single heap, and `setFlagsFromString` ignores the flags it is given. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Missing `queryObjects`, `startCpuProfile`, `startHeapProfile`, `Serializer`/`Deserializer`, `takeCoverage`/`stopCoverage` and `promiseHooks`. For profiling, use [`bun:jsc`](/project/benchmarking#javascript-heap-stats) instead.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
@@ -378,6 +376,8 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 🟡 `now()`, `timeOrigin`, `mark()`, `measure()` and `getEntries()` are implemented. The Node.js additions (`eventLoopUtilization()`, `nodeTiming`, `timerify()`) only exist once `node:perf_hooks` has been loaded. `eventLoopUtilization()` always returns zeros and `nodeTiming` holds placeholder values.
 
 ### [`process`](https://nodejs.org/api/process.html)
+
+Heap usage statistics include allocations since the most recent garbage collection. `process.memoryUsage()` and `Worker.getHeapStatistics()` use the same measurement.
 
 🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented: `buffer`, `config`, `constants`, `crypto/x509`, `fs`, `http_parser`, `natives`, `tty_wrap`, `util` and `uv` are available, the rest throw. Setting `process.title` is a no-op on macOS & Linux. `getActiveResourcesInfo()`, `_getActiveHandles()` and `_getActiveRequests()` always return an empty array, `setSourceMapsEnabled()` is a no-op, and `process.report.writeReport()` writes nothing. Missing `sourceMapsEnabled` and `addUncaughtExceptionCaptureCallback`.
 

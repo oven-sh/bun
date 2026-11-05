@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Console } from "node:console";
 import { bunEnv, bunExe } from "harness";
+import { Console } from "node:console";
 
 import { Writable } from "node:stream";
 

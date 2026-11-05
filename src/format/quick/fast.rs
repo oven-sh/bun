@@ -26,7 +26,7 @@ use crate::ast::{
 use crate::lexer::{KW_LENGTHS, kw, tk};
 use crate::options::{QUOTE_PROPS_AS_NEEDED, TRAILING_COMMA_ALL, TRAILING_COMMA_NONE};
 use crate::parse::core::{SCOPE_DERIVED_CONSTRUCTOR, SCOPE_FUNCTION, SCOPE_TOP};
-use crate::{Bytes, Quick, R, Words, div};
+use crate::{Bytes, Quick, R, Words, bytes_before, div, where_byte_is, where_not_printable};
 
 pub(crate) struct Fast {
     // ---- what read_statement() found
@@ -577,9 +577,7 @@ impl Quick {
     }
 
     pub(crate) fn word_end(&self, mut p: i32) -> i32 {
-        while (CC.at(self.t.at(p)) & ID_PART) != 0 {
-            p += 1;
-        }
+        p = self.name_end(p);
         return p;
     }
 
@@ -644,8 +642,18 @@ impl Quick {
         let mut q = p + 1;
         let mut other = false;
         loop {
-            while STRING_STOP.at(self.t.at(q)) == 0 {
-                q += 1;
+            // up to a quote, a backslash, or what is not printable ASCII
+            loop {
+                let v = self.t.u64_at(q);
+                let stops = where_not_printable(v)
+                    | where_byte_is(v, b'"')
+                    | where_byte_is(v, b'\'')
+                    | where_byte_is(v, b'\\');
+                if stops != 0 {
+                    q += bytes_before(stops);
+                    break;
+                }
+                q += 8;
             }
             if q > end {
                 return self.no(refusal::Long);
@@ -2343,9 +2351,7 @@ impl Quick {
                 kw = self.fast.scanned_keyword;
             } else {
                 q = p + 1;
-                while (CC.at(self.t.at(q)) & ID_PART) != 0 {
-                    q += 1;
-                }
+                q = self.name_end(q);
                 kw = if (KW_LENGTHS.at(c).wrapping_shr((q - p) as u32) & 1) != 0 {
                     self.keyword_at(p, q - p)
                 } else {
@@ -2630,9 +2636,7 @@ impl Quick {
                     }
                 }
                 q = r + 1;
-                while (CC.at(self.t.at(q)) & ID_PART) != 0 {
-                    q += 1;
-                }
+                q = self.name_end(q);
                 if sh > SH_MEMBER || sh == SH_LITERAL {
                     sh = SH_CHAIN;
                 } else {
@@ -5287,17 +5291,6 @@ impl Quick {
         };
     }
 }
-// 1 for what ends the plain part of a line comment: the end of the line, and what needs a look
-pub(crate) static COMMENT_STOP: [u8; 256] = [
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
 impl Quick {
     /// Behind p, the end of a line, in a list of statements (or of members) that is indented by `column`: the comments up to the next item, if each of them stands alone on its lines, as it
     /// is printed. Prettier gives such comments to the item that follows, and prints them in front of it with the empty lines of the source: see claim_comments() of the parser, which
@@ -5339,8 +5332,18 @@ impl Quick {
             if self.t.at(q + 1) == 47 {
                 q = v;
                 loop {
-                    while q < limit && COMMENT_STOP.at(self.t.at(q)) != 1 {
-                        q += 1;
+                    // up to the end of a line, a 0, or the first byte of U+2028
+                    loop {
+                        let v = self.t.u64_at(q);
+                        let stops = where_byte_is(v, 10)
+                            | where_byte_is(v, 13)
+                            | where_byte_is(v, 0)
+                            | where_byte_is(v, 0xe2);
+                        if stops != 0 {
+                            q += bytes_before(stops);
+                            break;
+                        }
+                        q += 8;
                     }
                     if self.t.at(q) == 10 {
                         break;
@@ -5369,6 +5372,19 @@ impl Quick {
                 q += 2;
                 last_line = start;
                 loop {
+                    // up to a `*`, the end of a line, or a 0
+                    loop {
+                        let v = self.t.u64_at(q);
+                        let stops = where_byte_is(v, b'*')
+                            | where_byte_is(v, 10)
+                            | where_byte_is(v, 13)
+                            | where_byte_is(v, 0);
+                        if stops != 0 {
+                            q += bytes_before(stops);
+                            break;
+                        }
+                        q += 8;
+                    }
                     let c = self.t.at(q);
                     if c == 42 && self.t.at(q + 1) == 47 {
                         break;
@@ -5493,9 +5509,7 @@ impl Quick {
     pub(crate) fn statement(&mut self, start: i32) -> R<bool> {
         let first = self.t.at(start);
         let mut end = start + 1;
-        while (CC.at(self.t.at(end)) & ID_PART) != 0 {
-            end += 1;
-        }
+        end = self.name_end(end);
         let word = if (KW_LENGTHS.at(first).wrapping_shr((end - start) as u32) & 1) != 0 {
             self.keyword_at(start, end - start)
         } else {

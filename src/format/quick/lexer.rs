@@ -1094,26 +1094,8 @@ impl Quick {
         self.lexer.tok_start = p;
         self.lexer.tok_flags = 0;
         if (CT.at(c) & C_ASCII_START) != 0 {
-            // A name: nearly every second token. Four bytes at a time: a byte of `ok` has its top bit set if that byte of v is a letter, a
-            // digit or "_". (x + (0x80 - low)) & ~(x + (0x7f - high)) has it set for low <= x <= high, for x below 0x80, without carries.
-            let mut q = p + 1;
-            loop {
-                let v = self.t.i32_at(q);
-                let x = v & 0x7f7f7f7f;
-                let l = x | 0x20202020;
-                let ok = ((l.wrapping_add(0x1f1f1f1f) & !l.wrapping_add(0x05050505))
-                    | (x.wrapping_add(0x50505050) & !x.wrapping_add(0x46464646))
-                    | !(x ^ 0x5f5f5f5f).wrapping_add(0x7f7f7f7f))
-                    & !v
-                    & HIGH_BITS;
-                if ok == HIGH_BITS {
-                    q += 4;
-                    continue;
-                }
-                let bad = ok ^ HIGH_BITS;
-                q += (31 - (bad.isolate_lowest_one()).leading_zeros() as i32) >> 3;
-                break;
-            }
+            // A name: nearly every second token.
+            let mut q = self.name_end(p + 1);
             let mut e = self.t.at(q);
             // "$", which the words do not know
             while (CT.at(e) & C_ASCII_PART) != 0 {

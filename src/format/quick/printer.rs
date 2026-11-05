@@ -736,12 +736,12 @@ impl Quick {
                                     break 's2;
                                 }
                                 let s = ((w as u32) >> 13) as i32;
-                                // Eight bytes at a time, and up to seven too many: what follows overwrites them.
-                                self.printer.out.put_u64(o, self.t.u64_at(s));
-                                let mut k: i32 = 8;
+                                // Sixteen bytes at a time, and up to fifteen too many: what follows overwrites them.
+                                self.printer.out.put_u128(o, self.t.u128_at(s));
+                                let mut k: i32 = 16;
                                 while k < len {
-                                    self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                    k += 8;
+                                    self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                    k += 16;
                                 }
                                 o += len;
                                 pos += len;
@@ -755,11 +755,11 @@ impl Quick {
                                 break 's2;
                             }
                             let s = self.d.at(pc + 1);
-                            self.printer.out.put_u64(o, self.t.u64_at(s));
-                            let mut k: i32 = 8;
+                            self.printer.out.put_u128(o, self.t.u128_at(s));
+                            let mut k: i32 = 16;
                             while k < len {
-                                self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                k += 8;
+                                self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                k += 16;
                             }
                             o += len;
                             pos += len;
@@ -1073,13 +1073,13 @@ impl Quick {
                                                 op::Static => {
                                                     let len = (v >> 5) & 255;
                                                     let s = ((v as u32) >> 13) as i32;
-                                                    self.printer.out.put_u64(o, self.t.u64_at(s));
-                                                    let mut k: i32 = 8;
+                                                    self.printer.out.put_u128(o, self.t.u128_at(s));
+                                                    let mut k: i32 = 16;
                                                     while k < len {
                                                         self.printer
                                                             .out
-                                                            .put_u64(o + k, self.t.u64_at(s + k));
-                                                        k += 8;
+                                                            .put_u128(o + k, self.t.u128_at(s + k));
+                                                        k += 16;
                                                     }
                                                     o += len;
                                                     pc += 1;
@@ -1088,13 +1088,13 @@ impl Quick {
                                                 op::Text => {
                                                     let len = ((v as u32) >> 5) as i32;
                                                     let s = self.d.at(pc + 1);
-                                                    self.printer.out.put_u64(o, self.t.u64_at(s));
-                                                    let mut k: i32 = 8;
+                                                    self.printer.out.put_u128(o, self.t.u128_at(s));
+                                                    let mut k: i32 = 16;
                                                     while k < len {
                                                         self.printer
                                                             .out
-                                                            .put_u64(o + k, self.t.u64_at(s + k));
-                                                        k += 8;
+                                                            .put_u128(o + k, self.t.u128_at(s + k));
+                                                        k += 16;
                                                     }
                                                     o += len;
                                                     pc += 2;
@@ -1106,11 +1106,11 @@ impl Quick {
                                                         let s = self.d.at(pc + 1);
                                                         let mut k: i32 = 0;
                                                         while k < len {
-                                                            self.printer.out.put_u64(
+                                                            self.printer.out.put_u128(
                                                                 o + k,
-                                                                self.t.u64_at(s + k),
+                                                                self.t.u128_at(s + k),
                                                             );
-                                                            k += 8;
+                                                            k += 16;
                                                         }
                                                         o += len;
                                                         pc += 1;
@@ -1179,8 +1179,8 @@ impl Quick {
                                                     while k < len {
                                                         self.printer
                                                             .out
-                                                            .put_u64(o + k, self.t.u64_at(s + k));
-                                                        k += 8;
+                                                            .put_u128(o + k, self.t.u128_at(s + k));
+                                                        k += 16;
                                                     }
                                                     o += len;
                                                     extra = extra + len - self.d.at(pc + 2);
@@ -1342,8 +1342,8 @@ impl Quick {
                             let s = self.d.at(pc + 1);
                             let mut k: i32 = 0;
                             while k < len {
-                                self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                k += 8;
+                                self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                k += 16;
                             }
                             o += len;
                             pos += len;

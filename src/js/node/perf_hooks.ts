@@ -156,15 +156,15 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
     }
     if (requested) {
       const nodeTypes = requested.filter(type => kNodeEntryTypes.has(type));
-      const namesGC = nodeTypes.includes("gc");
-      // The native class knows no 'gc' type. It makes its checks for a request that names 'gc', as it did while the registry had no such type either.
-      if (namesGC) super.observe(options);
       let registration = this[kNodeObserver];
-      if (nodeTypes.length > 0 && !registration) {
-        registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
+      if (nodeTypes.length > 0) {
+        const namesGC = nodeTypes.includes("gc");
+        // The native class knows no 'gc' type. It makes its checks for a request that names 'gc', as it did while the registry had no such type either.
+        if (namesGC) super.observe(options);
+        registration ??= this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
+        if (namesGC) require("internal/perf_hooks/gc").observeGC(registration);
       }
       if (registration) {
-        if (namesGC) require("internal/perf_hooks/gc").observeGC(registration);
         if (isTypeMode) {
           // observe({type}) appends to the observed set per the spec.
           registration.observe([...registration.types, ...nodeTypes]);

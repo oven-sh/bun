@@ -22,12 +22,10 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14), Winsock /
 // console-resize watcher / suspend-resume detection initialized on first use
 // instead of in uv__init, with uv__winsock_ensure() for callers that reach
-// ws2_32 directly (oven-sh/libuv#15), LoadLibraryExW for those lazy
-// loads (oven-sh/libuv#16), and a thread's explicit stack size taken as the
-// size to reserve, not to commit (oven-sh/libuv#19, from upstream
-// libuv#5279).
+// ws2_32 directly (oven-sh/libuv#15), and LoadLibraryExW for those lazy
+// loads (oven-sh/libuv#16).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "aaffdcbd6768728ed4857e4b1315be87af66ee86";
+const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
 
 // prettier-ignore
 const SHARED = [
@@ -72,11 +70,18 @@ export const libuv: Dependency = {
   // win-poll-no-reendgame-after-close: doesn't queue the endgame after poll_cb
   // if a nested uv_run inside poll_cb already ran it. Otherwise close_cb runs
   // twice.
+  //
+  // win-thread-stack-reservation: upstream libuv/libuv#5279 (libuv 1.53.0).
+  // uv_thread_create_ex passes STACK_SIZE_PARAM_IS_A_RESERVATION with an
+  // explicit stack size. Without it Windows commits the whole size when the
+  // thread starts: 8 MB for each thread of the pool. Delete the file when
+  // LIBUV_COMMIT has oven-sh/libuv#19, the same commit for the fork.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
+    "patches/libuv/win-thread-stack-reservation.patch",
   ],
 
   build: () => ({

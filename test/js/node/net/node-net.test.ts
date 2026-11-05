@@ -739,6 +739,38 @@ it.skipIf(!hasIPv6())("connects to an IPv4-mapped IPv6 address", async () => {
   }
 });
 
+// The server's thread is busy until the client has gone.
+it.if(isWindows || isLinux)("a connection that is reset before it is accepted is handed out", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const seen = [];
+      const server = require("net").createServer(socket => {
+        seen.push("connection");
+        socket.on("error", error => seen.push(error.code));
+        socket.on("close", () => {
+          console.log(seen.join(" "));
+          server.close();
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address();
+        const client = "const socket = require('net').connect(" + port + ", '127.0.0.1', () => socket.resetAndDestroy())";
+        require("child_process").spawnSync(process.execPath, ["-e", client], { stdio: "inherit" });
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("connection ECONNRESET\n");
+  expect(exitCode).toBe(0);
+});
+
 it("should handle connection error (unix)", done => {
   let errored = false;
 

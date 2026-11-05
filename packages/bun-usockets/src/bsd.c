@@ -60,6 +60,7 @@ static void init_debug_logging() {
 #else /* _WIN32 */
 #include <mstcpip.h>
 #include <mswsock.h>
+#include <winternl.h>
 #endif
 
 #if defined(__APPLE__)
@@ -858,6 +859,72 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
     return addr->port;
 }
 
+#ifdef _WIN32
+static void *bsd_winsock_extension(SOCKET s, GUID guid) {
+    void *function = NULL;
+    DWORD bytes;
+    WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &function, sizeof(function), &bytes, NULL, NULL);
+    return function;
+}
+
+static int bsd_has_other_handles(SOCKET s) {
+    PUBLIC_OBJECT_BASIC_INFORMATION object;
+    return NtQueryObject((HANDLE) s, ObjectBasicInformation, &object, sizeof(object), NULL) != 0 || object.HandleCount > 1;
+}
+
+/* For a listening socket that other processes have too. AcceptEx() can be taken back when one of them was faster,
+ * but it drops a connection that was reset before its turn, which accept() hands out. */
+static SOCKET bsd_accept_shared(SOCKET listener, struct bsd_addr_t *addr) {
+    WSAPOLLFD look = {listener, POLLRDNORM, 0};
+    if (WSAPoll(&look, 1, 0) <= 0) {
+        WSASetLastError(WSAEWOULDBLOCK);
+        return INVALID_SOCKET;
+    }
+
+    LPFN_ACCEPTEX accept_ex = (LPFN_ACCEPTEX) bsd_winsock_extension(listener, (GUID) WSAID_ACCEPTEX);
+    LPFN_GETACCEPTEXSOCKADDRS get_addresses = (LPFN_GETACCEPTEXSOCKADDRS) bsd_winsock_extension(listener, (GUID) WSAID_GETACCEPTEXSOCKADDRS);
+    WSAPROTOCOL_INFOW protocol;
+    int protocol_length = sizeof(protocol);
+    if (!accept_ex || !get_addresses || getsockopt(listener, SOL_SOCKET, SO_PROTOCOL_INFOW, (char *) &protocol, &protocol_length)) {
+        return INVALID_SOCKET;
+    }
+    SOCKET accepted = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, &protocol, 0,
+                                 WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (accepted == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    HANDLE event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!event) {
+        closesocket(accepted);
+        return INVALID_SOCKET;
+    }
+
+    char addresses[2 * (sizeof(struct sockaddr_storage) + 16)];
+    /* The low bit keeps the result out of a completion port that another process may have tied the socket to. */
+    OVERLAPPED overlapped = {.hEvent = (HANDLE) ((ULONG_PTR) event | 1)};
+    DWORD bytes, flags;
+    BOOL ok = accept_ex(listener, accepted, addresses, 0, sizeof(addresses) / 2, sizeof(addresses) / 2, &bytes, &overlapped);
+    if (!ok && WSAGetLastError() == ERROR_IO_PENDING) {
+        if (!HasOverlappedIoCompleted(&overlapped)) {
+            CancelIoEx((HANDLE) listener, &overlapped);
+        }
+        ok = WSAGetOverlappedResult(listener, &overlapped, &bytes, TRUE, &flags);
+    }
+    CloseHandle(event);
+
+    if (!ok || setsockopt(accepted, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *) &listener, sizeof(listener))) {
+        closesocket(accepted);
+        return INVALID_SOCKET;
+    }
+    struct sockaddr *local, *remote;
+    int local_length, remote_length;
+    get_addresses(addresses, 0, sizeof(addresses) / 2, sizeof(addresses) / 2, &local, &local_length, &remote, &remote_length);
+    memcpy(&addr->mem, remote, remote_length);
+    addr->len = remote_length;
+    return accepted;
+}
+#endif
+
 // called by dispatch_ready_poll
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
     LIBUS_SOCKET_DESCRIPTOR accepted_fd;
@@ -872,8 +939,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
     // Linux, FreeBSD
     accepted_fd = accept4(fd, (struct sockaddr *) addr, &addr->len, SOCK_CLOEXEC | SOCK_NONBLOCK);
+#elif defined(_WIN32)
+    accepted_fd = bsd_has_other_handles(fd) ? bsd_accept_shared(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len);
 #else
-    // Windows, OS X
+    // OS X
     accepted_fd = accept(fd, (struct sockaddr *) addr, &addr->len);
 #endif
 

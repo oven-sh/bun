@@ -432,9 +432,9 @@ devTest("function that is assigned to should become a live binding", {
 });
 
 // With `development.console`, console.log and console.error of the page also format their
-// arguments in the page and send the text to the dev server. The three tests below hold that
-// the page's call returns for a value that cannot print, and for a value that logs while it
-// prints.
+// arguments in the page and send the text to the dev server. The tests below hold that the
+// page's call returns for a value that cannot print, and that code of the page that logs while
+// a line is forwarded does not start a recursion.
 const consoleForwardingFiles = (script: string) => ({
   "index.html": emptyHtmlFile({
     scripts: ["index.ts"],
@@ -516,6 +516,14 @@ devTest("browser console forwarding does not throw into the page", {
     probe("value before another argument", { [custom]() { throw new Error("thrown by the function"); } }, "log", "after");
     // The console of the test client throws for a BigInt. The page still sees that.
     probe("console that throws", 1n);
+    // The forwarder counts the console calls in progress. The count goes down when the console
+    // throws, so a line that is two calls deep is still forwarded.
+    probe("getter that logs after the console threw", new (class After {
+      get a() {
+        console.log("second call after the console threw");
+        return 1;
+      }
+    })());
     console.log("done");
   `),
   htmlFiles: [],
@@ -537,13 +545,14 @@ devTest("browser console forwarding does not throw into the page", {
       "error whose stack is a symbol",
       "error",
       "value before another argument",
+      "getter that logs after the console threw",
     ];
     expect(await c.js`results`).toEqual({
       ...Object.fromEntries(returned.map(name => [name, "returned"])),
       "console that throws": "threw TypeError: Do not know how to serialize a BigInt",
     });
     // Every call that returned reached the console of the test client.
-    await c.expectMessage(...returned, "done");
+    await c.expectMessage(...returned, "second call after the console threw", "done");
 
     expect(forwardedLines(dev)).toEqual([
       "custom inspect function that throws [threw while printing]",
@@ -561,52 +570,98 @@ devTest("browser console forwarding does not throw into the page", {
       "error whose stack is a symbol Symbol(s)",
       "error TypeError: with a stack",
       "value before another argument [threw while printing] after",
+      "second call after the console threw",
+      "getter that logs after the console threw After { a: 1 }",
       "done",
     ]);
     expect(Bun.stripANSI(dev.output.lines.join("\n"))).toMatch(/\[browser\] error TypeError: with a stack\n\s+at /);
+  },
+});
 
-    // The page has loaded, so the socket of the forwarder is open and the next line goes to send().
-    const sent = await c.js`
+// The forwarder sends each line on the socket of the dev server, and a page can replace send().
+// This test logs strings only, so it does not depend on the formatter.
+devTest("browser console forwarding returns for a send() that throws or logs", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          console: true,
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "index.ts": `
+      console.log("loaded");
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    // `errors` lets the page call console.error.
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("loaded");
+    // The line arrives when the socket is open, so the next lines go to send().
+    await dev.output.waitForLine(/\[browser\].* loaded/);
+
+    const threw = await c.js`
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = () => {
         throw new Error("thrown by send");
       };
-      probe("socket that throws", 1);
-      WebSocket.prototype.send = send;
-      return results["socket that throws"];
+      try {
+        console.log("send that throws");
+        console.error("send that throws");
+        return "returned";
+      } catch (e) {
+        return "threw " + e;
+      } finally {
+        WebSocket.prototype.send = send;
+      }
     `;
-    expect(sent).toBe("returned");
-    await c.expectMessage("socket that throws");
+    expect(threw).toBe("returned");
+    await c.expectMessage("send that throws");
 
-    // The forwarder does not forward a line that a send() of the page logs from inside the send
-    // of the forwarder. The limit only keeps a build that forwards it from running until the
-    // stack is full.
-    const logged = await c.js`
+    // The line that send() logs is two console calls deep, and it is forwarded. Its own send()
+    // logs a line that is three calls deep, and that one is not. The limit of 100 only keeps a
+    // build that forwards every line from running until the stack is full.
+    const sends = await c.js`
       const send = WebSocket.prototype.send;
       let sends = 0;
       WebSocket.prototype.send = function (data) {
         if (sends++ < 100) console.log("send", data);
         return send.call(this, data);
       };
-      probe("socket that logs", 1);
-      WebSocket.prototype.send = send;
-      probe("line after the socket that logs", 2);
-      return { result: results["socket that logs"], sends };
+      try {
+        console.log("send that logs");
+      } finally {
+        WebSocket.prototype.send = send;
+      }
+      console.log("line after");
+      return sends;
     `;
-    expect(logged).toEqual({ result: "returned", sends: 1 });
-    await c.expectMessage("socket that logs", "send", "line after the socket that logs");
-    await dev.output.waitForLine(/\[browser\].* line after the socket that logs 2/);
-    const lines = forwardedLines(dev);
-    expect(lines.slice(lines.indexOf("done") + 1)).toEqual(["socket that logs 1", "line after the socket that logs 2"]);
+    expect(sends).toBe(2);
+    await c.expectMessage("send that logs", "send", "send", "line after");
+    await dev.output.waitForLine(/\[browser\].* line after/);
+    expect(forwardedLines(dev)).toEqual(["loaded", "send llsend that logs", "send that logs", "line after"]);
   },
 });
 
-// Code of the page runs while a value prints: a trap of a Proxy, a getter, a custom inspect
-// function. That code can log. Each limit below only keeps a build that never stops from
-// running until the stack is full.
+// Code of the page runs while a line is forwarded: a trap of a Proxy, a getter, a custom inspect
+// function, a built-in that the page replaced. The console of the test client runs code of the
+// page too. That code can log. The forwarder forwards a console call that is at most two calls
+// deep. Each limit below only keeps a build that forwards every call from running until the
+// stack is full.
 devTest("browser console forwarding returns for a value that logs while it prints", {
   files: consoleForwardingFiles(`
-    globalThis.calls = { trap: 0, functionTrap: 0, getter: 0, hook: 0 };
+    globalThis.calls = { trap: 0, functionTrap: 0, getter: 0, hook: 0, builtIn: 0, element: 0, has: 0 };
     const logs = new Proxy({ a: 1 }, {
       getPrototypeOf(target) {
         if (calls.trap++ < 1000) console.log("trap", logs, { self: logs });
@@ -628,7 +683,8 @@ devTest("browser console forwarding returns for a value that logs while it print
     probe("getters that log their object", new Store());
 
     // A function is not in the list of the values that print, and a custom inspect function
-    // runs before its object is in the list.
+    // runs before its object is in the list. Each of them logs again in the nested call, three
+    // calls deep.
     const logsFunction = new Proxy(function f() {}, {
       getPrototypeOf(target) {
         if (calls.functionTrap++ < 1000) console.log("function trap", logsFunction);
@@ -654,6 +710,58 @@ devTest("browser console forwarding returns for a value that logs while it print
       },
     });
     probe("value that the function added", added);
+
+    // A number prints through Object.is, and a page can replace a built-in.
+    const is = Object.is;
+    Object.is = function (a, b) {
+      if (calls.builtIn++ < 1000) console.log("Object.is", 7);
+      return is(a, b);
+    };
+    probe("built-in that logs a number", 5);
+    Object.is = is;
+
+    // The console of the test client reads each element of an array, as the console of Chrome
+    // does. So this getter also logs from inside the console's own call.
+    const elements = [1, 2, 3];
+    let nesting = 0;
+    Object.defineProperty(elements, 0, {
+      get() {
+        calls.element++;
+        if (nesting < 8) {
+          nesting++;
+          try {
+            console.log("element getter", elements);
+          } finally {
+            nesting--;
+          }
+        }
+        return 1;
+      },
+      enumerable: true,
+    });
+    probe("array whose element getter logs it", elements);
+
+    // Svelte replaces includes like this in development: after a miss, it asks each element of
+    // the array for a key. The formatter does not give it the list of the values that print.
+    const includes = Array.prototype.includes;
+    const state = Symbol("state");
+    Array.prototype.includes = function (item, from) {
+      const found = includes.call(this, item, from);
+      if (!found) {
+        for (const element of this) {
+          if (typeof element === "object" && element !== null && state in element) break;
+        }
+      }
+      return found;
+    };
+    probe("Proxy whose has trap logs, with includes replaced", new Set([new Proxy({ a: 1 }, {
+      has(target, key) {
+        calls.has++;
+        console.log("has trap");
+        return Reflect.has(target, key);
+      },
+    })]));
+    Array.prototype.includes = includes;
     console.log("done");
   `),
   htmlFiles: [],
@@ -669,8 +777,11 @@ devTest("browser console forwarding returns for a value that logs while it print
         "custom inspect function that logs its object": "returned",
         "custom inspect function that adds to the list": "returned",
         "value that the function added": "returned",
+        "built-in that logs a number": "returned",
+        "array whose element getter logs it": "returned",
+        "Proxy whose has trap logs, with includes replaced": "returned",
       },
-      calls: { trap: 9, getter: 2, functionTrap: 2, hook: 2 },
+      calls: { trap: 9, getter: 2, functionTrap: 2, hook: 2, builtIn: 2, element: 26, has: 0 },
     });
 
     const lines = forwardedLines(dev);
@@ -681,21 +792,32 @@ devTest("browser console forwarding returns for a value that logs while it print
       "getter a [Circular]",
       "getter b { of: [Circular] } [Function: Store]",
       "getters that log their object Store { a: 1, b: 2 }",
-      // Another call from code that such a call runs prints a tag for an object or a function.
-      "function trap [logged while printing]",
       "function trap [Function: f]",
       "trap that logs its Proxy of a function [Function: f]",
-      "hook [logged while printing] null 2",
       "hook text of the function null 2",
       "custom inspect function that logs its object text of the function",
       "custom inspect function that adds to the list text of the function",
       "value that the function added { added: 1 }",
+      "Object.is 7",
+      "built-in that logs a number 5",
+      // The first line is from the console's own call, where the array does not print yet.
+      "element getter [ 1, 2, 3 ]",
+      "element getter [Circular]",
+      "array whose element getter logs it [ 1, 2, 3 ]",
+      "Proxy whose has trap logs, with includes replaced Set { { a: 1 } }",
       "done",
     ]);
-    // The console of the test client got every one of these calls, each before its line was sent.
+    // The console of the test client got every one of these calls, each before its line was
+    // sent. It also got the calls that are three or more calls deep.
     const names =
-      /^(function trap|getter [ab]|hook|trap( that logs its Proxy( of a function)?)?|getters that log their object|custom inspect function that (logs its object|adds to the list)|value that the function added|done)/;
-    await c.expectMessageInAnyOrder(...lines.map(line => names.exec(line)![0]));
+      /^(function trap|getter [ab]|hook|trap( that logs its Proxy( of a function)?)?|getters that log their object|custom inspect function that (logs its object|adds to the list)|value that the function added|Object\.is|built-in that logs a number|element getter|array whose element getter logs it|Proxy whose has trap logs, with includes replaced|done)/;
+    await c.expectMessageInAnyOrder(
+      ...lines.map(line => names.exec(line)![0]),
+      "function trap",
+      "hook",
+      "Object.is",
+      ...Array.from({ length: 21 }, () => "element getter"),
+    );
   },
 });
 
@@ -718,8 +840,40 @@ devTest("browser console forwarding does not make console.error throw", {
         }
       }
     })(), "error");
+    // console.log and console.error count their calls together, so the third call here is not
+    // forwarded.
+    probe("getters that call console.log and console.error", new (class First {
+      get a() {
+        console.log("second call", new (class Second {
+          get b() {
+            console.error("third call");
+            return 2;
+          }
+        })());
+        return 1;
+      }
+    })(), "error");
     // The console of the test client calls this function and throws. The page still sees that.
     probe("console that throws", { [custom]() { throw new Error("thrown by the function"); } }, "error");
+    // The console of the test client calls this function too, so it logs from inside the
+    // console's own call. console.error and console.log count their calls together.
+    globalThis.hookCalls = 0;
+    let nesting = 0;
+    const logsAnError = {
+      [custom]() {
+        hookCalls++;
+        if (nesting < 4) {
+          nesting++;
+          try {
+            console.error("hook", logsAnError);
+          } finally {
+            nesting--;
+          }
+        }
+        return "text of the function";
+      },
+    };
+    probe("custom inspect function that logs an error", logsAnError, "error");
     console.error("done");
   `),
   htmlFiles: [],
@@ -727,17 +881,30 @@ devTest("browser console forwarding does not make console.error throw", {
     // `errors` lets the page call console.error.
     await using c = await dev.client("/", { errors: [] });
     await dev.output.waitForLine(/\[browser\].* done/);
-    expect(await c.js`results`).toEqual({
-      "revoked Proxy": "returned",
-      "Proxy of a Map": "returned",
-      "getter that logs an error": "returned",
-      "console that throws": "threw Error: thrown by the function",
+    expect(await c.js`({ results, hookCalls })`).toEqual({
+      results: {
+        "revoked Proxy": "returned",
+        "Proxy of a Map": "returned",
+        "getter that logs an error": "returned",
+        "getters that call console.log and console.error": "returned",
+        "console that throws": "threw Error: thrown by the function",
+        "custom inspect function that logs an error": "returned",
+      },
+      hookCalls: 18,
     });
-    expect(forwardedLines(dev)).toEqual([
+    await c.expectMessage("second call");
+    await dev.output.waitForLine(/\[browser\].* second call/);
+    const lines = forwardedLines(dev);
+    expect(lines.filter(line => line.startsWith("second call"))).toEqual(["second call Second { b: 2 }"]);
+    expect(lines.filter(line => !line.startsWith("second call"))).toEqual([
       "revoked Proxy Set { [threw while printing] }",
       "Proxy of a Map [threw while printing]",
       "total failed RangeError: no items",
       "getter that logs an error Cart { total: 0 }",
+      "getters that call console.log and console.error First { a: 1 }",
+      "hook text of the function",
+      "hook text of the function",
+      "custom inspect function that logs an error text of the function",
       "done",
     ]);
   },

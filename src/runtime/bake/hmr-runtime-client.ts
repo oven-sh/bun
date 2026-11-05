@@ -316,46 +316,59 @@ if (config.console) {
   // Ensure it only runs once, and avoid the extra noise in the HTML.
   const originalLog = console.log;
 
-  // A send() that the page replaced can log. That line is not forwarded: its own send would log again, without end.
-  let sending = false;
-
   function websocketInspect(logLevel: "l" | "e", values: any[]) {
-    if (sending) return;
-    // The browser's own console call already ran. A synchronous throw from here on only drops the forwarded line.
-    try {
-      let str = "l" + logLevel;
-      let first = true;
-      for (const value of values) {
-        if (first) {
-          first = false;
-        } else {
-          str += " ";
-        }
-
-        if (typeof value === "string") {
-          str += value;
-        } else {
-          str += inspect(value);
-        }
+    let str = "l" + logLevel;
+    let first = true;
+    for (const value of values) {
+      if (first) {
+        first = false;
+      } else {
+        str += " ";
       }
 
-      sending = true;
-      ws.sendBuffered(str);
-    } catch {}
-    sending = false;
+      if (typeof value === "string") {
+        str += value;
+      } else {
+        str += inspect(value);
+      }
+    }
+
+    ws.sendBuffered(str);
   }
+
+  // Console calls in progress, counted from before the browser's own call. Page code that a call runs can call console again.
+  let depth = 0;
 
   if (typeof originalLog === "function") {
     console.log = function log(...args: any[]) {
-      originalLog(...args);
-      websocketInspect("l", args);
+      depth++;
+      try {
+        originalLog(...args);
+        // Only two levels are forwarded. A throw from here on only drops the forwarded line.
+        if (depth <= 2) {
+          try {
+            websocketInspect("l", args);
+          } catch {}
+        }
+      } finally {
+        depth--;
+      }
     };
   }
 
   if (typeof consoleErrorWithoutInspector === "function") {
     console.error = function error(...args: any[]) {
-      consoleErrorWithoutInspector(...args);
-      websocketInspect("e", args);
+      depth++;
+      try {
+        consoleErrorWithoutInspector(...args);
+        if (depth <= 2) {
+          try {
+            websocketInspect("e", args);
+          } catch {}
+        }
+      } finally {
+        depth--;
+      }
     };
   }
 }

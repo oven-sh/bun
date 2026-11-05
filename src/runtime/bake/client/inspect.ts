@@ -20,8 +20,6 @@ const threwWhilePrinting = "[threw while printing]";
 // The values that print now. A console call from page code that one of them runs shares the list.
 const printing: any[] = [];
 
-let inspectDepth = 0;
-
 export interface InspectOptions {
   showHidden?: boolean;
   depth?: number;
@@ -60,11 +58,6 @@ const defaultOptions: InspectOptions = {
  * @returns {string} String representation
  */
 export function inspect(obj: any, options: InspectOptions = {}) {
-  // Page code that runs while a value prints can log a new value each time, so a call nested this deep prints a tag.
-  if (inspectDepth > 1 && obj !== null && (typeof obj === "object" || typeof obj === "function")) {
-    return "[logged while printing]";
-  }
-
   // Set up context with merged options
   const ctx: InspectContext = {
     seen: printing,
@@ -73,12 +66,7 @@ export function inspect(obj: any, options: InspectOptions = {}) {
     ...options,
   } as InspectContext;
 
-  inspectDepth++;
-  try {
-    return formatValue(ctx, obj, 0);
-  } finally {
-    inspectDepth--;
-  }
+  return formatValue(ctx, obj, 0);
 }
 
 /**
@@ -108,9 +96,9 @@ function formatValue(ctx: InspectContext, value: any, recurseTimes: number) {
       return String(value[inspectSymbol](recurseTimes, { ...ctx, seen: ctx.seen.slice() }));
     }
 
-    // Check for circular references
-    if (ctx.seen.includes(value)) {
-      return "[Circular]";
+    // Check for circular references. A loop and not `includes`: a page can replace that method, and Svelte 5 does in development.
+    for (let i = 0; i < ctx.seen.length; i++) {
+      if (ctx.seen[i] === value) return "[Circular]";
     }
 
     // Format based on type

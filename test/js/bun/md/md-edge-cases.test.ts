@@ -2376,16 +2376,22 @@ describe("front matter", () => {
   });
 
   test("the language of fenced code is read behind a byte order mark and behind the block", () => {
-    const language = (input: string, frontmatter?: boolean) =>
+    const language = (input: Input, frontmatter?: boolean) =>
       Markdown.render(input, { code: (_, meta) => String(meta?.language) }, { frontmatter });
     expect(language("\uFEFF```js\ncode\n```\n")).toBe("js");
     expect(language("\uFEFF```js\ncode\n```\n", false)).toBe("js");
+    expect(language(Buffer.from("\uFEFF```js\ncode\n```\n"))).toBe("js");
     expect(language("---\ntitle: x\n---\n```js\ncode\n```\n")).toBe("js");
     expect(language("\uFEFF---\ntitle: x\n---\n\uFEFF```js\ncode\n```\n")).toBe("js");
     // A fence without a language has no `meta`, and react() gives the language as a prop.
     expect(Markdown.render("\uFEFF```\ncode\n```\n", { code: (_, meta) => String(meta) })).toBe("undefined");
     const pre = (Markdown.react("\uFEFF```js\ncode\n```\n") as any).props.children[0];
     expect({ type: pre.type, language: pre.props.language }).toEqual({ type: "pre", language: "js" });
+    // ansi() colors the code by its language.
+    const colored = Markdown.ansi("```js\nlet a = 1;\n```\n");
+    expect(colored).not.toBe(Markdown.ansi("```\nlet a = 1;\n```\n"));
+    expect(Markdown.ansi("\uFEFF```js\nlet a = 1;\n```\n")).toBe(colored);
+    expect(Markdown.ansi("---\ntitle: x\n---\n```js\nlet a = 1;\n```\n")).toBe(colored);
   });
 
   test("the block does not add to what reference links may expand to", () => {

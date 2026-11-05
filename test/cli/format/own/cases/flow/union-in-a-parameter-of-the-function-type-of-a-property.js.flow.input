@@ -1,0 +1,13 @@
+class A {
+  scrollTo: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void = f;
+  static scrollBy: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void = f;
+}
+declare class B {
+  scrollTo: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void;
+  static scrollBy: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void;
+}
+type C = {
+  scrollTo: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void,
+  [key]: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void,
+  [[slot]]: (options?: {x?: number, y?: number, animated?: boolean, duration?: number, easing?: string, velocity?: number, ...} | number, deprecatedX?: number) => void,
+};

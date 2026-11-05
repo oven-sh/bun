@@ -1,0 +1,17 @@
+class A {
+  static bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+  cccccccccccccccccccccccccccccccccccccccccccccc: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+}
+declare class B {
+  static bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+  cccccccccccccccccccccccccccccccccccccccccccccc: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+}
+declare module "m" {
+  declare module.exports: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+}
+declare export default Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+type C = {
+  [kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk]: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,
+  ...Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,
+  [[ssssssssssssssssssssssssssssssssssssssssssss]]: Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,
+};

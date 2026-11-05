@@ -574,13 +574,32 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
     }
     let is_function_type = keyword_of_function_type(ty, func).is_none();
     match ty.parent() {
-        Node::Member(member) => is_function_type && !member.is_static(),
+        // `static` is a matter of an `ObjectTypeProperty`. The property of a class has a `TypeAnnotation`.
+        Node::Member(member) => {
+            is_function_type
+                && member.kind() != MemberKind::IndexSignature
+                && !member.is_flow_spread()
+                && (!member.is_static()
+                    || matches!(member.parent(), Node::Class(class) if !is_declared_class(class)))
+        }
         Node::Param(param) => is_function_type && !is_function_type_param(param),
         Node::VarDecl(_) => is_function_type,
-        Node::Func(owner) => is_function_type || matches!(owner.owner(), Node::Type(_)),
-        Node::Stmt(statement) => {
-            statement.tag() == StmtTag::TypeAlias && !is_declared(statement.modifiers())
-        }
+        // (the value of an indexer is the return type of its signature)
+        Node::Func(owner) => match owner.owner() {
+            Node::Type(_) => true,
+            Node::Member(member) if member.kind() == MemberKind::IndexSignature => false,
+            _ => is_function_type,
+        },
+        Node::Stmt(statement) => match statement.kind() {
+            // See `write_pseudo_type_alias`.
+            StmtKind::TypeAlias(alias) if alias.name().name().is("module.exports") => {
+                is_function_type
+            }
+            StmtKind::TypeAlias(_) => {
+                !statement.is_default_export() && !is_declared(statement.modifiers())
+            }
+            _ => false,
+        },
         Node::Type(parent) => matches!(parent.tag(), TypeTag::Union | TypeTag::Intersection),
         Node::Expr(e) => is_function_type && e.is_flow_type_cast(),
         _ => false,
@@ -602,10 +621,14 @@ pub(crate) fn is_union_indented_by_parameters(ty: TypeNode<'_>) -> bool {
     if param.pat().tag() == PatTag::Missing {
         return true;
     }
-    // The function type is the type of a property.
+    // The function type is the type of a property of an object type. Not of a class, which has a `TypeAnnotation`.
     !param.is_rest()
         && matches!(func.owner(), Node::Type(owner) if keyword_of_function_type(owner, func).is_none()
-            && matches!(owner.parent(), Node::Member(member) if !member.is_static()))
+            && matches!(owner.parent(), Node::Member(member) if !member.is_static()
+                && member.kind() == MemberKind::Property
+                && !member.is_flow_spread()
+                && member.flow_internal_slot().is_none()
+                && !matches!(member.parent(), Node::Class(class) if !is_declared_class(class))))
 }
 
 /// Writes the parameter of a function type for which [`is_shorthand_function_type`] is true.

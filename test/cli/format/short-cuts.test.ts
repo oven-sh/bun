@@ -4275,6 +4275,14 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", 'describe("x", () /* a */ /* b */=> {\n  f();\n});\n'],
     ["a.jsx", "", "a = <T><b>Log<\n// c\n/b>: {m}</T>;\n"],
     ["a.ts", "", "a = {\n  [b]:\n// c\n(value: number) => isNumber(value),\n};\n"],
+    // The name `let` in parentheses.
+    ["a.js", "--no-semi", "(let)\n"],
+    // A `;` behind a comment, with nothing to end.
+    ["a.js", "", '/* @flow */;\nimport "a";\na();\n'],
+    // A declaration as the body of an `if`.
+    ["a.ts", "", "if (1)\n  const enum A {}\n"],
+    // `await` that is a name among the parameters, for TypeScript.
+    ["a.tsx", "", "class A { set a(@dec {a} = await {}) {} }\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

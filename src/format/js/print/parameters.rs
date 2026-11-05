@@ -180,7 +180,8 @@ fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<
 fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
     (comments.is_owner(Node::Param(param)) && comments.has_comments(param.as_ast_nodes()))
-        || (comments.is_owner(Node::Pat(param.pat()))
+        || (!matches!(param.pat().kind(), PatKind::Missing)
+            && comments.is_owner(Node::Pat(param.pat()))
             && param.default().is_none()
             && !hugs_pattern_with_comments(f)
             && comments.has_comments(param.pat().as_ast_nodes()))

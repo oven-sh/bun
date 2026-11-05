@@ -112,7 +112,8 @@ pub(crate) mod rare {
     /// None of the following.
     pub(crate) const OTHER: i32 = 0;
     /// What the long way prints in another way if it breaks: an object type in the return type, for which it goes back and lays out the
-    /// parameters as it will the next time; a union as the key of an indexer of Flow, which it does not indent.
+    /// parameters as it will the next time; a union as the key of an indexer of Flow, which it does not indent; `boolean | null` and the
+    /// like in Flow, which it does not break.
     pub(crate) const BROKEN: i32 = 1;
     /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
     /// U+2028 or U+2029 anywhere, a "\r" without a "\n", bytes that are not UTF-8.
@@ -147,7 +148,7 @@ pub(crate) mod rare {
     pub(crate) const TAB_WIDTH: i32 = 14;
     /// Where the long way is not Prettier's way, and nobody has said that it should not be: a template with a private name as its tag,
     /// a member with the name `export` in a class of Flow, `A<B<>>` and `(a: B<>)` in Flow, import attributes on several lines with
-    /// `objectWrap: "collapse"`, a test call with `?.` in its callee.
+    /// `objectWrap: "collapse"`, a test call with `?.` in its callee, `boolean | null` in Flow where the group around it is not its own.
     pub(crate) const UNLIKE_PRETTIER: i32 = 15;
 }
 

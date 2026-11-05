@@ -101,6 +101,40 @@ impl Quick {
         return true;
     }
 
+    /// Flow: `boolean`, `mixed`, `empty` or `*`, and `null` or `void` for the rest. The long way hugs such a union as if the keyword were the
+    /// name of a type. What it prints is what Prettier prints as long as nothing in or around the union breaks.
+    pub(crate) fn is_hugged_by_the_long_way_only(&self, n: i32) -> bool {
+        if !self.mode.is_flow || (self.n.at(n) & 0xff) != k::UnionType {
+            return false;
+        }
+        let types = self.n.at(n + 4);
+        let mut found = false;
+        let mut i: i32 = 1;
+        while i <= self.n.at(types) {
+            let type_ = self.n.at(types + i);
+            if self.has_comment(type_) {
+                return false;
+            }
+            if !self.is_void_type(type_) {
+                if found
+                    || (self.n.at(type_) & 0xff) != k::KeywordType
+                    || !matches!(
+                        ((self.n.at(type_) as u32) >> SUB_SHIFT) as i32,
+                        type_keyword::Boolean
+                            | type_keyword::Mixed
+                            | type_keyword::Empty
+                            | type_keyword::All
+                    )
+                {
+                    return false;
+                }
+                found = true;
+            }
+            i += 1;
+        }
+        found
+    }
+
     pub(crate) fn should_hug_type(&self, n: i32) -> bool {
         if self.is_simple_type(n) || self.is_object_type(n) {
             return true;
@@ -349,6 +383,9 @@ impl Quick {
         self.softline();
         self.text(GT);
         self.group_close(g);
+        if count == 1 && self.is_hugged_by_the_long_way_only(self.n.at(params + 1)) {
+            self.gives_up_if_broken(g);
+        }
         Ok(())
     }
 
@@ -497,6 +534,7 @@ impl Quick {
             }
             return Ok(());
         }
+        let is_hugged_elsewhere = self.is_hugged_by_the_long_way_only(n);
         if self.needs_parens(n)?
             || (self.mode.is_flow && self.needs_parens_as_return_type_of_arrow(n)?)
         {
@@ -505,6 +543,9 @@ impl Quick {
             self.print_union_with_comments(n)?;
             self.dedent_softline();
             self.group_close(g);
+            if is_hugged_elsewhere {
+                self.gives_up_if_broken(g);
+            }
             return Ok(());
         }
         if self.is_multiple_tuple_type_element(n) {
@@ -519,11 +560,18 @@ impl Quick {
             self.dedent_softline();
             self.if_break_text(RPAREN, 0, 0);
             self.group_close(g);
+            if is_hugged_elsewhere {
+                self.gives_up_if_broken(g);
+            }
             return Ok(());
         }
         if ((args & ARG_LAYOUT_MASK) >> ARG_LAYOUT_SHIFT) == LAYOUT_BREAK_AFTER_OPERATOR
             || !self.should_indent_union_type(n)
         {
+            // (the group that breaks is somebody else's)
+            if is_hugged_elsewhere {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             self.print_union_with_comments(n)?;
             return Ok(());
         }
@@ -532,6 +580,9 @@ impl Quick {
         self.print_union_with_comments(n)?;
         self.indent_close();
         self.group_close(g);
+        if is_hugged_elsewhere {
+            self.gives_up_if_broken(g);
+        }
         Ok(())
     }
 

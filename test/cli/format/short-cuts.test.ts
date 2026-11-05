@@ -4736,6 +4736,13 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       'test?.skip("does something really long and complicated so I have to write a very long name for the test",()=>{})\n',
     ],
+    // Flow: `boolean | null` and the like, where they do not fit.
+    ["a.js.flow", "--print-width=20", "type A = { prefersFuseboxFrontend: boolean | null };\n"],
+    [
+      "a.js.flow",
+      "--print-width=20",
+      "class A {\n  extraData: mixed | void;\n  get oldValue(): mixed | null {}\n}\nfunction f(command: () => Promise<mixed | void>) {}\n",
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

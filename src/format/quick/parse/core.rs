@@ -468,11 +468,7 @@ impl Quick {
         self.parse.in_generator = 0;
         self.parse.in_async = 0;
         self.parse.in_function = 0;
-        self.parse.place = NOWHERE;
-        self.parse.suspensions = 0;
-        self.parse.default_export_at = 0;
-        self.parse.await_names = 0;
-        self.parse.needs_module = false;
+        self.forget_place();
         self.reset_typed();
         self.parse.known_blocks_count = 0;
         self.parse.refused_at = 0;
@@ -3791,6 +3787,15 @@ impl Quick {
         return Ok(left);
     }
 
+    /// At the start of a text.
+    pub(crate) fn forget_place(&mut self) {
+        self.parse.place = NOWHERE;
+        self.parse.suspensions = 0;
+        self.parse.default_export_at = 0;
+        self.parse.await_names = 0;
+        self.parse.needs_module = false;
+    }
+
     /// What has been read makes the file a module, in which `await` is no name.
     pub(crate) fn need_module(&mut self) -> R<()> {
         self.parse.needs_module = true;
@@ -4500,6 +4505,10 @@ impl Quick {
                     }
                     let type_arguments = self.ts_try_parse_type_arguments_in_expression()?;
                     if type_arguments == 0 {
+                        // `new A < b > c`: Flow's parsers are set on type arguments
+                        if no_calls && self.parse.typed == TYPED_FLOW {
+                            return Err(self.text_refuse());
+                        }
                         return Ok(base);
                     }
                     if self.lexer.tok == tk::ParenL && !no_calls {

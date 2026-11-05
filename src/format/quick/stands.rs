@@ -10,7 +10,7 @@
 
 use crate::fast::{
     AFTER_BLOCK, AFTER_DONE, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX,
-    BLOCK_OBJECT, MEMBER_OF_CLASS, MEMBER_OF_INTERFACE,
+    BLOCK_OBJECT, BLOCK_ODD_PARAMETERS, MEMBER_OF_CLASS, MEMBER_OF_INTERFACE,
 };
 use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
@@ -127,6 +127,13 @@ impl Quick {
             if self.fast.ready_block != end || self.t.at(end + 1) != 10 || (flags & BLOCK_JSX) != 0
             {
                 return Ok(-1);
+            }
+            // "use strict" in a function whose parameters are more than names
+            if (flags & BLOCK_ODD_PARAMETERS) != 0 {
+                let c = self.t.at(self.blanks(end + 2));
+                if c == 34 || c == 39 {
+                    return Ok(-1);
+                }
             }
             let inner = if (flags & BLOCK_FUNCTION) != 0 {
                 (flags & BLOCK_ASYNC) != 0
@@ -436,6 +443,15 @@ impl Quick {
         self.stands.last = end;
         self.forget_source_unit();
         self.stands.up_to = 0;
+        // Nobody keeps the place here: fast.rs finds itself outside of every loop, function and class, and leaves what depends on the place to the parser. Two things the parser
+        // looks for in the text of a whole item or file: `arguments` in the value of a field, and a comment that names a file.
+        self.forget_place();
+        let text = self.t.get(start as usize..end as usize).unwrap_or(&[]);
+        if bun_core::strings::contains(text, b"arguments")
+            || bun_core::strings::contains(text, b"///")
+        {
+            return Ok(false);
+        }
         let stands = self.items(start, 0, STATEMENTS, true)? == end;
         // what was read is not lost: the parser starts behind it
         self.set_verified(start, if stands { 0 } else { self.stands.up_to });

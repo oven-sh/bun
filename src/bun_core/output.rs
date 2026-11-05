@@ -2477,6 +2477,7 @@ impl ErrName for crate::CrateError {
 pub mod scoped_debug_writer {
     use super::*;
 
+    /// `Relaxed` is enough: it holds a descriptor number, and no memory is published through it.
     pub(crate) static SCOPED_FILE_WRITER: AtomicFd = AtomicFd::new(0);
 
     /// Every scope writes to the same fd. Held across the `write(2)` loop of

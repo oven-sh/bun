@@ -308,7 +308,7 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton.
+    // JS-VM-thread-only singleton: one thread stores and loads it, so `Relaxed` is enough.
     pub(crate) static RUNNER: AtomicPtr<TestRunner<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
     /// `None` outside `bun test` and in a Worker, because the runner belongs to the thread that runs the test files.

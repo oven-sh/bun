@@ -103,6 +103,8 @@ pub(crate) mod rare {
     pub(crate) const ODD_BYTES: i32 = 2;
     /// A `;` that is a statement or a member of its own, or that starts a line and is not the guard of what follows it (`;[a].b()`).
     pub(crate) const SEMICOLON: i32 = 3;
+    /// A `,` that starts a line: an empty line behind it is looked for behind the item by one way and behind the comma by the other.
+    pub(crate) const COMMA: i32 = 4;
 }
 
 /// Reads and writes that have an answer for every index: a read beyond the end gives 0, a write there does nothing.

@@ -2927,6 +2927,11 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js", "", "a // b\n;/* c *//* c */\n"],
     // The guard of code without semicolons is none of these.
     ["a.js", "--no-semi", "const a = 1\n;[1, 2].forEach(f)\n\n;(function () {})()\nfunction g() {}\n;`t`.length\n"],
+    // A `,` that starts a line, and an empty line behind it.
+    ["a.js", "", "({\n  a\n  ,\n\n  b,\n});\n"],
+    ["a.js", "", "const {\n  A\n  ,\n\n  B,\n} = c;\n"],
+    ["a.js", "", "foo = {a\n\n  ,\n  b: 'b'};\n"],
+    ["a.js.flow", "", "type A = {|\n  a: number\n  ,\n\n  b: boolean,\n|};\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

@@ -1033,6 +1033,9 @@ impl Quick {
                 return Ok(());
             }
             44 => {
+                if self.lexer.tok_nl != 0 {
+                    return Err(self.rare(rare::COMMA));
+                }
                 self.lexer_finish(tk::Comma, p + 1);
                 return Ok(());
             }

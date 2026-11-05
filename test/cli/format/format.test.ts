@@ -7944,9 +7944,10 @@ try {
       const odd = await run(index => texts[index]);
       const plain = await run(() => ordinary.repeat(length / ordinary.length));
       // The ordinary code goes the quick way, which takes a third of the time of the long way. Most of the odd shapes are refused by
-      // it, and so pay for both ways. That makes 9 to 10 on Linux when all is well. One shape that takes quadratic time adds 27 or
-      // more. Where everything goes the long way it is 2.3 to 3 on Linux and 8.3 on Windows, which is where the 48 comes from.
-      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 48 : 20);
+      // it, and so pay for both ways. That makes 6.5 to 7.5 on Linux when all is well. A shape adds 1.7 for each second that it
+      // takes, so this sees one that takes many seconds and not one that takes 1.5 s where 0.1 s is right. Where everything goes the
+      // long way it is 2.3 to 3 on Linux and 8.3 on Windows, which is where the 40 comes from.
+      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 40 : 16);
     }
   }, 120_000);
 

@@ -410,6 +410,84 @@ pub(crate) fn block_stands(
     stands
 }
 
+/// An expression of Vue.
+#[derive(Copy, Clone)]
+pub(crate) struct Expression<'c> {
+    pub(crate) text: &'c [u8],
+    pub(crate) is_typescript: bool,
+    /// `__vue_expression`: `a | b` is a filter.
+    pub(crate) has_filters: bool,
+    /// The name of the attribute whose value it is, and `="`. `None` for one between `{{` and `}}`.
+    pub(crate) attribute: Option<&'c [u8]>,
+    /// By how many levels the line is indented that it starts, together with the name of its attribute.
+    pub(crate) indentation: u32,
+}
+
+/// Puts an expression in a text of HTML with `options`, formatted, in the place of what `out` held: all of the attribute,
+/// or what is between the braces. It's what is printed if it starts a line and a line break follows.
+pub(crate) fn format_expression(
+    expression: Expression<'_>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    let text = expression.text;
+    let Some(of_host) = options_for(options, b"", true) else {
+        return Err(scratch.refuse(Reason::Options, text));
+    };
+    // A comment, which the long way has rules of its own for. In an attribute: what is written as an entity, and a string
+    // whose quotes may have to change. Between braces: what may end with `}}`.
+    // Which keys get quotes together with the others depends on the name of the parser.
+    let is_plain = of_host.quote_props != quick::QuoteProps::Consistent
+        && !strings::contains(text, b"//")
+        && !strings::contains(text, b"/*")
+        && !strings::contains_char(text, 0)
+        && match expression.attribute {
+            Some(_) => strings::index_of_any(text, b"\"\\&").is_none(),
+            None => !strings::contains_char(text, b'{'),
+        };
+    if !is_plain {
+        return Err(scratch.refuse(Reason::InHtml, text));
+    }
+    if !strings::is_valid_utf8(text) {
+        return Err(scratch.refuse(Reason::NotUtf8, text));
+    }
+    let quick_options = quick::Options {
+        end_of_line: quick::EndOfLine::Lf,
+        indentation: i32::try_from(expression.indentation).unwrap_or(i32::MAX),
+        single_quote: expression.attribute.is_some() || of_host.single_quote,
+        ..of_host
+    };
+    let how = quick::Expression {
+        text,
+        is_typescript: expression.is_typescript,
+        has_vue_filters: expression.has_filters,
+        wrap: match expression.attribute {
+            Some(_) => quick::Wrap::ByKind,
+            None => quick::Wrap::Bare,
+        },
+        before: expression.attribute.unwrap_or_default(),
+        after: match expression.attribute {
+            Some(_) => b"\"",
+            None => b"",
+        },
+    };
+    let quick = scratch.quick.get_or_insert_default();
+    quick.lend_guests(None);
+    if quick::format_expression(&how, &quick_options, quick, out).is_err() {
+        let reason = match quick.why() {
+            1 => Reason::SyntaxError,
+            8 => Reason::Guest,
+            _ => Reason::Rare,
+        };
+        return Err(scratch.refuse(reason, text));
+    }
+    if let Some(counts) = &mut scratch.counts {
+        counts.printed.add(text);
+    }
+    Ok(())
+}
+
 /// `file`: the options and the name for what is in a template in another language.
 fn format_as(
     text: &[u8],

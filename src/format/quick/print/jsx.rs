@@ -923,6 +923,7 @@ impl Quick {
             | k::JSXExpressionContainer
             | k::JSXFragment
             | k::ExpressionStatement
+            | k::JsExpressionRoot
             | k::NewExpression
             | k::CallExpression
             | k::ConditionalExpression => {

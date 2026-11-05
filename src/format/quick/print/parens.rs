@@ -965,6 +965,9 @@ impl Quick {
                         return Ok(false);
                     }
                 }
+                if pk == k::JsExpressionRoot {
+                    return Ok(false);
+                }
                 return Ok(true);
             }
             k::ConditionalExpression => {
@@ -1158,6 +1161,7 @@ impl Quick {
                     | k::BinaryExpression
                     | k::ConditionalExpression
                     | k::ExpressionStatement
+                    | k::JsExpressionRoot
                     | k::JSXAttribute
                     | k::JSXElement
                     | k::JSXExpressionContainer

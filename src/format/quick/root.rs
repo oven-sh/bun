@@ -1,6 +1,7 @@
 //! format(): bytes in, bytes out.
 
 use crate::doc::DOC_START;
+use crate::js::{WRAP_BARE, WRAP_BY_KIND, WRAP_EXPAND, WRAP_GROUP, WRAP_NONE};
 use crate::lang::lang;
 use crate::options::{
     EOL_AUTO, EOL_CR, EOL_CRLF, EOL_LF, QUOTE_PROPS_AS_NEEDED, QUOTE_PROPS_CONSISTENT,
@@ -280,6 +281,7 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     }
     let length = text.len() as i32;
     scratch.why.set(why::NONE);
+    crate::forget_losses();
     scratch.stack_check = bun_core::StackCheck::init();
     scratch.set_options(options, dialect);
     scratch.source_buffer(length, 0);
@@ -292,10 +294,118 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     scratch.set_short_cuts(false);
     // The text is gone when the parser comes.
     scratch.set_verified(0, 0);
-    matches!(stands, Ok(true))
+    matches!(stands, Ok(true)) && scratch.nothing_lost().is_ok()
+}
+
+/// What `formatAttributeValue()` of language-html puts around the document of an expression.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wrap {
+    /// Nothing.
+    Bare,
+    /// `group(doc)`
+    Group,
+    /// `printExpand(doc)`
+    Expand,
+    /// The one for an object, an array and, in Vue, a string or a template; the other for everything else: `shouldHugJsExpression()`.
+    ByKind,
+}
+
+/// An expression in HTML: the value of an attribute, or what is between `{{` and `}}`.
+#[derive(Clone, Copy, Debug)]
+pub struct Expression<'a> {
+    pub text: &'a [u8],
+    pub is_typescript: bool,
+    /// `a | b` at its top is a filter of Vue.
+    pub has_vue_filters: bool,
+    pub wrap: Wrap,
+    /// What is printed in front of it on its line (the name of the attribute, `="`), and behind it.
+    pub before: &'a [u8],
+    pub after: &'a [u8],
+}
+
+/// Puts `before`, the expression and `after` in the place of what `out` held, as they are printed where `before` starts a line that is indented by
+/// `options.indentation` levels and a line break follows `after`. There is no line break at the end. An expression with a comment is refused.
+pub fn format_expression(
+    expression: &Expression<'_>,
+    options: &Options,
+    scratch: &mut Quick,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    out.clear();
+    let text = expression.text;
+    if text.len() > LONGEST_FILE
+        || options.tab_width < 1
+        || options.print_width < 1
+        || !(0..=DEEPEST_HOST).contains(&options.indentation)
+        || options.end_of_line != EndOfLine::Lf
+        || bun_core::strings::contains_char(text, b'\r')
+    {
+        scratch.why.set(why::RARE);
+        return Err(Refused);
+    }
+    let dialect = Dialect {
+        language: if expression.is_typescript {
+            Language::TypeScript
+        } else {
+            Language::JavaScript
+        },
+        jsx: Some(!expression.is_typescript),
+        common_js: false,
+        module_only: true,
+        declaration_file: false,
+        name_ends_in_ts: false,
+        name_ends_in_js_flow: false,
+    };
+    scratch.host.wrap = match expression.wrap {
+        Wrap::Bare => WRAP_BARE,
+        Wrap::Group => WRAP_GROUP,
+        Wrap::Expand => WRAP_EXPAND,
+        Wrap::ByKind => WRAP_BY_KIND,
+    };
+    scratch.host.before.clear();
+    scratch.host.before.extend_from_slice(expression.before);
+    scratch.host.after.clear();
+    scratch.host.after.extend_from_slice(expression.after);
+    scratch.host.has_vue_filters = expression.has_vue_filters;
+    let done = scratch.format_expression_buffer(expression, dialect, options);
+    scratch.host.wrap = WRAP_NONE;
+    scratch.host.has_vue_filters = false;
+    match done {
+        Ok(()) => {
+            out.extend_from_slice(scratch.printer.out.sub(0, scratch.printer.out_length));
+            Ok(())
+        }
+        Err(Stop) => Err(Refused),
+    }
 }
 
 impl Quick {
+    fn format_expression_buffer(
+        &mut self,
+        expression: &Expression<'_>,
+        dialect: Dialect,
+        options: &Options,
+    ) -> R<()> {
+        let length = expression.text.len() as i32 + 3;
+        self.why.set(why::NONE);
+        crate::forget_losses();
+        self.stack_check = bun_core::StackCheck::init();
+        self.set_options(options, dialect);
+        self.source_buffer(length, 0);
+        self.t.put(SRC_BASE, 40);
+        self.t.set_all(expression.text, SRC_BASE + 1);
+        self.t.put(SRC_BASE + length - 2, 10);
+        self.t.put(SRC_BASE + length - 1, 41);
+        self.had_bom = false;
+        self.set_short_cuts(false);
+        let language = if expression.is_typescript {
+            lang::TypeScript
+        } else {
+            lang::Babel
+        };
+        self.format_normalized(length, language)
+    }
+
     fn set_options(&mut self, o: &Options, dialect: Dialect) {
         let to = &mut self.options;
         to.print_width = o.print_width.min(0x1fffffff);

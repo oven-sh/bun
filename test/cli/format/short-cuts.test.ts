@@ -3072,6 +3072,128 @@ describe("JavaScript and TypeScript in a host", () => {
     );
   });
 
+  describe("expressions of Vue", () => {
+    // The start tag is on one line, or the attribute is on a line of its own: what is printed for it is known there.
+    const expressions = [
+      // Printed as they are written but for the quotes, blanks or parentheses.
+      "t('a.b')",
+      "a['b']",
+      "a ? 'b' : 'c'",
+      "a+b",
+      "(a)",
+      "(a, b)",
+      "(a || b) && c",
+      "!(a <= b)",
+      "a  ?  b  :  c",
+      "[a,b]",
+      "{a:1}",
+      "{ a: 1, 'b-c': d, [e]: f, ...g }",
+      "{ 'a': 1 }",
+      "{ 1: a, 'b': c }",
+      "{ '': 1, 1: 2 }",
+      "`a${b}c`",
+      "`a\n${b}`",
+      "a as string",
+      "(a as string[] | undefined)",
+      "a!",
+      "<T>a",
+      "(e) => f(a, e as KeyboardEvent)",
+      "(e: DragEvent) => f(e, i)",
+      "e => f(e)",
+      "async () => { await a }",
+      "function () { return 1 }",
+      "a = b",
+      "a = b, c = d",
+      "a++",
+      "f(); g()",
+      "if (a) b",
+      "a | b",
+      "a | b(c) | d",
+      "a || b | c",
+      "new A()",
+      "typeof a === 'b'",
+      "await a",
+      "<div />",
+      // What breaks, whether it fits or not.
+      "{\n  a: 1 }",
+      "{\n      a: 1,\n      b: { c: 2 },\n    }",
+      "[\n  a, b]",
+      "[{ a: 1 }, { b: 2 }]",
+      "[\n      { required: true, message: 'age is required' },\n      { type: 'number', message: 'age must be a number' },\n    ]",
+      "a.b().c().d().e()",
+      // What doesn't fit.
+      `[ns.b(), ns.is('disabled', disabled), ns.is('focus', focus), ns.is('bordered', border), ns.is('checked', a === b)]`,
+      `{ top: cursorTop + 'px', left: cursorLeft + 'px', backgroundColor: displayedColor, lineHeight: height }`,
+      `parentMenu.type.name === 'ElMenu' && rootMenu.props.collapse && $slots.title && somethingElse.that.is.long`,
+      `sourceVisible ? locale['hide-source-of-the-example-code'] : locale['view-source-of-the-example-code']`,
+      `handleAction(distinguishCancelAndClose ? 'close' : 'cancel', anotherArgument, andOneMoreArgument, last)`,
+      `${"a".repeat(30)}.${"b".repeat(30)}.${"c".repeat(30)}`,
+      `(event) => handleDragOver(event, index, anotherArgumentOfTheHandler, andOneMoreArgumentOfTheHandler)`,
+      // To the column.
+      ...[52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62].map(length => `f(${"a".repeat(length)}, b)`),
+      // What is written in another way in an attribute.
+      "'\"'",
+      "a &amp;&amp; b",
+      "a && b",
+      "'&quot;'",
+      "'it\\'s'",
+      "'a' + &quot;b&quot;",
+      // Comments.
+      "a // b",
+      "a /* b */",
+      "/* a */ b",
+      // What can't be read.
+      "",
+      " ",
+      "a b",
+      "a) + (b",
+      "a); (b",
+      "a,",
+      "{",
+      "}}",
+      "'",
+      "a \u00e9",
+      "'\u4e2d\u6587'",
+    ];
+    const names = [":a", "v-if", "@a", "v-bind:a", ".a", ":class", "v-model", "v-for", "#a", ":aaaaaaaaaaaaaaaaaaaaaaaa"];
+    const script = '\n<script setup lang="ts">\nlet a;\n</script>\n';
+    expectSame(
+      "a.vue",
+      [
+        ...names.flatMap(name =>
+          expressions.map(code => `<template>\n  <div ${name}="${code}"></div>\n</template>\n${script}`),
+        ),
+        ...expressions.flatMap(code => [
+          `<template>\n  <div :a="${code}"></div>\n</template>\n`,
+          `<template>\n  <a :b="${code}" />\n</template>\n${script}`,
+          `<template>\n  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>\n</template>\n${script}`,
+          `<template>\n  <span :b="${code}">c</span>d\n</template>\n${script}`,
+          `<template>\n  <pre :b="${code}">\nc</pre>\n</template>\n${script}`,
+          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n${script}`,
+          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n`,
+          `<template>\n  <p>\n    {{ ${code} }}\n  </p>\n</template>\n${script}`,
+          `<template>\n  <p>a {{ ${code} }} b</p>\n</template>\n${script}`,
+          `<template>\n  <p>{{${code}}}<b>c</b></p>\n</template>\n${script}`,
+        ]),
+      ],
+      [
+        ...options,
+        ["--tab-width=8"],
+        ["--tab-width=3", "--print-width=60"],
+        ["--quote-props=consistent"],
+        ["--quote-props=preserve"],
+        ["--no-bracket-spacing"],
+        ["--arrow-parens=avoid"],
+        ["--trailing-comma=none"],
+        ["--object-wrap=collapse"],
+        ["--bracket-same-line"],
+        ["--single-attribute-per-line"],
+        ["--experimental-operator-position=start"],
+        ["--experimental-ternaries"],
+      ],
+    );
+  });
+
   describe("HTML", () => {
     const at = (depth: number, tag: string, code: string) => {
       const names = ["html", "body", "div", "section", "main"].slice(0, depth);

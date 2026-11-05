@@ -300,6 +300,7 @@ fn is_arrow_function_variable_type_argument(arguments: FormatTypeArguments<'_>) 
         && matches!(
             grand_parent.parent(),
             AstNodes::VariableDeclarator(declarator)
-                if declarator.init().is_some_and(|init| init.arrow_function().is_some())
+                if declarator.pat().tag() == PatTag::Ident
+                    && declarator.init().is_some_and(|init| init.arrow_function().is_some())
         )
 }

@@ -111,7 +111,7 @@ fn write_catch_clause<'a>(param: Option<VarDecl<'a>>, body: Stmt<'a>, f: &mut Fo
                 write!(f, [param.pat(), param.ty().map(FormatTypeAnnotation)]);
             });
         });
-        match !f.is_quiet() && has_comment_with_line_break(node, f) {
+        match !f.is_quiet() && has_comment_with_line_break(node, param.pat(), f) {
             true => write!(f, [space(), "(", soft_block_indent(&parameter), ")"]),
             false => write!(f, [space(), "(", parameter, ")"]),
         }
@@ -121,10 +121,18 @@ fn write_catch_clause<'a>(param: Option<VarDecl<'a>>, body: Stmt<'a>, f: &mut Fo
 }
 
 /// True if a comment on the catch parameter `node` is a line comment or has a line break between it and the parameter.
-fn has_comment_with_line_break<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+/// One that is all there is in the braces or brackets of `pattern` is on the parameter too.
+fn has_comment_with_line_break<'a>(
+    node: AstNodes<'a>,
+    pattern: Pat<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     let owned = f.comments().of_node(node);
     let mut leading = owned.leading.iter();
     let mut trailing = owned.trailing.iter();
     leading.any(|comment| comment.is_line() || comment.has_newline_after())
         || trailing.any(|comment| comment.is_line() || comment.has_newline_before())
+        || (!f.options().flavor.is_oxfmt()
+            && (f.comments().of_node(pattern.as_ast_nodes()).dangling.iter())
+                .any(|comment| comment.is_line()))
 }

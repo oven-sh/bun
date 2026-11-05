@@ -850,9 +850,105 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "whole-with-quote-in-comment.less": "// 'a'\nb {\n  // c\n  d: e; // f\n  // \"g\"\n  h: i; // 'j'\n  /* k */\n}\n",
     "whole.md": "```css\na {\n  b: c;\n}\n```\n",
     "whole.html": "<style>\n  a {\n    b: c;\n  }\n</style>\n",
+    ...Object.fromEntries(
+      ["css", "scss", "less"].map(syntax => [
+        `plain-at-rules.${syntax}`,
+        "@layer a;\n@layer a, b-c;\n@layer a {\n  d {\n  }\n}\n@theme inline {\n  --a: b;\n}\ne {\n  @apply a b-c d/50 hover:e w-1.5;\n  @apply url;\n" +
+          "  @apply hover:url;\n  @apply a  b;\n  @apply A;\n  @apply a !important;\n  @apply a[b];\n  @apply a, b;\n  @apply a;;\n  @apply a; /* f */\n}\n" +
+          "@tailwind base;\n@layer a.b {\n}\n@layer  a;\n@LAYER a;\n@theme {\n}\n@layer a{}\n@theme a;\n@apply a {\n}\n@layer url;\n" +
+          "e {\n  @apply some-long-name another-long-name yet-another-long-name one-more-long-name and-another-one;\n}\n",
+      ]),
+    ),
+    ...Object.fromEntries(
+      ["css", "scss", "less"].map(syntax => [
+        `slash-between-names.${syntax}`,
+        "a {\n  b: c/d;\n  b: c/d e;\n  b: c/d, e;\n  b: c/d/e;\n  b: c/1;\n  b: 1/c;\n  b: f(c/d);\n  b: c/url;\n  b: C/d;\n  b: c/D;\n  b: -c/d;\n  b: c /d;\n" +
+          "  b: c.d/e;\n  grid-area: c/d;\n  grid-column: wide-start/wide-end;\n  --b: c/d;\n" +
+          "  b: some-long-name/another-long-name yet-another-long-name one-more-long-name/and-another-one;\n}\n",
+      ]),
+    ),
+    "escapes-in-strings.scss":
+      'a {\n  b: "\\2014 \\00A0";\n  b: "\\f101" c;\n  b: \'\\e900\';\n  b: "\\"";\n  b: "\\\\";\n  b: "c\\\nd";\n  b: url("\\2014");\n  b: "\\#{c}";\n  b: "\\!";\n}\n',
+    "strings-that-are-not-ascii.scss":
+      'a {\n  b: "←";\n  b: "é" c;\n  b: "日本語", d;\n  b: e("é");\n  b:\n    "é" c,\n    d e;\n  @include f("é");\n' +
+      '  b: some-long-name another-long-name yet-another-long-name "日本語日本語日本";\n' +
+      '  b: some-long-name another-long-name yet-another-long-name "日本語日本語日本語";\n' +
+      '  b: some-long-name, another-long-name, yet-another-long-name, "日本語日本語日";\n' +
+      '  b:\n    some-long-name, another-long-name, yet-another-long-name, "日本語日本語日本語",\n    c;\n}\n',
     "numbers-of-every-length.css":
       "a {\n  b: 1 12 123 1234567 12345678 123456789 1px 123456px 1234567px 12345678px;\n  b: 1.5 1.25em 123.456 1234.567 12345.678px 1.2345678 0.5turn 1.5grad;\n" +
       "  b: 1% 1234567% 12345678% 1.5% 1.0 1.50 1. 1.px 1hz 1khz 1q 1Q 1x 1e3 1e 1.5e3 1abcdefg 1abcdefgh;\n  b: 1;\n}\nc {\n  d: 1",
+    "parentheses-without-a-name.scss":
+      "$a: ();\n$a: () !default;\n$a: (b, c);\n$a: (b c);\n$a: (b: c);\n$a: (b, (c, d));\n$a: (b, (c: d));\n$a: f((b, c));\n$a: (b), c;\n$a: (b) c;\n$a: ( );\n" +
+      "e {\n  f: (1 + 2) * 3;\n  f: with (g);\n  f: -(g);\n  grid-area: (g);\n  --f: (g);\n  f: 1px/2 (g);\n  @include h((b, c));\n  @if (g) {\n  }\n" +
+      "  f: (some-long-name, another-long-name, yet-another-long-name, one-more-long-nam);\n" +
+      "  f: (some-long-name, another-long-name, yet-another-long-name, one-more-long-name);\n}\n",
+    "interpolation.scss":
+      "a {\n  b: var(--#{$c}d);\n  b: var(--#{$c}d-e, #{$f});\n  b: #{$c};\n  b: #{$c}-d#{e.$f};\n  b: c-#{$d} e;\n  b: $c#{$d};\n  b: 1#{$c};\n  b: #fff#{$c};\n" +
+      "  b: C#{$d};\n  b: c.d#{$e};\n  b: f(c)#{$d};\n  b: #{$c}--;\n  b: #{c($d)};\n  b: #{$C};\n  b: #{ $c };\n  b: -#{$c};\n  b: #{$url};\n  --b: #{$c};\n" +
+      "  b: var(--#{$c}d), var(--#{$c}e);\n  b:\n    var(--#{$c}d),\n    var(--#{$c}e);\n  b:\n    var(--#{$c}d) f,\n    var(--#{$c}e);\n  b: #{$c}, d;\n}\n",
+    "use-and-content.scss":
+      '@use "a" as *;\n@use "./b" as c;\n@use \'d\' as *;\n@use "e" as * ;\n@use "f"  as *;\n@forward "g" as *;\n@mixin h {\n  @content;\n  @content ;\n  @content();\n' +
+      '  @include i as *;\n  @return "j" as *;\n  font: {\n    @content;\n  }\n}\n',
+    "mixins-and-escapes.less":
+      '.a(@b, @c) {\n  d: (@b / 2);\n  e: (@b + 1) * 2;\n  f: -(@b);\n  g: ~"@{h}-i";\n  j: ~\'k\';\n  l: m ~"n";\n  o: (p), q;\n  o: ~"p", q;\n  o:\n    ~"p",\n    q r;\n}\n' +
+      '@w: ~"@{x}-y";\n@z: (1 + 2);\n.a(@b) when (@c) {\n}\n.a(@b: 1) {\n}\n.A(@b) {\n}\n.a(@b){}\n.a(@b)  {\n}\n.a((@b)) {\n}\n.else(@b) {\n}\n.a("é") {\n}\n.a(@b) { // c\n}\n',
+    "standing-calls.scss": (() => {
+      const [a, b, c] = ["$some-long-argument-name", "$another-long-argument-name", "yet-another-name($one-more)"];
+      const call = (head: string, items: string[], tail: string, indent = "  ") =>
+        `${indent}${head}(\n${items.map(it => `${indent}  ${it}`).join(",\n")}\n${indent})${tail}\n`;
+      return (
+        call("$d: some-module.some-function", [a, b, c], ";", "") +
+        call("$d: e", [a, b, c], " !default;", "") +
+        call("$d: e", ["f", "g"], ";", "") +
+        "h {\n" +
+        call("i: some-function", [a, b, c], ";") +
+        call("i: some-function", [a, b, c], " !important;") +
+        call("i: some-function", [a, b, c], "; // j") +
+        call("i: some-function", [a, b, c], " k;") +
+        call("i: k some-function", [a, b, c], ";") +
+        call("i: -some-function", [a, b, c], ";") +
+        call("i: someFunction", [a, b, c], ";") +
+        call("i: some-function", [a, b, `${c},`], ";") +
+        call("i: some-function", [`${a}, ${b}`, c], ";") +
+        call("i: some-function", [a, `\n    ${b}`, c], ";") +
+        call("i: some-function", [a, `// l\n    ${b}`, c], ";") +
+        call("i: some-function", [`$m: ${a}`, b, c], ";") +
+        call("i: some-function", [`(${a})`, b, c], ";") +
+        call("i: some-function", [a, b, "url(http://some-long-host/some-long-path)"], ";") +
+        call("i: some-function", [a, b, "1px/2", c], ";") +
+        call("i: some-function", [`${a} ${b}`, c], ";") +
+        call("i: some-function", [`${a} ${b} ${c} and-some-more-words`, c], ";") +
+        call("i: some-function", [a, b, '"日本語日本語日本語"'], ";") +
+        call("i: url", [a, b, c], ";") +
+        call("i: not", [a, b, c], ";") +
+        call("grid-area: some-function", [a, b, c], ";") +
+        call("--i: some-function", [a, b, c], ";") +
+        call("@include some-module.some-mixin", [a, b, c], ";") +
+        call("@include some-mixin", [a, b, c], " {\n  }") +
+        call("@include n", ["f", "g"], ";") +
+        call("@return some-function", [a, b, c], ";") +
+        call("@debug some-function", [a, b, c], ";") +
+        call("@if some-function", [a, b, c], " {\n  }") +
+        "  font: {\n" +
+        call("family: some-function", [a, b, c], ";", "    ") +
+        call("@include some-mixin", [a, b, c], ";", "    ") +
+        "  }\n}\n"
+      );
+    })(),
+    "standing-calls.less":
+      "a {\n  b: some-function(\n    @some-long-argument-name,\n    @another-long-argument-name,\n    @yet-another-long-name\n  );\n" +
+      "  .some-mixin(\n    @some-long-argument-name,\n    @another-long-argument-name,\n    @yet-another-long-name\n  );\n}\n" +
+      "@c: some-function(\n  @some-long-argument-name,\n  @another-long-argument-name,\n  @yet-another-long-name\n);\n",
+    "lists-of-custom-properties.css":
+      'a {\n  --b:\n    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas,\n    "Liberation Mono", monospace;\n' +
+      '  --b:\n    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",\n    Roboto, sans-serif;\n  --b:\n    c, d;\n  --b:\n    c;\n' +
+      "  --b:\n    0 3px 1px -2px rgba(0, 0, 0, 0.2), 0 2px 2px 0 rgba(0, 0, 0, 0.14),\n    0 1px 5px 0 rgba(0, 0, 0, 0.12);\n" +
+      "  --b:\n    0 3px 1px -2px rgba(0, 0, 0, 0.2),\n    0 2px 2px 0 rgba(0, 0, 0, 0.14),\n    0 1px 5px 0 rgba(0, 0, 0, 0.12);\n" +
+      "  --b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-name,\n    'c', \"d\", .5, 1.0, #FFF;\n" +
+      "  --b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-name,\n    c !important;\n" +
+      "  --b:\n    some-long-name,another-long-name, yet-another-long-name, one-more-long-name,\n    c;\n" +
+      "  --b:\n    some-long-name another-long-name yet-another-long-name one-more-long-name and,\n    c;\n}\n",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

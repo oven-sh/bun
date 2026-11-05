@@ -265,7 +265,9 @@ struct StandingHead {
 
 /// Where `read_stretch` starts, as far as it matters to what's printed for the lines from there on.
 #[derive(Copy, Clone)]
-struct Surroundings {
+struct Surroundings<'a> {
+    /// Comments are printed from this. It's the text that's read, but for some comments: see `Parser::original`.
+    original: &'a [u8],
     syntax: Syntax,
     page: Page,
     quote: u8,
@@ -273,8 +275,6 @@ struct Surroundings {
     level: usize,
     is_in_declaration: bool,
     is_in_at_rule: bool,
-    /// Comments are printed from the original text: false if that isn't the text that's read.
-    takes_comments: bool,
     takes_long_comments: bool,
     lays_out_values: bool,
     /// A comment on the line of the statement before it is printed there.
@@ -466,13 +466,13 @@ impl Quick {
     ) -> Option<(usize, usize)> {
         let start = Gap::new(css, 0).end;
         let surroundings = Surroundings {
+            original: css,
             syntax,
             page: self.page,
             quote: self.quote,
             level: 0,
             is_in_declaration: false,
             is_in_at_rule: false,
-            takes_comments: true,
             takes_long_comments: self.takes_long_comments,
             lays_out_values: self.lays_out_values,
             is_on_its_line: true,
@@ -523,6 +523,43 @@ fn end_of_media_queries(css: &[u8], mut p: usize, syntax: Syntax) -> Option<usiz
             (b' ', b'{') => return Some(p),
             (b' ', _) => p += 1,
             (b',', b' ') => p += 2,
+            _ => return None,
+        }
+    }
+}
+
+/// For an at-rule whose params no parser looks at, so that they're printed as they're written: whether it's taken with
+/// a block, and without one.
+fn forms_of_plain_at_rule(name: &[u8], syntax: Syntax) -> Option<(bool, bool)> {
+    match name {
+        _ if syntax == Syntax::Less => None,
+        b"layer" => Some((true, true)),
+        b"theme" => Some((true, false)),
+        b"apply" | b"tailwind" => Some((false, true)),
+        _ => None,
+    }
+}
+
+/// The params of such an at-rule from `p` on: names with a blank, or a comma and a blank, between them. `is_apply`: the
+/// names are those of classes, as in `hover:a-b/50`. Returns where they end: at a `;`, or at the blank before a `{`.
+fn end_of_plain_params(css: &[u8], mut p: usize, is_apply: bool) -> Option<usize> {
+    const NAME: u8 = LOWER | DIGIT | DASH;
+    loop {
+        if class(byte(css, p)) & LOWER == 0 || value::starts_with_url(css, p) {
+            return None;
+        }
+        p = skip_long(css, p, NAME);
+        while is_apply && matches!(byte(css, p), b':' | b'/' | b'.') {
+            if class(byte(css, p + 1)) & (LOWER | DIGIT) == 0 || value::starts_with_url(css, p + 1)
+            {
+                return None;
+            }
+            p = skip_long(css, p + 1, NAME);
+        }
+        match (byte(css, p), byte(css, p + 1)) {
+            (b';', _) | (b' ', b'{') => return Some(p),
+            (b' ', _) => p += 1,
+            (b',', b' ') if !is_apply => p += 2,
             _ => return None,
         }
     }
@@ -1105,13 +1142,13 @@ impl<'a> Parser<'a> {
             Some((at, stretch)) if at == start => stretch,
             _ => {
                 let surroundings = Surroundings {
+                    original: self.original,
                     syntax: self.syntax,
                     page: quick.page,
                     quote: quick.quote,
                     level: quick.blocks.len(),
                     is_in_declaration: quick.blocks.last().is_some_and(|it| it.is_in_declaration),
                     is_in_at_rule: around != Around::None,
-                    takes_comments: std::ptr::eq(css, self.original),
                     takes_long_comments: quick.takes_long_comments,
                     lays_out_values: quick.lays_out_values,
                     is_on_its_line: self.nodes[self.current as usize].last_child == 0
@@ -1434,7 +1471,11 @@ impl<'a> Parser<'a> {
             self.add_at_rule(&at_rule, slot, Shape::Word, true);
             return true;
         }
-        if after == b' ' && (name == b"media" || name.ends_with(b"keyframes") || name == b"charset")
+        if after == b' '
+            && (name == b"media"
+                || name.ends_with(b"keyframes")
+                || name == b"charset"
+                || forms_of_plain_at_rule(name, syntax).is_some())
         {
             return self.read_at_rule_with_text(start, name_end);
         }
@@ -1445,7 +1486,13 @@ impl<'a> Parser<'a> {
     fn read_at_rule_with_text(&mut self, start: usize, name_end: usize) -> bool {
         let css = self.css;
         let params = name_end + 1;
-        let (params_end, shape) = match &css[start + 1..name_end] {
+        let name = &css[start + 1..name_end];
+        let forms = forms_of_plain_at_rule(name, self.syntax);
+        let (params_end, shape) = match name {
+            _ if forms.is_some() => (
+                end_of_plain_params(css, params, name == b"apply"),
+                Shape::Word,
+            ),
             b"media" => (end_of_media_queries(css, params, self.syntax), Shape::Line),
             b"charset" => {
                 // A string, which keeps its quotes.
@@ -1464,7 +1511,16 @@ impl<'a> Parser<'a> {
         let Some(params_end) = params_end else {
             return false;
         };
-        let has_block = &css[start + 1..name_end] != b"charset";
+        let has_block = match forms {
+            Some((takes_block, takes_none)) => {
+                let has_block = byte(css, params_end) == b' ';
+                if !(if has_block { takes_block } else { takes_none }) {
+                    return false;
+                }
+                has_block
+            }
+            None => name != b"charset",
+        };
         let tail: &[u8] = if has_block { b" {" } else { b";" };
         if !css[params_end..].starts_with(tail) {
             return false;
@@ -1672,21 +1728,24 @@ impl<'a> Parser<'a> {
 fn read_stretch(
     css: &[u8],
     start: usize,
-    surroundings: Surroundings,
+    surroundings: Surroundings<'_>,
     heads: &mut Vec<StandingHead>,
 ) -> Stretch {
     let Surroundings {
+        original,
         syntax,
         page,
         quote,
         level: base,
         is_in_declaration,
         is_in_at_rule,
-        takes_comments,
         takes_long_comments,
         lays_out_values,
         is_on_its_line,
     } = surroundings;
+    let is_original = std::ptr::eq(css, original);
+    let is_as_printed =
+        |start: usize, end: usize| is_original || css.get(start..end) == original.get(start..end);
     let mut segment: Option<(usize, usize)> = None;
     let mut semicolon = None;
     let mut at = start;
@@ -1698,10 +1757,10 @@ fn read_stretch(
         let mut head = None;
         let end = match byte(css, at) {
             b'}' if !heads.is_empty() => at + 1,
-            b'/' if takes_comments && (at > start || is_on_its_line) => {
+            b'/' if at > start || is_on_its_line => {
                 match end_of_standing_comment(css, at, syntax, takes_long_comments) {
-                    Some(end) => end,
-                    None => break true,
+                    Some(end) if is_as_printed(at, end) => end,
+                    _ => break true,
                 }
             }
             b'}' | b'/' => break true,
@@ -1712,6 +1771,13 @@ fn read_stretch(
                             head = Some((it.end - 2, Shape::Line, Some((it.name_end, it.params))));
                         }
                         it.end
+                    }
+                    None if lays_out_values && !is_in_declaration => {
+                        match end_of_at_rule_with_standing_call(css, at, syntax, quote, page, level)
+                        {
+                            Some(end) => end,
+                            None => break true,
+                        }
                     }
                     _ => break true,
                 }
@@ -1726,12 +1792,16 @@ fn read_stretch(
                     is_in_declaration,
                     lists,
                 ) {
-                    Some((end, shape)) if shape != Shape::Line || end - at <= room => {
+                    Some((end, shape, true)) => {
+                        head = Some((end, shape, None));
+                        end + 2
+                    }
+                    Some((end, shape, false)) if shape != Shape::Line || end - at <= room => {
                         if css.get(end..end + 2) != Some(b" /") {
                             end
                         } else if let Some(end) =
                             end_of_standing_comment(css, end + 1, syntax, false)
-                            && takes_comments
+                            && is_as_printed(at, end)
                             && (shape == Shape::Word || (shape == Shape::Line && end - at <= room))
                         {
                             // A comment behind a statement stays there, and the line is measured with it.
@@ -1833,7 +1903,22 @@ fn is_less_variable(css: &[u8], start: usize) -> bool {
 fn read_simple_at_rule(css: &[u8], start: usize, syntax: Syntax, quote: u8) -> Option<AtRule> {
     let name_end = skip_long(css, start + 1, LOWER | DIGIT | DASH | UNDERSCORE);
     let params = name_end + 1;
-    let (takes_block, takes_none) = match css.get(start + 1..name_end)? {
+    let name = css.get(start + 1..name_end)?;
+    if let Some((takes_block, takes_none)) = forms_of_plain_at_rule(name, syntax) {
+        if byte(css, name_end) != b' ' {
+            return None;
+        }
+        let params_end = end_of_plain_params(css, params, name == b"apply")?;
+        let has_block = css[params_end] == b' ';
+        return (if has_block { takes_block } else { takes_none }).then_some(AtRule {
+            start,
+            name_end,
+            params: (params, params_end),
+            end: params_end + if has_block { 2 } else { 1 },
+            has_block,
+        });
+    }
+    let (takes_block, takes_none) = match name {
         b"font-face" => {
             return css[name_end..].starts_with(b" {").then_some(AtRule {
                 start,
@@ -1841,6 +1926,15 @@ fn read_simple_at_rule(css: &[u8], start: usize, syntax: Syntax, quote: u8) -> O
                 params: (0, 0),
                 end: name_end + 2,
                 has_block: true,
+            });
+        }
+        b"content" if syntax == Syntax::Scss => {
+            return (byte(css, name_end) == b';').then_some(AtRule {
+                start,
+                name_end,
+                params: (0, 0),
+                end: name_end + 1,
+                has_block: false,
             });
         }
         b"media" if byte(css, name_end) == b' ' => {
@@ -1874,7 +1968,10 @@ fn read_simple_at_rule(css: &[u8], start: usize, syntax: Syntax, quote: u8) -> O
         b"mixin" | b"include" | b"function" => (true, true),
         _ => return None,
     };
-    let params_end = value::end_of_simple_value(css, params, syntax, quote)?;
+    let (params_end, ends_with_star) = value::end_of_simple_value(css, params, syntax, quote)?;
+    if ends_with_star && name != b"use" {
+        return None;
+    }
     let has_block = match css.get(params_end..params_end + 2)? {
         [b';', ..] if takes_none => false,
         b" {" if takes_block => true,
@@ -1887,6 +1984,31 @@ fn read_simple_at_rule(css: &[u8], start: usize, syntax: Syntax, quote: u8) -> O
         end: params_end + if has_block { 2 } else { 1 },
         has_block,
     })
+}
+
+/// `@include name(..);` or `@return name(..);` of SCSS, from `start` on, `level` blocks deep, with an argument on each
+/// line because it doesn't fit on one. Returns where it ends.
+fn end_of_at_rule_with_standing_call(
+    css: &[u8],
+    start: usize,
+    syntax: Syntax,
+    quote: u8,
+    page: Page,
+    level: usize,
+) -> Option<usize> {
+    let name_end = skip_long(css, start + 1, LOWER);
+    if syntax != Syntax::Scss
+        || !matches!(css.get(start + 1..name_end)?, b"include" | b"return")
+        || byte(css, name_end) != b' '
+    {
+        return None;
+    }
+    let places = (start, name_end + 1);
+    let (close, flat_len) =
+        value::end_of_standing_call(css, places, syntax, quote, Owner::AtRule, page, level)?;
+    // With its `;`.
+    let fits = level * page.tab_width + flat_len < page.width;
+    (byte(css, close + 1) == b';' && !fits).then_some(close + 2)
 }
 
 /// See `Parser::read_less_line_comment`. Returns where the line ends.

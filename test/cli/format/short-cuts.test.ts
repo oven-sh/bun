@@ -2877,6 +2877,13 @@ describe("templates in another language", () => {
     // Markdown.
     "const m = markdown`\n  # Title\n  * a\n  * b\n\n  some   text\n`;\nconst n = md`\n# Title\n\n\\`\\`\\`js\nlet  a\n\\`\\`\\`\n`;\n",
     "someFunction(markdown`>c\n`);\na.c(md`>c\n`).d();\nmd`a|||\n-|-|-`;\na=markdown` \\`\n\\``;\nconst b=await foo(async()=>md` this is a long long long long long long long long paragraph.`);\n",
+    // What is nearly a template in another language, or is one in two.
+    "graphql?.(`{a{b}}`);\nx=graphql?.(` `);\ngraphql?.(`${f()}`);\na?.graphql(`{a{b}}`);\nnew graphql(`{a}`);\ngraphql(a)(`{a}`);\n",
+    "x = /* GraphQL */ css`{ a }`;\nx = /* GraphQL */ css`a{`;\nx = /* GraphQL */ md`{ a`;\nx = /* HTML */ markdown`<a`;\nx = /* HTML */ gql`{a}`;\nx = /* HTML */ /* GraphQL */ `{a}`;\n",
+    "x = styled?.div`a{b:c}`;\nx = styled[\"div\"]`a{b:c}`;\nx = css.foo`a{b:c}`;\nx = (styled.div)`a{b:c}`;\nx = html.foo`<a></a>`;\nx = /*GraphQL*/ `{a}`;\nx = /** GraphQL */ `{a}`;\n",
+    "@Component({ 'template': `<a></a>` })\nclass A {}\n@ng.Component({ template: `<a></a>` })\nclass B {}\n@Component({ a: { template: `<a></a>` } })\nclass C {}\n@Component({ styles: [[`a{b:c}`]] })\nclass D {}\n@Component({ template: (`<a></a>`) })\nclass E {}\nComponent({ template: `<a></a>` });\n",
+    // A template in a substitution of a template, on another line.
+    "(html`<script type=\"text/x-handlebars-template\"><div><h1></h1><div></div></div></script><script>\n  ${(m>html`<`)}</script>`)\n",
     // A text without width.
     "/* HTML */` he fix happened. \u000b\n`;\n",
   ];

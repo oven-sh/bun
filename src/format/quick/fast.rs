@@ -2644,8 +2644,10 @@ impl Quick {
                 }
                 target = true;
             } else if d == 40 {
-                // graphql(schema, `..`)
-                if sh == SH_NAME && q - p == 7 && self.text_is(p, q, b"graphql") {
+                // graphql(schema, `..`), graphql?.(schema, `..`)
+                if ((sh == SH_NAME && q - p == 7) || (optional && q - p == 9))
+                    && self.text_is(p, p + 7, b"graphql")
+                {
                     self.fast.no_templates += 1;
                 }
                 let curried = self.t.at(q - 1) == 41;

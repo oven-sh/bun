@@ -504,6 +504,42 @@ test.skipIf(isDebug || isASAN).concurrent.each(tiers.slice(2))(
   },
 );
 
+// Of an object of JS the optimizing tiers know that it equals itself.
+test.concurrent.each(tiers)("a Python object that is compared with itself is asked: %s", async (_, env) => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "never.py": `
+class Never:
+    asked = 0
+    def __eq__(self, other):
+        Never.asked += 1
+        return False
+    __hash__ = None
+`,
+      "main.js": `
+      import { Never } from "./never.py";
+      const a = new Never();
+      const sites = {
+        constant() { return a == a; },
+        negated() { return a != a; },
+        wrapped(x) { const y = Object(x); return y == y; },
+        checked(x) { return x instanceof Never ? x == x : null; },
+        argument(x) { return x == x; },
+      };
+      for (const [name, site] of Object.entries(sites)) {
+        const answers = new Set(), before = Never.asked;
+        for (let i = 0; i < 3000; ++i) answers.add(site(a));
+        console.log(name, [...answers].join(), Never.asked - before);
+      }
+    `,
+    },
+    env,
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("constant false 3000\nnegated true 3000\nwrapped false 3000\nchecked false 3000\nargument false 3000\n");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("code of a realm that has no Python", async () => {
   const { stdout, stderr, exitCode } = await run({
     "v.py": vector,

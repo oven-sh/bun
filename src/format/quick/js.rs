@@ -14,6 +14,8 @@ pub(crate) struct Host {
     pub(crate) before: Vec<u8>,
     pub(crate) after: Vec<u8>,
     pub(crate) has_vue_filters: bool,
+    /// The expression is `<$>`, JSX of MDX and `</$>`: what is between the two is printed.
+    pub(crate) is_mdx_jsx: bool,
 }
 impl Host {
     pub(crate) fn new() -> Self {
@@ -22,6 +24,7 @@ impl Host {
             before: Vec::new(),
             after: Vec::new(),
             has_vue_filters: false,
+            is_mdx_jsx: false,
         }
     }
 }

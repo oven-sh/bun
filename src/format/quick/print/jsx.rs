@@ -764,7 +764,9 @@ impl Quick {
                 } else {
                     self.n.at(self.n.at(opening + 5)) > 1
                 }));
-        if forced_break && !contains_text {
+        let is_mdx_block =
+            self.host.is_mdx_jsx && (self.n.at(self.n.at(n + 3)) & 0xff) == k::JsExpressionRoot;
+        if forced_break && !contains_text && !is_mdx_block {
             // (<fbt> goes this way too: its rules are about text)
             let g = self.group_open();
             self.print(opening)?;
@@ -789,7 +791,6 @@ impl Quick {
             && !opening_is_ready
             && (self.n.at(self.n.at(opening + 4)) & 0xff) == k::JSXIdentifier
             && self.name_is(self.n.at(opening + 4), b"fbt");
-        let is_mdx_block = false;
         if count == 1
             && contains_text
             && !is_fbt

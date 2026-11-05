@@ -3265,6 +3265,12 @@ describe("JavaScript and TypeScript in a host", () => {
           "import a from 'a'\nconst b = 1\n\nexport const c = 1\nd()\n\nexport * from 'e'\n\nexport {f}\n\nexport {g} from 'g'\n",
           "export const a = `\n  b\n`\n\nexport const c = {\n  d: 1 }\n\nexport function e() { return <f/> }\n\n- g\n\n  export const h = `\n    i\n  `\n",
           "import a from 'a' // b\n\n// c\nimport d from 'd'\n\nexport const e = ;\n\nimport\n\nexport\n\n'use strict'\nimport f from 'f'\n",
+          // JSX below the root, and in a list.
+          "<A b={1}  c='d' />\n\n<A b={{c:1}}>\n  e\n</A>\n\n<A>\n  <B c={d}/>\n  <E />\n</A>\n\n<A>{b}{c}</A>\n\n<A>\n  {b ? <C /> : null}\n</A>\n",
+          `<A b={${"c".repeat(80)}} />\n\n<A b="${"c".repeat(40)}" d="${"e".repeat(40)}" />\n\n<A b={() => { f() }} />\n\n<A {...b} />\n\n<A b={\`c\nd\`} />\n`,
+          "<A />\n<B />\n\n<A>b</A> c\n\n<A>b</A>;\n\n<A b={1: 2} />\n\n<A>{/* c */}</A>\n\n<A>{b /* c */}</A>\n\n<A b={c // d\n} />\n\n<></>\n\n<>a <b>c</b></>\n",
+          "- a\n\n  <A b={1}  c='d'>\n    <B />\n    e   f\n  </A>\n\n> <A b={`c\n> d`} />\n\n<A b={css`a{color:red}`} />\n\n<A b={{ 1: c, 'd': e }} />\n",
+          "<A>\n  text   {b}   more <C>d</C>\n  {' '}\n  e\n</A>\n\n<A>&nbsp;&amp;</A>\n\n<A b=\"&quot;\" c='\"' />\n\n<a.b.c d />\n\n<a:b c:d=\"e\" />\n\n<$ />\n\n<A></$>\n",
         ],
         options,
       ));

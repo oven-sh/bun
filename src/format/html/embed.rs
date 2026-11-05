@@ -349,6 +349,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         let script = crate::js::quick::Script {
             text: code,
+            name: (self.options.format.filepath.as_deref()).unwrap_or_default(),
             is_typescript,
             is_no_module: source_type == SourceType::Script,
             indentation,

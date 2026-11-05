@@ -317,6 +317,8 @@ pub struct Expression<'a> {
     pub is_typescript: bool,
     /// `a | b` at its top is a filter of Vue.
     pub has_vue_filters: bool,
+    /// It is `<$>`, JSX of MDX and `</$>`: Prettier's `rootMarker: "mdx"`. What is between the two is printed.
+    pub is_mdx_jsx: bool,
     pub wrap: Wrap,
     /// What is printed in front of it on its line (the name of the attribute, `="`), and behind it.
     pub before: &'a [u8],
@@ -367,9 +369,11 @@ pub fn format_expression(
     scratch.host.after.clear();
     scratch.host.after.extend_from_slice(expression.after);
     scratch.host.has_vue_filters = expression.has_vue_filters;
+    scratch.host.is_mdx_jsx = expression.is_mdx_jsx;
     let done = scratch.format_expression_buffer(expression, dialect, options);
     scratch.host.wrap = WRAP_NONE;
     scratch.host.has_vue_filters = false;
+    scratch.host.is_mdx_jsx = false;
     match done {
         Ok(()) => {
             out.extend_from_slice(scratch.printer.out.sub(0, scratch.printer.out_length));

@@ -201,8 +201,8 @@ pub(crate) const G_FORCE_FLAT: i32 = 128;
 // Groups: there is a fill inside. A fill measures for itself. In a group that was measured and fits, all its measurements come out
 // as "fits"; in one that is flat because the group around it is (which may be flat only up to a forced line break) they may not.
 pub(crate) const G_HAS_FILL: i32 = 256;
-/// groups: see stays_expanded()
-pub(crate) const G_STAYS_EXPANDED: i32 = 512;
+/// groups: see gives_up_if_broken()
+pub(crate) const G_GIVES_UP: i32 = 512;
 /// the same in the second word of a detached doc
 pub(crate) const D_HAS_FILL: i32 = 1 << 16;
 pub(crate) const ALIGN_BIAS: i32 = 1024;
@@ -897,13 +897,18 @@ impl Quick {
         }
     }
 
-    /// The layout measures such a group step by step, and gives up if it does not fit.
     #[cold]
     fn mark_stays_expanded(&mut self, h: i32) {
         if self.options.object_wrap_preserve {
-            self.d
-                .put(h, (self.d.at(h) | (G_STAYS_EXPANDED << 5)) & !(G_PURE << 5));
+            self.gives_up_if_broken(h);
         }
+    }
+
+    /// For the group `h`, just closed: the layout measures it step by step, and leaves the text to the long way if it does not fit.
+    #[cold]
+    pub(crate) fn gives_up_if_broken(&mut self, h: i32) {
+        self.d
+            .put(h, (self.d.at(h) | (G_GIVES_UP << 5)) & !(G_PURE << 5));
     }
 
     /// Closes a group that is printed flat even where it does not fit. Nothing in it may force a break.

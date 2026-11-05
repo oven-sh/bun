@@ -3559,6 +3559,14 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A member chain in the parameters of a function that is the last argument.
     ["a.ts", "--print-width=28", "d=d((y=a.b().c())=>{})\n"],
     ["a.js", "--print-width=28", "new d((a=d.e().a())=>{})\n"],
+    // `declare type` is no `type`: its function type keeps the parentheses of the only parameter.
+    ["a.js.flow", "--arrow-parens=avoid", "declare type A = (B) => C;\n"],
+    // A union as the key of an indexer that breaks.
+    [
+      "a.js.flow",
+      "--print-width=22",
+      'const filteredSections: {\n  ["apis" | "components"]: Array<SectionData<RNTesterModuleInfo>>,\n} = {};\n',
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

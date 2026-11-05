@@ -140,7 +140,11 @@ impl Quick {
         }
         let parent = self.n.at(fn_ + 3);
         match self.n.at(parent) & 0xff {
-            k::TypeAlias | k::UnionType | k::IntersectionType => {
+            k::TypeAlias => {
+                // (a DeclareTypeAlias is none)
+                return (((self.n.at(parent) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) == 0;
+            }
+            k::UnionType | k::IntersectionType => {
                 return true;
             }
             k::FunctionType => {

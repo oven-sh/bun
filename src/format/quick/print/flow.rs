@@ -347,7 +347,16 @@ impl Quick {
                     self.print(self.n.at(n + 4))?;
                     self.text(COLON_SPACE);
                 }
-                self.print(self.n.at(n + 5))?;
+                let key = self.n.at(n + 5);
+                if (self.n.at(key) & 0xff) == k::UnionType {
+                    // The long way does not indent a union that breaks here.
+                    let g = self.group_open();
+                    self.print(key)?;
+                    self.group_close(g);
+                    self.gives_up_if_broken(g);
+                } else {
+                    self.print(key)?;
+                }
                 self.text(RBRACKET_COLON_);
                 self.print(self.n.at(n + 6))?;
                 self.print_class_member_semicolon(n, position);

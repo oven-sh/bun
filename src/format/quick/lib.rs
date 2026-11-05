@@ -108,8 +108,9 @@ pub(crate) mod why {
 pub(crate) mod rare {
     /// None of the following.
     pub(crate) const OTHER: i32 = 0;
-    /// An object type in the return type decides how the only parameter is laid out.
-    pub(crate) const RETURN_TYPE: i32 = 1;
+    /// What the long way prints in another way if it breaks: an object type in the return type, for which it goes back and lays out the
+    /// parameters as it will the next time; a union as the key of an indexer of Flow, which it does not indent.
+    pub(crate) const BROKEN: i32 = 1;
     /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
     /// U+2028 or U+2029 anywhere, a "\r" without a "\n", bytes that are not UTF-8.
     pub(crate) const ODD_BYTES: i32 = 2;

@@ -220,13 +220,13 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             let print_result = match ast_import.to_css(
                                 bump,
                                 &printer_options,
-                                Some(ImportInfo {
+                                ImportInfo {
                                     import_records: &entry.condition_import_records,
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
                                     ast_unique_key_for_additional_file: parse_graph
                                         .input_files
                                         .items_unique_key_for_additional_file(),
-                                }),
+                                },
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.
                                 Some(&c.mangled_props),

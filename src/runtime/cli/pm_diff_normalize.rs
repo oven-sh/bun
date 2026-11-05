@@ -916,7 +916,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
         alloc,
         bytes,
         opts,
-        Some(&mut import_records),
+        &mut import_records,
         bun_ast::Index::INVALID,
     )
     .ok()?;
@@ -928,9 +928,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
                 minify: false,
                 ..bun_css::PrinterOptions::default()
             },
-            Some(bun_css::ImportInfo::init_outside_of_bundler(
-                &import_records,
-            )),
+            bun_css::ImportInfo::init_outside_of_bundler(&import_records),
             None,
             &symbols,
         )

@@ -134,7 +134,7 @@ fn testing_impl<'a>(
         alloc,
         source,
         parser_options,
-        Some(&mut import_records),
+        &mut import_records,
         bun_ast::Index::INVALID,
     ) {
         Ok(ret) => {
@@ -165,9 +165,7 @@ fn testing_impl<'a>(
                     },
                     ..Default::default()
                 },
-                Some(ImportRecordHandler::init_outside_of_bundler(
-                    &import_records,
-                )),
+                ImportRecordHandler::init_outside_of_bundler(&import_records),
                 Some(&local_names),
                 &symbols,
             ) {
@@ -275,9 +273,7 @@ pub(crate) fn attr_test<'a>(
                     targets,
                     ..Default::default()
                 },
-                Some(ImportRecordHandler::init_outside_of_bundler(
-                    &import_records,
-                )),
+                ImportRecordHandler::init_outside_of_bundler(&import_records),
             ) {
                 Ok(r) => r,
                 Err(_e) => {

@@ -493,6 +493,7 @@ A run over a few files is over in milliseconds, so what is around the formatter 
 - **A file is four system calls**: `lstat` or `fstatat` when it is found, then `open`, `read`, `close`. A read that asks for more than the size and gets the size has all of it (`fs::read_file_of_size`). Anything else goes the long way.
 - **Directories are listed for what is looked for in them.** With `--no-config --no-editorconfig` none is. Those above files that are named are listed on all threads (`Configs::list_ahead`), and what is found in them is read in the order of the arguments.
 - Nothing is freed at the end (`ManuallyDrop` in `format_files`). To give memory back from all threads at once takes as long as the end of the process does: each call interrupts every other thread.
+- **What a file is comes from the end of its path** (`Kind::of`): the extensions of nearly all files are asked for before the name is cut off, put in small letters and shown to one language after the other, which takes 4000 instructions for the language that is asked last. An extension can be answered early if no language that is asked before its own goes by a name or an extension that ends like it.
 - `bun fmt --timing` has the phases. `--bench=<rounds>` (canary, debug) is the formatter alone.
 
 ## Conventions

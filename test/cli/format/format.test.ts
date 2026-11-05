@@ -6118,6 +6118,75 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
+  test("the last extension of a name says that it is YAML, Markdown, MDX, GraphQL, Handlebars or HTML, whatever is in front of it", async () => {
+    // What is printed for the text in the language, and for the same text in no language that changes it.
+    const languages: Record<string, [text: string, formatted: string]> = {
+      "yaml": ["a:   1\n", "a: 1\n"],
+      "yml": ["a:   1\n", "a: 1\n"],
+      "md": ["<A   />\n\n#   h\n", "<A   />\n\n# h\n"],
+      "mdx": ["<A   />\n\n#   h\n", "<A />\n\n# h\n"],
+      "graphql": ["{a}\n", "{\n  a\n}\n"],
+      "gql": ["{a}\n", "{\n  a\n}\n"],
+      "hbs": ["{{a   b}}\n", "{{a b}}"],
+      "handlebars": ["{{a   b}}\n", "{{a b}}"],
+      "html": ['<p (click)="a=1"   >b</p>\n', '<p (click)="a=1">b</p>\n'],
+      "component.html": ['<p (click)="a=1"   >b</p>\n', '<p (click)="a = 1">b</p>\n'],
+    };
+    const fronts = [
+      "a",
+      "",
+      "A",
+      "package.json",
+      "a.json",
+      ".babelrc",
+      "a.js",
+      "a.ts",
+      "a.js.flow",
+      "a.start.frag",
+      "Jakefile",
+      "a.css",
+      "a.vue",
+      "a.yaml",
+      "a.yml.mysql",
+      ".lintstagedrc",
+      "README",
+      "a.md",
+      "a.mdx",
+      "a.graphql",
+      "a.hbs",
+      "a.html",
+      "a.toml",
+      "b.css/c",
+      "b.md/c",
+    ];
+    const files: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [extension, [text, formatted]] of Object.entries(languages)) {
+      for (const front of fronts) {
+        const inDirectory = `${extension}/${front}.${extension}`;
+        files[inDirectory] = text;
+        expected[inDirectory] = formatted;
+      }
+      for (const [name, isFormatted] of [
+        [`A.${extension.toUpperCase()}`, true],
+        [`a.${extension[0].toUpperCase()}${extension.slice(1)}`, true],
+        [`a.${extension}x`, false],
+        [`a.${extension}~`, false],
+        [`a${extension.replaceAll(".", "")}`, false],
+        [extension.replaceAll(".", ""), false],
+      ] as const) {
+        // `a.mdx` is a language of its own.
+        if (name === "a.mdx") continue;
+        files[`${extension}/${name}`] = text;
+        expected[`${extension}/${name}`] = isFormatted ? formatted : text;
+      }
+    }
+    const names = Object.keys(files);
+    const result = await format(files, [], { reads: names });
+    expect(result.files).toEqual(expected);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("formats files under an .oxfmtrc.json like oxfmt, even if the run starts above it", async () => {
     const files = {
       "a.ts": "let a = // comment\n{\n  b: 1\n}\n",

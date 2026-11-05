@@ -212,21 +212,21 @@ impl Kind {
         if SCRIPTS.iter().any(|it| path.ends_with(it)) {
             return Some(Kind::Script);
         }
-        // No name and no extension that the other languages go by ends like this, and they are asked first.
-        if path.ends_with(b".vue") {
-            return Some(Kind::Html(bun_format::html::Parser::Vue));
-        }
-        // Nor like these.
-        if path.ends_with(b"ss") {
-            const STYLE_SHEETS: [(&[u8], bun_format::css::Parser); 3] = [
-                (b".css", bun_format::css::Parser::Css),
-                (b".scss", bun_format::css::Parser::Scss),
-                (b".less", bun_format::css::Parser::Less),
-            ];
-            let found = STYLE_SHEETS.iter().find(|it| path.ends_with(it.0));
-            if let Some((_, parser)) = found {
-                return Some(Kind::Css(*parser));
-            }
+        // No name and no extension that the languages go by which are asked before theirs ends like one of these.
+        let dot = path.iter().rposition(|byte| *byte == b'.');
+        match dot.map_or(&b""[..], |dot| &path[dot + 1..]) {
+            b"vue" => return Some(Kind::Html(bun_format::html::Parser::Vue)),
+            b"css" => return Some(Kind::Css(bun_format::css::Parser::Css)),
+            b"scss" => return Some(Kind::Css(bun_format::css::Parser::Scss)),
+            b"less" => return Some(Kind::Css(bun_format::css::Parser::Less)),
+            b"yaml" | b"yml" => return Some(Kind::Yaml),
+            b"md" => return Some(Kind::Markdown),
+            b"mdx" => return Some(Kind::Mdx),
+            b"graphql" | b"gql" => return Some(Kind::GraphQl),
+            b"hbs" | b"handlebars" => return Some(Kind::Handlebars),
+            // `a.component.html` is Angular's.
+            b"html" => return bun_format::html::parser_for_path(path).map(Kind::Html),
+            _ => {}
         }
         // Prettier's `getLanguageByFileName` compares the lowercased name.
         let lowered;

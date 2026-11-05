@@ -61,7 +61,7 @@ const isTooSlowHere = (name: string) =>
   (name.startsWith("slow/") && (isDebug || isASAN)) || (name === "interop/015_operators_jit" && isDebug);
 
 // The scripts of a directory that import a module of another one.
-const alsoNeeds: Record<string, string[]> = { slow: ["mod_cjk"] };
+const alsoNeeds: Record<string, string[]> = { slow: ["mod_cjk", "mod_hash"] };
 
 /** Declares a test for each script whose name (as "mod_io/io_misc") the function accepts. */
 export function differential(accepts: (name: string) => boolean) {

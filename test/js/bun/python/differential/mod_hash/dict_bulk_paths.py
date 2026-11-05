@@ -2,11 +2,12 @@
 # sets made of dicts and dicts made of sets), for targets in every state a dict can be in: new, emptied in several ways (which leaves
 # dead entries and used slots behind), cleared, half full, asked for a key of the program's before or after; and for sources likewise.
 # The sizes go across the sizes of the tables. After each: nothing is lost, nothing is there twice, the order is right.
-# (dict_modes_early.py runs this again in processes where dicts change the way they place strs early, in the middle of such loops: with two
-# arguments, n and k, only every nth case is gone through, beginning with the kth, but for the first part.)
+# There are 18,799 cases, which take a build with assertions minutes. So only every nth is gone through, beginning with the kth: n and k are the arguments, 16 and 0 if there
+# are none. slow/dict_bulk_paths_all.py goes through all. (dict_modes_early.py runs this again in processes where dicts change the way they place strs early, in the
+# middle of such loops.)
 import collections, copy, hashlib, sys, types
 
-EVERY, FIRST = (int(sys.argv[1]), int(sys.argv[2])) if len(sys.argv) > 2 else (1, 0)
+EVERY, FIRST = (int(sys.argv[1]), int(sys.argv[2])) if len(sys.argv) > 2 else (16, 0)
 case = 0
 def wanted():
     global case
@@ -155,7 +156,7 @@ def merged(items, source):
 
 TARGET_SIZES = [5, 6, 11, 22, 43]
 SOURCE_SIZES = [0, 1, 5, 6, 10, 11, 21, 22, 43, 86]
-def go_through(operations, targets, sources, all_of_them=False):
+def go_through(operations, targets, sources):
     digest = hashlib.sha256()
     bad = []
     count = 0
@@ -164,7 +165,7 @@ def go_through(operations, targets, sources, all_of_them=False):
             for n in TARGET_SIZES:
                 for m in SOURCE_SIZES:
                     count += 1
-                    if not all_of_them and not wanted(): continue
+                    if not wanted(): continue
                     operation = operations[count % len(operations)]
                     d, items = target(n)
                     s = source(m)
@@ -178,7 +179,7 @@ def go_through(operations, targets, sources, all_of_them=False):
 # Each way of filling for itself where a dict that is empty takes all that another dict has.
 EMPTY = [t for t in TARGETS if not t(6)[1]]
 for operations in ([o_update], [o_ior], [o_init]) if EVERY == 1 else ([o_update, o_ior, o_init],):
-    print(operations[0].__name__, *go_through(operations, EMPTY, [s_plain, s_asked, s_with_holes, s_all_kinds, s_subclass_keys], True))
+    print(operations[0].__name__, *go_through(operations, EMPTY, [s_plain, s_asked, s_with_holes, s_all_kinds, s_subclass_keys]))
 # All ways by turns for everything.
 print('all', *go_through(OPERATIONS, TARGETS, SOURCES))
 

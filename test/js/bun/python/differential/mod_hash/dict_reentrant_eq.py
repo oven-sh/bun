@@ -98,12 +98,13 @@ COMPARED = {
     add_many: READING | STORING, add_strs: READING | STORING, empty: READING | STORING, put_back_two: MOVING, pop_all_and_put_back: MOVING,
 }
 everything = sys.argv[1:] == ['all']
+few = sys.argv[1:] == ['few']           # for dict_modes_early.py: a third of the cases
 
 for kind in (dict, collections.OrderedDict):
     for act in ACTIONS:
         digest = hashlib.sha256()
         count = unsound = 0
-        for holes in ((), (1,), (1, 2), (2,), (4,), (1, 4)):
+        for holes in ((), (1, 4)) if few else ((), (1,), (1, 2), (2,), (4,), (1, 4)):
             for name, operation in OPERATIONS:
                 if not everything and name not in COMPARED[act]: continue
                 for wanted in (3, 5, 9):

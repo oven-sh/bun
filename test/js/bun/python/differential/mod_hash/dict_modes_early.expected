@@ -1,48 +1,27 @@
 status: 0
-script: d72df0fcd1550880
+script: e70e471924615794
 ---
-dict_modes.py () 0 549 93d32113ca8e7be8 
 dict_modes.py (0, 3) 0 549 93d32113ca8e7be8 
-dict_modes.py (1, None) 0 549 93d32113ca8e7be8 
-dict_modes.py (3, 5) 0 549 93d32113ca8e7be8 
-dict_foreign_keys.py () 0 78 ee5e226aa0394d78 
+dict_reentrant_eq.py few (0, 3) 0 30 0f6a6922fe72a28e 
+dict_bulk_paths.py (0, 3) 0 15 a8e11659a04b761b 
+dict_bulk_paths.py (1, None) 0 15 1464256de0fbdda7 
+dict_bulk_paths.py (None, 4) 0 15 84cff3a92e186526 
 dict_foreign_keys.py (0, 3) 0 78 ee5e226aa0394d78 
 dict_foreign_keys.py (1, None) 0 78 ee5e226aa0394d78 
-dict_foreign_keys.py (3, 5) 0 78 ee5e226aa0394d78 
-dict_str_subclass_keys.py () 0 528 2285d859c807c221 
+dict_foreign_keys.py (None, 4) 0 78 ee5e226aa0394d78 
 dict_str_subclass_keys.py (0, 3) 0 528 2285d859c807c221 
 dict_str_subclass_keys.py (1, None) 0 528 2285d859c807c221 
-dict_str_subclass_keys.py (3, 5) 0 528 2285d859c807c221 
-dict_keys_of_changed_classes.py () 0 355 cc0ebe9d75613e36 
+dict_str_subclass_keys.py (None, 4) 0 528 2285d859c807c221 
 dict_keys_of_changed_classes.py (0, 3) 0 355 cc0ebe9d75613e36 
 dict_keys_of_changed_classes.py (1, None) 0 355 cc0ebe9d75613e36 
-dict_keys_of_changed_classes.py (3, 5) 0 355 cc0ebe9d75613e36 
-dict_reentrant_eq.py () 0 30 a155ef891470ca8e 
-dict_reentrant_eq.py (0, 3) 0 30 a155ef891470ca8e 
-dict_reentrant_eq.py (1, None) 0 30 a155ef891470ca8e 
-dict_reentrant_eq.py (3, 5) 0 30 a155ef891470ca8e 
-dict_reentrant_eq.py (None, 4) 0 30 a155ef891470ca8e 
-dict_bulk_paths.py () 0 15 15111a2040a8f2a2 
-dict_bulk_paths.py (0, 3) 0 15 90dacc0391bc47c8 
-dict_bulk_paths.py (1, None) 0 15 86c2d4b82e77c91e 
-dict_bulk_paths.py (3, 5) 0 15 9881f2c29f21af4d 
-dict_bulk_paths.py (None, 4) 0 15 15111a2040a8f2a2 
-dict_bulk_paths.py (None, 5) 0 15 90dacc0391bc47c8 
-dict_bulk_paths.py (None, 6) 0 15 86c2d4b82e77c91e 
-dict_bulk_paths.py (2, 7) 0 15 9881f2c29f21af4d 
-stale_hash_identity.py () 0 156 6c168b114a09849e 
+dict_keys_of_changed_classes.py (None, 4) 0 355 cc0ebe9d75613e36 
 stale_hash_identity.py (0, 3) 0 156 6c168b114a09849e 
 stale_hash_identity.py (1, None) 0 156 6c168b114a09849e 
-dict_key_views.py () 0 273 e5c9ca05e8e4f28b 
 dict_key_views.py (0, 3) 0 273 e5c9ca05e8e4f28b 
 dict_key_views.py (1, None) 0 273 e5c9ca05e8e4f28b 
-dict_calls_of_keys.py one 0 100 40 () 0 4 34b1f37c46025b10 
 dict_calls_of_keys.py one 0 100 40 (0, 3) 0 4 34b1f37c46025b10 
 dict_calls_of_keys.py one 0 100 40 (1, None) 0 4 34b1f37c46025b10 
-dict_calls_of_keys.py one 0 100 40 (3, 5) 0 4 34b1f37c46025b10 
 dict_calls_of_keys.py one 0 100 40 (None, 4) 0 4 34b1f37c46025b10 
-dict_calls_of_keys.py two 0 100 60 () 0 4 2a879867a2b38e26 
 dict_calls_of_keys.py two 0 100 60 (0, 3) 0 4 2a879867a2b38e26 
 dict_calls_of_keys.py two 0 100 60 (1, None) 0 4 2a879867a2b38e26 
-dict_calls_of_keys.py two 0 100 60 (3, 5) 0 4 2a879867a2b38e26 
 dict_calls_of_keys.py two 0 100 60 (None, 4) 0 4 2a879867a2b38e26 

@@ -1,3 +1,9 @@
+//! Calls: call-expression.js, call-arguments.js and member-chain.js.
+//!
+//! This is where Prettier uses one doc in several places (conditionalGroup). Every decision that only needs the tree is
+//! taken first, so that the common cases are written straight into the stream; only what really ends up in more than
+//! one state of a conditional group is written detached and called.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_CHAIN, F_COMMENTS, F_COMPUTED, F_EXPR_BODY, F_OPTIONAL, F_SHORTHAND, P_DEFER, P_MASK,
@@ -15,11 +21,11 @@ use crate::print::util::is_literal_kind;
 use crate::{Bytes, Quick, R, Words, zeros};
 
 pub(crate) struct PrintCall {
-    /// ---------------------------------------------------------------------------------------------------- member chains
+    // ---------------------------------------------------------------------------------------------------- member chains
     /// The links of the chain that is being printed lie on a stack: [node, flags], the head of the chain first.
     pub(crate) ch: Vec<i32>,
     pub(crate) ch_top: i32,
-    /// what analyzeChain() found
+    /// what analyze_chain() found
     pub(crate) chain_should_merge: bool,
     pub(crate) chain_has_comment: bool,
     pub(crate) chain_is_short: bool,
@@ -40,7 +46,7 @@ impl Quick {
     // ------------------------------------------------------------------------------------------------ questions on nodes
     pub(crate) fn is_memberish(&self, n: i32) -> bool {
         let k = self.n.at(n) & 0xff;
-        return k == k::MemberExpression || (k == k::BindExpression && self.n.at(n + 4) != 0);
+        return k == k::MemberExpression;
     }
 
     pub(crate) fn template_literal_has_new_lines(&self, template: i32) -> bool {
@@ -78,7 +84,7 @@ impl Quick {
             if dot < 0 {
                 return k == k::Identifier && self.text_equals(n, path, 0, end);
             }
-            let mut name: i32;
+            let name: i32;
             if k == k::MetaProperty && path.index_of(46, 0) == dot {
                 name = self.n.at(n + 5);
             } else if k == k::MemberExpression
@@ -161,18 +167,19 @@ impl Quick {
             || self.name_is(n, b"afterAll");
     }
 
-    pub(crate) fn is_test_call(&self, n: i32, parent: i32) -> bool {
+    pub(crate) fn is_test_call(&self, n: i32, parent: i32) -> R<bool> {
+        self.stack()?;
         if n == 0 || (self.n.at(n) & (0xff | F_CHAIN)) != k::CallExpression {
-            return false;
+            return Ok(false);
         }
         let args = self.n.at(n + 5);
         let count = self.n.at(args);
         if count == 1 {
-            if self.is_angular_test_wrapper(n) && self.is_test_call(parent, 0) {
-                return self.is_function_or_arrow(self.n.at(args + 1));
+            if self.is_angular_test_wrapper(n) && self.is_test_call(parent, 0)? {
+                return Ok(self.is_function_or_arrow(self.n.at(args + 1)));
             }
             if self.is_unit_test_setup_identifier(self.n.at(n + 4)) {
-                return self.is_angular_test_wrapper(self.n.at(args + 1));
+                return Ok(self.is_angular_test_wrapper(self.n.at(args + 1)));
             }
         } else if count == 2 || count == 3 {
             let first = self.n.at(args + 1);
@@ -181,7 +188,7 @@ impl Quick {
                 && self.is_test_call_callee(self.n.at(n + 4))
             {
                 if count == 3 && (self.n.at(self.n.at(args + 3)) & 0xff) != k::NumericLiteral {
-                    return false;
+                    return Ok(false);
                 }
                 let second = self.n.at(args + 2);
                 if if count == 2 {
@@ -190,12 +197,12 @@ impl Quick {
                     self.is_function_or_arrow_with_body(second)
                         && self.n.at(self.n.at(second + 6)) <= 1
                 } {
-                    return true;
+                    return Ok(true);
                 }
-                return self.is_angular_test_wrapper(second);
+                return Ok(self.is_angular_test_wrapper(second));
             }
         }
-        return false;
+        return Ok(false);
     }
 
     pub(crate) fn is_function_or_arrow_with_body(&self, n: i32) -> bool {
@@ -265,9 +272,10 @@ impl Quick {
         return false;
     }
 
-    pub(crate) fn is_simple_call_argument(&self, mut n: i32, depth: i32) -> bool {
+    pub(crate) fn is_simple_call_argument(&self, mut n: i32, depth: i32) -> R<bool> {
+        self.stack()?;
         if depth <= 0 {
-            return false;
+            return Ok(false);
         }
         while (self.n.at(n) & 0xff) == k::NonNullExpression {
             n = self.n.at(n + 4);
@@ -279,30 +287,29 @@ impl Quick {
             while self.t.at(e - 1) != 47 {
                 e -= 1;
             }
-            return self.text_width(self.n.at(n + 1) + 1, e - 1) <= 5;
+            return Ok(self.text_width(self.n.at(n + 1) + 1, e - 1) <= 5);
         }
         if is_literal_kind(k)
             || k == k::Identifier
             || k == k::ThisExpression
             || k == k::Super
             || k == k::PrivateName
-            || k == k::ArgumentPlaceholder
         {
-            return true;
+            return Ok(true);
         }
         if k == k::TemplateLiteral {
             if self.template_literal_has_new_lines(n) {
-                return false;
+                return Ok(false);
             }
             let l = self.n.at(n + 5);
             let mut i: i32 = 1;
             while i <= self.n.at(l) {
-                if !self.is_simple_call_argument(self.n.at(l + i), depth - 1) {
-                    return false;
+                if !self.is_simple_call_argument(self.n.at(l + i), depth - 1)? {
+                    return Ok(false);
                 }
                 i += 1;
             }
-            return true;
+            return Ok(true);
         }
         if k == k::ObjectExpression {
             let l = self.n.at(n + 4);
@@ -311,71 +318,71 @@ impl Quick {
                 let p = self.n.at(l + i);
                 let pk = self.n.at(p) & 0xff;
                 if (self.n.at(p) & F_COMPUTED) != 0 {
-                    return false;
+                    return Ok(false);
                 }
                 if pk == k::Ready {
                     if (self.n.at(p) & F_SHORTHAND) == 0 && self.n.at(p + 6) > depth - 1 {
-                        return false;
+                        return Ok(false);
                     }
                 } else if pk == k::ObjectProperty {
                     if (self.n.at(p) & F_SHORTHAND) == 0
-                        && !self.is_simple_call_argument(self.n.at(p + 5), depth - 1)
+                        && !self.is_simple_call_argument(self.n.at(p + 5), depth - 1)?
                     {
-                        return false;
+                        return Ok(false);
                     }
                 } else {
                     // a method or a spread has no `value`
-                    return false;
+                    return Ok(false);
                 }
                 i += 1;
             }
-            return true;
+            return Ok(true);
         }
         if k == k::ArrayExpression {
             let l = self.n.at(n + 4);
             let mut i: i32 = 1;
             while i <= self.n.at(l) {
                 if self.n.at(l + i) != 0
-                    && !self.is_simple_call_argument(self.n.at(l + i), depth - 1)
+                    && !self.is_simple_call_argument(self.n.at(l + i), depth - 1)?
                 {
-                    return false;
+                    return Ok(false);
                 }
                 i += 1;
             }
-            return true;
+            return Ok(true);
         }
         if k == k::CallExpression || k == k::NewExpression || k == k::ImportExpression {
-            if k == k::ImportExpression || self.is_simple_call_argument(self.n.at(n + 4), depth) {
+            if k == k::ImportExpression || self.is_simple_call_argument(self.n.at(n + 4), depth)? {
                 let l = self.n.at(n + 5);
                 if self.n.at(l) > depth {
-                    return false;
+                    return Ok(false);
                 }
                 let mut i: i32 = 1;
                 while i <= self.n.at(l) {
-                    if !self.is_simple_call_argument(self.n.at(l + i), depth - 1) {
-                        return false;
+                    if !self.is_simple_call_argument(self.n.at(l + i), depth - 1)? {
+                        return Ok(false);
                     }
                     i += 1;
                 }
-                return true;
+                return Ok(true);
             }
-            return false;
+            return Ok(false);
         }
         if k == k::MemberExpression {
-            return self.is_simple_call_argument(self.n.at(n + 4), depth)
-                && self.is_simple_call_argument(self.n.at(n + 5), depth);
+            return Ok(self.is_simple_call_argument(self.n.at(n + 4), depth)?
+                && self.is_simple_call_argument(self.n.at(n + 5), depth)?);
         }
         if k == k::UnaryExpression {
             let o = ((head as u32) >> SUB_SHIFT) as i32;
             if o == tk::Not || o == tk::Sub || o == tk::Add || o == tk::Tilde {
                 return self.is_simple_call_argument(self.n.at(n + 4), depth);
             }
-            return false;
+            return Ok(false);
         }
         if k == k::UpdateExpression {
             return self.is_simple_call_argument(self.n.at(n + 4), depth);
         }
-        return false;
+        return Ok(false);
     }
 
     pub(crate) fn is_long_curried_call_expression(&self, n: i32) -> bool {
@@ -419,10 +426,11 @@ impl Quick {
         return false;
     }
 
-    pub(crate) fn could_expand_arg(&self, arg: i32, arrow_chain_recursion: bool) -> bool {
+    pub(crate) fn could_expand_arg(&self, arg: i32, arrow_chain_recursion: bool) -> R<bool> {
+        self.stack()?;
         let k = self.n.at(arg) & 0xff;
         if k == k::ObjectExpression || k == k::ArrayExpression {
-            return self.n.at(self.n.at(arg + 4)) > 0 || self.has_comment(arg);
+            return Ok(self.n.at(self.n.at(arg + 4)) > 0 || self.has_comment(arg));
         }
         if k == k::AsExpression || k == k::SatisfiesExpression {
             return self.could_expand_arg(self.n.at(arg + 4), false);
@@ -430,8 +438,8 @@ impl Quick {
         if k == k::TypeAssertion {
             return self.could_expand_arg(self.n.at(arg + 5), false);
         }
-        if k == k::FunctionExpression || k == k::DoExpression || k == k::ModuleExpression {
-            return true;
+        if k == k::FunctionExpression {
+            return Ok(true);
         }
         if k == k::ArrowFunctionExpression {
             let body = self.n.at(arg + 5);
@@ -442,14 +450,14 @@ impl Quick {
                 || bk == k::ObjectExpression
                 || bk == k::ArrayExpression
             {
-                return true;
+                return Ok(true);
             }
-            if bk == k::ArrowFunctionExpression && self.could_expand_arg(body, true) {
-                return true;
+            if bk == k::ArrowFunctionExpression && self.could_expand_arg(body, true)? {
+                return Ok(true);
             }
             if !arrow_chain_recursion {
                 if bk == k::ConditionalExpression || bk == k::CallExpression {
-                    return true;
+                    return Ok(true);
                 }
                 if bk == k::NonNullExpression {
                     let mut inner = body;
@@ -457,12 +465,12 @@ impl Quick {
                         inner = self.n.at(inner + 4);
                     }
                     if (self.n.at(inner) & 0xff) == k::CallExpression {
-                        return true;
+                        return Ok(true);
                     }
                 }
             }
         }
-        return false;
+        return Ok(false);
     }
 
     pub(crate) fn should_expand_last_arg(&mut self, args: i32) -> R<bool> {
@@ -478,7 +486,7 @@ impl Quick {
         }
         return Ok(!self.has_leading_comment(last)
             && !self.has_trailing_comment(last)
-            && self.could_expand_arg(last, false)
+            && self.could_expand_arg(last, false)?
             && (penultimate == 0 || self.babel_type(penultimate) != self.babel_type(last))
             && (count != 2
                 || (self.n.at(penultimate) & 0xff) != k::ArrowFunctionExpression
@@ -491,7 +499,8 @@ impl Quick {
         return self.n.at(n) & (0xff | F_CHAIN);
     }
 
-    pub(crate) fn is_hopefully_short_call_argument(&self, n: i32) -> bool {
+    pub(crate) fn is_hopefully_short_call_argument(&self, n: i32) -> R<bool> {
+        self.stack()?;
         if (self.n.at(n) & 0xff) == k::ParenthesizedExpression {
             return self.is_hopefully_short_call_argument(self.n.at(n + 4));
         }
@@ -501,7 +510,7 @@ impl Quick {
         {
             let mut type_ = self.n.at(n + 5);
             if type_ == 0 {
-                return false;
+                return Ok(false);
             }
             if (self.n.at(type_) & 0xff) == k::TypeAnnotation {
                 type_ = self.n.at(type_ + 4);
@@ -518,72 +527,37 @@ impl Quick {
                     type_ = self.n.at(list + 1);
                 }
             }
-            return self.is_simple_type(type_) && self.is_simple_call_argument(self.n.at(n + 4), 1);
+            return Ok(
+                self.is_simple_type(type_) && self.is_simple_call_argument(self.n.at(n + 4), 1)?
+            );
         }
         if self.is_call_like(n) && self.n.at(self.n.at(n + 5)) > 1 {
-            return false;
+            return Ok(false);
         }
         if self.is_binaryish(n) {
-            return self.is_simple_call_argument(self.n.at(n + 4), 1)
-                && self.is_simple_call_argument(self.n.at(n + 5), 1);
+            return Ok(self.is_simple_call_argument(self.n.at(n + 4), 1)?
+                && self.is_simple_call_argument(self.n.at(n + 5), 1)?);
         }
-        return (self.n.at(n) & 0xff) == k::RegExpLiteral || self.is_simple_call_argument(n, 2);
+        return Ok((self.n.at(n) & 0xff) == k::RegExpLiteral || self.is_simple_call_argument(n, 2)?);
     }
 
-    pub(crate) fn is_type_module_object_expression(&self, n: i32) -> bool {
-        if (self.n.at(n) & 0xff) != k::ObjectExpression || self.n.at(self.n.at(n + 4)) != 1 {
-            return false;
-        }
-        let property = self.n.at(self.n.at(n + 4) + 1);
-        if (self.n.at(property) & (0xff | F_COMPUTED)) != k::ObjectProperty {
-            return false;
-        }
-        let key = self.n.at(property + 4);
-        let value = self.n.at(property + 5);
-        let key_is_type = self.is_identifier_named(key, b"type")
-            || (self.is_string_literal(key)
-                && self.n.at(key + 2) - self.n.at(key + 1) == 6
-                && self.t.at(self.n.at(key + 1) + 1) == 116
-                && self.t.at(self.n.at(key + 1) + 2) == 121
-                && self.t.at(self.n.at(key + 1) + 3) == 112
-                && self.t.at(self.n.at(key + 1) + 4) == 101);
-        if !key_is_type
-            || !self.is_string_literal(value)
-            || self.n.at(value + 2) - self.n.at(value + 1) != 8
-        {
-            return false;
-        }
-        let word = b"module";
-        let mut i: i32 = 0;
-        while i < 6 {
-            if self.t.at(self.n.at(value + 1) + 1 + i) != word.at(i) {
-                return false;
-            }
-            i += 1;
-        }
-        return true;
-    }
-
-    pub(crate) fn should_expand_first_arg(&self, args: i32) -> bool {
+    pub(crate) fn should_expand_first_arg(&self, args: i32) -> R<bool> {
         if self.n.at(args) != 2 {
-            return false;
+            return Ok(false);
         }
         let first = self.n.at(args + 1);
         let second = self.n.at(args + 2);
         let fk = self.n.at(first) & 0xff;
         let sk = self.n.at(second) & 0xff;
-        if fk == k::ModuleExpression && self.is_type_module_object_expression(second) {
-            return true;
-        }
-        return !self.has_comment(first)
+        return Ok(!self.has_comment(first)
             && (fk == k::FunctionExpression
                 || (fk == k::ArrowFunctionExpression
                     && (self.n.at(self.n.at(first + 5)) & 0xff) == k::BlockStatement))
             && sk != k::FunctionExpression
             && sk != k::ArrowFunctionExpression
             && sk != k::ConditionalExpression
-            && self.is_hopefully_short_call_argument(second)
-            && !self.could_expand_arg(second, false);
+            && self.is_hopefully_short_call_argument(second)?
+            && !self.could_expand_arg(second, false)?);
     }
 
     pub(crate) fn is_valid_hook_callback_and_deps_format(&self, args: i32, base: i32) -> bool {
@@ -619,14 +593,15 @@ impl Quick {
     }
 
     // -------------------------------------------------------------------------------------------------------- arguments
-    pub(crate) fn print_trailing_comma_all(&mut self, n: i32) {
+    pub(crate) fn print_trailing_comma_all(&mut self, n: i32) -> R<()> {
         if self.options.trailing_comma != TRAILING_COMMA_ALL {
-            return;
+            return Ok(());
         }
         let k = self.n.at(n) & 0xff;
         if k != k::ImportExpression && k != k::ImportType && k != k::ExternalModuleReference {
-            self.if_break_text(COMMA, 0, 0);
+            self.if_break_text(COMMA, 0, 0)?;
         }
+        Ok(())
     }
 
     /// `arg,` and the line behind it, for every argument from `from` to `to`; nothing behind the very last argument.
@@ -639,12 +614,12 @@ impl Quick {
             if i == count {
                 break;
             }
-            self.text(COMMA);
+            self.text(COMMA)?;
             if self.is_next_line_empty(arg) {
                 self.hardline();
                 self.hardline();
             } else {
-                self.line();
+                self.line()?;
             }
             i += 1;
         }
@@ -661,23 +636,23 @@ impl Quick {
         let count = self.n.at(args);
         if count == 0 {
             let g = self.group_open();
-            self.text(LPAREN);
-            self.print_dangling_comments_in_list(n);
-            self.text(RPAREN);
+            self.text(LPAREN)?;
+            self.print_dangling_comments_in_list(n)?;
+            self.text(RPAREN)?;
             self.group_close(g);
             return Ok(());
         }
         if self.is_react_hook_call_with_deps_array(args) {
-            self.text(LPAREN);
+            self.text(LPAREN)?;
             let mut i: i32 = 1;
             while i <= count {
                 self.print(self.n.at(args + i))?;
                 if i != count {
-                    self.text(COMMA_SPACE);
+                    self.text(COMMA_SPACE)?;
                 }
                 i += 1;
             }
-            self.text(RPAREN);
+            self.text(RPAREN)?;
             return Ok(());
         }
         let mut any_arg_empty_line = false;
@@ -693,16 +668,16 @@ impl Quick {
                 && self.is_function_composition_arguments(args))
         {
             let g = self.group_open();
-            self.text(LPAREN);
-            self.indent_line();
+            self.text(LPAREN)?;
+            self.indent_line()?;
             self.print_arguments_range(args, 1, count)?;
-            self.print_trailing_comma_all(n);
-            self.dedent_line();
-            self.text(RPAREN);
+            self.print_trailing_comma_all(n)?;
+            self.dedent_line()?;
+            self.text(RPAREN)?;
             self.group_close_with(g, true, 0);
             return Ok(());
         }
-        if self.should_expand_first_arg(args) {
+        if self.should_expand_first_arg(args)? {
             let first = self.n.at(args + 1);
             let mut h = self.detach_open();
             self.print(self.n.at(args + 2))?;
@@ -723,15 +698,15 @@ impl Quick {
             }
             if expanded == 0 {
                 let g = self.group_open();
-                self.text(LPAREN);
-                self.indent_line();
+                self.text(LPAREN)?;
+                self.indent_line()?;
                 self.print(first)?;
-                self.text(COMMA);
-                self.line();
+                self.text(COMMA)?;
+                self.line()?;
                 self.call(tail);
-                self.print_trailing_comma_all(n);
-                self.dedent_line();
-                self.text(RPAREN);
+                self.print_trailing_comma_all(n)?;
+                self.dedent_line()?;
+                self.text(RPAREN)?;
                 self.group_close_with(g, true, 0);
                 return Ok(());
             }
@@ -743,33 +718,33 @@ impl Quick {
             let mut st: i32;
             if !breaks {
                 st = self.state_open();
-                self.text(LPAREN);
+                self.text(LPAREN)?;
                 self.call(expanded);
-                self.text(COMMA_SPACE);
+                self.text(COMMA_SPACE)?;
                 self.call(tail);
-                self.text(RPAREN);
+                self.text(RPAREN)?;
                 self.state_close(st);
             }
             st = self.state_open();
-            self.text(LPAREN);
+            self.text(LPAREN)?;
             let mut g = self.group_open();
             self.call(expanded);
             self.group_close_with(g, true, 0);
-            self.text(COMMA_SPACE);
+            self.text(COMMA_SPACE)?;
             self.call(tail);
-            self.text(RPAREN);
+            self.text(RPAREN)?;
             self.state_close(st);
             st = self.state_open();
             g = self.group_open();
-            self.text(LPAREN);
-            self.indent_line();
+            self.text(LPAREN)?;
+            self.indent_line()?;
             self.print_node(first, ARG_SHARE)?;
-            self.text(COMMA);
-            self.line();
+            self.text(COMMA)?;
+            self.line()?;
             self.call(tail);
-            self.print_trailing_comma_all(n);
-            self.dedent_line();
-            self.text(RPAREN);
+            self.print_trailing_comma_all(n)?;
+            self.dedent_line()?;
+            self.text(RPAREN)?;
             self.group_close_with(g, true, 0);
             self.state_close(st);
             self.cond_close(c, false);
@@ -799,15 +774,15 @@ impl Quick {
             }
             if expanded == 0 {
                 let g = self.group_open();
-                self.text(LPAREN);
-                self.indent_line();
+                self.text(LPAREN)?;
+                self.indent_line()?;
                 if head != 0 {
                     self.call(head);
                 }
                 self.print(last)?;
-                self.print_trailing_comma_all(n);
-                self.dedent_line();
-                self.text(RPAREN);
+                self.print_trailing_comma_all(n)?;
+                self.dedent_line()?;
+                self.text(RPAREN)?;
                 self.group_close_with(g, true, 0);
                 return Ok(());
             }
@@ -819,28 +794,28 @@ impl Quick {
             let mut st: i32;
             if !breaks {
                 st = self.state_open();
-                self.text(LPAREN);
+                self.text(LPAREN)?;
                 if head != 0 {
                     self.call(head);
                 }
                 self.call(expanded);
-                self.text(RPAREN);
+                self.text(RPAREN)?;
                 self.state_close(st);
             }
             st = self.state_open();
-            self.text(LPAREN);
+            self.text(LPAREN)?;
             if head != 0 {
                 self.call(head);
             }
             let mut g = self.group_open();
             self.call(expanded);
             self.group_close_with(g, true, 0);
-            self.text(RPAREN);
+            self.text(RPAREN)?;
             self.state_close(st);
             st = self.state_open();
             g = self.group_open();
-            self.text(LPAREN);
-            self.indent_line();
+            self.text(LPAREN)?;
+            self.indent_line()?;
             if head != 0 {
                 self.call(head);
             }
@@ -849,9 +824,9 @@ impl Quick {
             } else {
                 self.call(expanded);
             }
-            self.print_trailing_comma_all(n);
-            self.dedent_line();
-            self.text(RPAREN);
+            self.print_trailing_comma_all(n)?;
+            self.dedent_line()?;
+            self.text(RPAREN)?;
             self.group_close_with(g, true, 0);
             self.state_close(st);
             self.cond_close(c, false);
@@ -860,13 +835,13 @@ impl Quick {
         let curried = self.is_long_curried_call_expression(n);
         let g = if curried { 0 } else { self.group_open() };
         let breaks = self.doc.wb_count;
-        self.text(LPAREN);
+        self.text(LPAREN)?;
         self.indent_softline();
         self.print_arguments_range(args, 1, count)?;
         let should_break = self.doc.wb_count != breaks;
-        self.print_trailing_comma_all(n);
+        self.print_trailing_comma_all(n)?;
         self.dedent_softline();
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         if !curried {
             self.group_close_with(g, should_break, 0);
         }
@@ -877,25 +852,25 @@ impl Quick {
     pub(crate) fn print_callee(&mut self, n: i32) -> R<()> {
         let k = self.n.at(n) & 0xff;
         if k == k::ImportExpression {
-            self.text(IMPORT);
+            self.text(IMPORT)?;
             let phase = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & P_MASK;
             if phase == P_DEFER {
-                self.text(DOT_DEFER);
+                self.text(DOT_DEFER)?;
             } else if phase == P_SOURCE {
-                self.text(DOT_SOURCE);
+                self.text(DOT_SOURCE)?;
             }
             return Ok(());
         }
         if k == k::ImportType {
-            self.text(IMPORT);
+            self.text(IMPORT)?;
             return Ok(());
         }
         if k == k::ExternalModuleReference {
-            self.text(REQUIRE);
+            self.text(REQUIRE)?;
             return Ok(());
         }
         if k == k::NewExpression {
-            self.text(NEW_);
+            self.text(NEW_)?;
         }
         self.print(self.n.at(n + 4))?;
         self.line_suffix_boundary();
@@ -909,10 +884,10 @@ impl Quick {
         }
         return Ok(self.is_simple_module_import(n)
             || self.is_commons_js_or_amd_module_definition(n)
-            || self.is_test_call(n, self.n.at(n + 3)));
+            || self.is_test_call(n, self.n.at(n + 3))?);
     }
 
-    pub(crate) fn is_member_chain_call(&mut self, n: i32) -> R<bool> {
+    pub(crate) fn is_member_chain_call(&self, n: i32) -> R<bool> {
         return Ok((self.n.at(n) & 0xff) == k::CallExpression
             && self.is_memberish(self.n.at(n + 4))
             && !self.needs_parens(self.n.at(n + 4))?);
@@ -932,21 +907,21 @@ impl Quick {
         if self.prints_arguments_on_one_line(n)? {
             self.print_callee(n)?;
             if (self.n.at(n) & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT);
+                self.text(QUESTION_DOT)?;
             }
             self.print_type_arguments(n, k)?;
-            self.text(LPAREN);
+            self.text(LPAREN)?;
             let args = self.n.at(n + 5);
             let count = self.n.at(args);
             let mut i: i32 = 1;
             while i <= count {
                 if i > 1 {
-                    self.text(COMMA_SPACE);
+                    self.text(COMMA_SPACE)?;
                 }
                 self.print(self.n.at(args + i))?;
                 i += 1;
             }
-            self.text(RPAREN);
+            self.text(RPAREN)?;
             self.set_label(0);
             return Ok(());
         }
@@ -961,7 +936,7 @@ impl Quick {
         let g = if should_group { self.group_open() } else { 0 };
         self.print_callee(n)?;
         if (self.n.at(n) & F_OPTIONAL) != 0 {
-            self.text(QUESTION_DOT);
+            self.text(QUESTION_DOT)?;
         }
         self.print_type_arguments(n, k)?;
         self.print_call_arguments(n)?;
@@ -1215,6 +1190,9 @@ impl Quick {
         self.print_call.chain_is_short = is_short;
     }
 
+    /// `a.b.c(..)`: the call `n` is the only call of its chain, the head is no call, and there are no comments. That makes two groups at
+    /// most, which is a short chain whatever else is true of it. Eight chains in ten are like that. Pushes the links, the head last, and
+    /// returns their number; or 0, with nothing pushed.
     pub(crate) fn push_plain_links(&mut self, n: i32) -> R<i32> {
         let base = self.print_call.ch_top;
         let mut cur = self.n.at(n + 4);
@@ -1231,7 +1209,7 @@ impl Quick {
                 cur = self.n.at(cur + 4);
                 continue;
             }
-            if k == k::CallExpression || k == k::ImportExpression || k == k::BindExpression {
+            if k == k::CallExpression || k == k::ImportExpression {
                 break;
             }
             return Ok(self.print_call.ch_top - base);
@@ -1240,7 +1218,7 @@ impl Quick {
         return Ok(0);
     }
 
-    /// Would printCallExpression(n) return a doc with the label "member-chain"?
+    /// Would print_call_expression(n) return a doc with the label "member-chain"?
     pub(crate) fn is_member_chain_labeled(&mut self, n: i32) -> R<bool> {
         if self.prints_arguments_on_one_line(n)? || !self.is_member_chain_call(n)? {
             return Ok(false);
@@ -1269,25 +1247,25 @@ impl Quick {
         let is_top = i == count - 1;
         let comments = !is_top && self.has_comment(node);
         if comments {
-            self.print_leading_comments(node);
+            self.print_leading_comments(node)?;
         }
         let k = self.n.at(node) & 0xff;
         if k == k::CallExpression {
             if (self.n.at(node) & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT);
+                self.text(QUESTION_DOT)?;
             }
             self.print(self.n.at(node + 6))?;
             self.print_call_arguments(node)?;
         } else if k == k::MemberExpression {
             self.print_member_lookup(node)?;
         } else if k == k::NonNullExpression {
-            self.text(BANG);
+            self.text(BANG)?;
         } else {
-            self.text(DOUBLE_COLON);
+            self.text(DOUBLE_COLON)?;
             self.print(self.n.at(node + 5))?;
         }
         if comments {
-            self.print_trailing_comments(node);
+            self.print_trailing_comments(node)?;
         }
         if (self.print_call.ch.at(base + i * 2 + 1) & LINK_EMPTY_LINE_AFTER) != 0 {
             self.hardline();
@@ -1318,12 +1296,12 @@ impl Quick {
                 if (self.n.at(node) & 0xff) == k::MemberExpression {
                     self.print_member_lookup(node)?;
                 } else {
-                    self.text(BANG);
+                    self.text(BANG)?;
                 }
                 i -= 1;
             }
             if (self.n.at(n) & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT);
+                self.text(QUESTION_DOT)?;
             }
             self.print(self.n.at(n + 6))?;
             self.print_call_arguments(n)?;
@@ -1371,7 +1349,7 @@ impl Quick {
                 let args = self.n.at(node + 5);
                 let mut j: i32 = 1;
                 while j <= self.n.at(args) && !any_complex_argument {
-                    if !self.is_simple_call_argument(self.n.at(args + j), 2) {
+                    if !self.is_simple_call_argument(self.n.at(args + j), 2)? {
                         any_complex_argument = true;
                     }
                     j += 1;

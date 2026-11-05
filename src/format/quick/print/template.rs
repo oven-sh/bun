@@ -1,3 +1,9 @@
+//! Template literals (template-literal.js).
+//!
+//! Prettier prints an interpolation to a string with an infinite width, and keeps the string if it has no line break.
+//! That string is what the doc prints when everything in it is flat, so here the doc goes into a group that is flat by
+//! decree (G_FORCE_FLAT) if nothing in it forces a break.
+
 use crate::ast::k;
 use crate::doc::ALIGN_TO_ROOT;
 use crate::print::statics::{BACKQUOTE, DOLLAR_BRACE, RBRACE, SPACE};
@@ -6,16 +12,11 @@ use crate::{Quick, R, Words, div, rem};
 impl Quick {
     /// An expression that prints as plain text whatever the width.
     pub(crate) fn is_plain_expression(&self, n: i32) -> bool {
-        loop {
-            if self.has_comment(n) {
-                return false;
-            }
-            let k = self.n.at(n) & 0xff;
-            if k == k::Identifier || k == k::ThisExpression {
-                return true;
-            }
+        if self.has_comment(n) {
             return false;
         }
+        let k = self.n.at(n) & 0xff;
+        return k == k::Identifier || k == k::ThisExpression;
     }
 
     pub(crate) fn indent_size_of(&self, start: i32, end: i32) -> i32 {
@@ -41,7 +42,7 @@ impl Quick {
         return size;
     }
 
-    /// `indentSize` < 0: the indentation of the line it stands on is not kept.
+    /// `indent_size` < 0: the indentation of the line it stands on is not kept.
     pub(crate) fn print_template_expression(
         &mut self,
         expression: i32,
@@ -49,13 +50,13 @@ impl Quick {
         next_quasi: i32,
         indent_size: i32,
     ) -> R<()> {
-        let mut interpolation_has_newline =
+        let interpolation_has_newline =
             self.has_newline_in_range(self.n.at(quasi + 2), self.n.at(next_quasi + 1));
         if !interpolation_has_newline && self.is_plain_expression(expression) {
-            self.text(DOLLAR_BRACE);
+            self.text(DOLLAR_BRACE)?;
             self.print(expression)?;
             self.line_suffix_boundary();
-            self.text(RBRACE);
+            self.text(RBRACE)?;
             return Ok(());
         }
         let fills_before = self.doc.fill_count;
@@ -64,23 +65,23 @@ impl Quick {
         let doc = self.detach_close(h);
         if !interpolation_has_newline {
             if self.doc_will_break(doc) {
-                interpolation_has_newline = true;
+                // as if there were a line break in it
             } else if self.doc.fill_count != fills_before {
                 // A fill measures the line whatever the mode is, so for once the doc is printed to a text, as Prettier does.
                 self.print_to_text(doc, 1 << 28)?;
                 let filter = self.doc.text_filter;
                 let g = self.group_open();
-                self.text(DOLLAR_BRACE);
+                self.text(DOLLAR_BRACE)?;
                 // these texts have been through it
                 self.set_text_filter(0);
-                self.slice_any(self.printer.printed_start, self.printer.printed_end);
+                self.slice_any(self.printer.printed_start, self.printer.printed_end)?;
                 self.set_text_filter(filter);
                 self.line_suffix_boundary();
-                self.text(RBRACE);
+                self.text(RBRACE)?;
                 self.group_close(g);
                 return Ok(());
             } else {
-                self.text(DOLLAR_BRACE);
+                self.text(DOLLAR_BRACE)?;
                 let g = self.group_open();
                 let lines = self.doc.line_count;
                 self.call(doc);
@@ -88,7 +89,7 @@ impl Quick {
                 // Prettier has a string here
                 self.set_line_count(lines);
                 self.line_suffix_boundary();
-                self.text(RBRACE);
+                self.text(RBRACE)?;
                 return Ok(());
             }
         }
@@ -106,7 +107,7 @@ impl Quick {
             || k == k::SatisfiesExpression
             || self.is_binaryish(expression);
         let g = self.group_open();
-        self.text(DOLLAR_BRACE);
+        self.text(DOLLAR_BRACE)?;
         let mut closes: i32 = 0;
         if indent_size == 0
             && self.n.at(quasi + 2) > self.n.at(quasi + 1)
@@ -137,7 +138,7 @@ impl Quick {
             closes -= 1;
         }
         self.line_suffix_boundary();
-        self.text(RBRACE);
+        self.text(RBRACE)?;
         self.group_close(g);
         Ok(())
     }
@@ -154,7 +155,7 @@ impl Quick {
             return Ok(());
         }
         self.line_suffix_boundary();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         let mut indent_size: i32 = 0;
         let mut i: i32 = 1;
         while i <= count {
@@ -176,7 +177,7 @@ impl Quick {
             )?;
             i += 1;
         }
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         Ok(())
     }
 
@@ -197,7 +198,7 @@ impl Quick {
             ) {
                 self.softline();
             } else {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
         }
         self.line_suffix_boundary();

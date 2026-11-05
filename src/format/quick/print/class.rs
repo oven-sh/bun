@@ -1,3 +1,5 @@
+//! Classes, their members and decorators (class.js, class-body.js, decorators.js).
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_BODY, CL_EXTENDS, CL_ID, CL_IMPLEMENTS, CL_MIXINS, CL_SUPER, CL_SUPER_TYPE_ARGUMENTS,
@@ -31,7 +33,7 @@ impl Quick {
         let mut i: i32 = 1;
         while i <= self.n.at(decorators) {
             if i > 1 {
-                self.line();
+                self.line()?;
             }
             self.print(self.n.at(decorators + i))?;
             i += 1;
@@ -45,7 +47,7 @@ impl Quick {
         if self.has_newline_between_or_after_decorators(decorators) {
             self.hardline();
         } else {
-            self.line();
+            self.line()?;
         }
         self.group_close(g);
         Ok(())
@@ -93,7 +95,7 @@ impl Quick {
             self.break_parent();
         }
         self.print_decorator_list(decorators)?;
-        self.line();
+        self.line()?;
         Ok(())
     }
 
@@ -151,19 +153,19 @@ impl Quick {
     }
 
     pub(crate) fn print_super_class(&mut self, n: i32, super_class: i32) -> R<()> {
-        self.text(EXTENDS_);
-        self.print_leading_comments(super_class);
+        self.text(EXTENDS_)?;
+        self.print_leading_comments(super_class)?;
         if (self.n.at(self.n.at(n + 3)) & 0xff) == k::AssignmentExpression {
             let d = self.detach_open();
             self.print(super_class)?;
             let doc = self.detach_close(d);
             let g = self.group_open();
             let h = self.if_break_open(0);
-            self.text(LPAREN);
+            self.text(LPAREN)?;
             self.indent_softline();
             self.call(doc);
             self.dedent_softline();
-            self.text(RPAREN);
+            self.text(RPAREN)?;
             self.if_break_else(h);
             self.call(doc);
             self.if_break_close(h);
@@ -172,7 +174,7 @@ impl Quick {
             self.print(super_class)?;
         }
         self.print(self.n.at(n + CL_SUPER_TYPE_ARGUMENTS))?;
-        self.print_trailing_comments(super_class);
+        self.print_trailing_comments(super_class)?;
         Ok(())
     }
 
@@ -180,8 +182,8 @@ impl Quick {
         let mut i: i32 = 1;
         while i <= self.n.at(list) {
             if i > 1 {
-                self.text(COMMA);
-                self.line();
+                self.text(COMMA)?;
+                self.line()?;
             }
             self.print(self.n.at(list + i))?;
             i += 1;
@@ -205,26 +207,26 @@ impl Quick {
             // like a superclass
             let mut g: i32 = 0;
             if group_mode {
-                self.line();
+                self.line()?;
                 g = self.group_open();
             } else {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
-            self.text(keyword_and_space);
-            self.print_dangling_comments_filtered(n, marker, false);
+            self.text(keyword_and_space)?;
+            self.print_dangling_comments_filtered(n, marker, false)?;
             self.print_heritage_list(list)?;
             if group_mode {
                 self.group_close(g);
             }
             return Ok(());
         }
-        self.line();
-        if self.print_dangling_comments_filtered(n, marker, false) {
+        self.line()?;
+        if self.print_dangling_comments_filtered(n, marker, false)? {
             self.hardline();
         }
-        self.text(keyword);
+        self.text(keyword)?;
         let g = self.group_open();
-        self.indent_line();
+        self.indent_line()?;
         self.print_heritage_list(list)?;
         self.indent_close();
         self.group_close(g);
@@ -236,11 +238,11 @@ impl Quick {
         if part == 0 {
             return Ok(());
         }
-        self.print_leading_comments(part);
+        self.print_leading_comments(part)?;
         self.print(part)?;
         if self.has_trailing_comment(part) {
             self.indent_open();
-            self.print_trailing_comments(part);
+            self.print_trailing_comments(part)?;
             self.indent_close();
         }
         Ok(())
@@ -254,10 +256,10 @@ impl Quick {
         let is_interface = k == k::InterfaceDeclaration || k == k::InterfaceType;
         let modifiers = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
         if (modifiers & MOD_DECLARE) != 0 {
-            self.text(DECLARE_);
+            self.text(DECLARE_)?;
         }
         if (modifiers & MOD_ABSTRACT) != 0 {
-            self.text(ABSTRACT_);
+            self.text(ABSTRACT_)?;
         }
         self.text(if is_interface {
             INTERFACE
@@ -267,12 +269,12 @@ impl Quick {
             } else {
                 CLASS
             }
-        });
+        })?;
         let group_mode = self.should_print_class_in_group_mode(n);
         let heritage_group_id = if group_mode { self.new_group_id() } else { 0 };
         let g = if group_mode { self.group_open() } else { 0 };
         if id != 0 {
-            self.text(SPACE);
+            self.text(SPACE)?;
         }
         self.print_class_head_part(id)?;
         self.print_class_head_part(self.n.at(n + CL_TYPE_PARAMETERS))?;
@@ -281,12 +283,12 @@ impl Quick {
         }
         if super_class != 0 {
             if group_mode {
-                self.line();
+                self.line()?;
                 let g2 = self.group_open();
                 self.print_super_class(n, super_class)?;
                 self.group_close(g2);
             } else {
-                self.text(SPACE);
+                self.text(SPACE)?;
                 self.print_super_class(n, super_class)?;
             }
         } else {
@@ -323,10 +325,10 @@ impl Quick {
             let h = self.if_break_open(heritage_group_id);
             self.hardline();
             self.if_break_else(h);
-            self.text(SPACE);
+            self.text(SPACE)?;
             self.if_break_close(h);
         } else {
-            self.text(SPACE);
+            self.text(SPACE)?;
         }
         self.print(body)?;
         Ok(())
@@ -445,31 +447,32 @@ impl Quick {
         return (self.n.at(next) & 0xff) == k::CallSignature && self.n.at(member + 5) == 0;
     }
 
-    /// The semicolon of a member of an interface or a type literal. `position`: see memberPosition().
-    pub(crate) fn print_class_member_semicolon(&mut self, member: i32, position: i32) {
+    /// The semicolon of a member of an interface or a type literal. `position`: see member_position().
+    pub(crate) fn print_class_member_semicolon(&mut self, member: i32, position: i32) -> R<()> {
         let pk = self.n.at(self.n.at(member + 3)) & 0xff;
         if pk == k::ClassBody || pk == k::InterfaceBody {
             if self.options.semi || self.mode.is_flow {
-                self.text(SEMI);
+                self.text(SEMI)?;
             }
-            return;
+            return Ok(());
         }
         if pk != k::TypeLiteral || !self.mode.is_type_script {
-            return;
+            return Ok(());
         }
         if position < 0 {
             if self.options.semi {
-                self.if_break_text(SEMI, 0, 0);
+                self.if_break_text(SEMI, 0, 0)?;
             }
-            return;
+            return Ok(());
         }
         if self.options.semi
             || self.should_print_semicolon_after_interface_property(member, position)
         {
-            self.text(SEMI);
+            self.text(SEMI)?;
         } else {
-            self.if_break_text(0, SEMI, 0);
+            self.if_break_text(0, SEMI, 0)?;
         }
+        Ok(())
     }
 
     /// Is the type `n` the annotation of the only parameter of a function, one that is hugged?
@@ -508,8 +511,8 @@ impl Quick {
             let is_exact = (self.n.at(n) & F_EXACT) != 0 && self.mode.is_flow;
             let is_inexact = (self.n.at(n) & F_INEXACT) != 0 && self.mode.is_flow;
             if count == 0 && !has_dangling && !is_inexact {
-                self.text(if is_exact { LBRACE_BAR } else { LBRACE });
-                self.text(if is_exact { BAR_RBRACE } else { RBRACE });
+                self.text(if is_exact { LBRACE_BAR } else { LBRACE })?;
+                self.text(if is_exact { BAR_RBRACE } else { RBRACE })?;
                 return Ok(());
             }
             let should_break = self.has_dangling_line_comment(n)
@@ -523,12 +526,12 @@ impl Quick {
             let tight =
                 !self.options.bracket_spacing || (count == 0 && !is_inexact && !should_break);
             let g = if with_group { self.group_open() } else { 0 };
-            self.text(if is_exact { LBRACE_BAR } else { LBRACE });
+            self.text(if is_exact { LBRACE_BAR } else { LBRACE })?;
             self.indent_open();
             if tight {
                 self.softline();
             } else {
-                self.line();
+                self.line()?;
             }
             let mut i: i32 = 1;
             while i <= count {
@@ -545,13 +548,13 @@ impl Quick {
                 self.print(member)?;
                 if self.mode.is_flow {
                     if is_inexact || i < count {
-                        self.text(COMMA);
+                        self.text(COMMA)?;
                     } else if self.options.trailing_comma != TRAILING_COMMA_NONE {
-                        self.if_break_text(COMMA, 0, 0);
+                        self.if_break_text(COMMA, 0, 0)?;
                     }
                 }
                 if i < count {
-                    self.line();
+                    self.line()?;
                     if self.is_next_line_empty(member) {
                         self.hardline();
                     }
@@ -559,7 +562,7 @@ impl Quick {
                 i += 1;
             }
             if has_dangling {
-                self.print_dangling_comments(n);
+                self.print_dangling_comments(n)?;
             }
             if is_inexact {
                 if has_dangling {
@@ -568,27 +571,27 @@ impl Quick {
                     {
                         self.hardline();
                     } else {
-                        self.line();
+                        self.line()?;
                     }
                 } else if count > 0 {
-                    self.line();
+                    self.line()?;
                 }
-                self.text(ELLIPSIS);
+                self.text(ELLIPSIS)?;
             }
             self.indent_close();
             if tight {
                 self.softline();
             } else {
-                self.line();
+                self.line()?;
             }
-            self.text(if is_exact { BAR_RBRACE } else { RBRACE });
+            self.text(if is_exact { BAR_RBRACE } else { RBRACE })?;
             if with_group {
                 self.group_close_with(g, should_break, 0);
             }
             return Ok(());
         }
         let is_record = (self.n.at(n) & 0xff) == k::RecordDeclarationBody;
-        self.text(LBRACE);
+        self.text(LBRACE)?;
         if count > 0 || has_dangling {
             self.indent_hardline();
             let mut i: i32 = 1;
@@ -604,12 +607,12 @@ impl Quick {
                 self.print_item(member)?;
                 if is_record {
                     if (self.n.at(member) & 0xff) != k::ClassMethod {
-                        self.text(COMMA);
+                        self.text(COMMA)?;
                     }
                 } else if self.should_print_semicolon_after_class_property(member, next)
                     || self.should_print_semicolon_after_interface_property(member, next)
                 {
-                    self.text(SEMI);
+                    self.text(SEMI)?;
                 }
                 if i < count {
                     self.hardline();
@@ -620,11 +623,11 @@ impl Quick {
                 i += 1;
             }
             if has_dangling {
-                self.print_dangling_comments(n);
+                self.print_dangling_comments(n)?;
             }
             self.dedent_hardline();
         }
-        self.text(RBRACE);
+        self.text(RBRACE)?;
         Ok(())
     }
 
@@ -634,16 +637,16 @@ impl Quick {
             self.print_class_member_decorators(self.n.at(n + 7))?;
         }
         if (((head as u32) >> SUB_SHIFT) as i32) > M_MASK {
-            self.print_accessibility(head);
+            self.print_accessibility(head)?;
         }
         if (head & F_STATIC) != 0 {
-            self.text(STATIC_);
+            self.text(STATIC_)?;
         }
         if (((head as u32) >> SUB_SHIFT) as i32 & MOD_ABSTRACT) != 0 {
-            self.text(ABSTRACT_);
+            self.text(ABSTRACT_)?;
         }
         if (((head as u32) >> SUB_SHIFT) as i32 & MOD_OVERRIDE) != 0 {
-            self.text(OVERRIDE_);
+            self.text(OVERRIDE_)?;
         }
         self.print_method(n)?;
         Ok(())
@@ -657,33 +660,33 @@ impl Quick {
             self.print_class_member_decorators(self.n.at(n + 6))?;
         }
         if (modifiers & MOD_DECLARE) != 0 {
-            self.text(DECLARE_);
+            self.text(DECLARE_)?;
         }
         if modifiers != 0 {
-            self.print_accessibility(head);
+            self.print_accessibility(head)?;
         }
         if (head & F_STATIC) != 0 {
-            self.text(STATIC_);
+            self.text(STATIC_)?;
         }
         if (modifiers & MOD_ABSTRACT) != 0 {
-            self.text(ABSTRACT_);
+            self.text(ABSTRACT_)?;
         }
         if (modifiers & MOD_OVERRIDE) != 0 {
-            self.text(OVERRIDE_);
+            self.text(OVERRIDE_)?;
         }
         if (modifiers & MOD_READONLY) != 0 {
-            self.text(READONLY_);
+            self.text(READONLY_)?;
         }
         self.print(self.n.at(n + 8))?;
         if (head & F_ACCESSOR) != 0 {
-            self.text(ACCESSOR_);
+            self.text(ACCESSOR_)?;
         }
         self.print_key(n)?;
         if (head & F_OPTIONAL) != 0 {
-            self.text(QUESTION);
+            self.text(QUESTION)?;
         }
         if (head & F_DEFINITE) != 0 {
-            self.text(BANG);
+            self.text(BANG)?;
         }
         self.print_type_annotation_property(self.n.at(n + 7))?;
         Ok(())
@@ -702,7 +705,7 @@ impl Quick {
             0,
         )?;
         if self.options.semi {
-            self.text(SEMI);
+            self.text(SEMI)?;
         }
         Ok(())
     }

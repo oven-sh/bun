@@ -1,3 +1,7 @@
+//! A recursive descent parser for JavaScript with JSX. It builds the tree that Babel would build (as Prettier sees it after
+//! its post-processing), because Prettier's layout rules and comment placement depend on node kinds and ranges.
+//! It accepts a superset of the language: a formatter has no use for early errors.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     EXT_AT, F_ACCESSOR, F_AFTER_EMPTY, F_ANY_WIDTH, F_ASYNC, F_AWAIT, F_CHAIN, F_COMPUTED,
@@ -13,11 +17,12 @@ use crate::fast::{
 };
 use crate::holes::FILTER_END_OF_LINE;
 use crate::lexer::{C_END, C_FLAGS, C_START, C_STRIDE, CF_BLOCK, CF_CLAIMED, PREC, kw, tk};
+use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
 use crate::{Quick, R, Stop, Words, why, zeros};
 
 pub(crate) struct Parse {
-    /// ---- context
+    // ---- context
     pub(crate) in_function: i32,
     pub(crate) in_async: i32,
     pub(crate) in_generator: i32,
@@ -28,8 +33,9 @@ pub(crate) struct Parse {
     pub(crate) jsx_enabled: bool,
     /// A .cjs or .cts file: `await` is a name outside of async functions.
     pub(crate) is_common_js: bool,
-    /// ---- trying a reading of the text. While this is not 0, a syntax error is thrown without a message: whoever tries catches it.
+    // ---- trying a reading of the text. While this is not 0, a syntax error is thrown without a message: whoever tries catches it.
     pub(crate) speculating: i32,
+    /// TypeScript and Flow: the next call of parse_maybe_assign() parses something that may turn out to be a parameter of an arrow
     /// function, so `?` and `: type` can follow its left side.
     pub(crate) paren_item: i32,
     /// babel-flow: where the consequent of the conditional expression that was entered last starts
@@ -40,42 +46,42 @@ pub(crate) struct Parse {
     pub(crate) pending_statement: i32,
     /// Whoever calls for a block, or the body of a class, and goes on reading bytes behind it sets this: the lexer then stays at the end of the block and does not look at what follows.
     pub(crate) lexer_stays: bool,
-    /// ------------------------------------------------------------------------------------------------------- statements
-    /// Simple statements are read, and printed, without tokens and nodes: see ../fast.ts.
+    // ------------------------------------------------------------------------------------------------------- statements
+    /// Simple statements are read, and printed, without tokens and nodes: see fast.rs.
     pub(crate) reads_ahead: bool,
     pub(crate) top_level_await: bool,
     /// How many lists are open whose items are indented: blocks, bodies of classes, objects, arguments and arrays that start on a new line.
     pub(crate) list_depth: i32,
-    /// How many comments there were when claimComments() looked last.
+    /// How many comments there were when claim_comments() looked last.
     pub(crate) comments_seen: i32,
-    /// Where a statement starts that fast.ts has looked at and cannot read.
+    /// Where a statement starts that fast.rs has looked at and cannot read.
     pub(crate) refused_at: i32,
-    /// ---- What stands in the source as it will be printed is one text, however many lines it has: statements and members that fast.ts has read and not changed, one behind the other, each
+    // ---- What stands in the source as it will be printed is one text, however many lines it has: statements and members that fast.rs has read and not changed, one behind the other, each
     /// indented as the lists around it say, with no more than one empty line between two of them; and a statement with blocks, if all that is in the blocks stands like that.
-    /// Whether the lists are right about the indentation is for the printer to say: see standing() of core/doc.ts.
+    /// Whether the lists are right about the indentation is for the printer to say: see standing() of doc.rs.
     pub(crate) joins_lines: bool,
     /// The item that stands and was pushed last. It counts if it is the last item of the list at hand.
     pub(crate) last_standing: i32,
-    /// listDepth for the statements of the cases of the innermost `switch`: there a comment can belong to the next `case`.
+    /// list_depth for the statements of the cases of the innermost `switch`: there a comment can belong to the next `case`.
     pub(crate) cases_depth: i32,
-    /// What parseStatementWithBlocks() found: the statement stands, from its start to where the function says that it ends. It has not been pushed then.
+    /// What parse_statement_with_blocks() found: the statement stands, from its start to where the function says that it ends. It has not been pushed then.
     pub(crate) wrap_stands: bool,
     /// from the last `}` on
     pub(crate) wrap_last_length: i32,
     pub(crate) wrap_kind: i32,
     /// F_DECIDED, if that goes for something in the blocks
     pub(crate) wrap_decided: i32,
-    /// Blocks that have been read, for a parser that comes by a second time: see parseStatementWithBlocks().
+    /// Blocks that have been read, for a parser that comes by a second time: see parse_statement_with_blocks().
     pub(crate) known_blocks: Vec<i32>,
     pub(crate) known_blocks_count: i32,
-    /// Where the last block of the statement that parseStatementWithBlocks() has at hand ends.
+    /// Where the last block of the statement that parse_statement_with_blocks() has at hand ends.
     pub(crate) block_end: i32,
     /// Decorators that stood before `abstract class` or `declare class`.
     pub(crate) pending_decorators: i32,
-    /// ---------------------------------------------------------------------------------------------------------- classes
-    /// The call of parseSubscripts() that comes next is for a superclass or the like: a `{` behind it starts something else than a record.
+    // ---------------------------------------------------------------------------------------------------------- classes
+    /// The call of parse_subscripts() that comes next is for a superclass or the like: a `{` behind it starts something else than a record.
     pub(crate) no_record_expression: i32,
-    /// The call of parseSubscripts() that comes next is for a decorator.
+    /// The call of parse_subscripts() that comes next is for a decorator.
     pub(crate) in_decorator: i32,
     /// Set when an item between parentheses got a `?` or a type: an arrow has to follow.
     pub(crate) saw_typed_item: i32,
@@ -83,7 +89,7 @@ pub(crate) struct Parse {
     pub(crate) arguments_may_be_parameters: i32,
     /// The object that is parsed next is known to be a pattern.
     pub(crate) object_is_binding: bool,
-    /// Set by parseAttributes: F_EXTRA when the keyword is `assert`.
+    /// Set by parse_attributes: F_EXTRA when the keyword is `assert`.
     pub(crate) attributes_flag: i32,
 }
 impl Parse {
@@ -128,13 +134,7 @@ impl Parse {
     }
 }
 
-/// This is the body of an F# pipeline: the next `|>` ends it, even from within the body of an arrow function.
-pub(crate) const NO_IN_FSHARP_BODY: i32 = 2;
-impl Quick {
-    pub(crate) fn set_no_in(&mut self, value: i32) {
-        self.parse.no_in = value;
-    }
-}
+// ---- which language: 0 JavaScript, 1 TypeScript, 2 Flow
 pub(crate) const TYPED_TS: i32 = 1;
 pub(crate) const TYPED_FLOW: i32 = 2;
 impl Quick {
@@ -160,7 +160,7 @@ impl Quick {
         self.parse.speculating = depth;
     }
 
-    pub(crate) fn unexpected(&mut self) -> Stop {
+    pub(crate) fn unexpected(&self) -> Stop {
         if self.parse.speculating != 0 {
             return self.stop(why::SYNTAX);
         }
@@ -185,7 +185,7 @@ impl Quick {
         self.parse.paren_item = 0;
     }
 }
-// A bit of `noIn`, which is put aside and cleared wherever brackets open: between the `?` and the `:` of a conditional expression,
+// A bit of `no_in`, which is put aside and cleared wherever brackets open: between the `?` and the `:` of a conditional expression,
 // where `(a): b => c` needs a second look.
 pub(crate) const NO_IN_CONSEQUENT: i32 = 4;
 impl Quick {
@@ -261,7 +261,7 @@ impl Quick {
         if self.lexer.tok != tk::Name {
             return Err(self.unexpected());
         }
-        return Ok(self.identifier()?);
+        return self.identifier();
     }
 
     /// After a dot or as a key: any word.
@@ -269,7 +269,7 @@ impl Quick {
         if !self.is_word() {
             return Err(self.unexpected());
         }
-        return Ok(self.identifier()?);
+        return self.identifier();
     }
 
     // ---------------------------------------------------------------------------------------------------------- program
@@ -295,22 +295,26 @@ impl Quick {
             && self.options.guessing
             && (self.doc.text_filter == 0 || self.doc.text_filter == FILTER_END_OF_LINE)
             && self.options.semi
-            && !self.options.experimental_ternaries
             && !self.options.operator_position_start
-            && self.options.quote_props != QUOTE_PROPS_CONSISTENT;
+            && self.options.quote_props != QUOTE_PROPS_CONSISTENT
+            && (self.mode.single_statement_mode == 0
+                || self.mode.single_statement_mode == SINGLE_JSX_IN_MARKDOWN);
         self.parse.top_level_await =
             !self.parse.is_common_js && (self.parse.typed != TYPED_FLOW || self.mode.is_babel_flow);
         // (MDX looks at each statement)
         self.parse.joins_lines = self.parse.reads_ahead
+            && self.lang.guest_column == 0
             && self.doc.text_filter == 0
             && self.options.end_of_line == EOL_LF
-            && !self.options.use_tabs;
+            && !self.options.use_tabs
+            && self.mode.single_statement_mode == 0;
         self.set_may_break_lines(self.parse.joins_lines);
         let mut known: i32 = 0;
         if self.fast.verified_end != 0 {
             if self.parse.reads_ahead
                 && self.fast.verified_start == self.text.src_start
                 && self.parse.typed != TYPED_FLOW
+                && self.lang.guest_column == 0
             {
                 known = self.node_raw(
                     k::ReadyLines,
@@ -433,7 +437,7 @@ impl Quick {
                 self.parse.in_async != 0
                     || (self.parse.in_function == 0 && self.parse.top_level_await),
                 self.parse.list_depth.wrapping_mul(self.options.tab_width),
-            );
+            )?;
             let mut from = self.lexer.tok_end;
             if !read && self.fast.ready_start == 0 && self.parse.joins_lines {
                 let end = self.read_comments(
@@ -451,7 +455,7 @@ impl Quick {
                     );
                     from = end;
                     behind = end;
-                    read = self.read_next_statement(from);
+                    read = self.read_next_statement(from)?;
                 }
             }
             if read {
@@ -478,7 +482,7 @@ impl Quick {
                 }
             }
         }
-        let mut end: i32;
+        let end: i32;
         loop {
             if behind != 0 {
                 let brace = self.closing_brace_behind(behind);
@@ -539,14 +543,14 @@ impl Quick {
         let saved = self.parse.reads_ahead;
         self.parse.reads_ahead = false;
         let v0 = (|| -> R<i32> {
-            return Ok(self.parse_block()?);
+            return self.parse_block();
         })();
         self.parse.reads_ahead = saved;
         return v0;
     }
 
     pub(crate) fn parse_block(&mut self) -> R<i32> {
-        return Ok(self.parse_block_like(k::BlockStatement, false)?);
+        return self.parse_block_like(k::BlockStatement, false);
     }
 
     pub(crate) fn enter_list(&mut self) {
@@ -558,7 +562,7 @@ impl Quick {
     }
 
     /// A statement with decorators has been read: it has to be a class.
-    pub(crate) fn decorated(&mut self, n: i32) -> R<i32> {
+    pub(crate) fn decorated(&self, n: i32) -> R<i32> {
         let k = self.n.at(n) & 0xff;
         let d = if k == k::ExportNamedDeclaration || k == k::ExportDefaultDeclaration {
             self.n.at(n + 4)
@@ -678,7 +682,7 @@ impl Quick {
     }
 
     /// Pushes a statement of a list, where each starts a line of the output; and the simple statements that follow it, if it is one itself.
-    /// Returns 0 if the current token is what follows. Else the lexer has been left behind, and what is returned is where the last statement ends: see catchUp().
+    /// Returns 0 if the current token is what follows. Else the lexer has been left behind, and what is returned is where the last statement ends: see catch_up().
     pub(crate) fn parse_statements_in_list(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         if start == self.parse.refused_at
@@ -688,16 +692,16 @@ impl Quick {
                 self.parse.in_async != 0
                     || (self.parse.in_function == 0 && self.parse.top_level_await),
                 self.parse.list_depth.wrapping_mul(self.options.tab_width),
-            )
+            )?
         {
             let v0 = self.parse_statement()?;
             self.list_push(v0);
             return Ok(0);
         }
-        return Ok(self.read_statements(start, self.lexer.prev_end)?);
+        return self.read_statements(start, self.lexer.prev_end);
     }
 
-    /// fast.ts has read the statement at `start`; what stands in front of it ends at `behind`. Pushes it and those that follow, as far as fast.ts reads them. Returns what parseStatementsInList() returns.
+    /// fast.rs has read the statement at `start`; what stands in front of it ends at `behind`. Pushes it and those that follow, as far as fast.rs reads them. Returns what parse_statements_in_list() returns.
     pub(crate) fn read_statements(&mut self, mut start: i32, mut behind: i32) -> R<i32> {
         loop {
             if self.fast.ready_block != 0 {
@@ -724,7 +728,7 @@ impl Quick {
                     self.parse.in_async != 0
                         || (self.parse.in_function == 0 && self.parse.top_level_await),
                     self.parse.list_depth.wrapping_mul(self.options.tab_width),
-                ) {
+                )? {
                     if self.fast.ready_start != 0
                         || !self.parse.joins_lines
                         || self.parse.list_depth == self.parse.cases_depth
@@ -747,7 +751,7 @@ impl Quick {
                         0,
                     );
                     behind = end;
-                    if !self.read_next_statement(behind) {
+                    if !self.read_next_statement(behind)? {
                         break;
                     }
                 }
@@ -794,7 +798,7 @@ impl Quick {
                 }
                 behind = self.fast.ready_next;
                 self.parse.content_end = self.fast.ready_end;
-                if !self.read_next_statement(behind) {
+                if !self.read_next_statement(behind)? {
                     if self.fast.ready_start != 0
                         || !self.parse.joins_lines
                         || self.parse.list_depth == self.parse.cases_depth
@@ -817,7 +821,7 @@ impl Quick {
                         0,
                     );
                     behind = end;
-                    if !self.read_next_statement(behind) {
+                    if !self.read_next_statement(behind)? {
                         break;
                     }
                 }
@@ -828,7 +832,7 @@ impl Quick {
         return Ok(behind);
     }
 
-    /// The item that fast.ts has read last stands: T[start, end), whose last line has `lastLength` bytes. It goes on the text before it, or becomes a node.
+    /// The item that fast.rs has read last stands: T[start, end), whose last line has `last_length` bytes. It goes on the text before it, or becomes a node.
     pub(crate) fn push_standing(
         &mut self,
         start: i32,
@@ -909,7 +913,7 @@ impl Quick {
         return true;
     }
 
-    /// Pushes the member of a class or an interface at hand, and the simple ones that follow it, if fast.ts can read it; else nothing has happened.
+    /// Pushes the member of a class or an interface at hand, and the simple ones that follow it, if fast.rs can read it; else nothing has happened.
     pub(crate) fn parse_ready_members(&mut self, where_: i32) -> R<bool> {
         let start = self.lexer.tok_start;
         if !self.parse.reads_ahead
@@ -919,7 +923,7 @@ impl Quick {
                 where_,
                 self.parse.typed,
                 self.parse.list_depth.wrapping_mul(self.options.tab_width),
-            )
+            )?
         {
             return Ok(false);
         }
@@ -930,7 +934,7 @@ impl Quick {
         return Ok(true);
     }
 
-    /// readStatements() for members.
+    /// read_statements() for members.
     pub(crate) fn read_members(&mut self, mut start: i32, mut behind: i32, where_: i32) -> R<i32> {
         loop {
             if self.fast.ready_block != 0 {
@@ -956,7 +960,7 @@ impl Quick {
                     where_,
                     self.parse.typed,
                     self.parse.list_depth.wrapping_mul(self.options.tab_width),
-                ) {
+                )? {
                     if self.fast.ready_start != 0
                         || !self.parse.joins_lines
                         || where_ != MEMBER_OF_CLASS
@@ -979,7 +983,7 @@ impl Quick {
                         0,
                     );
                     behind = end;
-                    if !self.read_next_member(behind, where_) {
+                    if !self.read_next_member(behind, where_)? {
                         break;
                     }
                 }
@@ -1024,7 +1028,7 @@ impl Quick {
                     self.parse.last_standing = 0;
                 }
                 behind = self.fast.ready_next;
-                if !self.read_next_member(behind, where_) {
+                if !self.read_next_member(behind, where_)? {
                     if self.fast.ready_start != 0
                         || !self.parse.joins_lines
                         || where_ != MEMBER_OF_CLASS
@@ -1047,7 +1051,7 @@ impl Quick {
                         0,
                     );
                     behind = end;
-                    if !self.read_next_member(behind, where_) {
+                    if !self.read_next_member(behind, where_)? {
                         break;
                     }
                 }
@@ -1071,15 +1075,16 @@ impl Quick {
         return 0;
     }
 
-    /// fast.ts has read the statement up to the `{` of a block. The block is read here, then fast.ts goes on behind it. If it does not like what it
+    /// fast.rs has read the statement up to the `{` of a block. The block is read here, then fast.rs goes on behind it. If it does not like what it
     /// finds there (`}, 100);`, `}).then(..)`), the statement is parsed like any other, but for the blocks, which are not read again.
-    /// What stands in front of the statement ends at `behind`. Pushes the statement, and returns what parseStatementsInList() returns.
+    /// What stands in front of the statement ends at `behind`. Pushes the statement, and returns what parse_statements_in_list() returns.
     pub(crate) fn parse_statement_with_blocks(
         &mut self,
         start: i32,
         behind: i32,
         is_class_member: bool,
     ) -> R<i32> {
+        self.stack()?;
         let kind = self.fast.ready_kind;
         let column = self.fast.ready_column;
         let list_mark = self.arena.ls_pos;
@@ -1196,7 +1201,7 @@ impl Quick {
                 self.parse.typed,
                 self.parse.in_async != 0
                     || (self.parse.in_function == 0 && self.parse.top_level_await),
-            );
+            )?;
             if !self.fast.ready_stands
                 || (after != AFTER_BLOCK
                     && self.fast.ready_length != 0
@@ -1310,18 +1315,19 @@ impl Quick {
     }
 
     pub(crate) fn parse_statement(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         's0: {
             match self.lexer.tok {
                 tk::BraceL => {
-                    return Ok(self.parse_block()?);
+                    return self.parse_block();
                 }
                 tk::Semi => {
                     self.next()?;
                     return Ok(self.node0(k::EmptyStatement, start, self.lexer.prev_end));
                 }
                 tk::Var => {
-                    return Ok(self.parse_var_statement(start, V_VAR)?);
+                    return self.parse_var_statement(start, V_VAR);
                 }
                 tk::Const => {
                     if self.parse.typed == TYPED_TS {
@@ -1330,10 +1336,10 @@ impl Quick {
                             return Ok(declaration);
                         }
                     }
-                    return Ok(self.parse_var_statement(start, V_CONST)?);
+                    return self.parse_var_statement(start, V_CONST);
                 }
                 tk::Function => {
-                    return Ok(self.parse_function(start, k::FunctionDeclaration, 0)?);
+                    return self.parse_function(start, k::FunctionDeclaration, 0);
                 }
                 tk::Class => {
                     let declaration = self.parse_class(start, k::ClassDeclaration, 0)?;
@@ -1347,20 +1353,20 @@ impl Quick {
                         let decorators = self.parse_decorators()?;
                         if self.lexer.tok == tk::Export {
                             let v0 = self.parse_export(start, decorators)?;
-                            return Ok(self.decorated(v0)?);
+                            return self.decorated(v0);
                         }
                         if self.parse.typed == TYPED_TS && self.lexer.tok == tk::Name {
                             // @dec abstract class, @dec declare class
                             self.parse.pending_decorators = decorators;
                             let declaration = self.ts_parse_statement(start)?;
                             if declaration != 0 {
-                                return Ok(self.decorated(declaration)?);
+                                return self.decorated(declaration);
                             }
                         }
                         if self.lexer.tok != tk::Class {
                             return Err(self.unexpected());
                         }
-                        return Ok(self.parse_class(start, k::ClassDeclaration, decorators)?);
+                        return self.parse_class(start, k::ClassDeclaration, decorators);
                     }
                 }
                 tk::If => {
@@ -1404,7 +1410,7 @@ impl Quick {
                     return Ok(self.node1(kind, start, end, argument));
                 }
                 tk::For => {
-                    return Ok(self.parse_for(start)?);
+                    return self.parse_for(start);
                 }
                 tk::While => {
                     self.next()?;
@@ -1443,7 +1449,7 @@ impl Quick {
                     return Ok(self.node1(kind, start, end, label));
                 }
                 tk::Switch => {
-                    return Ok(self.parse_switch(start)?);
+                    return self.parse_switch(start);
                 }
                 tk::Try => {
                     self.next()?;
@@ -1513,11 +1519,11 @@ impl Quick {
                         if after == tk::ParenL || after == tk::Dot {
                             break 's0;
                         }
-                        return Ok(self.parse_import(start)?);
+                        return self.parse_import(start);
                     }
                 }
                 tk::Export => {
-                    return Ok(self.parse_export(start, 0)?);
+                    return self.parse_export(start, 0);
                 }
                 tk::Name => {
                     if self.parse.typed != 0 {
@@ -1539,7 +1545,7 @@ impl Quick {
                                 || self.lexer.tok == tk::BraceL;
                             self.restore();
                             if is_declaration {
-                                return Ok(self.parse_var_statement(start, V_LET)?);
+                                return self.parse_var_statement(start, V_LET);
                             }
                         }
                         kw::Async => {
@@ -1548,11 +1554,7 @@ impl Quick {
                             let is_function =
                                 self.lexer.tok == tk::Function && self.lexer.tok_nl == 0;
                             if is_function {
-                                return Ok(self.parse_function(
-                                    start,
-                                    k::FunctionDeclaration,
-                                    F_ASYNC,
-                                )?);
+                                return self.parse_function(start, k::FunctionDeclaration, F_ASYNC);
                             }
                             self.restore();
                         }
@@ -1564,7 +1566,7 @@ impl Quick {
                                 && self.lexer.tok_nl == 0;
                             self.restore();
                             if is_declaration {
-                                return Ok(self.parse_var_statement(start, V_USING)?);
+                                return self.parse_var_statement(start, V_USING);
                             }
                         }
                         kw::Await => {
@@ -1581,7 +1583,7 @@ impl Quick {
                             self.restore();
                             if is_declaration {
                                 self.next()?;
-                                return Ok(self.parse_var_statement(start, V_AWAIT_USING)?);
+                                return self.parse_var_statement(start, V_AWAIT_USING);
                             }
                         }
                         _ => {}
@@ -1659,7 +1661,7 @@ impl Quick {
     pub(crate) fn parse_var(&mut self, start: i32, kind: i32) -> R<i32> {
         self.next()?;
         let mark = self.arena.ls_pos;
-        let mut last: i32 = 0;
+        let mut last: i32;
         loop {
             let decl_start = self.lexer.tok_start;
             let id = self.parse_binding_atom()?;
@@ -2043,8 +2045,9 @@ impl Quick {
     }
 
     pub(crate) fn parse_binding_element(&mut self) -> R<i32> {
+        self.stack()?;
         if self.parse.typed != 0 {
-            return Ok(self.parse_typed_binding_element()?);
+            return self.parse_typed_binding_element();
         }
         let start = self.lexer.tok_start;
         if self.lexer.tok == tk::At {
@@ -2095,15 +2098,13 @@ impl Quick {
             return Ok(pattern);
         }
         if self.lexer.tok == tk::Void {
-            let n = self.node0(k::VoidPattern, self.lexer.tok_start, self.lexer.tok_end);
-            self.next()?;
-            return Ok(n);
+            return Err(self.text_refuse());
         }
         if self.parse.typed != 0 && self.lexer.tok == tk::This {
             // the type of `this`, written as a parameter
-            return Ok(self.identifier()?);
+            return self.identifier();
         }
-        return Ok(self.parse_ident()?);
+        return self.parse_ident();
     }
 
     pub(crate) fn parse_function_body(&mut self, flags: i32) -> R<i32> {
@@ -2254,7 +2255,7 @@ impl Quick {
 
     /// The current token is `=>`.
     pub(crate) fn parse_arrow_rest(&mut self, start: i32, params: i32, flags: i32) -> R<i32> {
-        return Ok(self.parse_typed_arrow_rest(start, params, flags, 0, 0)?);
+        return self.parse_typed_arrow_rest(start, params, flags, 0, 0);
     }
 
     pub(crate) fn parse_typed_arrow_rest(
@@ -2273,7 +2274,7 @@ impl Quick {
         self.next()?;
         let saved_no_in = self.parse.no_in;
         self.parse.no_in = saved_no_in & !NO_IN_CONSEQUENT;
-        let mut body: i32;
+        let body: i32;
         if self.lexer.tok == tk::BraceL {
             body = self.parse_function_body(flags)?;
         } else {
@@ -2386,7 +2387,7 @@ impl Quick {
                 MEMBER_OF_CLASS,
                 self.parse.typed,
                 self.parse.list_depth.wrapping_mul(self.options.tab_width),
-            );
+            )?;
             let mut from = self.lexer.tok_end;
             if !read && self.fast.ready_start == 0 && self.parse.joins_lines {
                 let end = self.read_comments(
@@ -2404,7 +2405,7 @@ impl Quick {
                     );
                     from = end;
                     behind = end;
-                    read = self.read_next_member(from, MEMBER_OF_CLASS);
+                    read = self.read_next_member(from, MEMBER_OF_CLASS)?;
                 }
             }
             if read {
@@ -2419,7 +2420,7 @@ impl Quick {
         } else {
             self.next()?;
         }
-        let mut end: i32;
+        let end: i32;
         loop {
             if behind != 0 {
                 let brace = self.closing_brace_behind(behind);
@@ -2451,7 +2452,7 @@ impl Quick {
                     MEMBER_OF_CLASS,
                     self.parse.typed,
                     self.parse.list_depth.wrapping_mul(self.options.tab_width),
-                )
+                )?
             {
                 behind =
                     self.read_members(self.lexer.tok_start, self.lexer.prev_end, MEMBER_OF_CLASS)?;
@@ -2656,12 +2657,12 @@ impl Quick {
             {
                 method = M_CONSTRUCTOR;
             }
-            return Ok(self.parse_method_rest(
+            return self.parse_method_rest(
                 k::ClassMethod | flags | (method << SUB_SHIFT),
                 start,
                 key,
                 decorators,
-            )?);
+            );
         }
         // `*`, `async`, `get` and `set` announce a method
         if (flags & (F_GENERATOR | F_ASYNC)) != 0 || method != M_METHOD {
@@ -2713,11 +2714,11 @@ impl Quick {
                 return Ok(n);
             }
             tk::PrivateName => {
-                return Ok(self.private_name()?);
+                return self.private_name();
             }
             _ => {}
         }
-        return Ok(self.parse_ident_name()?);
+        return self.parse_ident_name();
     }
 
     // ------------------------------------------------------------------------------------------------------ expressions
@@ -2771,7 +2772,7 @@ impl Quick {
             if self.lexer.tok != tk::Colon {
                 return Ok(left);
             }
-            // `(a: T)`: a cast, or a parameter of an arrow function, see toAssignableParameter()
+            // `(a: T)`: a cast, or a parameter of an arrow function, see to_assignable_parameter()
             let annotation = self.ts_parse_type_annotation()?;
             return Ok(self.node2(
                 k::TypeCastExpression,
@@ -2791,6 +2792,7 @@ impl Quick {
     }
 
     pub(crate) fn parse_maybe_assign(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         let mut is_paren_item: i32 = 0;
         if self.parse.typed != 0 {
@@ -2893,7 +2895,8 @@ impl Quick {
         end: i32,
         left: i32,
         right: i32,
-    ) -> i32 {
+    ) -> R<i32> {
+        self.stack()?;
         // Prettier turns `a || (b || c)` into `(a || b) || c`
         let r = self.n.at(right);
         if (r & 0xff) == k::LogicalExpression && ((r as u32) >> SUB_SHIFT) as i32 == op {
@@ -2903,16 +2906,16 @@ impl Quick {
                 self.n.at(self.n.at(right + 4) + 2),
                 left,
                 self.n.at(right + 4),
-            );
+            )?;
             return self.make_logical(op, start, end, inner, self.n.at(right + 5));
         }
-        return self.node2(
+        return Ok(self.node2(
             k::LogicalExpression | (op << SUB_SHIFT),
             start,
             end,
             left,
             right,
-        );
+        ));
     }
 
     pub(crate) fn parse_expr_op(
@@ -2921,13 +2924,13 @@ impl Quick {
         left_start: i32,
         min_prec: i32,
     ) -> R<i32> {
+        self.stack()?;
         loop {
             let op = self.lexer.tok;
             let prec = PREC.at(op);
             if prec <= min_prec
                 || (op == tk::In && (self.parse.no_in & 1) != 0)
                 || self.is_bare_arrow(left)
-                || (op == tk::Pipeline && (self.parse.no_in & NO_IN_FSHARP_BODY) != 0)
             {
                 if self.parse.typed != 0
                     && op == tk::Name
@@ -2943,20 +2946,14 @@ impl Quick {
             }
             self.next()?;
             let right_start = self.lexer.tok_start;
-            let right = if op == tk::Pipeline {
-                self.parse_pipeline_body(prec)?
-            } else {
-                {
-                    let v0 = self.parse_maybe_unary()?;
-                    self.parse_expr_op(
-                        v0,
-                        right_start,
-                        if op == tk::Pow { prec - 1 } else { prec },
-                    )?
-                }
-            };
+            if op == tk::Pipeline {
+                return Err(self.text_refuse());
+            }
+            let v0 = self.parse_maybe_unary()?;
+            let right =
+                self.parse_expr_op(v0, right_start, if op == tk::Pow { prec - 1 } else { prec })?;
             if op == tk::LOr || op == tk::LAnd || op == tk::Nullish {
-                left = self.make_logical(op, left_start, self.lexer.prev_end, left, right);
+                left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
             } else {
                 left = self.node2(
                     k::BinaryExpression | (op << SUB_SHIFT),
@@ -2983,6 +2980,7 @@ impl Quick {
     }
 
     pub(crate) fn parse_maybe_unary(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         match self.lexer.tok {
             tk::Not
@@ -2995,9 +2993,11 @@ impl Quick {
             | tk::Throw => {
                 {
                     let op = self.lexer.tok;
-                    let op_end = self.lexer.tok_end;
+                    if op == tk::Throw {
+                        return Err(self.text_refuse());
+                    }
                     self.next()?;
-                    // `void` where a binding can stand discards the value
+                    // `void` where a binding can stand
                     if op == tk::Void
                         && (self.lexer.tok == tk::Comma
                             || self.lexer.tok == tk::ParenR
@@ -3007,7 +3007,7 @@ impl Quick {
                             || self.lexer.tok == tk::In
                             || self.is_kw(kw::Of))
                     {
-                        return Ok(self.node0(k::VoidPattern, start, op_end));
+                        return Err(self.text_refuse());
                     }
                     let argument = self.parse_maybe_unary()?;
                     return Ok(self.node1(
@@ -3050,8 +3050,7 @@ impl Quick {
                             && self.lexer.tok != tk::Add
                             && self.lexer.tok != tk::Sub
                             && self.lexer.tok != tk::Div
-                            && self.lexer.tok != tk::Lt
-                            && !(self.lexer.tok == tk::Mod && self.is_in_hack_pipe_body()))
+                            && self.lexer.tok != tk::Lt)
                         && self.lexer.tok != tk::Question
                         && self.lexer.tok != tk::QuestionDot
                         && !(self.lexer.tok >= tk::Eq && self.lexer.tok <= tk::NullishEq);
@@ -3093,7 +3092,7 @@ impl Quick {
         if self.is_bare_arrow(atom) {
             return Ok(atom);
         }
-        return Ok(self.parse_subscripts(atom, start, false)?);
+        return self.parse_subscripts(atom, start, false);
     }
 
     pub(crate) fn parse_arguments(&mut self) -> R<i32> {
@@ -3136,22 +3135,18 @@ impl Quick {
                     self.list_push(spread);
                 }
             } else if self.lexer.tok == tk::Question {
-                // partial application: f(?, x)
+                // f(?, x)
                 self.save();
-                let start = self.lexer.tok_start;
-                let end = self.lexer.tok_end;
                 self.next()?;
                 if self.lexer.tok == tk::Comma || self.lexer.tok == tk::ParenR {
-                    let v1 = self.node0(k::ArgumentPlaceholder, start, end);
-                    self.list_push(v1);
-                } else {
-                    self.restore();
-                    let v2 = self.parse_maybe_assign()?;
-                    self.list_push(v2);
+                    return Err(self.text_refuse());
                 }
+                self.restore();
+                let v1 = self.parse_maybe_assign()?;
+                self.list_push(v1);
             } else {
-                let v3 = self.parse_maybe_assign()?;
-                self.list_push(v3);
+                let v2 = self.parse_maybe_assign()?;
+                self.list_push(v2);
             }
             if self.lexer.tok != tk::ParenR {
                 self.expect(tk::Comma)?;
@@ -3207,7 +3202,9 @@ impl Quick {
         })();
         let v0 = match v0 {
             Err(Stop) => (|| -> R<Option<i32>> {
-                if !(self.why == why::SYNTAX) || (self.parse.speculating == depth && depth == 0) {
+                if !(self.why.get() == why::SYNTAX)
+                    || (self.parse.speculating == depth && depth == 0)
+                {
                     return Err(Stop);
                 }
                 result = 0;
@@ -3365,7 +3362,7 @@ impl Quick {
                             self.n.put(v0, v1);
                             i += 1;
                         }
-                        return Ok(self.parse_arrow_rest(start, args, F_ASYNC)?);
+                        return self.parse_arrow_rest(start, args, F_ASYNC);
                     }
                     if maybe_async && self.parse.typed != 0 && self.lexer.tok == tk::Colon {
                         let list_mark = self.arena.ls_pos;
@@ -3448,11 +3445,7 @@ impl Quick {
                         && self.parse.typed == TYPED_FLOW
                         && is_record_constructor != 0
                     {
-                        return Ok(self.flow_parse_record_expression(
-                            start,
-                            base,
-                            type_arguments,
-                        )?);
+                        return self.flow_parse_record_expression(start, base, type_arguments);
                     } else {
                         base = self.node2(
                             k::InstantiationExpression,
@@ -3478,19 +3471,14 @@ impl Quick {
                         if k != k::Identifier && k != k::MemberExpression {
                             return Ok(base);
                         }
-                        return Ok(self.flow_parse_record_expression(start, base, 0)?);
+                        return self.flow_parse_record_expression(start, base, 0);
                     }
                 }
                 tk::DoubleColon => {
                     if no_calls {
                         return Ok(base);
                     }
-                    self.next()?;
-                    let callee_start = self.lexer.tok_start;
-                    let v2 = self.parse_expr_atom()?;
-                    let callee = self.parse_subscripts(v2, callee_start, true)?;
-                    base = self.node2(k::BindExpression, start, self.lexer.prev_end, base, callee);
-                    continue;
+                    return Err(self.text_refuse());
                 }
                 _ => {}
             }
@@ -3509,6 +3497,7 @@ impl Quick {
     }
 
     pub(crate) fn parse_expr_atom(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         match self.lexer.tok {
             tk::Name => {
@@ -3527,11 +3516,7 @@ impl Quick {
                         self.next()?;
                         if self.lexer.tok_nl == 0 {
                             if self.lexer.tok == tk::Function {
-                                return Ok(self.parse_function(
-                                    start,
-                                    k::FunctionExpression,
-                                    F_ASYNC,
-                                )?);
+                                return self.parse_function(start, k::FunctionExpression, F_ASYNC);
                             }
                             if self.lexer.tok == tk::Lt && self.parse.typed != 0 {
                                 // async <T>(x: T) => y
@@ -3546,17 +3531,10 @@ impl Quick {
                                     let mark = self.arena.ls_pos;
                                     self.list_push(param);
                                     let v0 = self.list_finish(mark);
-                                    return Ok(self.parse_arrow_rest(start, v0, F_ASYNC)?);
+                                    return self.parse_arrow_rest(start, v0, F_ASYNC);
                                 }
                             } else if self.lexer.tok == tk::Do {
-                                self.next()?;
-                                let body = self.parse_block()?;
-                                return Ok(self.node1(
-                                    k::DoExpression | F_ASYNC,
-                                    start,
-                                    self.lexer.prev_end,
-                                    body,
-                                ));
+                                return Err(self.text_refuse());
                             }
                         }
                         self.restore();
@@ -3564,27 +3542,7 @@ impl Quick {
                         self.save();
                         self.next()?;
                         if self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0 {
-                            let body_start = self.lexer.tok_start;
-                            self.next()?;
-                            let mark = self.arena.ls_pos;
-                            while self.lexer.tok != tk::BraceR {
-                                if self.lexer.tok == tk::EOF {
-                                    return Err(self.unexpected());
-                                }
-                                let v1 = self.parse_statement()?;
-                                self.list_push(v1);
-                            }
-                            let list = self.list_finish(mark);
-                            let body_end = self.lexer.tok_start;
-                            self.next()?;
-                            let program =
-                                self.node_ll(k::Program, body_start + 1, body_end, 0, list);
-                            return Ok(self.node1(
-                                k::ModuleExpression,
-                                start,
-                                self.lexer.prev_end,
-                                program,
-                            ));
+                            return Err(self.text_refuse());
                         }
                         self.restore();
                     }
@@ -3592,38 +3550,38 @@ impl Quick {
                     if self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
                         let mark = self.arena.ls_pos;
                         self.list_push(id);
-                        let v2 = self.list_finish(mark);
-                        return Ok(self.parse_arrow_rest(start, v2, 0)?);
+                        let v1 = self.list_finish(mark);
+                        return self.parse_arrow_rest(start, v1, 0);
                     }
                     return Ok(id);
                 }
             }
             tk::Num => {
-                return Ok(self.leaf(k::NumericLiteral)?);
+                return self.leaf(k::NumericLiteral);
             }
             tk::String => {
-                return Ok(self.leaf(k::StringLiteral)?);
+                return self.leaf(k::StringLiteral);
             }
             tk::BigInt => {
-                return Ok(self.leaf(k::BigIntLiteral)?);
+                return self.leaf(k::BigIntLiteral);
             }
             tk::ParenL => {
-                return Ok(self.parse_paren_and_distinguish()?);
+                return self.parse_paren_and_distinguish();
             }
             tk::BracketL => {
-                return Ok(self.parse_array()?);
+                return self.parse_array();
             }
             tk::BraceL => {
-                return Ok(self.parse_object()?);
+                return self.parse_object();
             }
             tk::This => {
-                return Ok(self.leaf(k::ThisExpression)?);
+                return self.leaf(k::ThisExpression);
             }
             tk::Null => {
-                return Ok(self.leaf(k::NullLiteral)?);
+                return self.leaf(k::NullLiteral);
             }
             tk::True | tk::False => {
-                return Ok(self.leaf(k::BooleanLiteral)?);
+                return self.leaf(k::BooleanLiteral);
             }
             tk::Function => {
                 if self.t.at(self.lexer.tok_end) == 46
@@ -3641,33 +3599,33 @@ impl Quick {
                         property,
                     ));
                 }
-                return Ok(self.parse_function(start, k::FunctionExpression, 0)?);
+                return self.parse_function(start, k::FunctionExpression, 0);
             }
             tk::Class => {
-                return Ok(self.parse_class(start, k::ClassExpression, 0)?);
+                return self.parse_class(start, k::ClassExpression, 0);
             }
             tk::At => {
                 let decorators = self.parse_decorators()?;
                 if self.lexer.tok != tk::Class {
                     return Err(self.unexpected());
                 }
-                return Ok(self.parse_class(start, k::ClassExpression, decorators)?);
+                return self.parse_class(start, k::ClassExpression, decorators);
             }
             tk::New => {
-                return Ok(self.parse_new()?);
+                return self.parse_new();
             }
             tk::BackQuote => {
-                return Ok(self.parse_template(false)?);
+                return self.parse_template(false);
             }
             tk::Div | tk::DivEq => {
                 self.rescan_regex()?;
-                return Ok(self.leaf(k::RegExpLiteral)?);
+                return self.leaf(k::RegExpLiteral);
             }
             tk::Super => {
-                return Ok(self.leaf(k::Super)?);
+                return self.leaf(k::Super);
             }
             tk::Import => {
-                return Ok(self.parse_import_expression()?);
+                return self.parse_import_expression();
             }
             tk::Lt => {
                 {
@@ -3684,38 +3642,10 @@ impl Quick {
                 }
             }
             tk::PrivateName => {
-                return Ok(self.private_name()?);
+                return self.private_name();
             }
-            tk::Do => {
-                self.next()?;
-                let body = self.parse_block()?;
-                return Ok(self.node1(k::DoExpression, start, self.lexer.prev_end, body));
-            }
-            tk::DoubleColon => {
-                self.next()?;
-                let callee_start = self.lexer.tok_start;
-                let v3 = self.parse_expr_atom()?;
-                let callee = self.parse_subscripts(v3, callee_start, true)?;
-                return Ok(self.node2(k::BindExpression, start, self.lexer.prev_end, 0, callee));
-            }
-            tk::Mod => {
-                {
-                    // `%` is the topic of a pipeline, `%Name` an intrinsic of V8
-                    if !self.is_in_hack_pipe_body() {
-                        self.save();
-                        self.next()?;
-                        if self.lexer.tok == tk::Name {
-                            let end = self.lexer.tok_end;
-                            self.next()?;
-                            if self.lexer.tok == tk::ParenL {
-                                return Ok(self.node0(k::V8IntrinsicIdentifier, start, end));
-                            }
-                        }
-                        self.restore();
-                    }
-                    self.note_topic_reference(start)?;
-                    return Ok(self.leaf(k::TopicReference)?);
-                }
+            tk::Do | tk::DoubleColon | tk::Mod => {
+                return Err(self.text_refuse());
             }
             _ => {}
         }
@@ -3738,7 +3668,7 @@ impl Quick {
                 if self.t.at(p) != 64 {
                     break 'c1;
                 }
-                let mut after: i32 = 0;
+                let after: i32;
                 if self.t.at(p + 1) == 116
                     && self.t.at(p + 2) == 121
                     && self.t.at(p + 3) == 112
@@ -3855,7 +3785,7 @@ impl Quick {
                 i += 1;
             }
             let v4 = self.list_finish(mark);
-            return Ok(self.parse_arrow_rest(start, v4, 0)?);
+            return self.parse_arrow_rest(start, v4, 0);
         }
         if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
             let arrow = self.try_parse_arrow_with_return_type(start, mark, 0)?;
@@ -3867,7 +3797,7 @@ impl Quick {
         if count == 0 || saw_rest || trailing_comma || typed_item != 0 {
             return Err(self.unexpected());
         }
-        let mut expression: i32;
+        let expression: i32;
         if count == 1 {
             expression = self.arena.ls.at(mark);
             self.list_truncate(mark);
@@ -3896,6 +3826,7 @@ impl Quick {
     }
 
     pub(crate) fn parse_new(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         let meta_end = self.lexer.tok_end;
         self.next()?;
@@ -3978,7 +3909,7 @@ impl Quick {
         return Ok(self.call_node(v2, start, v3, 0, v4, 0));
     }
 
-    /// The current token is "`". `isType`: between `${` and `}` stand types.
+    /// The current token is "`". `is_type`: between `${` and `}` stand types.
     pub(crate) fn parse_template(&mut self, is_type: bool) -> R<i32> {
         let start = self.lexer.tok_start;
         let mark = self.arena.ls_pos;
@@ -4128,7 +4059,7 @@ impl Quick {
                     is_binding,
                     self.parse.list_depth.wrapping_mul(self.options.tab_width),
                     false,
-                )
+                )?
             {
                 let mut property_start = self.lexer.tok_start;
                 let mut behind: i32;
@@ -4148,7 +4079,7 @@ impl Quick {
                     if self.t.at(behind) != 44 {
                         break;
                     }
-                    if !self.read_next_property(behind + 1, is_binding) {
+                    if !self.read_next_property(behind + 1, is_binding)? {
                         self.parse.refused_at = self.fast.ready_start;
                         break;
                     }
@@ -4177,7 +4108,7 @@ impl Quick {
         return Ok(self.node_l(k::ObjectExpression, start, v3, v4));
     }
 
-    /// The current token starts a member of an object type of Flow. Pushes it, and those that follow it, if fast.ts can read them; the current token is then what
+    /// The current token starts a member of an object type of Flow. Pushes it, and those that follow it, if fast.rs can read them; the current token is then what
     /// stands behind the last one, a separator or the end of the type.
     pub(crate) fn parse_ready_type_properties(&mut self) -> R<bool> {
         if !self.parse.reads_ahead
@@ -4186,7 +4117,7 @@ impl Quick {
             || !self.read_type_property(
                 self.lexer.tok_start,
                 self.parse.list_depth.wrapping_mul(self.options.tab_width),
-            )
+            )?
         {
             return Ok(false);
         }
@@ -4206,7 +4137,7 @@ impl Quick {
             if self.t.at(behind) != 44 && self.t.at(behind) != 59 {
                 break;
             }
-            if !self.read_next_type_property(behind + 1) {
+            if !self.read_next_type_property(behind + 1)? {
                 self.parse.refused_at = self.fast.ready_start;
                 break;
             }
@@ -4268,12 +4199,12 @@ impl Quick {
             key = self.parse_property_name()?;
         }
         if self.lexer.tok == tk::ParenL || (self.lexer.tok == tk::Lt && self.parse.typed != 0) {
-            return Ok(self.parse_method_rest(
+            return self.parse_method_rest(
                 k::ObjectMethod | flags | (method << SUB_SHIFT),
                 start,
                 key,
                 0,
-            )?);
+            );
         }
         if self.eat(tk::Colon)? {
             let value = self.parse_maybe_assign()?;
@@ -4316,6 +4247,7 @@ impl Quick {
     /// Turns an expression into the pattern it covers, in place.
     /// The same for what stood between parentheses and turns out to be a parameter. Returns the node that takes the place of `n`.
     pub(crate) fn to_assignable_parameter(&mut self, n: i32) -> R<i32> {
+        self.stack()?;
         if self.parse.typed == TYPED_FLOW {
             let k = self.n.at(n) & 0xff;
             if k == k::TypeCastExpression {
@@ -4353,7 +4285,6 @@ impl Quick {
             k::Identifier
             | k::ObjectPattern
             | k::ArrayPattern
-            | k::VoidPattern
             | k::TypeCastExpression
             | k::AssignmentPattern => {}
             _ => {
@@ -4366,17 +4297,14 @@ impl Quick {
         return Ok(n);
     }
 
-    /// Babel's checkLVal() for what is assigned to: a name, a member, or (with `patterns`) a pattern of those, which toAssignable() has
+    /// Babel's checkLVal() for what is assigned to: a name, a member, or (with `patterns`) a pattern of those, which to_assignable() has
     /// made of the literal. The parsers reject everything else, and a host then leaves the code as it stands.
-    pub(crate) fn check_target(&mut self, n: i32, patterns: bool) -> R<()> {
+    pub(crate) fn check_target(&self, n: i32, patterns: bool) -> R<()> {
+        self.stack()?;
         let head = self.n.at(n);
         's0: {
             match head & 0xff {
-                k::Identifier
-                | k::MemberExpression
-                | k::VoidPattern
-                | k::TypeCastExpression
-                | k::CallExpression => {
+                k::Identifier | k::MemberExpression | k::TypeCastExpression | k::CallExpression => {
                     return Ok(());
                 }
                 k::ObjectPattern => {
@@ -4397,7 +4325,7 @@ impl Quick {
                                 if kind == k::ObjectProperty {
                                     self.check_target(self.n.at(member + 5), true)?;
                                 } else if kind == k::Ready {
-                                    // toAssignable() has looked at it
+                                    // to_assignable() has looked at it
                                     break 'c2;
                                 } else if kind == k::RestElement {
                                     self.check_target(self.n.at(member + 4), true)?;
@@ -4456,7 +4384,7 @@ impl Quick {
     }
 
     /// TypeScript's parser takes `=` behind whatever is a "left-hand side expression" by its form, `3 = a` included.
-    pub(crate) fn check_target_of_type_script(&mut self, n: i32) -> R<()> {
+    pub(crate) fn check_target_of_type_script(&self, n: i32) -> R<()> {
         let head = self.n.at(n);
         if (head & F_PAREN) != 0 {
             return Ok(());
@@ -4482,6 +4410,7 @@ impl Quick {
     }
 
     pub(crate) fn to_assignable(&mut self, n: i32) -> R<()> {
+        self.stack()?;
         if n == 0 {
             return Ok(());
         }
@@ -4546,16 +4475,16 @@ impl Quick {
     // ---------------------------------------------------------------------------------------------------------- modules
     pub(crate) fn module_export_name(&mut self) -> R<i32> {
         if self.lexer.tok == tk::String {
-            return Ok(self.leaf(k::StringLiteral)?);
+            return self.leaf(k::StringLiteral);
         }
-        return Ok(self.parse_ident_name()?);
+        return self.parse_ident_name();
     }
 
     pub(crate) fn string_literal(&mut self) -> R<i32> {
         if self.lexer.tok != tk::String {
             return Err(self.unexpected());
         }
-        return Ok(self.leaf(k::StringLiteral)?);
+        return self.leaf(k::StringLiteral);
     }
 
     /// `with { type: "json" }`, or nothing.
@@ -4638,7 +4567,7 @@ impl Quick {
                 let is_equals = self.lexer.tok == tk::Eq;
                 self.restore();
                 if is_equals {
-                    return Ok(self.ts_parse_import_equals(start, import_kind)?);
+                    return self.ts_parse_import_equals(start, import_kind);
                 }
             }
         }
@@ -4739,7 +4668,7 @@ impl Quick {
                     continue;
                 }
                 let imported = self.module_export_name()?;
-                let mut local: i32;
+                let local: i32;
                 if self.is_kw(kw::As) {
                     self.next()?;
                     local = self.parse_ident_name()?;
@@ -4789,9 +4718,6 @@ impl Quick {
     pub(crate) fn peek_is_string(&self) -> bool {
         // only called between save() and restore(): look one more token ahead by hand
         let p = self.lexer.pos;
-        let t0 = self.lexer.tok;
-        let s0 = self.lexer.tok_start;
-        let e0 = self.lexer.tok_end;
         let mut q = p;
         while self.t.at(q) == 32 || self.t.at(q) == 9 || self.t.at(q) == 10 {
             q += 1;
@@ -4876,12 +4802,12 @@ impl Quick {
                 if self.eat(tk::Comma)? {
                     self.parse_export_specifiers()?;
                 }
-                return Ok(self.finish_export_from(
+                return self.finish_export_from(
                     start,
                     mark,
                     true,
                     export_kind << IK_SHIFT << SUB_SHIFT,
-                )?);
+                );
             }
             if !self.is_kw(kw::From) {
                 return Err(self.unexpected());
@@ -4982,14 +4908,14 @@ impl Quick {
         if self.lexer.tok == tk::BraceL {
             let mark = self.arena.ls_pos;
             self.parse_export_specifiers()?;
-            return Ok(self.finish_export_from(
+            return self.finish_export_from(
                 start,
                 mark,
                 false,
                 F_SHORTHAND | (export_kind << IK_SHIFT << SUB_SHIFT),
-            )?);
+            );
         }
-        let mut declaration: i32 = 0;
+        let declaration: i32;
         let decl_start = self.lexer.tok_start;
         's0: {
             match self.lexer.tok {
@@ -5027,38 +4953,7 @@ impl Quick {
                     }
                     {
                         // export v from "mod"; export v, { a } from "mod"
-                        let mark = self.arena.ls_pos;
-                        let exported = self.identifier()?;
-                        let v1 = self.node1(
-                            k::ExportDefaultSpecifier,
-                            decl_start,
-                            self.lexer.prev_end,
-                            exported,
-                        );
-                        self.list_push(v1);
-                        let mut flags: i32 = 0;
-                        if self.eat(tk::Comma)? {
-                            if self.lexer.tok == tk::Mul {
-                                let spec_start = self.lexer.tok_start;
-                                self.next()?;
-                                if !self.is_kw(kw::As) {
-                                    return Err(self.unexpected());
-                                }
-                                self.next()?;
-                                let name = self.module_export_name()?;
-                                let v2 = self.node1(
-                                    k::ExportNamespaceSpecifier,
-                                    spec_start,
-                                    self.lexer.prev_end,
-                                    name,
-                                );
-                                self.list_push(v2);
-                            } else {
-                                self.parse_export_specifiers()?;
-                                flags = F_SHORTHAND;
-                            }
-                        }
-                        return Ok(self.finish_export_from(start, mark, true, flags)?);
+                        return Err(self.text_refuse());
                     }
                 }
                 _ => {
@@ -5096,7 +4991,7 @@ impl Quick {
                 continue;
             }
             let local = self.module_export_name()?;
-            let mut exported: i32;
+            let exported: i32;
             if self.is_kw(kw::As) {
                 self.next()?;
                 exported = self.module_export_name()?;
@@ -5220,35 +5115,36 @@ impl Quick {
         ));
     }
 
-    pub(crate) fn is_same_jsx_name(&self, a: i32, b: i32) -> bool {
+    pub(crate) fn is_same_jsx_name(&self, a: i32, b: i32) -> R<bool> {
+        self.stack()?;
         let k = self.n.at(a) & 0xff;
         if k != (self.n.at(b) & 0xff) {
-            return false;
+            return Ok(false);
         }
         if k != k::JSXIdentifier {
-            return self.is_same_jsx_name(self.n.at(a + 4), self.n.at(b + 4))
-                && self.is_same_jsx_name(self.n.at(a + 5), self.n.at(b + 5));
+            return Ok(self.is_same_jsx_name(self.n.at(a + 4), self.n.at(b + 4))?
+                && self.is_same_jsx_name(self.n.at(a + 5), self.n.at(b + 5))?);
         }
         let start = self.n.at(a + 1);
         let length = self.n.at(a + 2) - start;
         let other = self.n.at(b + 1);
         if self.n.at(b + 2) - other != length {
-            return false;
+            return Ok(false);
         }
         let mut i: i32 = 0;
         while i < length {
             if self.t.at(start + i) != self.t.at(other + i) {
-                return false;
+                return Ok(false);
             }
             i += 1;
         }
-        return true;
+        return Ok(true);
     }
 
     /// Is `name` the name in the opening tag?
-    pub(crate) fn closes_jsx(&mut self, opening: i32, name: i32) -> R<bool> {
+    pub(crate) fn closes_jsx(&self, opening: i32, name: i32) -> R<bool> {
         if (self.n.at(opening) & 0xff) != k::Ready {
-            return Ok(self.is_same_jsx_name(self.n.at(opening + 4), name));
+            return self.is_same_jsx_name(self.n.at(opening + 4), name);
         }
         // The name in the opening tag is written without blanks or comments. If this one is not, it is not found to be the same, and the long way finds out.
         let length = self.n.at(opening + 6);
@@ -5267,7 +5163,7 @@ impl Quick {
         return Ok(true);
     }
 
-    /// A node for what fast.ts has read of an element.
+    /// A node for what fast.rs has read of an element.
     pub(crate) fn ready_jsx(&mut self, kind: i32, start: i32) -> i32 {
         let n = self.node_raw(
             k::Ready | self.fast.ready_flags | (kind << SUB_SHIFT),
@@ -5290,6 +5186,7 @@ pub(crate) const JSX_IN_PARENS: i32 = 3;
 impl Quick {
     /// The current token is `<`. On return `pos` stands behind the last `>`, and no token has been read there.
     pub(crate) fn parse_jsx_element(&mut self, where_: i32) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         if self.parse.known_blocks_count != 0 {
             let known = self.known_block_at(start);
@@ -5313,7 +5210,7 @@ impl Quick {
                 self.parse.list_depth.wrapping_mul(self.options.tab_width),
                 where_ == JSX_CHILD,
                 where_ == JSX_IN_PARENS,
-            );
+            )?;
             if read != JSX_REFUSED {
                 self.set_pos(self.fast.ready_end);
                 if read == JSX_ELEMENT {
@@ -5363,14 +5260,14 @@ impl Quick {
                             self.parse.in_async != 0
                                 || (self.parse.in_function == 0 && self.parse.top_level_await),
                             tag_column,
-                        )
+                        )?
                     {
                         let mut behind: i32;
                         loop {
                             let v0 = self.ready_jsx(self.fast.ready_kind, attr_start);
                             self.list_push(v0);
                             behind = self.fast.ready_end;
-                            if !self.read_next_jsx_attribute(behind, tag_column) {
+                            if !self.read_next_jsx_attribute(behind, tag_column)? {
                                 self.parse.refused_at = self.fast.ready_start;
                                 break;
                             }
@@ -5482,7 +5379,7 @@ impl Quick {
                             self.parse.in_async != 0
                                 || (self.parse.in_function == 0 && self.parse.top_level_await),
                             self.parse.list_depth.wrapping_mul(self.options.tab_width),
-                        )
+                        )?
                     {
                         let v4 = self.ready_jsx(k::JSXExpressionContainer, self.lexer.tok_start);
                         self.list_push(v4);

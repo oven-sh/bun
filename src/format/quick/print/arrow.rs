@@ -1,3 +1,6 @@
+//! Arrow functions and chains of them (arrow-function.js). Every decision depends on the tree alone, so they are all
+//! taken first and the function is then written front to back.
+
 use crate::ast::{F_ASYNC, FN_PREDICATE, FN_RETURN_TYPE, FN_TYPE_PARAMETERS, k};
 use crate::doc::{LABEL_EMBED, LABEL_EMBED_NO_HUG};
 use crate::options::TRAILING_COMMA_ALL;
@@ -41,13 +44,6 @@ impl Quick {
                     cur = self.n.at(cur + 4);
                     continue;
                 }
-                k::BindExpression => {
-                    if self.n.at(cur + 4) == 0 {
-                        return true;
-                    }
-                    cur = self.n.at(cur + 4);
-                    continue;
-                }
                 k::SequenceExpression => {
                     cur = self.n.at(self.n.at(cur + 4) + 1);
                     continue;
@@ -63,7 +59,6 @@ impl Quick {
             k::ArrayExpression
             | k::ObjectExpression
             | k::ArrowFunctionExpression
-            | k::DoExpression
             | k::BlockStatement
             | k::JSXElement
             | k::JSXFragment => {
@@ -78,7 +73,7 @@ impl Quick {
 
     pub(crate) fn print_signature(&mut self, n: i32, args: i32) -> R<()> {
         if (self.n.at(n) & F_ASYNC) != 0 {
-            self.text(ASYNC_);
+            self.text(ASYNC_)?;
         }
         if !self.options.arrow_parens_always && self.can_print_params_without_parens(n) {
             self.print(self.n.at(self.n.at(n + 6) + 1))?;
@@ -104,8 +99,8 @@ impl Quick {
             self.group_close(g);
         }
         if self.has_dangling_matching(n, DANGLING_BEFORE_ARROW) {
-            self.text(SPACE);
-            self.print_dangling_comments_filtered(n, DANGLING_BEFORE_ARROW, false);
+            self.text(SPACE)?;
+            self.print_dangling_comments_filtered(n, DANGLING_BEFORE_ARROW, false)?;
         }
         Ok(())
     }
@@ -184,13 +179,13 @@ impl Quick {
             let mut first = true;
             while cur != tail {
                 cur = self.n.at(cur + 5);
-                self.text(ARROW);
+                self.text(ARROW)?;
                 if first && indent_rest {
                     self.indent_open();
                 }
                 first = false;
-                self.line();
-                self.print_leading_comments(cur);
+                self.line()?;
+                self.print_leading_comments(cur)?;
                 self.print_signature(cur, args)?;
             }
             if indent_rest || indent_all {
@@ -202,7 +197,7 @@ impl Quick {
             self.indent_close();
         }
         self.group_close_with(signatures, should_break_signatures, chain_group_id);
-        self.text(ARROW);
+        self.text(ARROW)?;
         let body_group = if should_print_as_chain {
             0
         } else {
@@ -217,32 +212,32 @@ impl Quick {
             || (self.n.at(parent) & 0xff) == k::JSXExpressionContainer)
             && !self.has_comment(n);
         if should_put_body_on_same_line && add_parens_if_not_break {
-            self.text(SPACE);
+            self.text(SPACE)?;
             let g = self.group_open();
-            self.if_break_text(0, LPAREN, 0);
+            self.if_break_text(0, LPAREN, 0)?;
             self.indent_softline();
             self.print_arrow_body(function_body, args)?;
             self.indent_close();
-            self.if_break_text(0, RPAREN, 0);
+            self.if_break_text(0, RPAREN, 0)?;
             if print_comma {
-                self.if_break_text(COMMA, 0, 0);
+                self.if_break_text(COMMA, 0, 0)?;
             }
             if trailing_softline {
                 self.softline();
             }
             self.group_close(g);
-            self.print_chain_trailing_comments(n, tail);
+            self.print_chain_trailing_comments(n, tail)?;
         } else if should_put_body_on_same_line {
-            self.text(SPACE);
+            self.text(SPACE)?;
             self.print_arrow_body(function_body, args)?;
-            self.print_chain_trailing_comments(n, tail);
+            self.print_chain_trailing_comments(n, tail)?;
         } else {
-            self.indent_line();
+            self.indent_line()?;
             self.print_arrow_body(function_body, args)?;
-            self.print_chain_trailing_comments(n, tail);
+            self.print_chain_trailing_comments(n, tail)?;
             self.indent_close();
             if print_comma {
-                self.if_break_text(COMMA, 0, 0);
+                self.if_break_text(COMMA, 0, 0)?;
             }
             if trailing_softline {
                 self.softline();
@@ -264,12 +259,13 @@ impl Quick {
     }
 
     /// The trailing comments of the inner arrows of a chain, the innermost first.
-    pub(crate) fn print_chain_trailing_comments(&mut self, n: i32, tail: i32) {
+    pub(crate) fn print_chain_trailing_comments(&mut self, n: i32, tail: i32) -> R<()> {
         let mut cur = tail;
         while cur != n {
-            self.print_trailing_comments(cur);
+            self.print_trailing_comments(cur)?;
             cur = self.n.at(cur + 3);
         }
+        Ok(())
     }
 
     pub(crate) fn print_arrow_body(&mut self, body: i32, args: i32) -> R<()> {

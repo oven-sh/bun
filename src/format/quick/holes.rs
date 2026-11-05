@@ -1,9 +1,26 @@
-use crate::{Quick, Words, zeros};
+//! Text filters and holes: what a host does to the texts of a guest.
+//!
+//! Prettier walks the finished doc of a guest with mapDoc() and rewrites its strings: it puts the `${expression}`s of a
+//! template literal in the place of placeholders, escapes what a template literal cannot hold as it is, turns `"` into
+//! `&quot;` in an attribute value. Here the host sets a filter before it runs the guest, and every text that is written to
+//! the stream while the filter is set goes through it (doc.rs tests one variable in text(), slice() and slice_w()).
+//! So the widths that groups record are right from the start, and a guest's printer does not have to know about any of it.
+//!
+//! Holes. The host writes the guest's source into the generated area with a placeholder for each expression, spelled as
+//! Prettier spells it, because how the guest's parser takes the placeholder decides the layout ("@prettier-placeholder-3-id"
+//! is an at-word to CSS). It prints each expression first, as a detached doc; the filter writes a call to that doc where
+//! the placeholder stands in a text. A guest's *parser and printer rules* may still have to ask whether a text is or holds a
+//! placeholder: hole_count, placeholder_at(), has_placeholder().
+//!
+//! Filters nest (a template literal in a <script> in a template literal): what the inner filter writes goes through the
+//! outer one, as it does when Prettier maps the outer doc.
+
+use crate::{Quick, R, Words, zeros};
 
 pub(crate) struct Holes {
     /// How many holes the source of the running guest has. 0: it has none, or it is not in a template literal.
     pub(crate) hole_count: i32,
-    /// How many placeholders were replaced so far. The host gives up if this is not holeCount in the end.
+    /// How many placeholders were replaced so far. The host gives up if this is not hole_count in the end.
     pub(crate) holes_used: i32,
     pub(crate) lv: Vec<i32>,
     /// LV[0 .. STRIDE) is "no filter"
@@ -16,7 +33,7 @@ pub(crate) struct Holes {
     pub(crate) prefix_length: i32,
     pub(crate) suffix_at: i32,
     pub(crate) suffix_length: i32,
-    /// If a placeholder starts at `p` (and ends at or before `end`): where it ends, with its number in holeIndex. Else 0.
+    /// If a placeholder starts at `p` (and ends at or before `end`): where it ends, with its number in hole_index. Else 0.
     pub(crate) hole_index: i32,
 }
 impl Holes {
@@ -38,7 +55,7 @@ impl Holes {
     }
 }
 
-/// set by beginHoles()
+/// set by begin_holes()
 pub(crate) const FILTER_HOLES: i32 = 1;
 /// uncookTemplateElementValue(): a backslash before each of \ ` ${
 pub(crate) const FILTER_UNCOOK: i32 = 2;
@@ -50,14 +67,14 @@ pub(crate) const FILTER_QUOT: i32 = 8;
 pub(crate) const FILTER_SCRIPT_END: i32 = 16;
 /// replaceEndOfLine(): a literal line for each "\n"
 pub(crate) const FILTER_END_OF_LINE: i32 = 32;
-/// for doc.ts: there is another filter below this one
+/// for doc.rs: there is another filter below this one
 pub(crate) const FILTER_BELOW: i32 = 64;
 // the levels: [flags, first hole, holes, used, prefix, its length, suffix, its length]
 pub(crate) const STRIDE: i32 = 8;
 impl Quick {
     pub(crate) fn load(&mut self) {
         let at = self.holes.level * STRIDE;
-        // doc.ts lets texts without a line ending pass by a filter that is FILTER_END_OF_LINE alone: not if there is a filter below it
+        // doc.rs lets texts without a line ending pass by a filter that is FILTER_END_OF_LINE alone: not if there is a filter below it
         let flags = self.holes.lv.at(at);
         self.set_text_filter(
             if flags == FILTER_END_OF_LINE
@@ -141,7 +158,7 @@ impl Quick {
         self.load();
     }
 
-    /// A host, before embed(): the texts of the guest are changed as `flags` say. popTextFilter() after embed().
+    /// A host, before embed(): the texts of the guest are changed as `flags` say. pop_text_filter() after embed().
     pub(crate) fn push_text_filter(&mut self, flags: i32) {
         self.push(flags, 0, 0, 0, 0, 0);
     }
@@ -151,8 +168,8 @@ impl Quick {
     }
 
     /// A host whose guest has holes, after it has printed the expressions (each as a detached doc; one of them may hold a
-    /// template literal with holes of its own) and before embed(): beginHoles(), setHole() for each, embed(), a look at
-    /// holesUsed, endHoles(). A placeholder is prefix, decimal number, suffix; the two are fixed texts (staticText()).
+    /// template literal with holes of its own) and before embed(): begin_holes(), set_hole() for each, embed(), a look at
+    /// holes_used, end_holes(). A placeholder is prefix, decimal number, suffix; the two are fixed texts (static_text()).
     /// `flags`: what else happens to the texts between the placeholders.
     pub(crate) fn begin_holes(
         &mut self,
@@ -173,7 +190,7 @@ impl Quick {
         );
     }
 
-    /// `doc` (detachOpen() .. detachClose()) is what goes where placeholder `index` stands.
+    /// `doc` (detach_open() .. detach_close()) is what goes where placeholder `index` stands.
     pub(crate) fn set_hole(&mut self, index: i32, doc: i32) {
         self.holes.holes.put(self.holes.hole_base + index, doc);
     }
@@ -216,6 +233,30 @@ impl Quick {
         return q + self.holes.suffix_length;
     }
 
+    /// Does T[start, end) hold a placeholder?
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn has_placeholder(&mut self, start: i32, end: i32) -> bool {
+        if self.holes.hole_count == 0 {
+            return false;
+        }
+        let first = self.t.at(self.holes.prefix_at);
+        let mut p = start;
+        while p < end {
+            if self.t.at(p) == first && self.placeholder_at(p, end) != 0 {
+                return true;
+            }
+            p += 1;
+        }
+        return false;
+    }
+
+    /// Not needed any more: every text goes through the filter. Kept for callers that say what they mean.
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn slice_with_holes(&mut self, start: i32, end: i32) -> R<()> {
+        self.slice_any(start, end)?;
+        Ok(())
+    }
+
     // ---- the filter itself. It runs with the level below as the current one, so that what it writes goes through the outer filter.
     pub(crate) fn is_script_end(&self, p: i32, end: i32) -> bool {
         // </(?=script\b) without regard to case
@@ -235,9 +276,9 @@ impl Quick {
     }
 
     /// Writes T[start, end), which holds no placeholder, changed as `flags` say.
-    pub(crate) fn write_piece(&mut self, start: i32, end: i32, flags: i32) {
+    pub(crate) fn write_piece(&mut self, start: i32, end: i32, flags: i32) -> R<()> {
         if start >= end {
-            return;
+            return Ok(());
         }
         let mut needs = false;
         let mut p = start;
@@ -249,8 +290,8 @@ impl Quick {
             p += 1;
         }
         if !needs {
-            self.slice_any(start, end);
-            return;
+            self.slice_any(start, end)?;
+            return Ok(());
         }
         self.reserve_gen((end - start) * 6 + 8);
         let mut from = self.text.gen_pos;
@@ -260,7 +301,7 @@ impl Quick {
                 let c = self.t.at(p);
                 if c == 10 && (flags & FILTER_END_OF_LINE) != 0 {
                     self.reserve();
-                    self.slice_any(from, self.text.gen_pos);
+                    self.slice_any(from, self.text.gen_pos)?;
                     self.literalline();
                     self.reserve_gen((end - p) * 6 + 8);
                     from = self.text.gen_pos;
@@ -304,10 +345,12 @@ impl Quick {
             }
             p += 1;
         }
-        self.slice_any(from, self.text.gen_pos);
+        self.slice_any(from, self.text.gen_pos)?;
+        Ok(())
     }
 
-    pub(crate) fn filter(&mut self, start: i32, end: i32) {
+    pub(crate) fn filter(&mut self, start: i32, end: i32) -> R<()> {
+        self.stack()?;
         let flags = self.holes.lv.at(self.holes.level * STRIDE);
         let count = self.holes.hole_count;
         let base = self.holes.hole_base;
@@ -324,7 +367,7 @@ impl Quick {
                         let doc = self.holes.holes.at(base + self.holes.hole_index);
                         self.holes.level -= 1;
                         self.load();
-                        self.write_piece(from, p, flags);
+                        self.write_piece(from, p, flags)?;
                         self.call(doc);
                         self.holes.level += 1;
                         self.load();
@@ -349,9 +392,10 @@ impl Quick {
             } else {
                 flags & !FILTER_END_OF_LINE
             },
-        );
+        )?;
         self.holes.level += 1;
         self.holes.lv.put(self.holes.level * STRIDE + 3, used);
         self.load();
+        Ok(())
     }
 }

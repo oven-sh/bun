@@ -1,24 +1,27 @@
+//! Conditional expressions (ternary-old.js: the layout without --experimental-ternaries).
+
 use crate::ast::{F_COMPUTED, k};
 use crate::doc::ALIGN_DEDENT;
 use crate::print::statics::{_EXTENDS_, COLON_SPACE, LPAREN, QUESTION_SPACE, RPAREN, SPACE};
 use crate::{Quick, R, Words};
 
 impl Quick {
-    pub(crate) fn chain_contains_jsx(&self, n: i32) -> bool {
+    pub(crate) fn chain_contains_jsx(&self, n: i32) -> R<bool> {
+        self.stack()?;
         let mut f: i32 = 4;
         while f <= 6 {
             let child = self.n.at(n + f);
             if self.is_jsx_element(child) {
-                return true;
+                return Ok(true);
             }
             if (self.n.at(child) & 0xff) == k::ConditionalExpression
-                && self.chain_contains_jsx(child)
+                && self.chain_contains_jsx(child)?
             {
-                return true;
+                return Ok(true);
             }
             f += 1;
         }
-        return false;
+        return Ok(false);
     }
 
     pub(crate) fn should_extra_indent(&self, n: i32) -> bool {
@@ -26,7 +29,7 @@ impl Quick {
             return false;
         }
         let mut child = n;
-        let mut parent: i32;
+        let parent: i32;
         loop {
             let node = self.n.at(child + 3);
             let k = self.n.at(node) & 0xff;
@@ -71,11 +74,11 @@ impl Quick {
     }
 
     pub(crate) fn print_wrapped(&mut self, n: i32) -> R<()> {
-        self.if_break_text(LPAREN, 0, 0);
+        self.if_break_text(LPAREN, 0, 0)?;
         self.indent_softline();
         self.print(n)?;
         self.dedent_softline();
-        self.if_break_text(RPAREN, 0, 0);
+        self.if_break_text(RPAREN, 0, 0)?;
         Ok(())
     }
 
@@ -90,11 +93,7 @@ impl Quick {
         Ok(())
     }
 
-    pub(crate) fn print_ternary(&mut self, n: i32, args: i32) -> R<()> {
-        if self.options.experimental_ternaries {
-            self.print_ternary_experimental(n, args)?;
-            return Ok(());
-        }
+    pub(crate) fn print_ternary(&mut self, n: i32, _args: i32) -> R<()> {
         let kind = self.n.at(n) & 0xff;
         let is_expression = kind == k::ConditionalExpression;
         // a conditional type has two nodes where an expression has its test
@@ -127,17 +126,15 @@ impl Quick {
             && (self.is_jsx_element(test)
                 || self.is_jsx_element(consequent)
                 || self.is_jsx_element(alternate)
-                || self.chain_contains_jsx(last_conditional_parent));
+                || self.chain_contains_jsx(last_conditional_parent)?);
         if jsx_mode {
             force_no_indent = true;
         }
         let extra_indent = self.should_extra_indent(n);
         let wrap_all = is_parent_test || extra_indent;
         let break_closing_paren = !jsx_mode
-            && (((self.n.at(parent) & 0xff) == k::MemberExpression
-                && (self.n.at(parent) & F_COMPUTED) == 0)
-                || ((self.n.at(parent) & 0xff) == k::NGPipeExpression
-                    && self.n.at(parent + 4) == n));
+            && ((self.n.at(parent) & 0xff) == k::MemberExpression
+                && (self.n.at(parent) & F_COMPUTED) == 0);
         let should_group = parent == first_non_conditional_parent;
         let outer = if wrap_all { self.group_open() } else { 0 };
         if wrap_all {
@@ -151,7 +148,7 @@ impl Quick {
         }
         self.print(test)?;
         if !is_expression {
-            self.text(_EXTENDS_);
+            self.text(_EXTENDS_)?;
             self.print(self.n.at(n + 5))?;
         }
         if is_alternate {
@@ -161,15 +158,15 @@ impl Quick {
             self.indent_open();
         }
         if jsx_mode {
-            self.text(SPACE);
-            self.text(QUESTION_SPACE);
+            self.text(SPACE)?;
+            self.text(QUESTION_SPACE)?;
             if self.is_nil(consequent) {
                 self.print(consequent)?;
             } else {
                 self.print_wrapped(consequent)?;
             }
-            self.text(SPACE);
-            self.text(COLON_SPACE);
+            self.text(SPACE)?;
+            self.text(COLON_SPACE)?;
             if (self.n.at(alternate) & 0xff) == k::ConditionalExpression || self.is_nil(alternate) {
                 self.print(alternate)?;
             } else {
@@ -186,17 +183,17 @@ impl Quick {
                 }
             }
             let consequent_is_conditional = (self.n.at(consequent) & 0xff) == kind;
-            self.line();
-            self.text(QUESTION_SPACE);
+            self.line()?;
+            self.text(QUESTION_SPACE)?;
             if consequent_is_conditional {
-                self.if_break_text(0, LPAREN, 0);
+                self.if_break_text(0, LPAREN, 0)?;
             }
             self.print_branch(consequent)?;
             if consequent_is_conditional {
-                self.if_break_text(0, RPAREN, 0);
+                self.if_break_text(0, RPAREN, 0)?;
             }
-            self.line();
-            self.text(COLON_SPACE);
+            self.line()?;
+            self.text(COLON_SPACE)?;
             self.print_branch(alternate)?;
             if !plain {
                 self.indent_close();

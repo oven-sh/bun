@@ -1,8 +1,11 @@
+//! format(): bytes in, bytes out. The languages are registered by whoever imports this: all.rs has all of them.
+
 use crate::doc::DOC_START;
 use crate::lang::lang;
 use crate::options::{
     EOL_AUTO, EOL_CR, EOL_CRLF, EOL_LF, QUOTE_PROPS_AS_NEEDED, QUOTE_PROPS_CONSISTENT,
     QUOTE_PROPS_PRESERVE, TRAILING_COMMA_ALL, TRAILING_COMMA_ES5, TRAILING_COMMA_NONE,
+    WHITESPACE_CSS, WHITESPACE_IGNORE,
 };
 use crate::text::SRC_BASE;
 use crate::{Bytes, Quick, R, Stop, Words, why};
@@ -71,13 +74,57 @@ pub struct Refused;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Language {
-    /// JavaScript, with JSX; Flow if the file says so.
+    /// JavaScript, with JSX. A file with `@flow` in its first comments is read as Flow.
     JavaScript,
     /// Flow as its own parser reads it.
     Flow,
     /// Flow as Babel reads it.
     BabelFlow,
     TypeScript,
+}
+
+/// What kind of file the text is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Dialect {
+    pub language: Language,
+    /// TypeScript: is `<a>` an element (.tsx) or a type assertion (.ts)? `None`: the name of the file does not say, and both are tried.
+    pub jsx: Option<bool>,
+    /// A .cjs or .cts file: `await` is a name outside of async functions.
+    pub common_js: bool,
+    /// The name of the file ends in ".ts": `<T,>() => 1` needs no comma.
+    pub name_ends_in_ts: bool,
+    /// The name of the file ends in ".js.flow": JavaScript is read as Flow.
+    pub name_ends_in_js_flow: bool,
+}
+
+fn ends_with_ignoring_case(name: &[u8], end: &[u8]) -> bool {
+    name.len() >= end.len()
+        && name
+            .iter()
+            .rev()
+            .zip(end.iter().rev())
+            .all(|(a, b)| a.to_ascii_lowercase() == *b)
+}
+
+impl Dialect {
+    /// What the name of the file says about a text in `language`.
+    pub fn of_name(language: Language, name: &[u8]) -> Dialect {
+        let ends_with_one_of =
+            |ends: &[&[u8]]| ends.iter().any(|end| ends_with_ignoring_case(name, end));
+        Dialect {
+            language,
+            jsx: if ends_with_one_of(&[b".ts", b".mts", b".cts"]) {
+                Some(false)
+            } else if ends_with_one_of(&[b".js", b".mjs", b".cjs", b".jsx", b".tsx"]) {
+                Some(true)
+            } else {
+                None
+            },
+            common_js: ends_with_one_of(&[b".cjs", b".cts"]),
+            name_ends_in_ts: name.ends_with(b".ts"),
+            name_ends_in_js_flow: name.ends_with(b".js.flow"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -118,9 +165,10 @@ pub struct Options {
     pub arrow_parens_always: bool,
     pub end_of_line: EndOfLine,
     pub single_attribute_per_line: bool,
-    pub experimental_ternaries: bool,
     pub operator_position_start: bool,
     pub embedded_language_formatting_auto: bool,
+    /// `htmlWhitespaceSensitivity: "ignore"`, for HTML in templates.
+    pub html_whitespace_sensitivity_ignore: bool,
     /// Everything goes through the tokens, the tree and the document.
     pub no_short_cuts: bool,
 }
@@ -142,9 +190,9 @@ impl Default for Options {
             arrow_parens_always: true,
             end_of_line: EndOfLine::Lf,
             single_attribute_per_line: false,
-            experimental_ternaries: false,
             operator_position_start: false,
             embedded_language_formatting_auto: true,
+            html_whitespace_sensitivity_ignore: false,
             no_short_cuts: false,
         }
     }
@@ -153,54 +201,34 @@ impl Default for Options {
 /// A file that is longer is refused, so that sums of positions stay far from the largest number.
 const LONGEST_FILE: usize = 1 << 28;
 
-fn ends_with_ignoring_case(name: &[u8], end: &[u8]) -> bool {
-    name.len() >= end.len()
-        && name
-            .iter()
-            .rev()
-            .zip(end.iter().rev())
-            .all(|(a, b)| a.to_ascii_lowercase() == *b)
+/// Formats `text` and puts the result in the place of what `out` held. `scratch` lives from file to file; what it holds never changes what is printed.
+/// If the file is refused, `out` is empty.
+pub fn format(
+    text: &[u8],
+    dialect: Dialect,
+    options: &Options,
+    scratch: &mut Quick,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    out.clear();
+    if text.len() > LONGEST_FILE || options.tab_width < 1 || options.print_width < 1 {
+        scratch.why.set(why::RARE);
+        return Err(Refused);
+    }
+    match scratch.format_buffer(text, dialect, options) {
+        Ok(()) => {
+            if scratch.had_bom {
+                out.extend_from_slice(b"\xef\xbb\xbf");
+            }
+            out.extend_from_slice(scratch.printer.out.sub(0, scratch.printer.out_length));
+            Ok(())
+        }
+        Err(Stop) => Err(Refused),
+    }
 }
 
 impl Quick {
-    /// Formats `text`, the contents of the file `name`. The result is `output()`.
-    pub fn format(
-        &mut self,
-        text: &[u8],
-        language: Language,
-        name: &[u8],
-        options: &Options,
-    ) -> Result<(), Refused> {
-        if text.len() > LONGEST_FILE {
-            return Err(Refused);
-        }
-        let length = text.len() as i32;
-        self.set_options(options, name);
-        self.source_buffer(length, 0);
-        self.t.set_all(text, SRC_BASE);
-        let language = match language {
-            Language::JavaScript => lang::Babel,
-            Language::Flow => lang::Flow,
-            Language::BabelFlow => lang::BabelFlow,
-            Language::TypeScript => lang::TypeScript,
-        };
-        self.why = why::NONE;
-        match self.format_buffer(length, language, options, name) {
-            Ok(()) => Ok(()),
-            Err(Stop) => Err(Refused),
-        }
-    }
-
-    pub fn output(&self) -> &[u8] {
-        self.printer.out.sub(0, self.printer.out_length)
-    }
-
-    /// The file started with a byte order mark, which is not part of the output.
-    pub fn had_bom(&self) -> bool {
-        self.had_bom
-    }
-
-    fn set_options(&mut self, o: &Options, name: &[u8]) {
+    fn set_options(&mut self, o: &Options, dialect: Dialect) {
         let to = &mut self.options;
         to.print_width = o.print_width.min(0x1fffffff);
         to.tab_width = o.tab_width;
@@ -229,40 +257,32 @@ impl Quick {
             EndOfLine::Auto => EOL_AUTO,
         };
         to.single_attribute_per_line = o.single_attribute_per_line;
-        to.experimental_ternaries = o.experimental_ternaries;
         to.operator_position_start = o.operator_position_start;
         to.embedded_language_formatting_auto = o.embedded_language_formatting_auto;
-        to.name_ends_in_ts = name.ends_with(b".ts");
-        to.name_ends_in_js_flow = name.ends_with(b".js.flow");
-        self.name_is_common_js =
-            ends_with_ignoring_case(name, b".cjs") || ends_with_ignoring_case(name, b".cts");
-        // Whether `<a>` is an element or a type assertion depends on the name of the file. Without one that says so, both are tried.
-        self.name_says_jsx = if [&b".ts"[..], b".mts", b".cts"]
-            .iter()
-            .any(|end| ends_with_ignoring_case(name, end))
-        {
-            0
-        } else if [&b".js"[..], b".mjs", b".cjs", b".jsx", b".tsx"]
-            .iter()
-            .any(|end| ends_with_ignoring_case(name, end))
-        {
-            1
+        to.html_whitespace_sensitivity = if o.html_whitespace_sensitivity_ignore {
+            WHITESPACE_IGNORE
         } else {
-            -1
+            WHITESPACE_CSS
         };
+        to.name_ends_in_ts = dialect.name_ends_in_ts;
+        to.name_ends_in_js_flow = dialect.name_ends_in_js_flow;
+        self.dialect = dialect;
     }
 
-    fn format_buffer(
-        &mut self,
-        mut length: i32,
-        language: i32,
-        options: &Options,
-        name: &[u8],
-    ) -> R<()> {
-        self.had_bom = length >= 3
-            && self.t.at(SRC_BASE) == 0xef
-            && self.t.at(SRC_BASE + 1) == 0xbb
-            && self.t.at(SRC_BASE + 2) == 0xbf;
+    fn format_buffer(&mut self, text: &[u8], dialect: Dialect, options: &Options) -> R<()> {
+        let mut length = text.len() as i32;
+        self.why.set(why::NONE);
+        self.stack_check = bun_core::StackCheck::init();
+        self.set_options(options, dialect);
+        self.source_buffer(length, 0);
+        self.t.set_all(text, SRC_BASE);
+        let language = match dialect.language {
+            Language::JavaScript => lang::Babel,
+            Language::Flow => lang::Flow,
+            Language::BabelFlow => lang::BabelFlow,
+            Language::TypeScript => lang::TypeScript,
+        };
+        self.had_bom = text.starts_with(b"\xef\xbb\xbf");
         if self.had_bom {
             self.t
                 .move_within(SRC_BASE, SRC_BASE + 3, SRC_BASE + length);
@@ -276,16 +296,16 @@ impl Quick {
         let mut result = self.format_normalized(length, language);
         if result.is_ok() {
             self.note_guess(false, length);
-        } else if self.why == why::REDO {
+        } else if self.why.get() == why::REDO {
             // A guess about the layout was wrong. The text is still there: once more, without guessing.
             self.redone += 1;
             self.note_guess(true, length);
             self.set_short_cuts(false);
             self.unwind_source(0);
             let end_of_line = self.options.end_of_line;
-            self.set_options(options, name);
+            self.set_options(options, dialect);
             self.options.end_of_line = end_of_line;
-            self.why = why::NONE;
+            self.why.set(why::NONE);
             result = self.format_normalized(length, language);
         }
         self.set_short_cuts(false);
@@ -325,8 +345,17 @@ impl Quick {
         let stub = self.end_doc();
         self.stage(2);
         self.print_doc(DOC_START, stub)?;
-        self.stage(3);
         Ok(())
+    }
+
+    /// Why the last file was refused: 1 a syntax error, 4 a mistake in here, 5 the output is too large, 6 the stack is full, 7 something rare, 8 code in another language.
+    pub fn why(&self) -> i32 {
+        self.why.get()
+    }
+
+    /// Where the syntax error is, from the start of the text (without the byte order mark, and with "\n" at the ends of the lines).
+    pub fn failed_at(&self) -> i32 {
+        self.failed_at.get()
     }
 
     /// How many files were formatted twice.
@@ -359,8 +388,7 @@ impl Quick {
                 self.lexer.c.sub(0, self.lexer.c_count * 8),
                 hash_words(self.n.sub(0, self.arena.n_pos), (1, 2)),
             ),
-            2 => hash_words(self.d.sub(0, self.doc.d_pos), (1, 2)),
-            _ => (0, 0),
+            _ => hash_words(self.d.sub(0, self.doc.d_pos), (1, 2)),
         };
         let h = ((h.0 as u32 as u64) << 32) | h.1 as u32 as u64;
         if let Some(slot) = self.stages.get_mut(stage as usize) {
@@ -374,26 +402,22 @@ impl Quick {
                     words.extend_from_slice(self.lexer.c.sub(0, self.lexer.c_count * 8));
                     self.kept.push(words);
                 }
-                2 => self.kept.push(self.d.sub(0, self.doc.d_pos).to_vec()),
-                _ => {}
+                _ => self.kept.push(self.d.sub(0, self.doc.d_pos).to_vec()),
             }
         }
     }
-    pub fn stages(&self) -> [u64; 4] {
+    pub fn stages(&self) -> [u64; 3] {
         self.stages
     }
     pub fn clear_stages(&mut self, keep: bool) {
-        self.stages = [0; 4];
+        self.stages = [0; 3];
         self.keep_stages = keep;
         self.kept.clear();
     }
     pub fn kept(&self) -> &[Vec<i32>] {
         &self.kept
     }
-    pub fn why(&self) -> i32 {
-        self.why
-    }
-    pub fn failed_at(&self) -> i32 {
-        self.failed_at
+    pub fn set_no_guests(&mut self, value: bool) {
+        self.no_guests = value;
     }
 }

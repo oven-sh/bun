@@ -1,8 +1,11 @@
+//! Statements (block.js, statement-sequence.js, if-statement.js, for-statement.js, switch-statement.js .. of Prettier).
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_AWAIT, MK_MODULE, MOD_DECLARE, V_AWAIT_USING, V_CONST, V_LET, V_MASK, V_USING, k,
 };
 use crate::lexer::tk;
+use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::print::comments::DANGLING_NO_MARKER;
 use crate::print::statics::{
     _AWAIT, _IN_, _LBRACE, _LPAREN, _OF_, AWAIT_USING, BREAK, CASE_, CATCH_, COLON, COMMA, CONST,
@@ -81,7 +84,7 @@ impl Quick {
             self.print_statement_sequence(body)?;
         }
         if has_dangling {
-            self.print_dangling_comments(n);
+            self.print_dangling_comments(n)?;
         }
         Ok(())
     }
@@ -101,17 +104,19 @@ impl Quick {
         let parent = self.n.at(n + 3);
         let pk = self.n.at(parent) & 0xff;
         let has_content = self.block_has_content(n, directives, body);
-        if k == k::Program && pk != k::ModuleExpression {
+        if k == k::Program {
             if has_content {
                 self.print_block_body(n, directives, body)?;
-                self.hardline();
+                if self.lang.depth == 0 {
+                    self.hardline();
+                }
             }
             return Ok(());
         }
         if k == k::StaticBlock {
-            self.text(STATIC_);
+            self.text(STATIC_)?;
         }
-        self.text(LBRACE);
+        self.text(LBRACE)?;
         if has_content {
             self.indent_hardline();
             self.print_block_body(n, directives, body)?;
@@ -126,8 +131,6 @@ impl Quick {
                 | k::ForStatement
                 | k::WhileStatement
                 | k::DoWhileStatement
-                | k::DoExpression
-                | k::ModuleExpression
                 | k::ComponentDeclaration
                 | k::HookDeclaration
                 | k::MatchStatementCase => {}
@@ -151,12 +154,13 @@ impl Quick {
                 }
             }
         }
-        self.text(RBRACE);
+        self.text(RBRACE)?;
         Ok(())
     }
 
     // ------------------------------------------------------------------------------------------- expression statements
-    pub(crate) fn expression_needs_asi_protection(&mut self, n: i32) -> R<bool> {
+    pub(crate) fn expression_needs_asi_protection(&self, n: i32) -> R<bool> {
+        self.stack()?;
         match self.n.at(n) & 0xff {
             k::ParenthesizedExpression
             | k::TypeAssertion
@@ -181,11 +185,6 @@ impl Quick {
                     return Ok(true);
                 }
             }
-            k::BindExpression => {
-                if self.n.at(n + 4) == 0 {
-                    return Ok(true);
-                }
-            }
             _ => {}
         }
         if self.needs_parens(n)? {
@@ -194,19 +193,43 @@ impl Quick {
         if !self.has_naked_left_side(n) {
             return Ok(false);
         }
-        return Ok(self.expression_needs_asi_protection(self.get_left_side_child(n))?);
+        return self.expression_needs_asi_protection(self.get_left_side_child(n));
     }
 
-    pub(crate) fn expression_statement_needs_leading_semicolon(&mut self, n: i32) -> R<bool> {
+    /// The only statement of a program that is the value of an attribute, or a JSX element in Markdown.
+    pub(crate) fn is_special_single_expression_statement(&self, n: i32) -> bool {
+        let parent = self.n.at(n + 3);
+        if (self.n.at(parent) & 0xff) != k::Program || self.n.at(self.n.at(parent + 4)) != 0 {
+            return false;
+        }
+        // (comments that are items of the list do not count)
+        let body = self.n.at(parent + 5);
+        let mut i: i32 = 1;
+        while i <= self.n.at(body) {
+            if self.n.at(body + i) != n
+                && (self.n.at(self.n.at(body + i)) & 0xff) != k::ReadyComment
+            {
+                return false;
+            }
+            i += 1;
+        }
+        return self.mode.single_statement_mode != SINGLE_JSX_IN_MARKDOWN
+            || self.is_jsx_element(self.n.at(n + 4));
+    }
+
+    pub(crate) fn expression_statement_needs_leading_semicolon(&self, n: i32) -> R<bool> {
         if self.options.semi {
             return Ok(false);
         }
         if (self.n.at(n) & 0xff) != k::ExpressionStatement {
             return Ok(false);
         }
+        if self.mode.single_statement_mode != 0 && self.is_special_single_expression_statement(n) {
+            return Ok(false);
+        }
         match self.n.at(self.n.at(n + 3)) & 0xff {
             k::Program | k::BlockStatement | k::StaticBlock | k::SwitchCase | k::ModuleBlock => {
-                return Ok(self.expression_needs_asi_protection(self.n.at(n + 4))?);
+                return self.expression_needs_asi_protection(self.n.at(n + 4));
             }
             _ => {}
         }
@@ -217,20 +240,23 @@ impl Quick {
         if self.expression_statement_needs_leading_semicolon(n)? {
             if self.should_expression_statement_print_own_comments(n)? {
                 let type_cast = self.last_leading_comment(n);
-                self.print_leading_comments_filtered(n, type_cast, -1);
-                self.text(SEMI);
-                self.print_leading_comments_filtered(n, -1, type_cast);
+                self.print_leading_comments_filtered(n, type_cast, -1)?;
+                self.text(SEMI)?;
+                self.print_leading_comments_filtered(n, -1, type_cast)?;
                 self.print(self.n.at(n + 4))?;
-                self.print_trailing_comments(n);
+                self.print_trailing_comments(n)?;
                 return Ok(());
             }
-            self.text(SEMI);
+            self.text(SEMI)?;
             self.print(self.n.at(n + 4))?;
             return Ok(());
         }
         self.print(self.n.at(n + 4))?;
+        if self.mode.single_statement_mode != 0 && self.is_special_single_expression_statement(n) {
+            return Ok(());
+        }
         if self.options.semi {
-            self.text(SEMI);
+            self.text(SEMI)?;
         }
         Ok(())
     }
@@ -314,26 +340,26 @@ impl Quick {
         }
         let g = self.group_open();
         if (((self.n.at(n) as u32) >> SUB_SHIFT) as i32) >= MOD_DECLARE {
-            self.text(DECLARE_);
+            self.text(DECLARE_)?;
         }
         match ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & V_MASK {
             V_LET => {
-                self.text(LET);
+                self.text(LET)?;
             }
             V_CONST => {
-                self.text(CONST);
+                self.text(CONST)?;
             }
             V_USING => {
-                self.text(USING);
+                self.text(USING)?;
             }
             V_AWAIT_USING => {
-                self.text(AWAIT_USING);
+                self.text(AWAIT_USING)?;
             }
             _ => {
-                self.text(VAR);
+                self.text(VAR)?;
             }
         }
-        self.text(SPACE);
+        self.text(SPACE)?;
         let first = self.n.at(list + 1);
         if count == 1 && !self.has_comment(first) {
             self.print(first)?;
@@ -346,11 +372,11 @@ impl Quick {
             self.indent_open();
             let mut i: i32 = 2;
             while i <= count {
-                self.text(COMMA);
+                self.text(COMMA)?;
                 if has_value && !is_for_init {
                     self.hardline();
                 } else {
-                    self.line();
+                    self.line()?;
                 }
                 self.print(self.n.at(list + i))?;
                 i += 1;
@@ -358,7 +384,7 @@ impl Quick {
             self.indent_close();
         }
         if !is_for_init && self.options.semi {
-            self.text(SEMI);
+            self.text(SEMI)?;
         }
         self.group_close(g);
         Ok(())
@@ -379,7 +405,7 @@ impl Quick {
         let k = self.n.at(n) & 0xff;
         if k == k::EmptyStatement {
             if self.has_leading_comment(n) {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
             self.print(n)?;
             return Ok(());
@@ -397,11 +423,11 @@ impl Quick {
             return Ok(());
         }
         if is_block || (is_else_if && k == k::IfStatement) {
-            self.text(SPACE);
+            self.text(SPACE)?;
             self.print(n)?;
             return Ok(());
         }
-        self.indent_line();
+        self.indent_line()?;
         self.print(n)?;
         self.indent_close();
         Ok(())
@@ -440,9 +466,9 @@ impl Quick {
         let consequent = self.n.at(n + 5);
         let alternate = self.n.at(n + 6);
         let g = self.group_open();
-        self.text(IF_LPAREN);
+        self.text(IF_LPAREN)?;
         self.print_condition(self.n.at(n + 4))?;
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         self.print_clause(consequent, false)?;
         self.group_close(g);
         if alternate == 0 {
@@ -465,21 +491,21 @@ impl Quick {
                     self.hardline();
                 }
             } else {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
-            self.print_dangling_comments(n);
+            self.print_dangling_comments(n)?;
             let last = self.last_dangling_comment(n);
             if !self.is_block_comment(last) || self.has_newline(self.comment_end(last)) {
                 self.hardline();
             } else {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
             need_space = false;
         }
         if need_space {
-            self.text(SPACE);
+            self.text(SPACE)?;
         }
-        self.text(ELSE);
+        self.text(ELSE)?;
         let g2 = self.group_open();
         self.print_clause(alternate, true)?;
         self.group_close(g2);
@@ -491,31 +517,31 @@ impl Quick {
         let test = self.n.at(n + 5);
         let update = self.n.at(n + 6);
         let body = self.n.at(n + 7);
-        if self.print_dangling_comments(n) {
+        if self.print_dangling_comments(n)? {
             self.softline();
         }
         let g = self.group_open();
         if init == 0 && test == 0 && update == 0 {
-            self.text(FOR_EVER);
+            self.text(FOR_EVER)?;
             self.print_clause(body, false)?;
             self.group_close(g);
             return Ok(());
         }
-        self.text(FOR_LPAREN);
+        self.text(FOR_LPAREN)?;
         let g2 = self.group_open();
         self.indent_softline();
         self.print(init)?;
-        self.text(SEMI);
-        self.line();
+        self.text(SEMI)?;
+        self.line()?;
         self.print(test)?;
-        self.text(SEMI);
+        self.text(SEMI)?;
         if update != 0 {
-            self.line();
+            self.line()?;
             self.print(update)?;
         }
         self.dedent_softline();
         self.group_close(g2);
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         self.print_clause(body, false)?;
         self.group_close(g);
         Ok(())
@@ -524,15 +550,15 @@ impl Quick {
     pub(crate) fn print_for_x_statement(&mut self, n: i32) -> R<()> {
         let is_of = (self.n.at(n) & 0xff) == k::ForOfStatement;
         let g = self.group_open();
-        self.text(FOR);
+        self.text(FOR)?;
         if is_of && (self.n.at(n) & F_AWAIT) != 0 {
-            self.text(_AWAIT);
+            self.text(_AWAIT)?;
         }
-        self.text(_LPAREN);
+        self.text(_LPAREN)?;
         self.print(self.n.at(n + 4))?;
-        self.text(if is_of { _OF_ } else { _IN_ });
+        self.text(if is_of { _OF_ } else { _IN_ })?;
         self.print(self.n.at(n + 5))?;
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         self.print_clause(self.n.at(n + 6), false)?;
         self.group_close(g);
         Ok(())
@@ -544,9 +570,9 @@ impl Quick {
             WITH_LPAREN
         } else {
             WHILE_LPAREN
-        });
+        })?;
         self.print_condition(self.n.at(n + 4))?;
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         self.print_clause(self.n.at(n + 5), false)?;
         self.group_close(g);
         Ok(())
@@ -555,19 +581,19 @@ impl Quick {
     pub(crate) fn print_do_while_statement(&mut self, n: i32) -> R<()> {
         let body = self.n.at(n + 4);
         let g = self.group_open();
-        self.text(DO);
+        self.text(DO)?;
         self.print_clause(body, false)?;
         self.group_close(g);
         if (self.n.at(body) & 0xff) == k::BlockStatement {
-            self.text(SPACE);
+            self.text(SPACE)?;
         } else {
             self.hardline();
         }
-        self.text(WHILE_LPAREN);
+        self.text(WHILE_LPAREN)?;
         self.print_condition(self.n.at(n + 5))?;
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         if self.options.semi {
-            self.text(SEMI);
+            self.text(SEMI)?;
         }
         Ok(())
     }
@@ -577,13 +603,13 @@ impl Quick {
             BREAK
         } else {
             CONTINUE
-        });
+        })?;
         if self.n.at(n + 4) != 0 {
-            self.text(SPACE);
+            self.text(SPACE)?;
             self.print(self.n.at(n + 4))?;
         }
         if self.options.semi {
-            self.text(SEMI);
+            self.text(SEMI)?;
         }
         Ok(())
     }
@@ -591,9 +617,9 @@ impl Quick {
     pub(crate) fn print_labeled_statement(&mut self, n: i32) -> R<()> {
         let body = self.n.at(n + 5);
         self.print(self.n.at(n + 4))?;
-        self.text(COLON);
+        self.text(COLON)?;
         if !((self.n.at(body) & 0xff) == k::EmptyStatement && !self.has_leading_comment(body)) {
-            self.text(SPACE);
+            self.text(SPACE)?;
         }
         self.print(body)?;
         Ok(())
@@ -601,13 +627,13 @@ impl Quick {
 
     pub(crate) fn print_switch_statement(&mut self, n: i32) -> R<()> {
         let g = self.group_open();
-        self.text(SWITCH_LPAREN);
+        self.text(SWITCH_LPAREN)?;
         self.indent_softline();
         self.print(self.n.at(n + 4))?;
         self.dedent_softline();
-        self.text(RPAREN);
+        self.text(RPAREN)?;
         self.group_close(g);
-        self.text(_LBRACE);
+        self.text(_LBRACE)?;
         let cases = self.n.at(n + 5);
         let count = self.n.at(cases);
         if count > 0 {
@@ -626,24 +652,24 @@ impl Quick {
             }
             self.indent_close();
         } else {
-            self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, true);
+            self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, true)?;
         }
         self.hardline();
-        self.text(RBRACE);
+        self.text(RBRACE)?;
         Ok(())
     }
 
     pub(crate) fn print_switch_case(&mut self, n: i32) -> R<()> {
         if self.n.at(n + 4) != 0 {
-            self.text(CASE_);
+            self.text(CASE_)?;
             self.print(self.n.at(n + 4))?;
-            self.text(COLON);
+            self.text(COLON)?;
         } else {
-            self.text(DEFAULT_COLON);
+            self.text(DEFAULT_COLON)?;
         }
         if self.has_dangling_comment(n) {
-            self.text(SPACE);
-            self.print_dangling_comments(n);
+            self.text(SPACE)?;
+            self.print_dangling_comments(n)?;
         }
         let list = self.n.at(n + 5);
         let count = self.n.at(list);
@@ -661,7 +687,7 @@ impl Quick {
             return Ok(());
         }
         if real == 1 && (self.n.at(only) & 0xff) == k::BlockStatement {
-            self.text(SPACE);
+            self.text(SPACE)?;
             self.print_statement_sequence(list)?;
         } else {
             self.indent_hardline();
@@ -672,14 +698,14 @@ impl Quick {
     }
 
     pub(crate) fn print_try_statement(&mut self, n: i32) -> R<()> {
-        self.text(TRY_);
+        self.text(TRY_)?;
         self.print(self.n.at(n + 4))?;
         if self.n.at(n + 5) != 0 {
-            self.text(SPACE);
+            self.text(SPACE)?;
             self.print(self.n.at(n + 5))?;
         }
         if self.n.at(n + 6) != 0 {
-            self.text(FINALLY);
+            self.text(FINALLY)?;
             self.print(self.n.at(n + 6))?;
         }
         Ok(())
@@ -687,7 +713,7 @@ impl Quick {
 
     pub(crate) fn print_catch_clause(&mut self, n: i32) -> R<()> {
         let param = self.n.at(n + 4);
-        self.text(CATCH_);
+        self.text(CATCH_)?;
         if param != 0 {
             let mut parameter_has_comments = false;
             let mut c = self.first_comment(param);
@@ -700,7 +726,7 @@ impl Quick {
                 }
                 c = self.next_comment(c);
             }
-            self.text(LPAREN);
+            self.text(LPAREN)?;
             if parameter_has_comments {
                 self.indent_softline();
                 self.print(param)?;
@@ -708,7 +734,7 @@ impl Quick {
             } else {
                 self.print(param)?;
             }
-            self.text(RPAREN_);
+            self.text(RPAREN_)?;
         }
         self.print(self.n.at(n + 5))?;
         Ok(())
@@ -719,35 +745,30 @@ impl Quick {
             THROW
         } else {
             RETURN
-        });
+        })?;
         let argument = self.n.at(n + 4);
         if argument != 0 {
-            self.text(SPACE);
+            self.text(SPACE)?;
             if self.return_argument_has_leading_comment(argument) {
-                self.text(LPAREN);
+                self.text(LPAREN)?;
                 self.indent_hardline();
                 self.print(argument)?;
                 self.dedent_hardline();
-                self.text(RPAREN);
-            } else if self.is_binaryish(argument)
-                || (self.options.experimental_ternaries
-                    && (self.n.at(argument) & 0xff) == k::ConditionalExpression
-                    && ((self.n.at(self.n.at(argument + 5)) & 0xff) == k::ConditionalExpression
-                        || (self.n.at(self.n.at(argument + 6)) & 0xff) == k::ConditionalExpression))
-            {
+                self.text(RPAREN)?;
+            } else if self.is_binaryish(argument) {
                 let g = self.group_open();
-                self.if_break_text(LPAREN, 0, 0);
+                self.if_break_text(LPAREN, 0, 0)?;
                 self.indent_softline();
                 self.print(argument)?;
                 self.dedent_softline();
-                self.if_break_text(RPAREN, 0, 0);
+                self.if_break_text(RPAREN, 0, 0)?;
                 self.group_close(g);
             } else {
                 self.print(argument)?;
             }
         }
         if self.options.semi {
-            self.text(SEMI);
+            self.text(SEMI)?;
         }
         Ok(())
     }
@@ -764,8 +785,8 @@ impl Quick {
                 if i == 1 {
                     self.print(self.n.at(list + i))?;
                 } else {
-                    self.text(COMMA);
-                    self.indent_line();
+                    self.text(COMMA)?;
+                    self.indent_line()?;
                     self.print(self.n.at(list + i))?;
                     self.indent_close();
                 }
@@ -796,8 +817,8 @@ impl Quick {
         let mut i: i32 = 1;
         while i <= count {
             if i > 1 {
-                self.text(COMMA);
-                self.line();
+                self.text(COMMA)?;
+                self.line()?;
             }
             self.reserve();
             self.print(self.n.at(list + i))?;

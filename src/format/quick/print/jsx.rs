@@ -1,10 +1,16 @@
+//! JSX (jsx.js).
+//!
+//! Prettier turns the children of an element into a list that alternates between contents and separators, edits that
+//! list, and then builds up to two docs from it. Here the list is a run of [type, a, b] records on a scratch stack.
+//! Where the tree alone says that the element breaks, a child is a node that is printed when the list is written out;
+//! otherwise it is printed detached, because both docs use it.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_AFTER_EMPTY, F_BLANK, F_BLANK_LINE, F_COMMENTS, F_ESCAPE, F_EXTRA, F_QUOTE, F_SELF_CLOSING,
     F_SHORTHAND, F_SLOW_TEXT, k,
 };
 use crate::holes::FILTER_END_OF_LINE;
-use crate::lang::lang;
 use crate::options::EOL_LF;
 use crate::print::comments::DANGLING_NO_MARKER;
 use crate::print::statics::{
@@ -130,11 +136,11 @@ impl Quick {
     pub(crate) fn emit_entry(&mut self, at: i32) -> R<()> {
         match self.print_jsx.jx.at(at) {
             TEXT => {
-                self.slice(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2));
+                self.slice(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2))?;
                 return Ok(());
             }
             TEXT_SLOW => {
-                self.slice_any(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2));
+                self.slice_any(self.print_jsx.jx.at(at + 1), self.print_jsx.jx.at(at + 2))?;
                 return Ok(());
             }
             DOC => {
@@ -154,12 +160,12 @@ impl Quick {
                 return Ok(());
             }
             LINE => {
-                self.line();
+                self.line()?;
                 return Ok(());
             }
             WHITESPACE => {
                 if self.print_jsx.whitespace_is_line {
-                    self.line();
+                    self.line()?;
                     return Ok(());
                 }
                 let h = self.if_break_open(0);
@@ -167,10 +173,10 @@ impl Quick {
                     RAW_WHITESPACE_SINGLE
                 } else {
                     RAW_WHITESPACE_DOUBLE
-                });
+                })?;
                 self.softline();
                 self.if_break_else(h);
-                self.text(SPACE);
+                self.text(SPACE)?;
                 self.if_break_close(h);
                 return Ok(());
             }
@@ -211,7 +217,7 @@ impl Quick {
         self.jx_push(EMPTY, 0, 0);
     }
 }
-// What fast.ts has read: a whole element, `{expression}`, an opening tag. See readJsxTag().
+// What fast.rs has read: a whole element, `{expression}`, an opening tag. See read_jsx_tag().
 pub(crate) const READY_ELEMENT: i32 = k::Ready | (k::JSXElement << SUB_SHIFT);
 pub(crate) const KIND_AND_SUB: i32 = 0xff | (0xff << SUB_SHIFT);
 impl Quick {
@@ -335,7 +341,7 @@ impl Quick {
                             }
                         }
                         p = q;
-                        let mut last_length: i32 = 0;
+                        let mut last_length: i32;
                         loop {
                             let mut w = p;
                             while w < end && !is_jsx_whitespace_char(self.t.at(w)) {
@@ -429,7 +435,7 @@ impl Quick {
             || (type_ == WHITESPACE && self.print_jsx.whitespace_is_line);
     }
 
-    /// The edits of printJsxElementInternal. Returns the new base of the list.
+    /// The edits of print_jsx_element_internal. Returns the new base of the list.
     pub(crate) fn clean_children(&mut self, mut base: i32, contains_text: bool) -> i32 {
         let mut i = (self.print_jsx.jx_top - base) / 3 - 2;
         while i >= 0 {
@@ -508,13 +514,13 @@ impl Quick {
                 if type_ == WHITESPACE {
                     if i == 1 && self.print_jsx.jx.at(base) == EMPTY {
                         if length == 2 {
-                            self.text(raw);
+                            self.text(raw)?;
                             break 'c1;
                         }
                         if use_fill {
                             self.fill_sep();
                         }
-                        self.text(raw);
+                        self.text(raw)?;
                         self.hardline();
                         if use_fill {
                             self.fill_item();
@@ -522,14 +528,14 @@ impl Quick {
                         break 'c1;
                     }
                     if i == length - 1 {
-                        self.text(raw);
+                        self.text(raw)?;
                         break 'c1;
                     }
                     if self.print_jsx.jx.at(at - 3) == EMPTY
                         && i >= 2
                         && self.print_jsx.jx.at(at - 6) == HARD
                     {
-                        self.text(raw);
+                        self.text(raw)?;
                         break 'c1;
                     }
                 }
@@ -555,7 +561,7 @@ impl Quick {
         Ok(())
     }
 
-    /// Is the text `n` two or more words of printable ASCII, with nothing around them that would be printed as `{" "}`? Then T[wordsStart, wordsEnd) is the words
+    /// Is the text `n` two or more words of printable ASCII, with nothing around them that would be printed as `{" "}`? Then T[words_start, words_end) is the words
     /// with one blank between two of them.
     pub(crate) fn has_plain_words(&mut self, n: i32) -> bool {
         let mut p = self.n.at(n + 1);
@@ -656,7 +662,7 @@ impl Quick {
 
     pub(crate) fn print_closing(&mut self, n: i32) -> R<()> {
         if (self.n.at(n) & 0xff) == k::Ready {
-            self.slice(self.n.at(n + 1), self.n.at(n + 2));
+            self.slice(self.n.at(n + 1), self.n.at(n + 2))?;
         } else {
             self.print(n)?;
         }
@@ -664,7 +670,7 @@ impl Quick {
     }
 
     /// The children of an element that is broken, if there is no text among them: each has its lines to itself, and an empty line between two of them stays.
-    /// What collectChildren(), cleanChildren() and printMultilineChildren() come to in that case.
+    /// What collect_children(), clean_children() and print_multiline_children() come to in that case.
     pub(crate) fn print_children_without_text(&mut self, children: i32) -> R<()> {
         let count = self.n.at(children);
         let g = self.group_open();
@@ -758,10 +764,7 @@ impl Quick {
                 } else {
                     self.n.at(self.n.at(opening + 5)) > 1
                 }));
-        if forced_break
-            && !contains_text
-            && !(0 == lang::Mdx && (self.n.at(self.n.at(n + 3)) & 0xff) == k::JsExpressionRoot)
-        {
+        if forced_break && !contains_text {
             // (<fbt> goes this way too: its rules are about text)
             let g = self.group_open();
             self.print(opening)?;
@@ -786,8 +789,7 @@ impl Quick {
             && !opening_is_ready
             && (self.n.at(self.n.at(opening + 4)) & 0xff) == k::JSXIdentifier
             && self.name_is(self.n.at(opening + 4), b"fbt");
-        let is_mdx_block =
-            0 == lang::Mdx && (self.n.at(self.n.at(n + 3)) & 0xff) == k::JsExpressionRoot;
+        let is_mdx_block = false;
         if count == 1
             && contains_text
             && !is_fbt
@@ -810,7 +812,7 @@ impl Quick {
                 st = self.state_open();
                 let g = self.group_open();
                 self.call(opening_doc);
-                self.slice(from, to);
+                self.slice(from, to)?;
                 self.print_closing(closing)?;
                 self.group_close(g);
                 self.state_close(st);
@@ -921,7 +923,6 @@ impl Quick {
             | k::JSXExpressionContainer
             | k::JSXFragment
             | k::ExpressionStatement
-            | k::JsExpressionRoot
             | k::NewExpression
             | k::CallExpression
             | k::ConditionalExpression => {
@@ -930,23 +931,23 @@ impl Quick {
             _ => {}
         }
         if !wrap {
-            self.print_leading_comments(n);
+            self.print_leading_comments(n)?;
             self.print_jsx_element_internal(n)?;
-            self.print_trailing_comments(n);
+            self.print_trailing_comments(n)?;
             return Ok(());
         }
         let parens = self.needs_parens(n)?;
         let g = self.group_open();
         if !parens {
-            self.if_break_text(LPAREN, 0, 0);
+            self.if_break_text(LPAREN, 0, 0)?;
         }
         self.indent_softline();
-        self.print_leading_comments(n);
+        self.print_leading_comments(n)?;
         self.print_jsx_element_internal(n)?;
-        self.print_trailing_comments(n);
+        self.print_trailing_comments(n)?;
         self.dedent_softline();
         if !parens {
-            self.if_break_text(RPAREN, 0, 0);
+            self.if_break_text(RPAREN, 0, 0)?;
         }
         self.group_close_with(g, self.should_break_jsx_element(n), 0);
         Ok(())
@@ -963,11 +964,11 @@ impl Quick {
         return true;
     }
 
-    pub(crate) fn print_jsx_attribute_string(&mut self, value: i32) {
+    pub(crate) fn print_jsx_attribute_string(&mut self, value: i32) -> R<()> {
         let head = self.n.at(value);
         let start = self.n.at(value + 1);
         let end = self.n.at(value + 2);
-        self.print_leading_comments(value);
+        self.print_leading_comments(value)?;
         if (head & (F_QUOTE | F_ESCAPE)) == 0 {
             let quote = if self.options.jsx_single_quote {
                 39
@@ -976,29 +977,29 @@ impl Quick {
             };
             if self.t.at(start) == quote {
                 if (head & F_SLOW_TEXT) != 0 {
-                    self.slice_with_newlines(start, end);
+                    self.slice_with_newlines(start, end)?;
                 } else {
-                    self.slice(start, end);
+                    self.slice(start, end)?;
                 }
             } else {
                 self.text(if self.options.jsx_single_quote {
                     SQUOTE
                 } else {
                     DQUOTE
-                });
+                })?;
                 if (head & F_SLOW_TEXT) != 0 {
-                    self.slice_with_newlines(start + 1, end - 1);
+                    self.slice_with_newlines(start + 1, end - 1)?;
                 } else {
-                    self.slice(start + 1, end - 1);
+                    self.slice(start + 1, end - 1)?;
                 }
                 self.text(if self.options.jsx_single_quote {
                     SQUOTE
                 } else {
                     DQUOTE
-                });
+                })?;
             }
-            self.print_trailing_comments(value);
-            return;
+            self.print_trailing_comments(value)?;
+            return Ok(());
         }
         // unescape the two entities, choose the quote, escape again
         self.reserve_gen((end - start) * 6 + 8);
@@ -1036,8 +1037,9 @@ impl Quick {
             p += 1;
         }
         self.gen_byte(quote);
-        self.slice_with_newlines(from, self.text.gen_pos);
-        self.print_trailing_comments(value);
+        self.slice_with_newlines(from, self.text.gen_pos)?;
+        self.print_trailing_comments(value)?;
+        Ok(())
     }
 
     pub(crate) fn string_has_newline(&self, n: i32) -> bool {
@@ -1051,13 +1053,14 @@ impl Quick {
         return false;
     }
 
-    pub(crate) fn should_inline_container(&self, n: i32, parent: i32) -> bool {
+    pub(crate) fn should_inline_container(&self, n: i32, parent: i32) -> R<bool> {
+        self.stack()?;
         let k = self.n.at(n) & 0xff;
         if k == k::JSXEmptyExpression {
-            return true;
+            return Ok(true);
         }
         if self.has_comment(n) {
-            return false;
+            return Ok(false);
         }
         match k {
             k::ArrayExpression
@@ -1066,9 +1069,8 @@ impl Quick {
             | k::CallExpression
             | k::FunctionExpression
             | k::TemplateLiteral
-            | k::TaggedTemplateExpression
-            | k::DoExpression => {
-                return true;
+            | k::TaggedTemplateExpression => {
+                return Ok(true);
             }
             k::NonNullExpression => {
                 let mut inner = n;
@@ -1076,20 +1078,21 @@ impl Quick {
                     inner = self.n.at(inner + 4);
                 }
                 if (self.n.at(inner) & 0xff) == k::CallExpression {
-                    return true;
+                    return Ok(true);
                 }
             }
             k::AwaitExpression => {
-                return self.should_inline_container(self.n.at(n + 4), n)
-                    || (self.n.at(self.n.at(n + 4)) & 0xff) == k::JSXElement;
+                return Ok(self.should_inline_container(self.n.at(n + 4), n)?
+                    || (self.n.at(self.n.at(n + 4)) & 0xff) == k::JSXElement);
             }
             _ => {}
         }
-        return self.is_jsx_element(parent)
-            && (k == k::ConditionalExpression || self.is_binaryish(n));
+        return Ok(
+            self.is_jsx_element(parent) && (k == k::ConditionalExpression || self.is_binaryish(n))
+        );
     }
 
-    /// An attribute. One that fast.ts has read is a text; see readJsxAttribute().
+    /// An attribute. One that fast.rs has read is a text; see read_jsx_attribute().
     pub(crate) fn print_attribute(&mut self, n: i32) -> R<()> {
         let head = self.n.at(n);
         if (head & (0xff | F_COMMENTS)) != k::Ready {
@@ -1098,7 +1101,7 @@ impl Quick {
             self.fitted(self.n.at(n + 4), self.n.at(n + 5), 0);
         } else {
             // there is no other way to print it
-            self.slice(self.n.at(n + 4), self.n.at(n + 4) + self.n.at(n + 5));
+            self.slice(self.n.at(n + 4), self.n.at(n + 4) + self.n.at(n + 5))?;
         }
         Ok(())
     }
@@ -1112,10 +1115,10 @@ impl Quick {
         let name_has_comments =
             self.has_comment(name) || (type_arguments != 0 && self.has_comment(type_arguments));
         if self_closing && count == 0 && !name_has_comments {
-            self.text(LT);
+            self.text(LT)?;
             self.print(name)?;
             self.print(type_arguments)?;
-            self.text(SELF_CLOSE);
+            self.text(SELF_CLOSE)?;
             return Ok(());
         }
         if count == 1 {
@@ -1133,12 +1136,12 @@ impl Quick {
                 && !self.has_comment(attribute)
             {
                 let g = self.group_open();
-                self.text(LT);
+                self.text(LT)?;
                 self.print(name)?;
                 self.print(type_arguments)?;
-                self.text(SPACE);
+                self.text(SPACE)?;
                 self.print_attribute(attribute)?;
-                self.text(if self_closing { SELF_CLOSE } else { GT });
+                self.text(if self_closing { SELF_CLOSE } else { GT })?;
                 self.group_close(g);
                 return Ok(());
             }
@@ -1163,7 +1166,7 @@ impl Quick {
         }
         let hard_attribute_line = self.options.single_attribute_per_line && count > 1;
         let g = self.group_open();
-        self.text(LT);
+        self.text(LT)?;
         self.print(name)?;
         self.print(type_arguments)?;
         self.indent_open();
@@ -1176,15 +1179,15 @@ impl Quick {
             } else if hard_attribute_line {
                 self.hardline();
             } else {
-                self.line();
+                self.line()?;
             }
             self.print_attribute(self.n.at(attributes + i))?;
             i += 1;
         }
         self.indent_close();
         if self_closing {
-            self.line();
-            self.text(SLASH_GT);
+            self.line()?;
+            self.text(SLASH_GT)?;
         } else {
             let last_has_trailing_comments =
                 count > 0 && self.has_trailing_comment(self.n.at(attributes + count));
@@ -1195,7 +1198,7 @@ impl Quick {
             if !same_line {
                 self.softline();
             }
-            self.text(GT);
+            self.text(GT)?;
         }
         self.group_close_with(g, should_break, 0);
         Ok(())
@@ -1207,9 +1210,9 @@ impl Quick {
                 self.print(self.n.at(n + 4))?;
                 let value = self.n.at(n + 5);
                 if value != 0 {
-                    self.text(EQUALS);
+                    self.text(EQUALS)?;
                     if (self.n.at(value) & 0xff) == k::StringLiteral {
-                        self.print_jsx_attribute_string(value);
+                        self.print_jsx_attribute_string(value)?;
                     } else {
                         self.print(value)?;
                     }
@@ -1218,38 +1221,38 @@ impl Quick {
             }
             k::JSXNamespacedName => {
                 self.print(self.n.at(n + 4))?;
-                self.text(COLON);
+                self.text(COLON)?;
                 self.print(self.n.at(n + 5))?;
                 return Ok(());
             }
             k::JSXMemberExpression => {
                 self.print(self.n.at(n + 4))?;
-                self.text(DOT);
+                self.text(DOT)?;
                 self.print(self.n.at(n + 5))?;
                 return Ok(());
             }
             k::JSXSpreadAttribute | k::JSXSpreadChild => {
                 let argument = self.n.at(n + 4);
-                self.text(LBRACE);
+                self.text(LBRACE)?;
                 if !self.has_comment(argument) {
-                    self.text(ELLIPSIS);
+                    self.text(ELLIPSIS)?;
                     self.print(argument)?;
                 } else {
                     self.indent_softline();
-                    self.print_leading_comments(argument);
-                    self.text(ELLIPSIS);
+                    self.print_leading_comments(argument)?;
+                    self.text(ELLIPSIS)?;
                     self.print(argument)?;
-                    self.print_trailing_comments(argument);
+                    self.print_trailing_comments(argument)?;
                     self.dedent_softline();
                 }
-                self.text(RBRACE);
+                self.text(RBRACE)?;
                 return Ok(());
             }
             k::JSXExpressionContainer => {
                 let expression = self.n.at(n + 4);
                 let g = self.group_open();
-                self.text(LBRACE);
-                if self.should_inline_container(expression, self.n.at(n + 3)) {
+                self.text(LBRACE)?;
+                if self.should_inline_container(expression, self.n.at(n + 3))? {
                     self.print(expression)?;
                     self.line_suffix_boundary();
                 } else {
@@ -1258,7 +1261,7 @@ impl Quick {
                     self.dedent_softline();
                     self.line_suffix_boundary();
                 }
-                self.text(RBRACE);
+                self.text(RBRACE)?;
                 self.group_close(g);
                 return Ok(());
             }
@@ -1272,42 +1275,42 @@ impl Quick {
             }
             k::JSXClosingElement => {
                 let name = self.n.at(n + 4);
-                self.text(LT_SLASH);
+                self.text(LT_SLASH)?;
                 if self.has_leading_line_comment(name) {
                     self.indent_hardline();
                     self.print(name)?;
                     self.dedent_hardline();
                 } else {
                     if self.has_leading_block_comment(name) {
-                        self.text(SPACE);
+                        self.text(SPACE)?;
                     }
                     self.print(name)?;
                 }
-                self.text(GT);
+                self.text(GT)?;
                 return Ok(());
             }
             k::JSXOpeningFragment | k::JSXClosingFragment => {
                 let node_has_comment = self.has_comment(n);
                 let has_own_line_comment = node_has_comment && self.has_line_comment(n);
                 let is_opening = k == k::JSXOpeningFragment;
-                self.text(if is_opening { LT } else { LT_SLASH });
+                self.text(if is_opening { LT } else { LT_SLASH })?;
                 self.indent_open();
                 if has_own_line_comment {
                     self.hardline();
                 } else if node_has_comment && !is_opening {
-                    self.text(SPACE);
+                    self.text(SPACE)?;
                 }
-                self.print_dangling_comments(n);
+                self.print_dangling_comments(n)?;
                 self.indent_close();
                 if has_own_line_comment {
                     self.hardline();
                 }
-                self.text(GT);
+                self.text(GT)?;
                 return Ok(());
             }
             k::JSXEmptyExpression => {
                 let requires_hardline = self.has_comment(n) && self.has_line_comment(n);
-                self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, requires_hardline);
+                self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, requires_hardline)?;
                 if requires_hardline {
                     self.hardline();
                 }

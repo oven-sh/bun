@@ -1,5 +1,11 @@
+//! Template literals whose text is CSS, GraphQL, HTML or Markdown (language-js/embed/*).
+//!
+//! The doc of such a literal is written once, out of line, and kept under the node (the printers of calls and arrow functions
+//! ask for its label before they decide on a layout, and may print an argument several times). How a guest runs: lang.rs;
+//! how the `${}`s get into its output: holes.rs.
+
 use crate::ast::{F_CHAIN, F_COMPUTED, F_ESCAPE, k};
-use crate::doc::{LABEL_EMBED, LABEL_EMBED_NO_HUG};
+use crate::doc::{LABEL_EMBED, LABEL_EMBED_NO_HUG, op};
 use crate::holes::{FILTER_BACKTICK, FILTER_END_OF_LINE, FILTER_UNCOOK};
 use crate::lang::{GUEST_BETWEEN_LINES, lang};
 use crate::options::WHITESPACE_IGNORE;
@@ -10,7 +16,7 @@ pub(crate) struct PrintEmbed {
     /// the docs of the expressions of the literal that is being printed
     pub(crate) ex: Vec<i32>,
     pub(crate) ex_top: i32,
-    /// ---------------------------------------------------------------------------------------------------------- GraphQL
+    // ---------------------------------------------------------------------------------------------------------- GraphQL
     pub(crate) part_count: i32,
     pub(crate) html_template_literal_counter: i32,
 }
@@ -92,7 +98,7 @@ impl Quick {
         // a child, not an attribute's value: the parent of an attribute's container is the attribute
         let opening = self.n.at(element + 4);
         if (self.n.at(opening) & 0xff) == k::Ready {
-            // fast.ts does not read the tags of <style>
+            // fast.rs does not read the tags of <style>
             return false;
         }
         let name = self.n.at(opening + 4);
@@ -504,11 +510,13 @@ impl Quick {
         return Ok(base);
     }
 
-    pub(crate) fn gen_decimal(&mut self, value: i32) {
+    pub(crate) fn gen_decimal(&mut self, value: i32) -> R<()> {
+        self.stack()?;
         if value >= 10 {
-            self.gen_decimal(value / 10);
+            self.gen_decimal(value / 10)?;
         }
         self.gen_byte(48 + value % 10);
+        Ok(())
     }
 }
 // -------------------------------------------------------------------------------------------------------------- CSS
@@ -519,9 +527,9 @@ impl Quick {
     pub(crate) fn print_embed_css(&mut self, n: i32) -> R<bool> {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.indent_hardline();
-        let mut ok: bool;
+        let ok: bool;
         if count == 1 {
             let quasi = self.n.at(quasis + 1);
             ok = self.embed(lang::Scss, self.n.at(quasi + 1), self.n.at(quasi + 2))?;
@@ -533,7 +541,7 @@ impl Quick {
                 let quasi = self.n.at(quasis + i);
                 if i > 1 {
                     self.gen_copy(CSS_PREFIX, CSS_PREFIX + CSS_PREFIX_TEXT.len() as i32);
-                    self.gen_decimal(i - 2);
+                    self.gen_decimal(i - 2)?;
                     self.gen_copy(CSS_SUFFIX, CSS_SUFFIX + 3);
                 }
                 self.gen_copy(self.n.at(quasi + 1), self.n.at(quasi + 2));
@@ -562,7 +570,7 @@ impl Quick {
             return Ok(false);
         }
         self.dedent_softline();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.set_label(LABEL_EMBED);
         return Ok(true);
     }
@@ -602,8 +610,13 @@ impl Quick {
         return true;
     }
 
-    /// printGraphqlComments(). Returns false if there is nothing but white space.
-    pub(crate) fn print_graphql_comments(&mut self, start: i32, end: i32, dry_run: bool) -> bool {
+    /// print_graphql_comments(). Returns false if there is nothing but white space.
+    pub(crate) fn print_graphql_comments(
+        &mut self,
+        start: i32,
+        end: i32,
+        dry_run: bool,
+    ) -> R<bool> {
         let mut seen_comment = false;
         let mut previous_was_blank = false;
         let mut p = start;
@@ -619,7 +632,7 @@ impl Quick {
             }
             if from != to {
                 if dry_run {
-                    return true;
+                    return Ok(true);
                 }
                 if seen_comment {
                     self.hardline();
@@ -627,7 +640,7 @@ impl Quick {
                 if previous_was_blank && seen_comment {
                     self.hardline();
                 }
-                self.slice_any(from, to);
+                self.slice_any(from, to)?;
                 seen_comment = true;
             }
             previous_was_blank = from == to;
@@ -636,7 +649,7 @@ impl Quick {
             }
             p = e + 1;
         }
-        return seen_comment;
+        return Ok(seen_comment);
     }
 
     pub(crate) fn print_embed_graph_ql(&mut self, n: i32) -> R<bool> {
@@ -645,7 +658,7 @@ impl Quick {
         let base = self.print_expressions(n)?;
         let saved_parts = self.print_embed.part_count;
         self.print_embed.part_count = 0;
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.indent_hardline();
         let mut ok = true;
         let mut i: i32 = 1;
@@ -721,7 +734,7 @@ impl Quick {
                 p = e + 1;
             }
             let has_doc =
-                !comments_and_whitespace_only || self.print_graphql_comments(start, end, true);
+                !comments_and_whitespace_only || self.print_graphql_comments(start, end, true)?;
             if has_doc {
                 if !is_first && starts_with_blank_line {
                     self.next_part();
@@ -731,7 +744,7 @@ impl Quick {
                     self.push_text_filter(FILTER_UNCOOK);
                 }
                 if comments_and_whitespace_only {
-                    self.print_graphql_comments(start, end, false);
+                    self.print_graphql_comments(start, end, false)?;
                 } else {
                     ok = self.embed(lang::GraphQL, start, end)?;
                 }
@@ -756,7 +769,7 @@ impl Quick {
             return Ok(false);
         }
         self.dedent_hardline();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.set_label(LABEL_EMBED);
         return Ok(true);
     }
@@ -780,11 +793,11 @@ impl Quick {
         self.reserve_gen(32);
         let suffix = self.text.gen_pos;
         self.gen_byte(95);
-        self.gen_decimal(counter);
+        self.gen_decimal(counter)?;
         self.gen_string(b"_IN_JS");
         let suffix_length = self.text.gen_pos - suffix;
-        let mut start: i32;
-        let mut end: i32;
+        let start: i32;
+        let end: i32;
         let only = self.n.at(quasis + 1);
         if count == 1 && (self.n.at(only) & F_ESCAPE) == 0 {
             start = self.n.at(only + 1);
@@ -797,7 +810,7 @@ impl Quick {
                 self.gen_cooked(self.n.at(quasi + 1), self.n.at(quasi + 2));
                 if i < count {
                     self.gen_copy(HTML_PREFIX, HTML_PREFIX + HTML_PREFIX_TEXT.len() as i32);
-                    self.gen_decimal(i - 1);
+                    self.gen_decimal(i - 1)?;
                     self.gen_copy(suffix, suffix + suffix_length);
                 }
                 i += 1;
@@ -807,21 +820,21 @@ impl Quick {
         }
         let leading_whitespace = start < end && is_space(self.t.at(start));
         let trailing_whitespace = start < end && is_space(self.t.at(end - 1));
-        let hard_break = 0 == WHITESPACE_IGNORE;
+        let hard_break = self.options.html_whitespace_sensitivity == WHITESPACE_IGNORE;
         let has_linebreak = hard_break || (leading_whitespace && trailing_whitespace);
         let outer = self.group_open();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         let mut indent_at: i32 = 0;
         if has_linebreak {
             self.indent_open();
             if hard_break {
                 self.hardline();
             } else {
-                self.line();
+                self.line()?;
             }
         } else {
             if leading_whitespace {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
             indent_at = self.nop();
         }
@@ -832,7 +845,7 @@ impl Quick {
             HTML_PREFIX_TEXT.len() as i32,
             suffix,
             suffix_length,
-            FILTER_UNCOOK | 0,
+            FILTER_UNCOOK,
         );
         let mut i: i32 = 0;
         while i < count - 1 {
@@ -854,14 +867,18 @@ impl Quick {
             if hard_break {
                 self.hardline();
             } else {
-                self.line();
+                self.line()?;
             }
         } else {
+            if self.lang.top_level_count > 1 {
+                self.patch(indent_at, op::IndentOpen);
+                self.indent_close();
+            }
             if trailing_whitespace {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
         }
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.group_close(outer);
         self.set_label(if has_linebreak {
             LABEL_EMBED
@@ -959,7 +976,7 @@ impl Quick {
             end = self.text.gen_pos;
             self.gen_source_end();
         }
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         if indent_length != 0 {
             self.indent_softline();
         } else {
@@ -976,7 +993,7 @@ impl Quick {
             return Ok(false);
         }
         self.dedent_softline();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.set_label(LABEL_EMBED);
         return Ok(true);
     }
@@ -1031,13 +1048,13 @@ impl Quick {
             if valid {
                 let mark = self.checkpoint();
                 let h = self.detach_open();
-                let mut ok: bool;
+                let ok: bool;
                 let first = self.n.at(quasis + 1);
                 if count == 1
                     && self.print_embed_is_blank(self.n.at(first + 1), self.n.at(first + 2))
                 {
-                    self.text(BACKQUOTE);
-                    self.text(BACKQUOTE);
+                    self.text(BACKQUOTE)?;
+                    self.text(BACKQUOTE)?;
                     self.set_label(0);
                     ok = true;
                 } else if kind == EMBED_CSS {

@@ -1,8 +1,12 @@
+//! Binary and logical expressions (binaryish.js).
+//!
+//! Prettier flattens a chain of operators of the same precedence into a list of parts, and the caller then indents all
+//! parts but the first. Here the chain is written in one go: whoever writes the first operand opens the indentation.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{F_CHAIN, F_COMPUTED, k};
-use crate::lang::lang;
 use crate::lexer::tk;
-use crate::print::statics::{COLON_SPACE, OPERATOR, SPACE};
+use crate::print::statics::{OPERATOR, SPACE};
 use crate::print::util::should_flatten;
 use crate::{Quick, R, Words};
 
@@ -53,37 +57,8 @@ impl Quick {
     }
 
     pub(crate) fn line_before_operator(&self, n: i32) -> bool {
-        return (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
-            || (self.n.at(n) & 0xff) == k::NGPipeExpression)
+        return ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
             && !self.has_leading_own_line_comment(self.n.at(n + 5));
-    }
-
-    /// `: a : b` behind the name of a pipe
-    pub(crate) fn print_pipe_arguments(&mut self, n: i32) -> R<()> {
-        let list = self.n.at(n + 6);
-        let count = self.n.at(list);
-        if count == 0 {
-            return Ok(());
-        }
-        let g = self.group_open();
-        self.indent_softline();
-        self.text(COLON_SPACE);
-        let mut i: i32 = 1;
-        while i <= count {
-            if i > 1 {
-                self.line();
-                self.text(COLON_SPACE);
-            }
-            self.align_open(2);
-            let inner = self.group_open();
-            self.print(self.n.at(list + i))?;
-            self.group_close(inner);
-            self.indent_close();
-            i += 1;
-        }
-        self.indent_close();
-        self.group_close(g);
-        Ok(())
     }
 
     pub(crate) fn comment_before_operator(&self, right: i32) -> bool {
@@ -93,16 +68,17 @@ impl Quick {
     }
 
     /// What stands between the parts so far and the operator with its right operand.
-    pub(crate) fn print_separator(&mut self, n: i32) {
+    pub(crate) fn print_separator(&mut self, n: i32) -> R<()> {
         if self.options.operator_position_start {
             if self.should_inline_logical_expression(n)
                 || self.comment_before_operator(self.n.at(n + 5))
             {
-                self.text(SPACE);
+                self.text(SPACE)?;
             }
         } else if !self.line_before_operator(n) {
-            self.text(SPACE);
+            self.text(SPACE)?;
         }
+        Ok(())
     }
 
     /// The operator and the right operand.
@@ -119,45 +95,33 @@ impl Quick {
                 && (self.n.at(right) & 0xff) != k);
         let g = if should_group { self.group_open() } else { 0 };
         if self.should_inline_logical_expression(n) {
-            self.text(operator);
+            self.text(operator)?;
             if self.has_leading_own_line_comment(right) {
-                self.indent_line();
+                self.indent_line()?;
                 self.print(right)?;
                 self.indent_close();
             } else {
-                self.text(SPACE);
+                self.text(SPACE)?;
                 self.print(right)?;
             }
         } else if self.options.operator_position_start {
-            self.line();
+            self.line()?;
             if self.comment_before_operator(right) {
-                self.print_leading_comments(right);
+                self.print_leading_comments(right)?;
                 self.print_binaryish.skip_leading_comments_of = right;
             }
-            self.text(operator);
-            self.text(SPACE);
+            self.text(operator)?;
+            self.text(SPACE)?;
             self.print(right)?;
         } else if self.line_before_operator(n) {
-            self.line();
-            self.text(operator);
-            self.text(SPACE);
-            if self.parse_pipeline.uses_hack_pipeline
-                && ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
-            {
-                self.print_nested_parts(right, is_inside_parenthesis)?;
-            } else {
-                self.print(right)?;
-            }
-            if k == k::NGPipeExpression {
-                self.print_pipe_arguments(n)?;
-            }
-        } else {
-            self.text(operator);
-            self.line();
+            self.line()?;
+            self.text(operator)?;
+            self.text(SPACE)?;
             self.print(right)?;
-            if k == k::NGPipeExpression {
-                self.print_pipe_arguments(n)?;
-            }
+        } else {
+            self.text(operator)?;
+            self.line()?;
+            self.print(right)?;
         }
         if should_group {
             self.group_close_with(g, should_break, 0);
@@ -172,6 +136,7 @@ impl Quick {
         is_inside_parenthesis: bool,
         indent_after_head: bool,
     ) -> R<()> {
+        self.stack()?;
         let left = self.n.at(n + 4);
         if self.is_binaryish(left)
             && should_flatten(
@@ -181,13 +146,13 @@ impl Quick {
         {
             let comments = self.has_comment(left);
             if comments {
-                self.print_leading_comments(left);
+                self.print_leading_comments(left)?;
             }
             self.print_left_parts(left, is_inside_parenthesis, indent_after_head)?;
-            self.print_separator(left);
+            self.print_separator(left)?;
             self.print_right(left, is_inside_parenthesis)?;
             if comments {
-                self.print_trailing_comments(left);
+                self.print_trailing_comments(left)?;
             }
             return Ok(());
         }
@@ -200,28 +165,9 @@ impl Quick {
         Ok(())
     }
 
-    /// printBinaryishExpressions() with isNested, for the right side of a hack pipeline, where the pipelines that follow it are.
-    pub(crate) fn print_nested_parts(&mut self, n: i32, is_inside_parenthesis: bool) -> R<()> {
-        if !self.is_binaryish(n) {
-            let g = self.group_open();
-            self.print(n)?;
-            self.group_close(g);
-            return Ok(());
-        }
-        let comments = self.has_comment(n);
-        if comments {
-            self.print_leading_comments(n);
-        }
-        self.print_parts(n, is_inside_parenthesis)?;
-        if comments {
-            self.print_trailing_comments(n);
-        }
-        Ok(())
-    }
-
     pub(crate) fn print_parts(&mut self, n: i32, is_inside_parenthesis: bool) -> R<()> {
         self.print_left_parts(n, is_inside_parenthesis, false)?;
-        self.print_separator(n);
+        self.print_separator(n)?;
         self.print_right(n, is_inside_parenthesis)?;
         Ok(())
     }
@@ -236,14 +182,6 @@ impl Quick {
             || pk == k::DoWhileStatement
         {
             self.print_parts(n, true)?;
-            return Ok(());
-        }
-        if self.parse_pipeline.uses_hack_pipeline
-            && ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
-        {
-            let g = self.group_open();
-            self.print_parts(n, false)?;
-            self.group_close(g);
             return Ok(());
         }
         if (self.is_call_or_new(parent) && self.n.at(parent + 4) == n)
@@ -262,13 +200,6 @@ impl Quick {
             || pk == k::ThrowStatement
             || (pk == k::JSXExpressionContainer
                 && (self.n.at(grandparent) & 0xff) == k::JSXAttribute)
-            || (pk == k::JsExpressionRoot
-                && ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 != tk::BitOr)
-            || ((self.n.at(n) & 0xff) != k::NGPipeExpression
-                && ((pk == k::NGRoot && self.lang.lang == lang::NgBinding)
-                    || (pk == k::NGMicrosyntaxExpression
-                        && (self.n.at(grandparent) & 0xff) == k::NGMicrosyntax
-                        && self.n.at(self.n.at(grandparent + 4)) == 1)))
             || (pk == k::ArrowFunctionExpression && self.n.at(parent + 5) == n)
             || pk == k::ForStatement
             || (pk == k::ConditionalExpression
@@ -302,7 +233,7 @@ impl Quick {
         if !self.is_jsx_element(self.n.at(n + 5)) {
             let g = self.group_open();
             self.print_left_parts(n, false, true)?;
-            self.print_separator(n);
+            self.print_separator(n)?;
             self.print_right(n, false)?;
             self.indent_close();
             self.group_close(g);
@@ -312,7 +243,7 @@ impl Quick {
         let outer = self.group_open();
         let chain = self.group_open();
         self.print_left_parts(n, false, true)?;
-        self.print_separator(n);
+        self.print_separator(n)?;
         self.indent_close();
         self.group_close_with(chain, false, id);
         self.indent_if_break_open(id, false);

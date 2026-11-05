@@ -1,3 +1,5 @@
+//! The kinds and flags of the JavaScript tree. How nodes are laid out: arena.rs
+
 use crate::{Quick, Words};
 
 #[allow(non_upper_case_globals)]
@@ -24,10 +26,6 @@ pub(crate) mod k {
     pub(crate) const JSXEmptyExpression: i32 = 19;
     pub(crate) const JSXOpeningFragment: i32 = 20;
     pub(crate) const JSXClosingFragment: i32 = 21;
-    pub(crate) const TopicReference: i32 = 22;
-    pub(crate) const ArgumentPlaceholder: i32 = 23;
-    pub(crate) const VoidPattern: i32 = 24;
-    pub(crate) const V8IntrinsicIdentifier: i32 = 25;
     // expressions
     pub(crate) const TemplateLiteral: i32 = 27;
     pub(crate) const TaggedTemplateExpression: i32 = 28;
@@ -65,9 +63,6 @@ pub(crate) mod k {
     pub(crate) const ArrayPattern: i32 = 60;
     pub(crate) const ObjectPattern: i32 = 61;
     pub(crate) const Decorator: i32 = 62;
-    pub(crate) const DoExpression: i32 = 63;
-    pub(crate) const BindExpression: i32 = 64;
-    pub(crate) const ModuleExpression: i32 = 65;
     // statements
     pub(crate) const ExpressionStatement: i32 = 66;
     pub(crate) const BlockStatement: i32 = 67;
@@ -99,7 +94,6 @@ pub(crate) mod k {
     pub(crate) const ExportNamedDeclaration: i32 = 92;
     pub(crate) const ExportSpecifier: i32 = 93;
     pub(crate) const ExportNamespaceSpecifier: i32 = 94;
-    pub(crate) const ExportDefaultSpecifier: i32 = 95;
     pub(crate) const ExportDefaultDeclaration: i32 = 96;
     pub(crate) const ExportAllDeclaration: i32 = 97;
     // JSX
@@ -113,22 +107,8 @@ pub(crate) mod k {
     pub(crate) const JSXSpreadChild: i32 = 105;
     pub(crate) const JSXNamespacedName: i32 = 106;
     pub(crate) const JSXMemberExpression: i32 = 107;
-    pub(crate) const JsonRoot: i32 = 108;
-    pub(crate) const JsExpressionRoot: i32 = 109;
-    // the expressions of Angular
-    pub(crate) const NGRoot: i32 = 110;
-    /// its sub-kind is Tk.BitOr, so that it goes with the binary expressions
-    pub(crate) const NGPipeExpression: i32 = 111;
-    pub(crate) const NGChainedExpression: i32 = 112;
-    pub(crate) const NGEmptyExpression: i32 = 113;
-    pub(crate) const NGMicrosyntax: i32 = 114;
-    /// F_COMPUTED: "$implicit", which is not in the source
-    pub(crate) const NGMicrosyntaxKey: i32 = 115;
-    pub(crate) const NGMicrosyntaxExpression: i32 = 116;
-    pub(crate) const NGMicrosyntaxKeyedExpression: i32 = 117;
-    pub(crate) const NGMicrosyntaxLet: i32 = 118;
-    pub(crate) const NGMicrosyntaxAs: i32 = 119;
-    // Prettier prints the pair alike nearly everywhere, and where it does not, mode.ts knows which language is running.
+    // ---- types. A kind that TypeScript and Flow both have stands for the node of either (TSUnionType, UnionTypeAnnotation):
+    // Prettier prints the pair alike nearly everywhere, and where it does not, mode.rs knows which language is running.
     /// `: T`, and `=> T` of a function type
     pub(crate) const TypeAnnotation: i32 = 120;
     /// any, string, this, null .. (TK_*)
@@ -159,6 +139,7 @@ pub(crate) mod k {
     pub(crate) const TypeLiteral: i32 = 138;
     pub(crate) const InterfaceBody: i32 = 139;
     pub(crate) const MappedType: i32 = 140;
+    /// TSTypeOperator, KeyofTypeAnnotation, TypeOperator
     pub(crate) const TypeOperator: i32 = 141;
     /// also OptionalIndexedAccessType
     pub(crate) const IndexedAccessType: i32 = 142;
@@ -167,6 +148,7 @@ pub(crate) mod k {
     /// TSTypeQuery, TypeofTypeAnnotation
     pub(crate) const TypeQuery: i32 = 145;
     pub(crate) const TypePredicate: i32 = 146;
+    /// TSLiteralType, StringLiteralTypeAnnotation ..
     pub(crate) const LiteralType: i32 = 147;
     pub(crate) const TemplateLiteralType: i32 = 148;
     pub(crate) const ImportType: i32 = 149;
@@ -248,7 +230,7 @@ pub(crate) mod k {
     pub(crate) const RecordDeclarationBody: i32 = 215;
     pub(crate) const RecordDeclarationProperty: i32 = 216;
     pub(crate) const RecordExpression: i32 = 217;
-    // A statement that fast.ts has read and printed in one go. The sub-kind is the kind of node that the parser would have made, and start
+    // A statement that fast.rs has read and printed in one go. The sub-kind is the kind of node that the parser would have made, and start
     // and end are those of that node. No children; two numbers: where the text to print stands, and its length.
     pub(crate) const Ready: i32 = 218;
     // The same for a statement with blocks in it, which the parser has read: `it("a", () => { .. });`, `if (a) { .. } else { .. }`.
@@ -258,7 +240,7 @@ pub(crate) mod k {
     // A comment that stands alone on its lines in front of a statement or a member of a class: an item of the list like the others, which is what it
     // is printed as. Start and end are those of the comment. One number: its flags (CF_BLOCK ..).
     pub(crate) const ReadyComment: i32 = 220;
-    // The statements and comments at the start of a program of which stands.ts has found that they are printed as they stand, at column 0. Start and end are those of the text.
+    // The statements and comments at the start of a program of which stands.rs has found that they are printed as they stand, at column 0. Start and end are those of the text.
     pub(crate) const ReadyLines: i32 = 221;
 }
 // ---- flags (bits 8..23 of word 0)
@@ -282,6 +264,7 @@ pub(crate) const F_GENERATOR: i32 = 1 << 17;
 pub(crate) const F_OPTIONAL: i32 = 1 << 18;
 /// Optional{Member,Call}Expression of Babel: part of an optional chain
 pub(crate) const F_CHAIN: i32 = 1 << 19;
+/// UpdateExpression; also delegate of yield, await of for-of, self_closing, tail
 pub(crate) const F_PREFIX: i32 = 1 << 20;
 /// a string with a backslash, an identifier with an escape
 pub(crate) const F_ESCAPE: i32 = 1 << 21;
@@ -313,6 +296,7 @@ pub(crate) const F_EXPR_BODY: i32 = F_PREFIX;
 pub(crate) const F_EXT: i32 = F_STATIC;
 /// `!` of a ClassProperty or VariableDeclarator
 pub(crate) const F_DEFINITE: i32 = F_CHAIN;
+/// EnumDeclaration, TypeParameter
 pub(crate) const F_CONST: i32 = F_EXTRA;
 /// TypePredicate
 pub(crate) const F_ASSERTS: i32 = F_EXTRA;
@@ -334,7 +318,7 @@ pub(crate) const F_REST: i32 = F_PREFIX;
 pub(crate) const F_THIS: i32 = F_STATIC;
 /// TypeParameter of Flow: `T extends B`, not `T: B`
 pub(crate) const F_EXTENDS_BOUND: i32 = F_COMPUTED;
-// (the bit of generators, because few nodes of plain JavaScript have it: printNode() takes a slower way for all that do)
+// (the bit of generators, because few nodes of plain JavaScript have it: print_node() takes a slower way for all that do)
 /// JSXText: it is known to be blanks and at least one line feed
 pub(crate) const F_BLANK: i32 = F_EXTRA;
 /// .. and more than one line feed
@@ -362,7 +346,7 @@ pub(crate) const P_DEFER: i32 = 1;
 pub(crate) const P_SOURCE: i32 = 2;
 pub(crate) const P_MODULE: i32 = 3;
 pub(crate) const P_MASK: i32 = 3;
-// importKind and exportKind: bits 2 and 3 of the sub-kind of declarations and specifiers
+// import_kind and export_kind: bits 2 and 3 of the sub-kind of declarations and specifiers
 pub(crate) const IK_SHIFT: i32 = 2;
 pub(crate) const IK_TYPE: i32 = 1;
 pub(crate) const IK_TYPEOF: i32 = 2;
@@ -462,7 +446,7 @@ pub(crate) static SHAPE: [u16; 222] = [
     2, 802, 1, 802, 17, 17, 3, 3, 16, 2, 0, 1, 1, 1, 2, 17, 2, 1, 17, 2, 1, 17, 8739, 16, 3, 3, 0,
     16, 0, 0,
 ];
-// Where the two extra words of a binding stand (see F_EXT): typeAnnotation, decorators.
+// Where the two extra words of a binding stand (see F_EXT): type_annotation, decorators.
 pub(crate) static EXT_AT: [u8; 222] = [
     0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0,
     0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 5, 5, 0, 0,
@@ -525,7 +509,7 @@ impl Quick {
         return n;
     }
 
-    /// The typed fields are 0; fill them with setChild() and setList().
+    /// The typed fields are 0; fill them with set_child() and set_list().
     pub(crate) fn class_node(
         &mut self,
         head: i32,

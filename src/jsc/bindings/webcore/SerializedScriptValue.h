@@ -176,6 +176,8 @@ private:
     // Raw `*mut BlockList` pointers whose refcount was bumped at serialize
     // time so they outlive the wire buffer; released in the destructor.
     Vector<void*> m_serializedBlockListRefs;
+    // What `Histogram__retainForStructuredClone` returned at serialize time; released in the destructor.
+    Vector<uint64_t> m_serializedHistogramIds;
 #if ENABLE(WEBASSEMBLY)
     std::unique_ptr<WasmModuleArray> m_wasmModulesArray;
     std::unique_ptr<WasmMemoryHandleArray> m_wasmMemoryHandlesArray;

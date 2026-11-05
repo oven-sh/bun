@@ -212,7 +212,7 @@ fn parse_impl_in(
 }
 
 fn run_stage2<'s>(
-    source: &'s bun_ast::Source,
+    source: &'s bun_ast::Source<'s>,
     log: &mut bun_ast::Log,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
@@ -697,7 +697,7 @@ fn parse_auto_quoted_string(
 
 /// Extracts the top-level `name` and `version` strings from a package.json.
 pub struct PackageJSONVersionChecker<'a> {
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     log: &'a mut bun_ast::Log,
 
     pub(crate) found_version_buf: [u8; 1024],
@@ -709,7 +709,7 @@ pub struct PackageJSONVersionChecker<'a> {
 }
 
 impl<'a> PackageJSONVersionChecker<'a> {
-    pub fn init(source: &'a bun_ast::Source, log: &'a mut bun_ast::Log) -> Self {
+    pub fn init(source: &'a bun_ast::Source<'a>, log: &'a mut bun_ast::Log) -> Self {
         Self {
             source,
             log,

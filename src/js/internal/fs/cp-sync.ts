@@ -22,7 +22,7 @@ const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 
 // COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE
 const kMaxCopyMode = 7;
@@ -38,7 +38,24 @@ const defaultCpOptions = {
   mode: 0,
 };
 
-function decorateSystemError(err, prefix, context) {
+interface SystemErrorContext {
+  message: string;
+  path?: string;
+  dest?: string;
+  syscall: string;
+  errno: number;
+  code: string;
+}
+
+interface SystemError extends Error {
+  info?: SystemErrorContext;
+  errno?: number;
+  syscall?: string;
+  path?: string;
+  dest?: string;
+}
+
+function decorateSystemError(err: SystemError, prefix: string, context: SystemErrorContext) {
   const { syscall, code, message: ctxMessage, path, dest, errno } = context;
   let message = `${prefix}: ${syscall} returned ${code} (${ctxMessage})`;
   if (path !== undefined) message += ` ${path}`;
@@ -53,7 +70,7 @@ function decorateSystemError(err, prefix, context) {
   return err;
 }
 
-function fsCpDirToNonDirError(context) {
+function fsCpDirToNonDirError(context: SystemErrorContext) {
   return decorateSystemError(
     $ERR_FS_CP_DIR_TO_NON_DIR(context.message),
     "Cannot overwrite non-directory with directory",
@@ -61,19 +78,19 @@ function fsCpDirToNonDirError(context) {
   );
 }
 
-function fsCpEExistError(context) {
+function fsCpEExistError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_CP_EEXIST(context.message), "Target already exists", context);
 }
 
-function fsCpEinvalError(context) {
+function fsCpEinvalError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_CP_EINVAL(context.message), "Invalid src or dest", context);
 }
 
-function fsCpFifoPipeError(context) {
+function fsCpFifoPipeError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_CP_FIFO_PIPE(context.message), "Cannot copy a FIFO pipe", context);
 }
 
-function fsCpNonDirToDirError(context) {
+function fsCpNonDirToDirError(context: SystemErrorContext) {
   return decorateSystemError(
     $ERR_FS_CP_NON_DIR_TO_DIR(context.message),
     "Cannot overwrite directory with non-directory",
@@ -81,11 +98,11 @@ function fsCpNonDirToDirError(context) {
   );
 }
 
-function fsCpSocketError(context) {
+function fsCpSocketError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_CP_SOCKET(context.message), "Cannot copy a socket file", context);
 }
 
-function fsCpSymlinkToSubdirectoryError(context) {
+function fsCpSymlinkToSubdirectoryError(context: SystemErrorContext) {
   return decorateSystemError(
     $ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY(context.message),
     "Cannot overwrite symlink in subdirectory of self",
@@ -93,15 +110,15 @@ function fsCpSymlinkToSubdirectoryError(context) {
   );
 }
 
-function fsCpUnknownError(context) {
+function fsCpUnknownError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_CP_UNKNOWN(context.message), "Cannot copy an unknown file type", context);
 }
 
-function fsEisdirError(context) {
+function fsEisdirError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_EISDIR(context.message), "Path is a directory", context);
 }
 
-function getValidMode(mode) {
+function getValidMode(mode: number | null | undefined) {
   if (mode == null) {
     return 0;
   }
@@ -111,6 +128,7 @@ function getValidMode(mode) {
 
 const kValidatedCpOptions = Symbol("kValidatedCpOptions");
 
+function validateCpOptions(options: Partial<CpOptions> | undefined): CpOptions;
 function validateCpOptions(options) {
   // Callback fs.cp validates before delegating to fs.promises.cp; the brand
   // lets the second pass skip re-validating the same object.
@@ -142,22 +160,24 @@ function validateCpOptions(options) {
   return options;
 }
 
-function areIdentical(srcStat, destStat) {
+function areIdentical(srcStat: AnyStats, destStat: AnyStats) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
-const normalizePathToArray = path =>
+const normalizePathToArray = (path: string) =>
   ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
-function isSrcSubdir(src, dest) {
+function isSrcSubdir(src: string, dest: string) {
   const srcArr = normalizePathToArray(src);
   const destArr = normalizePathToArray(dest);
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
 }
 
-type BigIntStats = import("node:fs").BigIntStats;
+type Stats = $Node.Stats;
+type BigIntStats = $Node.BigIntStats;
+type AnyStats = Stats | BigIntStats;
 
 interface CpOptions {
   dereference: boolean;
@@ -184,9 +204,9 @@ interface SkippedPaths {
   skipped: true;
 }
 
-function checkPathsSync(src, dest, opts: CpOptions & { filter: undefined }): CheckedPaths;
-function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths;
-function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths {
+function checkPathsSync(src: string, dest: string, opts: CpOptions & { filter: undefined }): CheckedPaths;
+function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPaths | SkippedPaths;
+function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPaths | SkippedPaths {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
     if ($isPromise(shouldCopy)) {
@@ -238,11 +258,11 @@ function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
 
-function getStatsSync(src, dest, opts) {
-  let destStat;
+function getStatsSync(src: string, dest: string, opts: CpOptions) {
+  let destStat: BigIntStats;
   const statFunc = opts.dereference
-    ? file => statSync(file, { bigint: true })
-    : file => lstatSync(file, { bigint: true });
+    ? (file: string) => statSync(file, { bigint: true })
+    : (file: string) => lstatSync(file, { bigint: true });
   const srcStat = statFunc(src);
   try {
     destStat = statFunc(dest);
@@ -253,11 +273,11 @@ function getStatsSync(src, dest, opts) {
   return { srcStat, destStat };
 }
 
-function checkParentPathsSync(src, srcStat, dest) {
+function checkParentPathsSync(src: string, srcStat: BigIntStats, dest: string) {
   const srcParent = resolve(dirname(src));
   const destParent = resolve(dirname(dest));
   if (destParent === srcParent || destParent === parse(destParent).root) return;
-  let destStat;
+  let destStat: BigIntStats;
   try {
     destStat = statSync(destParent, { bigint: true });
   } catch (err: any) {
@@ -283,11 +303,11 @@ function checkParentPathsSync(src, srcStat, dest) {
 // regular files and directories; anything else — including entries whose type
 // the filesystem does not report — bails to the ported walker. Scan errors
 // also bail so the walker surfaces them the way node would.
-function treeContainsOnlyFilesAndDirsSync(root) {
+function treeContainsOnlyFilesAndDirsSync(root: string) {
   const stack = [root];
   while (stack.length) {
-    const dir = stack.pop();
-    let entries;
+    const dir = stack.pop()!;
+    let entries: $Node.Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
@@ -307,7 +327,7 @@ function treeContainsOnlyFilesAndDirsSync(root) {
 
 // node-correct validation before handing off to the native fast path
 // (which performs the copy but does not implement node's cp error codes).
-function tryNativeFastPathSync(src, dest, opts: CpOptions & { filter: undefined }) {
+function tryNativeFastPathSync(src: string, dest: string, opts: CpOptions & { filter: undefined }) {
   const checked = checkPathsSync(src, dest, opts);
   const { srcStat, destStat } = checked;
   checkParentPathsSync(src, srcStat, dest);
@@ -337,7 +357,7 @@ function tryNativeFastPathSync(src, dest, opts: CpOptions & { filter: undefined 
   return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
 }
 
-function cpSyncFn(src, dest, opts, checked?) {
+function cpSyncFn(src: string, dest: string, opts: CpOptions, checked?: CheckedPaths) {
   // `checked` carries the stats from a preceding tryNativeFastPathSync so the
   // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
   const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
@@ -346,13 +366,13 @@ function cpSyncFn(src, dest, opts, checked?) {
   return checkParentDir(destStat, src, dest, opts);
 }
 
-function checkParentDir(destStat, src, dest, opts) {
+function checkParentDir(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
   const destParent = dirname(dest);
   if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
   return getStats(destStat, src, dest, opts);
 }
 
-function getStats(destStat, src, dest, opts) {
+function getStats(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
   const statSyncFn = opts.dereference ? statSync : lstatSync;
   const srcStat = statSyncFn(src);
 
@@ -396,12 +416,12 @@ function getStats(destStat, src, dest, opts) {
   });
 }
 
-function onFile(srcStat, destStat, src, dest, opts) {
+function onFile(srcStat: Stats, destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
   if (!destStat) return copyFile(srcStat, src, dest, opts);
   return mayCopyFile(srcStat, src, dest, opts);
 }
 
-function mayCopyFile(srcStat, src, dest, opts) {
+function mayCopyFile(srcStat: Stats, src: string, dest: string, opts: CpOptions) {
   if (opts.force) {
     unlinkSync(dest);
     return copyFile(srcStat, src, dest, opts);
@@ -416,13 +436,13 @@ function mayCopyFile(srcStat, src, dest, opts) {
   }
 }
 
-function copyFile(srcStat, src, dest, opts) {
+function copyFile(srcStat: Stats, src: string, dest: string, opts: CpOptions) {
   copyFileSync(src, dest, opts.mode);
   if (opts.preserveTimestamps) handleTimestamps(srcStat.mode, src, dest);
   return setDestMode(dest, srcStat.mode);
 }
 
-function handleTimestamps(srcMode, src, dest) {
+function handleTimestamps(srcMode: number, src: string, dest: string) {
   // Make sure the file is writable before setting the timestamp
   // otherwise open fails with EPERM when invoked with 'r+'
   // (through utimes call)
@@ -430,19 +450,19 @@ function handleTimestamps(srcMode, src, dest) {
   return setDestTimestamps(src, dest);
 }
 
-function fileIsNotWritable(srcMode) {
+function fileIsNotWritable(srcMode: number) {
   return (srcMode & 0o200) === 0;
 }
 
-function makeFileWritable(dest, srcMode) {
+function makeFileWritable(dest: string, srcMode: number) {
   return setDestMode(dest, srcMode | 0o200);
 }
 
-function setDestMode(dest, srcMode) {
+function setDestMode(dest: string, srcMode: number) {
   return chmodSync(dest, srcMode);
 }
 
-function setDestTimestamps(src, dest) {
+function setDestTimestamps(src: string, dest: string) {
   // The initial srcStat.atime cannot be trusted
   // because it is modified by the read(2) system call
   // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
@@ -450,7 +470,7 @@ function setDestTimestamps(src, dest) {
   return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat, destStat, src, dest, opts) {
+function onDir(srcStat: Stats, destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
   if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
   if (opts.errorOnExist && !opts.force) {
     throw fsCpEExistError({
@@ -464,13 +484,13 @@ function onDir(srcStat, destStat, src, dest, opts) {
   return copyDir(src, dest, opts);
 }
 
-function mkDirAndCopy(srcMode, src, dest, opts) {
+function mkDirAndCopy(srcMode: number, src: string, dest: string, opts: CpOptions) {
   mkdirSync(dest);
   copyDir(src, dest, opts);
   return setDestMode(dest, srcMode);
 }
 
-function copyDir(src, dest, opts) {
+function copyDir(src: string, dest: string, opts: CpOptions) {
   for (const dirent of readdirSync(src, { withFileTypes: true })) {
     const { name } = dirent;
     const srcItem = join(src, name);
@@ -480,7 +500,7 @@ function copyDir(src, dest, opts) {
   }
 }
 
-function onLink(destStat, src, dest, opts) {
+function onLink(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
   let resolvedSrc = readlinkSync(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
     resolvedSrc = resolve(dirname(src), resolvedSrc);
@@ -488,7 +508,7 @@ function onLink(destStat, src, dest, opts) {
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
   }
-  let resolvedDest;
+  let resolvedDest: string;
   try {
     resolvedDest = readlinkSync(dest);
   } catch (err: any) {
@@ -531,7 +551,7 @@ function onLink(destStat, src, dest, opts) {
   return copyLink(resolvedSrc, dest);
 }
 
-function copyLink(resolvedSrc, dest) {
+function copyLink(resolvedSrc: string, dest: string) {
   unlinkSync(dest);
   return symlinkSync(resolvedSrc, dest);
 }

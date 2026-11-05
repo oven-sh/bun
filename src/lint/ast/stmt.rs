@@ -105,8 +105,12 @@ pub enum StmtKind<'a> {
     ExportAsNamespace(Name<'a>),
 }
 
+/// A kind of the HIR that is listed after the braces is shown as another.
 macro_rules! tags {
-    ($(#[$doc:meta])* $name:ident of $kind:ident { $($variant:ident $pattern:tt,)* }) => {
+    (
+        $(#[$doc:meta])* $name:ident of $kind:ident { $($variant:ident $pattern:tt,)* }
+        $($hidden:ident $hidden_pattern:tt => $shown:ident,)*
+    ) => {
         $(#[$doc])*
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
@@ -118,7 +122,10 @@ macro_rules! tags {
 
             #[inline]
             pub(crate) fn of(kind: &hir::$kind) -> $name {
-                match kind { $(tags!(@pattern $kind $variant $pattern) => $name::$variant,)* }
+                match kind {
+                    $(tags!(@pattern $kind $variant $pattern) => $name::$variant,)*
+                    $(tags!(@pattern $kind $hidden $hidden_pattern) => $name::$shown,)*
+                }
             }
         }
     };
@@ -131,7 +138,7 @@ pub(crate) use tags;
 tags! {
     /// The kind of a statement without its payload. Rules listen for tags.
     ///
-    /// A `with` statement has the tag `Block`.
+    /// A `with` statement has the tag `Block`, a directive the tag `Expr`.
     StmtTag of StmtKind {
         Empty unit,
         Debugger unit,
@@ -165,6 +172,8 @@ tags! {
         ExportAssign tuple,
         ExportAsNamespace tuple,
     }
+    With fields => Block,
+    Directive fields => Expr,
 }
 
 impl<'a> Stmt<'a> {
@@ -198,7 +207,9 @@ impl<'a> Stmt<'a> {
         match raw.kind {
             hir::StmtKind::Empty => StmtKind::Empty,
             hir::StmtKind::Debugger => StmtKind::Debugger,
-            hir::StmtKind::Expr(expr) => StmtKind::Expr(e(expr)),
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Directive { expr, .. } => {
+                StmtKind::Expr(e(expr))
+            }
             hir::StmtKind::Var(decls) => StmtKind::Var(List::run(file, decls)),
             hir::StmtKind::Fn(f) => StmtKind::Fn(Func::new(file, f)),
             hir::StmtKind::Class(c) => StmtKind::Class(Class::new(file, c)),
@@ -237,9 +248,10 @@ impl<'a> Stmt<'a> {
                 body: s(body),
                 test: e(test),
             },
-            hir::StmtKind::Block(list) => match file.hir.with_bodies.is_empty() {
-                true => StmtKind::Block(List::ids(file, list)),
-                false => self.kind_of_block_or_with(raw, list),
+            hir::StmtKind::Block(list) => StmtKind::Block(List::ids(file, list)),
+            hir::StmtKind::With { object, body } => StmtKind::With {
+                object: e(object),
+                body: s(body),
             },
             hir::StmtKind::Switch { expr, cases } => StmtKind::Switch {
                 expr: e(expr),
@@ -300,22 +312,6 @@ impl<'a> Stmt<'a> {
                 finalizer: Stmt::some(file, finalizer),
             },
             _ => StmtKind::Empty,
-        }
-    }
-
-    /// The kind of a statement that the HIR stores as the block `list`, in a file with a `with` statement.
-    #[inline(never)]
-    fn kind_of_block_or_with(
-        self,
-        raw: &hir::Stmt,
-        list: hir::IdList<hir::StmtId>,
-    ) -> StmtKind<'a> {
-        let list = List::ids(self.file, list);
-        match (list.get(0).map(Stmt::kind), list.get(1)) {
-            (Some(StmtKind::Expr(object)), Some(body)) if self.file.is_with(raw) => {
-                StmtKind::With { object, body }
-            }
-            _ => StmtKind::Block(list),
         }
     }
 
@@ -538,14 +534,13 @@ impl<'a> Stmt<'a> {
         Some(self.file.ident(name, at))
     }
 
-    /// True if it wraps the expression in a `for` head or the object of a `with`. The HIR has a statement there but the
-    /// source doesn't, so it's never a parent and no listener is called with it.
+    /// True if it wraps the expression in a `for` head.
     #[inline]
     pub fn is_wrapper(self) -> bool {
         self.file.wrapped_in(self.id).is_some()
     }
 
-    /// The `for` or `with` statement it's a wrapper in.
+    /// The `for` statement it's a wrapper in.
     #[inline]
     pub(crate) fn wrapped_in(self) -> Option<Stmt<'a>> {
         self.file
@@ -573,15 +568,8 @@ impl<'a> Stmt<'a> {
     /// The statements, if it's a block.
     #[inline]
     pub fn as_block(self) -> Option<List<'a, Stmt<'a>>> {
-        let raw = self.try_raw()?;
-        match raw.kind {
-            hir::StmtKind::Block(list) => match self.file.hir.with_bodies.is_empty() {
-                true => Some(List::ids(self.file, list)),
-                false => match self.kind_of_block_or_with(raw, list) {
-                    StmtKind::Block(statements) => Some(statements),
-                    _ => None,
-                },
-            },
+        match self.try_raw()?.kind {
+            hir::StmtKind::Block(list) => Some(List::ids(self.file, list)),
             _ => None,
         }
     }
@@ -595,7 +583,9 @@ impl<'a> Stmt<'a> {
     #[inline]
     pub fn as_expr(self) -> Option<Expr<'a>> {
         match self.try_raw()?.kind {
-            hir::StmtKind::Expr(e) => Some(Expr::new(self.file, e)),
+            hir::StmtKind::Expr(e) | hir::StmtKind::Directive { expr: e, .. } => {
+                Some(Expr::new(self.file, e))
+            }
             _ => None,
         }
     }
@@ -835,19 +825,7 @@ impl super::File<'_> {
         !self.hir.with_bodies.is_empty()
     }
 
-    /// The HIR stores `with (object) body` as a block of the two that starts at the keyword.
-    #[inline]
-    fn is_with(&self, raw: &hir::Stmt) -> bool {
-        !self.hir.with_bodies.is_empty()
-            && matches!(raw.kind, hir::StmtKind::Block(list) if list.len() == 2)
-            && self
-                .hir
-                .text
-                .get(raw.start as usize..)
-                .is_some_and(|it| it.starts_with(b"with"))
-    }
-
-    /// The `for` or `with` statement that the statement `id` is a wrapper in, if any.
+    /// The `for` statement that the statement `id` is a wrapper in, if any.
     #[inline]
     pub(super) fn wrapped_in(&self, id: hir::StmtId) -> Option<hir::StmtId> {
         if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
@@ -856,14 +834,10 @@ impl super::File<'_> {
         let bun_sema::bind::Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return None;
         };
-        let raw = self.hir.stmts.get(parent.idx())?;
-        let is_wrapper = match raw.kind {
+        let is_wrapper = match self.hir.stmts.get(parent.idx())?.kind {
             hir::StmtKind::For { init: head, .. }
             | hir::StmtKind::ForIn { left: head, .. }
             | hir::StmtKind::ForOf { left: head, .. } => head == id,
-            hir::StmtKind::Block(list) => {
-                self.is_with(raw) && self.hir.ids.get(list.start as usize) == Some(&id.0)
-            }
             _ => false,
         };
         is_wrapper.then_some(parent)

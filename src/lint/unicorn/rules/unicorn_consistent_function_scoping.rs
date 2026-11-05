@@ -13,7 +13,7 @@ pub struct ConsistentFunctionScoping {
     check_arrow_functions: bool,
 }
 
-const CONSISTENT_FUNCTION_SCOPING: Message = Message::new(
+const CONSISTENT_FUNCTION_SCOPING: &Message = &Message::new(
     "",
     "Function `{{name}}` does not capture any variables from its parent scope",
 );

@@ -1,0 +1,258 @@
+# A member call on an expected receiver is two uses with the same tests: under one set of tests the read is a closure nobody uses and the call is direct
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# RUN(TESTS): pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Task" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f1 mutability=Fixed}, {key="patched" function=f2}, {key="counted" function=f3 mutability=Fixed}] namedMembers=[{key="run" function=f1 mutability=Fixed}, {key="patched" function=f2}, {key="counted" function=f3 mutability=Fixed}]}
+layout L1 kind=Instance name="Open" constructor=f4 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
+layout L2 kind=Instance name="Stable" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="patched" function=f7}] namedMembers=[{key="patched" function=f7}]}
+function f0 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    Return
+}
+function f2 name="patched" kind=Method flags=[HasThis] thisType={type=object} results=[{type=anything}] {
+  b0(v0: object):
+    Return
+}
+function f3 name="counted" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=object} results=[{type=anything}] {
+  b0(v0: number, v1: object):
+    Return
+}
+function f4 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="run" kind=Method flags=[HasThis] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    Return
+}
+function f6 name="Stable" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="patched" kind=Method flags=[HasThis] thisType={type=object} results=[{type=anything}] {
+  b0(v0: object):
+    Return
+}
+
+function f8 name="read-and-call" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f8 name="read-and-call"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: [[isTask]]: boolean ~ true = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isTask]] -> taken [[passed]](| 0), notTaken {{*}}
+# CHECK-NOT: Test
+# CHECK-NOT: PropGet
+# CHECK: v2: f1 = NewClosure function=f1
+# CHECK-NOT: v2
+# CHECK: v3: anything = CallDirect [[task]], v1 function=f1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: {{*}}() frequency=Unlikely:
+# CHECK-NEXT: [[method]]: anything = PropGet v0 key="run"
+# CHECK-NEXT: [[result]]: anything = Call [[method]], v0, v1 calleeKey="run"
+# CHECK-NEXT: Return [[result]]
+# CHECK-NEXT: [[passed]]([[task]]: L0):
+# CHECK-NEXT: [[isOwn]]: boolean = BelongsToInstance [[task]]
+# CHECK-NEXT: Branch [[isOwn]] -> taken {{*}}(| 0), notTaken {{*}}()
+# CHECK-NOT: Test
+# CHECK-NOT: BelongsToInstance
+# CHECK-NOT: AreMembersUnchanged
+# CHECK-NOT: HasNoExtraProperties
+# CHECK-NOT: HasLayoutPrototype
+function f9 name="method-may-be-replaced" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="patched"
+    v2 = Call v1, v0 calleeKey="patched"
+    Return v2
+}
+# CHECK-LABEL: function f9 name="method-may-be-replaced"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: [[patchedIsTask]]: boolean ~ true = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[patchedIsTask]] -> taken [[patchedPassed]](| 0), notTaken {{*}}
+# CHECK: = NewClosure function=f2
+# CHECK: = CallDirect [[patchedTask]] function=f2
+# CHECK: [[patchedPassed]]([[patchedTask]]: L0):
+# CHECK-NEXT: [[patchedIsOwn]]: boolean = BelongsToInstance [[patchedTask]]
+# CHECK-NEXT: Branch [[patchedIsOwn]] -> taken [[patchedOwn]](| 0), notTaken {{*}}()
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: [[patchedOwn]]({{*}}: guard):
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}layout=L0{{*}}key="patched"}]
+# CHECK-NOT: AreMembersUnchanged
+function f10 name="proven-receiver" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="patched"
+    v2 = Call v1, v0 calleeKey="patched"
+    Return v2
+}
+# CHECK-LABEL: function f10 name="proven-receiver"
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}layout=L2{{*}}key="patched"}]
+# CHECK-NOT: Test
+# CHECK-NOT: BelongsToInstance
+# CHECK: = NewClosure function=f7
+# CHECK: = CallDirect v0 function=f7
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: [[provenMethod]]: anything = PropGet v0 key="patched"
+# CHECK-NEXT: = Call [[provenMethod]], v0 calleeKey="patched"
+# CHECK-NOT: Test
+# CHECK-NOT: BelongsToInstance
+function f11 name="receiver-may-gain-properties-and-another-prototype" parameters=[{type=L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L1, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# One bit of the class says of all its objects that none hides the method and none has another prototype.
+# CHECK-LABEL: function f11 name="receiver-may-gain-properties-and-another-prototype"
+# CHECK-NEXT: b0(v0: anything ~ L1, v1: anything):
+# CHECK-NEXT: [[isOpen]]: boolean ~ true = TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch [[isOpen]] -> taken [[openPassed]](| 0), notTaken {{*}}
+# CHECK: = NewClosure function=f5
+# CHECK: v3: anything = CallDirect [[open]], v1 function=f5
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: {{*}}() frequency=Unlikely:
+# CHECK-NEXT: [[openMethod]]: anything = PropGet v0 key="run"
+# CHECK-NEXT: = Call [[openMethod]], v0, v1 calleeKey="run"
+# CHECK: [[openPassed]]([[open]]: L1):
+# CHECK-NEXT: [[openIsOwn]]: boolean = BelongsToInstance [[open]]
+# CHECK-NEXT: Branch [[openIsOwn]] -> taken [[openOwn]](| 0), notTaken {{*}}()
+# CHECK: [[openOwn]]({{*}}: guard):
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}layout=L1{{*}}key="run"}]
+# CHECK-NOT: Test
+# CHECK-NOT: AreMembersUnchanged
+# CHECK-NOT: BelongsToInstance
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: HasNoExtraProperties
+function f12 name="unknown-code-between-read-and-call" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# The function that a call enters is read before the arguments are computed: the tests stand in front of the read, and what the argument runs comes too late.
+# CHECK-LABEL: function f12 name="unknown-code-between-read-and-call"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: v2: f1 = NewClosure function=f1
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: v4: anything = CallDirect {{*}}, v3 function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: [[read12]]: anything = PropGet v0 key="run"
+# CHECK-NEXT: [[argument12]]: anything = Call v1
+# CHECK-NEXT: = Call [[read12]], v0, [[argument12]] calleeKey="run"
+# CHECK: = BelongsToInstance
+# TESTS-LABEL: function f12 name="unknown-code-between-read-and-call"
+# TESTS: = TypeTest v0 testedType=L0
+# TESTS: = Call v1
+# TESTS: = BelongsToInstance
+function f13 name="unknown-code-may-add-a-property-between-read-and-call" parameters=[{type=L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L1, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# The call has a test of its own, because the argument may have hidden the method. Where that fails, the call still enters the function that was read.
+# CHECK-LABEL: function f13 name="unknown-code-may-add-a-property-between-read-and-call"
+# CHECK-NEXT: b0(v0: anything ~ L1, v1: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=L1
+# CHECK: v2: f5 = NewClosure function=f5
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}layout=L1{{*}}key="run"}]
+# CHECK-NEXT: Branch {{*}}, notTaken [[generic13]](v2, v3)
+# CHECK: v4: anything = CallDirect {{*}}, v3 function=f5
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK: [[generic13]]([[callee13]]: anything{{*}}, [[argument13]]: anything) frequency=Unlikely:
+# CHECK-NEXT: = Call [[callee13]], v0, [[argument13]] calleeKey="run"
+# TESTS-LABEL: function f13 name="unknown-code-may-add-a-property-between-read-and-call"
+# TESTS: = TypeTest v0 testedType=L1
+# TESTS: = Call v1
+# TESTS: = AreMembersUnchanged
+# TESTS: = BelongsToInstance
+function f14 name="value-of-the-read-is-also-returned" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v2
+}
+# CHECK-LABEL: function f14 name="value-of-the-read-is-also-returned"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: v2: f1 = NewClosure function=f1 [isHeldByClosureTable]
+# CHECK-NEXT: = CallDirect {{*}}, v1 function=f1
+# CHECK-NEXT: Return v2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: [[read]]: anything = PropGet v0 key="run"
+# CHECK-NEXT: = Call [[read]], v0, v1 calleeKey="run"
+# CHECK-NEXT: Return [[read]]
+# CHECK-NOT: NewClosure
+# TESTS-LABEL: function f14 name="value-of-the-read-is-also-returned"
+# TESTS: = TypeTest v0 testedType=L0
+# TESTS: = NewClosure function=f1 [isHeldByClosureTable]
+# TESTS: = BelongsToInstance
+# TESTS-LABEL: function f15 name="method-with-capture"
+function f15 name="method-with-capture" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="counted"
+    v2 = Call v1, v0 calleeKey="counted"
+    Return v2
+}
+# CHECK-LABEL: function f15 name="method-with-capture"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: v1: anything = PropGet v0 key="counted"
+# CHECK-NEXT: v2: anything = Call v1, v0 calleeKey="counted"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f16 name="nothing-expected" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f16 name="nothing-expected"
+# CHECK-NEXT: b0(v0: object, v1: anything):
+# CHECK-NEXT: v2: anything = PropGet v0 key="run"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# What was read goes on as an argument of an edge, to where the ways that have failed a test meet, and is only called there too.
+function f17 name="the-read-goes-on-as-an-argument-of-an-edge" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything, v2: boolean):
+    v3 = PropGet v0 key="run"
+    v4 = Call v1
+    Branch v2 -> taken b1(), notTaken b2(v3)
+  b1():
+    v5 = Call v3, v0, v4 calleeKey="run"
+    Return v5
+  b2(v6: anything) frequency=Unlikely:
+    v7 = Call v6, v0, v4 calleeKey="run"
+    Return v7
+}
+# CHECK-LABEL: function f17 name="the-read-goes-on-as-an-argument-of-an-edge"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything, v2: boolean):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: v3: f1 = NewClosure function=f1
+# CHECK-NEXT: v4: anything = Call v1
+# CHECK-NEXT: Branch v2 -> taken {{*}}(), notTaken {{*}}(v3{{*}})
+# And where it is passed on to somebody who keeps it, it is the object on the prototype, which the closure table holds.
+function f18 name="the-argument-of-the-edge-is-returned" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything, v2: boolean):
+    v3 = PropGet v0 key="run"
+    v4 = Call v1
+    Branch v2 -> taken b1(), notTaken b2(v3)
+  b1():
+    v5 = Call v3, v0, v4 calleeKey="run"
+    Return v5
+  b2(v6: anything) frequency=Unlikely:
+    Return v6
+}
+# CHECK-LABEL: function f18 name="the-argument-of-the-edge-is-returned"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything, v2: boolean):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: v3: f1 = NewClosure function=f1 [isHeldByClosureTable]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NOT: NewClosure

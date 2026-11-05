@@ -3,6 +3,7 @@
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::member_chain::is_member_call_chain;
+use super::number::format_trimmed_number;
 use super::object::{
     FormatKey, KeyParent, format_computed_or_property_key, printed_key, write_member_name,
 };
@@ -74,7 +75,7 @@ pub(crate) const MIN_OVERLAP_FOR_BREAK: u32 = 3;
 /// nothing that can break. Only such a key can be short. Prettier checks that `cleanDoc(keyDoc)` is a string.
 ///
 /// oxfmt measures the source text in the brackets, whatever it is, without the comments around it.
-fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
+fn computed_key_width<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> Option<usize> {
     if f.options().flavor.is_oxfmt() {
         return Some(f.source_text().span_width(key.inner_span(f.file())) + 2);
     }
@@ -92,7 +93,13 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
         .text_for(&span)
         .get(1..)
         .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
-    (!is_template).then(|| f.source_text().span_width(span))
+    (!is_template).then(|| {
+        if !f.is_quiet() && f.comments().has_comment_in_span(span) {
+            return f.source_text().span_width(span);
+        }
+        let printed = printed_key(key, key.inner_span(f.file()), parent, f);
+        f.string_width(&printed) as usize + 2
+    })
 }
 
 /// What [`AssignmentLike::write_left`] returns for `property` of an object, which has a key and no comments.
@@ -100,7 +107,8 @@ pub(crate) fn has_short_key<'a>(property: Prop<'a>, f: &Formatter<'a>) -> bool {
     let text_width_for_break =
         f.options().indent_width.value() as usize + MIN_OVERLAP_FOR_BREAK as usize;
     property.key().is_some_and(|key| match key.is_computed() {
-        true => computed_key_width(key, f).is_some_and(|width| width < text_width_for_break),
+        true => computed_key_width(key, property.as_ast_nodes(), f)
+            .is_some_and(|width| width < text_width_for_break),
         false => {
             let printed = printed_key(key, key.inner_span(f.file()), property.as_ast_nodes(), f);
             (f.string_width(&printed) as usize) < text_width_for_break
@@ -133,11 +141,19 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
             | ExprKind::Null
             | ExprKind::True
             | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex(_) => {
-                return Some(width + f.source_text().span_width(current.span()));
+                return Some(width + f.string_width(f.source_text().text_for(&current)) as usize);
+            }
+            ExprKind::Number(_) => {
+                let printed = format_trimmed_number(f.source_text().text_for(&current));
+                return Some(width + printed.len());
+            }
+            ExprKind::String(_) => {
+                let source = f.source_text().text_for(&current);
+                let kind = StringLiteralParentKind::Expression;
+                let printed = FormatLiteralStringToken::new(source, false, kind).clean_text(f);
+                return Some(width + printed.width());
             }
             ExprKind::ImportMeta => return Some(width + "import.meta".len()),
             ExprKind::NewTarget => return Some(width + "new.target".len()),
@@ -413,7 +429,8 @@ impl<'a> AssignmentLike<'a> {
                 }
                 Some(key) if key.is_computed() => {
                     write!(f, ["[", FormatKey::new(key, property.as_ast_nodes()), "]"]);
-                    computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
+                    computed_key_width(key, property.as_ast_nodes(), f)
+                        .is_some_and(|width| width < text_width_for_break)
                 }
                 Some(key) => {
                     write_member_name(key, KeyParent::Property(property), f) < text_width_for_break
@@ -430,7 +447,8 @@ impl<'a> AssignmentLike<'a> {
                     }
                     Some(key) if key.is_computed() => {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
-                        computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
+                        computed_key_width(key, node, f)
+                            .is_some_and(|width| width < text_width_for_break)
                     }
                     Some(key) => {
                         write_member_name(key, KeyParent::Node(node), f) < text_width_for_break

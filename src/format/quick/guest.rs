@@ -245,12 +245,9 @@ impl Sink<'_> {
             [] => {}
             [first] if (0x20..0x7f).contains(&first) => {
                 self.q.reserve();
-                self.q
-                    .text(op::Short | (1 << 5) | (i32::from(first) << 13));
+                self.q.text(op::Short | (1 << 5) | (i32::from(first) << 13));
             }
-            [first, second]
-                if (0x20..0x7f).contains(&first) && (0x20..0x7f).contains(&second) =>
-            {
+            [first, second] if (0x20..0x7f).contains(&first) && (0x20..0x7f).contains(&second) => {
                 self.q.reserve();
                 self.q.text(
                     op::Short | (2 << 5) | (i32::from(first) << 13) | (i32::from(second) << 21),

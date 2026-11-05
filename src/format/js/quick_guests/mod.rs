@@ -14,9 +14,9 @@ pub(crate) mod from_ir;
 
 use self::from_doc::{FromDoc, Unwritten};
 use self::from_ir::{FromIr, Last};
-use crate::{FormatError, FormatOptions};
 use crate::html::writer::{QuickBuffers, ToQuick};
 use crate::js::context::JsFormatContext;
+use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 use bun_format_quick::{Answer, Guest, Guests, Sink};
 
@@ -99,7 +99,14 @@ impl QuickGuests {
         let storage = self.document.storage();
         self.groups.clear();
         // A line break comes before it.
-        let translation = FromIr::new(sink, storage, text, &mut self.groups, Last::LineBreak, false);
+        let translation = FromIr::new(
+            sink,
+            storage,
+            text,
+            &mut self.groups,
+            Last::LineBreak,
+            false,
+        );
         match translation.write(storage.interned(root)) {
             Ok(_) => Answer::Written,
             Err(unwritten) => unwritten.into(),

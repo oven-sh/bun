@@ -289,12 +289,12 @@ pub(crate) fn write_template<'a>(
             write_line_breaks(1, f);
             f.write_element(FormatElement::ExpandParent);
             f.write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
-            write_ops(&ops, f);
+            write_ops(ops, f);
             f.write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
         } else {
             f.write_element(FormatElement::Tag(Tag::StartIndent));
             f.write_element(FormatElement::Line(LineMode::Soft));
-            write_ops(&ops, f);
+            write_ops(ops, f);
             f.write_element(FormatElement::Tag(Tag::EndIndent));
         }
         f.write_element(FormatElement::Line(LineMode::Soft));

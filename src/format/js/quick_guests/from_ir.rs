@@ -31,7 +31,9 @@ pub(crate) enum Last {
     /// A line break.
     LineBreak,
     /// A text and then a line break that's only printed if its group breaks. `or_blank`: else it's a blank.
-    LineBreakIfBroken { or_blank: bool },
+    LineBreakIfBroken {
+        or_blank: bool,
+    },
     Unknown,
 }
 
@@ -213,7 +215,11 @@ impl<'s, 'q, 'd> FromIr<'s, 'q, 'd> {
 
     /// If nothing is printed between `elements[index]` and the next line break: whether that one is certain to be
     /// printed.
-    fn is_followed_by_line_break(&self, elements: &[FormatElement], mut index: usize) -> Option<bool> {
+    fn is_followed_by_line_break(
+        &self,
+        elements: &[FormatElement],
+        mut index: usize,
+    ) -> Option<bool> {
         // The groups that start on the way, and how many of those around have ended.
         let (mut started, mut ended) = (SmallVec::<[bool; 4]>::new(), 0);
         loop {
@@ -478,10 +484,9 @@ impl<'s, 'q, 'd> FromIr<'s, 'q, 'd> {
                 let id = self.group_id(id);
                 self.sink.indent_if_break_open(id, false);
             }
-            Tag::EndIndent
-            | Tag::EndAlign
-            | Tag::EndDedent(_)
-            | Tag::EndIndentIfGroupBreaks(_) => self.sink.indent_close(),
+            Tag::EndIndent | Tag::EndAlign | Tag::EndDedent(_) | Tag::EndIndentIfGroupBreaks(_) => {
+                self.sink.indent_close()
+            }
             Tag::StartGroup(group) => {
                 let id = group.id().map_or(0, |id| self.group_id(id));
                 self.frames.push(Frame::Group {

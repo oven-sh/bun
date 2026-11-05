@@ -343,8 +343,8 @@ impl Quick {
                 }
                 let mut v = q + 2;
                 v = self.blanks_end(v);
-                // prettier-ignore
-                if self.t.at(v) == 112 {
+                // prettier-ignore, behind white space of any kind
+                if self.t.at(v) == 112 || (self.t.at(v) >= 128 && self.unicode_space(v) != 0) {
                     return Ok(-1);
                 }
                 while self.t.at(q) != 10 && q < self.stands.last {

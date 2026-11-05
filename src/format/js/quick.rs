@@ -34,8 +34,6 @@ pub enum Reason {
     Language,
     /// Code in HTML that the long way reads in another way than a file.
     InHtml,
-    /// A comment may say that something stays as it is written.
-    IgnoreComment,
     SyntaxError,
     /// Something rare that is left to the long way.
     Rare,
@@ -49,11 +47,10 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 11] = [
+    pub const ALL: [Reason; 10] = [
         Reason::Options,
         Reason::Language,
         Reason::InHtml,
-        Reason::IgnoreComment,
         Reason::SyntaxError,
         Reason::Rare,
         Reason::Guest,
@@ -546,11 +543,6 @@ fn format_as(
         text,
         is_flow: false,
     };
-    // What is printed around code that stays as it is written (parentheses, semicolons, the comment itself) is where
-    // the long way corrects Prettier most often.
-    if strings::contains(code.text, b"prettier-ignore") {
-        return Err(scratch.refuse(Reason::IgnoreComment, code.text));
-    }
     let quick = scratch.quick.get_or_insert_default();
     match file {
         Some((options, path)) => {

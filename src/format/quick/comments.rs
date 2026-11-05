@@ -284,6 +284,30 @@ impl Quick {
         if (comments_taken_in(inside) & form) == 0 {
             return false;
         }
+        // `prettier-ignore`: on lines of its own, right before a statement, a member or a property that starts a line
+        if self.is_prettier_ignore()
+            && !((form == OWN_LINE || form == OWN_BLOCK)
+                && i == c.gap_last
+                && c.h_following != 0
+                // (what could go on the line before gets a `;` in front where there are no semicolons)
+                && (self.options.semi || is_part_of_word(behind) || behind == 123)
+                // (the long way drops the `;` of a `declare export` of Flow where there are no semicolons)
+                && !(self.parse.typed == TYPED_FLOW
+                    && matches!(
+                        c.h_following_kind,
+                        k::ExportNamedDeclaration | k::ExportDefaultDeclaration | k::ExportAllDeclaration
+                    ))
+                && (matches!(
+                    inside,
+                    k::Program | k::BlockStatement | k::ModuleBlock | k::ClassBody
+                ) || (matches!(before, 123 | 59 | 44)
+                    && (inside == k::ObjectExpression
+                        // (in Flow the separator is no part of the member)
+                        || (matches!(inside, k::InterfaceBody | k::TypeLiteral)
+                            && self.parse.typed != TYPED_FLOW)))))
+        {
+            return false;
+        }
         // it starts where another one ends
         if i > self.lexer.c_base && self.lexer.c.at((i - 1) * C_STRIDE + C_END) == c.h_start {
             return false;

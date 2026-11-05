@@ -5498,6 +5498,10 @@ impl Quick {
             if self.t.at(v) == 112 && self.text_is(v, v + 15, b"prettier-ignore") {
                 return 0;
             }
+            // (white space of any kind may stand before those words)
+            if self.t.at(v) >= 128 && self.unicode_space(v) != 0 {
+                return 0;
+            }
             if first == 0 {
                 first = start;
             }

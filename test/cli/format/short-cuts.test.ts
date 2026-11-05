@@ -4314,6 +4314,33 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js", "--print-width=25 --tab-width=1", "const price = user ? (user.isMember ? 8 : 10) : 12;\n"],
     // A statement that is an `as` expression: some names get parentheses.
     ["a.ts", "", "component as T;\nhook satisfies T;\n"],
+    // `prettier-ignore` in plain places: on lines of its own before a statement, a member, a property.
+    [
+      "a.ts",
+      "",
+      "// a\n// prettier-ignore\nconst a   =  [1,0,\n              0,1];\nb  (  );\n/* prettier-ignore */\ndeclare module   'vue' {\n  interface   A {}\n}\nclass C {\n  // prettier-ignore\n  m( a,b ) { }\n  n( a,b ) { }\n}\ninterface I {\n  // prettier-ignore\n  a:   1;\n  b:   2;\n}\nx = {\n  // prettier-ignore\n  'a':   1,\n  'b':   2,\n};\n",
+    ],
+    [
+      "a.ts",
+      "--no-semi",
+      "a()\n// prettier-ignore\nb  (  )\nfunction f() {\n  c();\n  // prettier-ignore\n  return   d\n}\n",
+    ],
+    // `prettier-ignore` in other places.
+    [
+      "a.ts",
+      "",
+      "function f(value: unknown) {\n  for\n// prettier-ignore\n(let i = 0; i < value.length; ++i) {\n    g(i);\n  }\n}\n",
+    ],
+    // Before a member of an object type of Flow, whose separator is no part of it.
+    [
+      "a.js.flow",
+      "",
+      "export interface Spec {\n  // prettier-ignore\n  +getConstants: () => {||};\n  +getBase64ForTag: () => void;\n}\n",
+    ],
+    // Before a `declare export` of Flow.
+    ["a.js.flow", "--no-semi", "x;\n// prettier-ignore\ndeclare export function f(): void;\n"],
+    // White space of any kind before the words.
+    ["a.js", "", "a;\n//\u00a0prettier-ignore\nb  (  );\n/*\u3000prettier-ignore */\nc  (  );\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

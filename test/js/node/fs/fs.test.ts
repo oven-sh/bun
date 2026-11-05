@@ -316,6 +316,66 @@ describe("FileHandle", () => {
   describe.each([bunExe(), nodeExeAtLeast("24.0.0")].filter((executable): executable is string => executable !== null))(
     "close through a forwarding receiver (%s)",
     executable => {
+      it.concurrent("transfers a handle also referenced through a class instance", async () => {
+        using dir = tempDir("filehandle-transfer-class", {
+          data: "data",
+          "worker.cjs": /* js */ `
+            const assert = require("node:assert/strict");
+            const { open } = require("node:fs/promises");
+            const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+            class Holder {
+              constructor(fh) { this.fh = fh; }
+            }
+            (async () => {
+              if (!isMainThread) {
+                const { fh, holder } = workerData;
+                try {
+                  assert.equal(await fh.readFile("utf8"), "data");
+                  // Bun already clones the nested reference as a plain object.
+                  assert.equal(typeof holder.fh.readFile, globalThis.Bun ? "undefined" : "function");
+                  assert.equal(holder.fh === fh, !globalThis.Bun);
+                } finally {
+                  await fh.close();
+                }
+                parentPort.postMessage("ok");
+                return;
+              }
+              const fh = await open("data", "r");
+              let worker;
+              try {
+                worker = new Worker(__filename, {
+                  workerData: { fh, holder: new Holder(fh) },
+                  transferList: [fh],
+                });
+                const message = await new Promise((resolve, reject) => {
+                  worker.once("message", resolve);
+                  worker.once("error", reject);
+                  worker.once("exit", code => reject(new Error("Worker exited before replying: " + code)));
+                });
+                assert.equal(message, "ok");
+                assert.equal(fh.fd, -1);
+                console.log(message);
+              } finally {
+                if (worker) await worker.terminate();
+                await fh.close();
+              }
+            })().catch(error => {
+              console.error(error);
+              process.exitCode = 1;
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [executable, "worker.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+      });
+
       it.concurrent.each(["direct", "proxy", "get-trap", "nested-proxy", "detached", "foreign-this"])(
         "%s closes once and disarms its finalizer",
         async mode => {

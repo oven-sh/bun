@@ -431,6 +431,13 @@ function asyncWrap(fn: any, name: string) {
       this[kRefs] = 1;
       this[kClosePromise] = null;
       this[kFlag] = flag;
+      // Keep the bound function out of structured-clone property traversal.
+      Object.defineProperty(this, "close", {
+        value: this.close.bind(this),
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
       if (this[kFd] !== -1) {
         (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
       }
@@ -709,7 +716,7 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    close = async () => {
+    async close() {
       const fd = this[kFd];
       if (fd === -1) {
         return Promise.$resolve();
@@ -742,7 +749,7 @@ function asyncWrap(fn: any, name: string) {
 
       this.emit("close");
       return this[kClosePromise];
-    };
+    }
 
     async [SymbolAsyncDispose]() {
       return this.close();

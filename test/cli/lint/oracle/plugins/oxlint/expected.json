@@ -9600,5 +9600,14 @@
   "regexp-namespace-interface.ts:10:21+2 typescript(restrict-template-expressions)",
   "sentinel.ts:3:29+14 typescript(restrict-template-expressions)",
   "sentinel.ts:4:29+7 typescript(restrict-template-expressions)"
+ ],
+ "capitalized-comments/ignore-pattern": [
+  "a.js:10:1+30 eslint(capitalized-comments)",
+  "a.js:12:1+22 eslint(capitalized-comments)",
+  "a.js:13:1+9 eslint(capitalized-comments)",
+  "a.js:6:1+31 eslint(capitalized-comments)",
+  "a.js:7:1+28 eslint(capitalized-comments)",
+  "b.js:5:1+12 eslint(capitalized-comments)",
+  "b.js:7:1+12 eslint(capitalized-comments)"
  ]
 }

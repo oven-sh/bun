@@ -54,7 +54,7 @@ fn without_asterisks(value: &[u8]) -> Cow<'_, [u8]> {
 /// an anchored pattern such as `^noinspection` matches `// noinspection` for oxlint and not for ESLint.
 fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
     fn normalize_line(line: &[u8]) -> &[u8] {
-        let line = strings::trim_js_whitespace_start(line.strip_suffix(b"\r").unwrap_or(line));
+        let line = strings::trim_js_whitespace_start(line);
         match line.strip_prefix(b"*") {
             Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
             None => line,
@@ -63,14 +63,24 @@ fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
     if !strings::contains_char(value, b'\n') {
         return Cow::Borrowed(normalize_line(value));
     }
-    // Like Rust's `str::lines`, which oxlint uses: a final line break ends the last line and starts no empty one.
-    let value = value.strip_suffix(b"\n").unwrap_or(value);
+    // The lines are those of Rust's `str::lines`, which oxlint uses: a `\n` ends a line and takes the `\r` before it
+    // with it, and a final `\n` starts no empty line. A `\r` that no `\n` follows stays.
+    let (value, ends_with_line_break) = match value.strip_suffix(b"\n") {
+        Some(value) => (value, true),
+        None => (value, false),
+    };
     let mut normalized = Vec::with_capacity(value.len());
-    for (i, line) in strings::split(value, b"\n").enumerate() {
-        if i > 0 {
+    let mut lines = strings::split(value, b"\n").peekable();
+    while let Some(line) = lines.next() {
+        let is_last = lines.peek().is_none();
+        let line = match !is_last || ends_with_line_break {
+            true => line.strip_suffix(b"\r").unwrap_or(line),
+            false => line,
+        };
+        normalized.extend_from_slice(normalize_line(line));
+        if !is_last {
             normalized.push(b'\n');
         }
-        normalized.extend_from_slice(normalize_line(line));
     }
     Cow::Owned(normalized)
 }

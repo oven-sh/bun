@@ -1181,6 +1181,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         Output::err_generic("Invalid Argument '--revision'", ());
         Global::exit(1);
     }
+    if cmd == CommandTag::RunAsNodeCommand && args.flag(b"--version") {
+        let _ = Output::writer().write_all(
+            const_format::concatcp!("v", bun_core::env::REPORTED_NODEJS_VERSION, "\n").as_bytes(),
+        );
+        Output::flush();
+        Global::exit(0);
+    }
 
     if args.flag(b"--help") {
         command::tag_print_help(cmd, true);
@@ -1200,14 +1207,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             cli::print_revision_and_exit();
         }
     }
-    if cmd == CommandTag::RunAsNodeCommand && args.flag(b"--version") {
-        let _ = Output::writer().write_all(
-            const_format::concatcp!("v", bun_core::env::REPORTED_NODEJS_VERSION, "\n").as_bytes(),
-        );
-        Output::flush();
-        Global::exit(0);
-    }
-
     // ── --cwd ────────────────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.

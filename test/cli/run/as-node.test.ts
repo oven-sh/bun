@@ -139,6 +139,10 @@ describe("fake node cli", () => {
     { args: ["--no-warnings", "--version"] },
     { args: ["--require", "./preload.cjs", "--version"] },
     { args: ["--import", "./preload.mjs", "-v"] },
+    { args: ["--help", "--version"] },
+    { args: ["--version", "--help"] },
+    { args: ["-h", "-v"] },
+    { args: ["-v", "-h"] },
   ])("reports the Node compatibility version for $args", async ({ args }) => {
     expect(
       await runNodeAlias(args, "", {

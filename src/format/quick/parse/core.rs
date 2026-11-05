@@ -307,7 +307,8 @@ impl Quick {
             && self.doc.text_filter == 0
             && self.options.end_of_line == EOL_LF
             && !self.options.use_tabs
-            && self.mode.single_statement_mode == 0;
+            && self.mode.single_statement_mode == 0
+            && !self.options.is_mdx_es_syntax;
         self.set_may_break_lines(self.parse.joins_lines);
         let mut known: i32 = 0;
         if self.fast.verified_end != 0 {

@@ -1,5 +1,6 @@
 //! From the text to the document: which parser reads the file, and the stages in their order.
 
+use crate::ast::k;
 use crate::lang::lang;
 use crate::lexer::{C_END, C_START, C_STRIDE};
 use crate::parse::core::{TYPED_FLOW, TYPED_TS};
@@ -160,10 +161,46 @@ impl Quick {
         false
     }
 
+    /// validateImportExport() of language-markdown/mdx.js
+    fn assert_only_imports_and_exports(&self, program: i32) -> R<()> {
+        if self.n.at(self.n.at(program + 4)) != 0 {
+            return Err(self.text_refuse());
+        }
+        let body = self.n.at(program + 5);
+        let mut i: i32 = 1;
+        while i <= self.n.at(body) {
+            let statement = self.n.at(body + i);
+            if (self.n.at(statement) & 0xff) != k::ReadyComment {
+                let kind = self.statement_kind(statement);
+                if kind != k::ImportDeclaration
+                    && kind != k::ExportDefaultDeclaration
+                    && kind != k::ExportNamedDeclaration
+                {
+                    return Err(self.text_refuse());
+                }
+                // `export * as a from "b"` is not for here, whatever kind of node it is.
+                if kind == k::ExportNamedDeclaration {
+                    let mut p = self.n.at(statement + 1) + 6;
+                    while self.t.at(p) == 32 || (self.t.at(p) >= 9 && self.t.at(p) <= 13) {
+                        p += 1;
+                    }
+                    if self.t.at(p) == 42 || self.t.at(p) == 47 {
+                        return Err(self.text_refuse());
+                    }
+                }
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
     pub(crate) fn format_js(&mut self) -> R<()> {
         let mode = self.mode_of_run();
         self.set_js_mode(mode);
         let root = self.parse_once()?;
+        if self.options.is_mdx_es_syntax {
+            self.assert_only_imports_and_exports(root)?;
+        }
         self.nothing_lost()?;
         self.stage(0);
         if self.has_long_row_of_comments() {

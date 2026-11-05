@@ -190,7 +190,6 @@ fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<qu
         // A pragma goes to the top of the host. Where the doctype of HTML in a template is asked about, the host isn't.
         && (is_host || (!insert_pragma && !is_in_html_file))
         && !is_mdx_jsx
-        && !is_mdx_es_syntax
         && *html_template_depth == 0
         && *in_html == InHtml::default()
         && !flavor.is_oxfmt()
@@ -233,6 +232,7 @@ fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<qu
         html_whitespace_sensitivity_ignore: *html_whitespace_sensitivity
             == HtmlWhitespaceSensitivity::Ignore,
         is_in_markdown: false,
+        is_mdx_es_syntax: *is_mdx_es_syntax,
         marks_line_breaks_in_texts: false,
         indentation: 0,
         no_short_cuts: false,

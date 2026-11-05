@@ -171,6 +171,8 @@ pub struct Options {
     pub html_whitespace_sensitivity_ignore: bool,
     /// The text is code in Markdown: a program that is nothing but an element of JSX gets no semicolon.
     pub is_in_markdown: bool,
+    /// The text is `import` and `export` declarations of MDX. Anything else in it is refused.
+    pub is_mdx_es_syntax: bool,
     /// A line break that is part of a text (in a template, a comment, a string) is written as "\r\n": a host that indents the lines of the result tells
     /// it from the others, behind which the indentation of the host goes. Only with `EndOfLine::Lf`.
     pub marks_line_breaks_in_texts: bool,
@@ -202,6 +204,7 @@ impl Default for Options {
             embedded_language_formatting_auto: true,
             html_whitespace_sensitivity_ignore: false,
             is_in_markdown: false,
+            is_mdx_es_syntax: false,
             marks_line_breaks_in_texts: false,
             indentation: 0,
             no_short_cuts: false,
@@ -324,6 +327,7 @@ impl Quick {
             WHITESPACE_CSS
         };
         to.is_in_markdown = o.is_in_markdown;
+        to.is_mdx_es_syntax = o.is_mdx_es_syntax;
         to.marks_line_breaks_in_texts = o.marks_line_breaks_in_texts;
         to.indentation = o.indentation;
         to.name_ends_in_ts = dialect.name_ends_in_ts;

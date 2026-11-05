@@ -138,15 +138,13 @@ impl ConsoleObject {
         out
     }
 
-    /// The buffered stderr writer. Console output reaches it only through
-    /// [`with_console_sink`], which decides between it and a replaced
-    /// `process.stderr.write`.
+    /// The buffered stderr writer. Reached only through [`with_console_sink`].
     #[inline]
     fn error_writer(&mut self) -> &mut bun_core::io::Writer {
         self.error_writer_backing.new_interface()
     }
 
-    /// The buffered stdout writer. See [`ConsoleObject::error_writer`].
+    /// The buffered stdout writer. Reached only through [`with_console_sink`].
     #[inline]
     fn writer(&mut self) -> &mut bun_core::io::Writer {
         self.writer_backing.new_interface()
@@ -416,8 +414,7 @@ fn message_with_type_and_level_(
 
     if message_type == MessageType::Clear {
         let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
-        // Node clears through process.stdout. Bun's own path prefers stderr when
-        // it is a terminal, so only a replaced stdout `write` changes the target.
+        // Node clears through process.stdout.
         let stream = replaced_stdio_write_stream(global, false);
         if stream.is_empty() {
             Output::reset_terminal();
@@ -453,10 +450,8 @@ fn message_with_type_and_level_(
     })
 }
 
-/// Set once a `process.stdout` / `process.stderr` stream whose `write` user
-/// code can replace exists. Process-wide rather than per-VM on purpose: a
-/// worker that builds its own stream only ever turns it on, and a spurious
-/// `true` only means the cheap per-VM lookup runs.
+/// Set once a `process.stdout` or `process.stderr` stream exists whose `write`
+/// user code can replace. Process-wide: a spurious `true` only runs the per-VM lookup.
 static STDIO_WRITE_STREAM_EXISTS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -467,16 +462,13 @@ pub extern "C" fn Bun__Console__onStdioWriteStreamCreated() {
 }
 
 unsafe extern "C" {
-    /// `src/jsc/bindings/BunProcess.cpp`: `process.stdout` (fd 1) or
-    /// `process.stderr` (fd 2) when its `write` is no longer the one Bun
-    /// installed, otherwise the empty value. Runs no user code and cannot throw.
+    /// `BunProcess.cpp`: the stream for `fd` when its `write` is no longer the
+    /// one Bun installed, otherwise the empty value. Runs no user code, cannot throw.
     safe fn Bun__Process__stdioStreamWithReplacedWrite(global: &JSGlobalObject, fd: i32)
     -> JSValue;
 }
 
-/// The stream the console has to write through, or the empty value when the
-/// native writer is the right sink. Nothing can have replaced `write` before
-/// the stream object exists, so until then this is one relaxed load.
+/// The stream the console has to write through, or the empty value for the native writer.
 #[inline]
 fn replaced_stdio_write_stream(global: &JSGlobalObject, use_stderr: bool) -> JSValue {
     if !STDIO_WRITE_STREAM_EXISTS.load(core::sync::atomic::Ordering::Relaxed) {
@@ -485,37 +477,25 @@ fn replaced_stdio_write_stream(global: &JSGlobalObject, use_stderr: bool) -> JSV
     Bun__Process__stdioStreamWithReplacedWrite(global, if use_stderr { 2 } else { 1 })
 }
 
-/// Runs `f` against the sink this console message belongs on.
-///
-/// Node performs every console write through `process.std{out,err}.write`, so
-/// a replaced `write` has to see the output here too. While the stream still
-/// has Bun's own `write`, `f` writes straight to the native buffered writer.
-/// Otherwise the whole message is collected and handed to the replacement in
-/// one call, after the stream lock is released, so a `write` that logs again
-/// or blocks cannot hold the lock against another thread.
+/// Runs `f` against the sink this console message belongs on: the native
+/// buffered writer, or one call of a replaced `process.std{out,err}.write`
+/// with the whole message, as node's `kWriteToConsole` does.
 fn with_console_sink<R>(
     global: &JSGlobalObject,
     use_stderr: bool,
     f: impl FnOnce(&mut dyn bun_io::Write) -> JsResult<R>,
 ) -> JsResult<R> {
-    // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
-    // time.
     let stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
-    // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
-    // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
-    // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
-    // when `bun test` isn't running or hooks aren't installed.
+    // The bun test reporter's `onBeforePrint`, through `RuntimeHooks` (a forward dep).
     if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
         (hooks.console_on_before_print)();
     }
 
     let stream = replaced_stdio_write_stream(global, use_stderr);
     let console: *mut ConsoleObject = vm_console(global);
-    // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across `f`, which can re-enter JS.
+    // SAFETY: see [`vm_console`]. A raw deref, so no `&mut ConsoleObject` is
+    // held across `f`, which can re-enter JS.
     let native: &mut bun_core::io::Writer = unsafe {
         if use_stderr {
             (*console).error_writer()
@@ -530,9 +510,7 @@ fn with_console_sink<R>(
         return result;
     }
 
-    // Anything the native writer still holds has to reach the descriptor
-    // before the replaced `write` runs, or the two sinks interleave out of
-    // order.
+    // Flushed first, or the two sinks interleave out of order.
     let _ = native.flush();
     let mut captured: Vec<u8> = Vec::new();
     let result = f(&mut captured)?;
@@ -541,9 +519,7 @@ fn with_console_sink<R>(
     Ok(result)
 }
 
-/// Hands one formatted message to the replaced `process.std{out,err}.write`,
-/// as node's `kWriteToConsole` does. An exception from the call is swallowed,
-/// like node's `ignoreErrors`, unless it is the VM's termination.
+/// An exception from the replaced `write` is dropped, as node's `ignoreErrors` does.
 fn deliver_to_replaced_write(global: &JSGlobalObject, stream: JSValue, bytes: Vec<u8>) {
     if bytes.is_empty() {
         return;
@@ -5951,8 +5927,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     });
 }
 
-/// `[1.23ms] label`, the prefix of `console.timeEnd` and `console.timeLog`
-/// output. The duration is read in microseconds and shown in milliseconds.
+/// `[1.23ms] label`, the prefix of `console.timeEnd` and `console.timeLog` output.
 fn write_elapsed(writer: &mut dyn bun_io::Write, timer: &bun_core::time::Timer, label: &[u8]) {
     let elapsed =
         (timer.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
@@ -5997,9 +5972,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let _ = with_console_sink(global, true, |writer| {
         write_elapsed(writer, &value, slice);
 
-        // print the arguments
-        // `Formatter` has a `Drop` impl, so struct-update from a
-        // temporary is rejected (E0509). Construct via `new()` then mutate.
         let mut fmt = Formatter::new(global);
         fmt.max_depth = bun_options_types::context::try_get()
             .and_then(|ctx| ctx.runtime_options.console_depth)

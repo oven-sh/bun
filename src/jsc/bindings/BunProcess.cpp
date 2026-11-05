@@ -4087,9 +4087,8 @@ void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue
     Bun__Console__onStdioWriteStreamCreated();
 }
 
-// The `write` the stream has now, found with getDirect on the stream and its prototypes so no
-// user code runs. Caches the own slot of a plain structure for the next compare. An empty value
-// means no object on the chain has a direct `write`.
+// The `write` the stream has now, read with getDirect so no user code runs. Empty when no object on
+// the chain has a direct `write`.
 JSValue Process::resolveStdioWrite(JSC::VM& vm, unsigned slot)
 {
     const Identifier& name = WebCore::builtinNames(vm).writePublicName();
@@ -4131,9 +4130,7 @@ JSObject* Process::stdioStreamWithReplacedWrite(JSC::VM& vm, int fd)
     return stream;
 }
 
-// Console write path (src/jsc/ConsoleObject.rs). Returns the empty value when the stream has
-// never been built or still carries Bun's own `write`, which is the signal to keep the native
-// buffered writer. No throw scope: nothing here runs user code.
+// Console write path (src/jsc/ConsoleObject.rs). No throw scope: nothing here runs user code.
 extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
 {
     if (!globalObject->hasProcessObject())

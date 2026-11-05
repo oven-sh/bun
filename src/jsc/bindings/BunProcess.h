@@ -35,13 +35,9 @@ class Process : public WebCore::JSEventEmitter {
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
-    // process.stdout (index 0) and process.stderr (index 1) as the full JS stream classes build
-    // them, each with the `write` it had then. The native console writes to the descriptor
-    // while a stream still has that `write` and goes through the stream once user code
-    // replaces it, as node's console does. The structure and offset cache the own `write`
-    // slot so the per-message compare reads no property table. A slot stays empty until the
-    // stream is first read, and for the streams of a trimmed executable or a worker, whose
-    // `write` cannot be replaced.
+    // process.stdout (index 0) and process.stderr (index 1) with the `write` each had when built.
+    // The native console writes through the stream once user code replaces that `write`.
+    // The structure and offset cache the own `write` slot for the per-message compare.
     WriteBarrier<JSObject> m_stdioWriteStream[2];
     WriteBarrier<Unknown> m_pristineStdioWrite[2];
     WriteBarrier<Structure> m_stdioWriteStructure[2];

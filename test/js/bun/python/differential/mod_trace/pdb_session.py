@@ -1,4 +1,5 @@
 # pdb, told what to do through its stdin.
+import gc
 import io
 import pdb
 import sys
@@ -27,6 +28,8 @@ def session(title, commands, function=target, *args):
     out = io.StringIO()
     debugger = pdb.Pdb(stdin=io.StringIO('\n'.join(commands) + '\n'), stdout=out, nosigint=True, readrc=False)
     debugger.use_rawinput = False
+    # What importing has left behind goes now: the debugger would stop in a callback of a weak reference that a collection runs.
+    gc.collect()
     try:
         result = debugger.runcall(function, *args)
     except BaseException as e:
@@ -62,6 +65,7 @@ def uses_set_trace():
 
 
 print('===== set_trace')
+gc.collect()
 out = sys.stdout
 sys.stdout = captured = io.StringIO()
 try:

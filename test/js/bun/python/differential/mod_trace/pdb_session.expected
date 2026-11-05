@@ -1,91 +1,91 @@
 status: 0
-script: 6f6035d65f6639f1
+script: 7d75158edaf80f83
 ---
 ===== step and next
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) > FILE(16)target()
--> for i in range(n):
 (Pdb) > FILE(17)target()
+-> for i in range(n):
+(Pdb) > FILE(18)target()
 -> total += helper(i)
-(Pdb) > FILE(16)target()
--> for i in range(n):
 (Pdb) > FILE(17)target()
+-> for i in range(n):
+(Pdb) > FILE(18)target()
 -> total += helper(i)
 (Pdb) *** NameError: name 'a' is not defined
-(Pdb) > FILE(16)target()
+(Pdb) > FILE(17)target()
 -> for i in range(n):
 (Pdb) *** NameError: name 'b' is not defined
 (Pdb) --Return--
-> FILE(22)target()->102
+> FILE(23)target()->102
 -> return total
 (Pdb) 
 result: 102
 ===== breakpoint
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 1 at FILE:10
-(Pdb) > FILE(10)helper()
+(Pdb) Breakpoint 1 at FILE:11
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 0
 (Pdb)   LIB/bdb.py(955)runcall()
 -> res = func(*args, **kwds)
-  FILE(17)target()
+  FILE(18)target()
 -> total += helper(i)
-> FILE(10)helper()
+> FILE(11)helper()
 -> b = a * 2
-(Pdb) > FILE(10)helper()
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 1
-(Pdb) Deleted breakpoint 1 at FILE:10
+(Pdb) Deleted breakpoint 1 at FILE:11
 (Pdb) 
 result: 106
 ===== conditional breakpoint
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 2 at FILE:10
-(Pdb) > FILE(10)helper()
+(Pdb) Breakpoint 2 at FILE:11
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 2
 (Pdb) Num Type         Disp Enb   Where
-2   breakpoint   keep yes   at FILE:10
+2   breakpoint   keep yes   at FILE:11
 	stop only if a == 2
 	breakpoint already hit 3 times
 (Pdb) 
 result: 112
 ===== temporary breakpoint
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 3 at FILE:17
-(Pdb) Deleted breakpoint 3 at FILE:17
-> FILE(17)target()
+(Pdb) Breakpoint 3 at FILE:18
+(Pdb) Deleted breakpoint 3 at FILE:18
+> FILE(18)target()
 -> total += helper(i)
 (Pdb) 0
 (Pdb) 
 result: 102
 ===== until and jump
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) > FILE(18)target()
+(Pdb) > FILE(19)target()
 -> try:
 (Pdb) 2
-(Pdb) > FILE(22)target()
+(Pdb) > FILE(23)target()
 -> return total
 (Pdb) --Return--
-> FILE(22)target()->2
+> FILE(23)target()->2
 -> return total
 (Pdb) 
 result: 2
 ===== up and down
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 4 at FILE:10
-(Pdb) > FILE(10)helper()
+(Pdb) Breakpoint 4 at FILE:11
+(Pdb) > FILE(11)helper()
 -> b = a * 2
-(Pdb) > FILE(17)target()
+(Pdb) > FILE(18)target()
 -> total += helper(i)
 (Pdb) 1
-(Pdb) > FILE(10)helper()
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 0
 (Pdb) a = 0
@@ -93,115 +93,115 @@ result: 2
 (Pdb) 
 result: 100
 ===== assign
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) > FILE(16)target()
--> for i in range(n):
 (Pdb) > FILE(17)target()
+-> for i in range(n):
+(Pdb) > FILE(18)target()
 -> total += helper(i)
 (Pdb) (Pdb) 0
-(Pdb) (Pdb) > FILE(10)helper()
+(Pdb) (Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 
 
 result: None
 ===== list
-> FILE(10)helper()
+> FILE(11)helper()
 -> b = a * 2
-(Pdb)  14  	def target(n):
- 15  	    total = 0
- 16  	    for i in range(n):
-(Pdb)   9  	def helper(a):
- 10 B->	    b = a * 2
- 11  	    return b
+(Pdb)  15  	def target(n):
+ 16  	    total = 0
+ 17  	    for i in range(n):
+(Pdb)  10  	def helper(a):
+ 11 B->	    b = a * 2
+ 12  	    return b
 (Pdb) 
 result: 2
 ===== return value
-> FILE(10)helper()
+> FILE(11)helper()
 -> b = a * 2
 (Pdb) --Return--
-> FILE(11)helper()->8
+> FILE(12)helper()->8
 -> return b
 (Pdb) 8
 (Pdb) 
 result: 8
 ===== quit
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) > FILE(16)target()
+(Pdb) > FILE(17)target()
 -> for i in range(n):
 (Pdb) 
 result: None
 ===== display
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
 (Pdb) display total: ** raised NameError: name 'total' is not defined **
-(Pdb) > FILE(16)target()
+(Pdb) > FILE(17)target()
 -> for i in range(n):
 display total: 0  [old: ** raised NameError: name 'total' is not defined **]
-(Pdb) > FILE(17)target()
+(Pdb) > FILE(18)target()
 -> total += helper(i)
-(Pdb) > FILE(10)helper()
--> b = a * 2
 (Pdb) > FILE(11)helper()
+-> b = a * 2
+(Pdb) > FILE(12)helper()
 -> return b
 (Pdb) 
 result: 100
 ===== exception
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 5 at FILE:19
-(Pdb) > FILE(19)target()
+(Pdb) Breakpoint 5 at FILE:20
+(Pdb) > FILE(20)target()
 -> raise ValueError('boom')
 (Pdb) ValueError: boom
-> FILE(19)target()
+> FILE(20)target()
 -> raise ValueError('boom')
-(Pdb) > FILE(20)target()
+(Pdb) > FILE(21)target()
 -> except ValueError:
 (Pdb) 0
 (Pdb) 
 result: 100
 ===== commands
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 6 at FILE:10
+(Pdb) Breakpoint 6 at FILE:11
 (Pdb) *** cannot set commands: Breakpoint 1 already deleted
 (Pdb) *** NameError: name 'a' is not defined
-(Pdb) > FILE(10)helper()
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) *** NameError: name 'end' is not defined
-(Pdb) > FILE(10)helper()
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 
 
 result: None
 ===== ignore
-> FILE(15)target()
+> FILE(16)target()
 -> total = 0
-(Pdb) Breakpoint 7 at FILE:10
+(Pdb) Breakpoint 7 at FILE:11
 (Pdb) *** Breakpoint 1 already deleted
-(Pdb) > FILE(10)helper()
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 0
 (Pdb) *** Breakpoint 1 already deleted
-(Pdb) > FILE(10)helper()
+(Pdb) > FILE(11)helper()
 -> b = a * 2
 (Pdb) 
 
 result: None
 ===== set_trace
-> FILE(59)uses_set_trace()
+> FILE(62)uses_set_trace()
 -> pdb.Pdb(stdin=io.StringIO('p x\nn\np y\nc\n'), stdout=sys.stdout, nosigint=True, readrc=False).set_trace()
 (Pdb) 1
-(Pdb) > FILE(60)uses_set_trace()
+(Pdb) > FILE(63)uses_set_trace()
 -> y = 2
 (Pdb) *** NameError: name 'y' is not defined
 (Pdb) 
 3
 ===== post mortem
-> FILE(16)target()
+> FILE(17)target()
 -> for i in range(n):
 (Pdb) 'x'
-(Pdb) > FILE(77)post_mortem()
+(Pdb) > FILE(81)post_mortem()
 -> target('x')
 (Pdb) 

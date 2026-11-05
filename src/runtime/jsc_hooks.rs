@@ -4338,9 +4338,11 @@ unsafe fn get_loader_and_virtual_source<'a>(
     type_attribute_str: Option<&[u8]>,
     preserve_path_delimiters: bool,
 ) -> crate::Result<LoaderResult<'a>> {
-    let (normalized_file_path_from_specifier, specifier, query) =
-        // SAFETY: per fn contract.
-        normalize_specifier_for_loader(unsafe { &(*jsc_vm).origin }, specifier_str, preserve_path_delimiters);
+    let (normalized_file_path_from_specifier, specifier, query) = normalize_specifier_for_loader(
+        &VirtualMachine::get().origin,
+        specifier_str,
+        preserve_path_delimiters,
+    );
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // A `data:` URL has no file name. What follows its last "." is part of the module's text.

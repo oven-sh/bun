@@ -630,6 +630,29 @@ impl Quick {
         }
     }
 
+    /// The parsers, the reader and the printers set things for the time of a call and put them back behind it. A run that stops half way
+    /// does not get there, and what it has set would hold for the next text. (What the texts, the tree, the document, the comments and the
+    /// layout keep is set anew at the start of a run.)
+    #[cold]
+    pub(crate) fn forget_run(&mut self) {
+        self.holes = holes::Holes::new();
+        self.fast = fast::Fast::new();
+        self.parse_flow = parse::flow::ParseFlow::new();
+        self.parse_typescript = parse::typescript::ParseTypescript::new();
+        self.parse = parse::core::Parse::new();
+        self.print_embed = print::embed::PrintEmbed::new();
+        self.print_jest_each = print::jest_each::PrintJestEach::new();
+        self.print_binaryish = print::binaryish::PrintBinaryish::new();
+        self.print_member = print::member::PrintMember::new();
+        self.print_ternary = print::ternary::PrintTernary::new();
+        self.print_object = print::object::PrintObject::new();
+        self.print_types = print::types::PrintTypes::new();
+        self.print_call = print::call::PrintCall::new();
+        self.print_jsx = print::jsx::PrintJsx::new();
+        self.print = print::core::Print::new();
+        self.stands = stands::Stands::new();
+    }
+
     #[cold]
     pub(crate) fn stop(&self, why: i32) -> Stop {
         self.why.set(why);

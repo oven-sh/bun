@@ -257,7 +257,10 @@ pub fn format(
             }
             Ok(())
         }
-        Err(Stop) => Err(Refused),
+        Err(Stop) => {
+            scratch.forget_run();
+            Err(Refused)
+        }
     }
 }
 
@@ -295,6 +298,9 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     scratch.set_short_cuts(false);
     // The text is gone when the parser comes.
     scratch.set_verified(0, 0);
+    if stands.is_err() {
+        scratch.forget_run();
+    }
     matches!(stands, Ok(true)) && scratch.nothing_lost().is_ok()
 }
 
@@ -380,7 +386,10 @@ pub fn format_expression(
             out.extend_from_slice(scratch.printer.out.sub(0, scratch.printer.out_length));
             Ok(())
         }
-        Err(Stop) => Err(Refused),
+        Err(Stop) => {
+            scratch.forget_run();
+            Err(Refused)
+        }
     }
 }
 
@@ -489,6 +498,7 @@ impl Quick {
             // A guess about the layout was wrong. The text is still there: once more, without guessing.
             self.redone += 1;
             self.note_guess(true, length);
+            self.forget_run();
             self.set_short_cuts(false);
             self.unwind_source(0);
             let end_of_line = self.options.end_of_line;

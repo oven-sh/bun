@@ -4391,6 +4391,33 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     expect(different).toEqual([]);
     expect(said).toEqual(expected);
   });
+
+  // One thread formats one file after the other with the same scratch. A run that stops half way has set things that it does not put back.
+  test("what is refused leaves nothing behind for the next file", async () => {
+    const next = `x = [[1, 2], [3, 4]];
+y = [{ a: 1, b: 2 }, { a: 3, b: 4 }];
+const z = a ? b : c ? d : e;
+f = (
+  <g h="i">
+    j {k} <l />
+  </g>
+);
+m.n().o().p(q => r).s();
+class T extends U {
+  // v
+  w = \`x\${y}z\`;
+  static async *a(b, { c, d } = {}) {}
+}
+it.each\`
+  a | b
+  \${1} | \${2}
+\`("c", () => {});
+`;
+    const texts = rows.filter(([name, flags]) => name === "a.js" && flags === "").flatMap(row => [next, row[2]]);
+    const { different, said, expected } = await differences("a.js", [...texts, next], ["--threads=1"]);
+    expect(different).toEqual([]);
+    expect(said).toEqual(expected);
+  });
 });
 
 describe("JavaScript and Flow that the long way rejects", () => {

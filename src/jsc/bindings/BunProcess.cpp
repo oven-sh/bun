@@ -4066,7 +4066,80 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (JSObject* streamObject = stream.getObject()) {
+        // The stream classes put `write` on the instance (writeFast in internal/fs/streams).
+        JSValue write = streamObject->getDirect(vm, WebCore::builtinNames(vm).writePublicName());
+        if (write)
+            uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject, write);
+    }
     return stream;
+}
+
+extern "C" void Bun__Console__onStdioWriteStreamCreated();
+
+void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue pristineWrite)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    m_stdioWriteStream[slot].set(vm, this, stream);
+    m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
+    resolveStdioWrite(vm, slot);
+    Bun__Console__onStdioWriteStreamCreated();
+}
+
+// The `write` the stream has now, found with getDirect on the stream and its prototypes so no
+// user code runs. Caches the own slot of a plain structure for the next compare. An empty value
+// means no object on the chain has a direct `write`.
+JSValue Process::resolveStdioWrite(JSC::VM& vm, unsigned slot)
+{
+    const Identifier& name = WebCore::builtinNames(vm).writePublicName();
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    Structure* structure = stream->structure();
+    if (!structure->isCompiledStructure()) {
+        PropertyOffset offset = stream->getDirectOffset(vm, name);
+        if (offset != invalidOffset) {
+            m_stdioWriteStructure[slot].set(vm, this, structure);
+            m_stdioWriteOffset[slot] = offset;
+            return stream->getDirect(offset);
+        }
+    }
+    m_stdioWriteStructure[slot].clear();
+    m_stdioWriteOffset[slot] = invalidOffset;
+    for (JSObject* current = stream; current;) {
+        if (JSValue value = current->getDirect(vm, name))
+            return value;
+        JSValue proto = current->getPrototypeDirect();
+        if (!proto.isObject())
+            return {};
+        current = asObject(proto);
+    }
+    return {};
+}
+
+JSObject* Process::stdioStreamWithReplacedWrite(JSC::VM& vm, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    if (!stream)
+        return nullptr;
+    JSValue current = stream->structure() == m_stdioWriteStructure[slot].get()
+        ? stream->getDirect(m_stdioWriteOffset[slot])
+        : resolveStdioWrite(vm, slot);
+    if (!current || current == m_pristineStdioWrite[slot].get())
+        return nullptr;
+    return stream;
+}
+
+// Console write path (src/jsc/ConsoleObject.rs). Returns the empty value when the stream has
+// never been built or still carries Bun's own `write`, which is the signal to keep the native
+// buffered writer. No throw scope: nothing here runs user code.
+extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
+{
+    if (!globalObject->hasProcessObject())
+        return JSValue::encode({});
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->processObject()->stdioStreamWithReplacedWrite(vm, fd));
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -4852,6 +4925,11 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
+    for (unsigned i = 0; i < 2; ++i) {
+        visitor.append(thisObject->m_stdioWriteStream[i]);
+        visitor.append(thisObject->m_pristineStdioWrite[i]);
+        visitor.append(thisObject->m_stdioWriteStructure[i]);
+    }
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

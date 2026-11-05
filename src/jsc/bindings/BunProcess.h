@@ -35,9 +35,26 @@ class Process : public WebCore::JSEventEmitter {
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
+    // process.stdout (index 0) and process.stderr (index 1) as the full JS stream classes build
+    // them, each with the `write` it had then. The native console writes to the descriptor
+    // while a stream still has that `write` and goes through the stream once user code
+    // replaces it, as node's console does. The structure and offset cache the own `write`
+    // slot so the per-message compare reads no property table. A slot stays empty until the
+    // stream is first read, and for the streams of a trimmed executable or a worker, whose
+    // `write` cannot be replaced.
+    WriteBarrier<JSObject> m_stdioWriteStream[2];
+    WriteBarrier<Unknown> m_pristineStdioWrite[2];
+    WriteBarrier<Structure> m_stdioWriteStructure[2];
+    PropertyOffset m_stdioWriteOffset[2] = { invalidOffset, invalidOffset };
+
     void installDefaultWarningListener(JSC::VM&);
+    JSValue resolveStdioWrite(JSC::VM&, unsigned slot);
 
 public:
+    // fd is 1 or 2. Called once per stream when the full JS stream is built.
+    void setStdioWriteStream(JSC::VM&, int fd, JSObject* stream, JSValue pristineWrite);
+    // The stream for fd when its `write` is no longer the one Bun installed, otherwise null. Runs no user code.
+    JSObject* stdioStreamWithReplacedWrite(JSC::VM&, int fd);
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

@@ -4223,10 +4223,12 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         // Compiled code asks with the name of its module. A text that a Worker starts from and that is interpreted asks with the path that import.meta has there.
         if (Bun::hasCompiledModules() && (referrerString.startsWith("data:"_s) || referrerString.startsWith("blob:"_s))) [[unlikely]]
             referrerString = makeString('/', referrerString);
-        // This callback receives a loader key; the resolver receives a filesystem referrer.
-        if (!referrerString.startsWith("file://"_s) && !Bun::isCompiledModule(referrerString))
-            referrerString = referrerString.left(moduleKeyPathLength(referrerString));
     }
+
+    // Mock graph routing needs the full key, including its internal query markers.
+    auto resolverReferrer = referrerString;
+    if (!resolverReferrer.startsWith("file://"_s) && !Bun::isCompiledModule(resolverReferrer))
+        resolverReferrer = resolverReferrer.left(moduleKeyPathLength(resolverReferrer));
 
     // Not implied by hasVirtualModules(), since a factory keeps running after Bun.plugin.clearAll() removes every mock.
     bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
@@ -4235,7 +4237,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     WTF::String resolved;
     bool hasModuleMocks = globalObject->onLoadPlugins.hasVirtualModules();
     if (hasModuleMocks) {
-        auto virtualReferrer = referrerString;
+        auto virtualReferrer = resolverReferrer;
         if (virtualReferrer.startsWith("file://"_s)) {
             auto url = WTF::URL(virtualReferrer);
             if (url.isValid())
@@ -4251,7 +4253,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (resolved.isNull()) {
         ErrorableString res;
         BunString keyZ = Bun::toString(keyString);
-        BunString referrerZ = Bun::toString(referrerString);
+        BunString referrerZ = Bun::toString(resolverReferrer);
         BunString queryZ = Bun::toStringRef(requestedSuffix);
         Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ, splitQuery);
         RETURN_IF_EXCEPTION(scope, {});

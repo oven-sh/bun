@@ -219,6 +219,7 @@ pub fn format(
         && !options.filepath.as_deref().is_some_and(can_be_json)
         && direct::format(&text, original, options, &mut scratch.direct, document, out)
     {
+        crate::whole_texts::note();
         return Ok(());
     }
     // It has to parse as YAML in any case.

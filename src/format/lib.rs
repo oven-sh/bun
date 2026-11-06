@@ -35,6 +35,7 @@ pub mod tailwind;
 mod text;
 pub mod toml;
 pub mod verify;
+pub mod whole_texts;
 pub mod yaml;
 
 /// Helpers for callers that handle Flow files.

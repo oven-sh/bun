@@ -1945,8 +1945,10 @@ impl Run<'_> {
     ) -> Outcome {
         let verifies = self.options.debug_check;
         let mut best = f64::MAX;
+        let whole_texts = AtomicUsize::new(0);
         for round in 0..self.options.bench {
             // A round stands for a run.
+            whole_texts.store(0, Ordering::Relaxed);
             for worker in workers {
                 let mut worker = worker.lock();
                 let worker = worker.get_or_insert_default();
@@ -1959,7 +1961,9 @@ impl Run<'_> {
                     return;
                 };
                 let names = (atoms as &dyn Intern, memory);
+                bun_format::whole_texts::take();
                 let formatted = format(path, text, resolved, names, &mut worker.scratch, verifies);
+                whole_texts.fetch_add(bun_format::whole_texts::take() as usize, Ordering::Relaxed);
                 if let Ok((formatted, _)) = std::hint::black_box(formatted) {
                     worker.scratch.spare = formatted;
                 }
@@ -2013,6 +2017,11 @@ impl Run<'_> {
                 );
             }
         }
+        let _ = writeln!(
+            self.out.stderr,
+            "other short cuts: {} texts from start to end",
+            whole_texts.into_inner()
+        );
         self.out
     }
 

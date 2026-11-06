@@ -850,6 +850,7 @@ fn format_once(
                 out.extend_from_slice(whole);
                 out.push(b'\n');
                 scratch.runs = Some((runs, printed));
+                crate::whole_texts::note();
                 return Ok(None);
             }
             let (mut whole, mut lines_so_far) = (whole, Vec::new());
@@ -860,6 +861,7 @@ fn format_once(
                     write_lines_and_code(whole, named, options, &options_of_text, scratch, out)
                 else {
                     scratch.runs = Some((runs, printed));
+                    crate::whole_texts::note();
                     return Ok(None);
                 };
                 // What has been printed are lines like the others. Nothing is formatted twice.

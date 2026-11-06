@@ -157,6 +157,7 @@ fn format_normalized(
         && !options.is_in_markdown
         && direct::format(text, options, scratch, out)
     {
+        crate::whole_texts::note();
         return Ok(());
     }
     let Scratch {

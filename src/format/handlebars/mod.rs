@@ -178,6 +178,7 @@ pub fn format(
         let len = out.len();
         out.extend_from_slice(&original[..first]);
         if direct::format(text, original, options, scratch, out) {
+            crate::whole_texts::note();
             return Ok(());
         }
         out.truncate(len);

@@ -548,6 +548,7 @@ pub fn format(
         {
             out.extend_from_slice(&text[from..end]);
             out.push(b'\n');
+            crate::whole_texts::note();
             return Ok(());
         }
         way = Way::QuickAfterFirstLines;

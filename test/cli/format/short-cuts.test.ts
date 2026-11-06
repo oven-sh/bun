@@ -95,11 +95,11 @@ async function memoryInMegabytes(name: string, text: string, flags: string[]) {
 
 // Everything below passes if every short cut refuses everything. These don't.
 describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
-  /** What `--bench` says about `name` with `text` in it: how long the best round took, and which way its scripts went. */
+  /** What `--bench` says about `name` with `text` in it: which way its scripts went, and how many other texts a short cut has printed. */
   async function bench(name: string, text: string, flags: string[]) {
     using dir = tempDir("format-short-cuts", { [name]: text });
     await using proc = spawn({
-      cmd: [bunExe(), "fmt", ...plainly, "--threads=1", "--bench=5", ...flags, name],
+      cmd: [bunExe(), "fmt", ...plainly, "--threads=1", "--bench=1", ...flags, name],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -108,7 +108,7 @@ describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(exitCode).toBe(0);
     return {
-      milliseconds: Number(/^best round ([\d.]+) ms$/m.exec(stderr)?.[1]),
+      wholeTexts: Number(/^other short cuts: (\d+) texts from start to end$/m.exec(stderr)?.[1]),
       ways: stderr.split("\n").filter(line => /^the quick way|refused/.test(line)),
     };
   }
@@ -134,7 +134,7 @@ describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
     expect(ways).toEqual([expect.stringMatching(new RegExp(`^the quick way: ${scripts} scripts, \\d+ bytes$`))]);
   });
 
-  // Nothing counts which way a text in these languages goes. The long way takes three to twenty times as long.
+  // A text that is formatted already is printed from start to end without the parser of its language.
   test.concurrent.each([
     [
       "a.css",
@@ -163,10 +163,11 @@ describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
     ],
     ["a.mdx", '# a\n\nSome text with **bold** and `code`.\n\n<A b="c">d</A>\n\n- one\n- two\n\n'],
     ["a.html", '<div class="a">\n  <p>Some text</p>\n  <ul>\n    <li>one</li>\n    <li>two</li>\n  </ul>\n</div>\n'],
-    ["a.ts", typed + "\n"],
-  ])("%s takes less than half the time", async (name, text) => {
-    const [short, long] = await Promise.all([[], ["--no-short-cuts"]].map(own => bench(name, text.repeat(200), own)));
-    expect(short.milliseconds * 2).toBeLessThan(long.milliseconds);
+  ])("%s", async (name, text) => {
+    const [short, long] = await Promise.all(
+      [[], ["--no-short-cuts"]].map(own => bench(name, text.trimEnd() + "\n", own)),
+    );
+    expect([short.wholeTexts, long.wholeTexts]).toEqual([1, 0]);
   });
 });
 

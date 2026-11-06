@@ -73,6 +73,7 @@ pub(crate) fn parse(
     let parse_from = |tree: &mut Tree, first_line: usize| {
         as_written
             .and_then(|reader| tree_without_parser(text, tree, first_line, reader))
+            .inspect(|_| crate::whole_texts::note())
             .or_else(|| parse_lines_with(text, tree, syntax, first_line, as_written))
     };
     let Some(front_matter) = super::front_matter::parse(original) else {

@@ -193,26 +193,6 @@ pub(crate) fn scan_is_space_byte(c: i32) -> bool {
 }
 
 impl Quick {
-    /// The last byte before `p` that is neither white space nor in a comment; 0 at the start.
-    pub(crate) fn previous_significant_char(&self, mut p: i32) -> i32 {
-        p -= 1;
-        loop {
-            let c = self.t.at(p);
-            if scan_is_space_byte(c) {
-                p -= 1;
-                continue;
-            }
-            if c == 0 {
-                return 0;
-            }
-            let comment = self.comment_at(p);
-            if comment < 0 {
-                return c;
-            }
-            p = self.lexer.c.at(comment * C_STRIDE + C_START) - 1;
-        }
-    }
-
     /// The first byte at or behind `p` that is neither white space nor in a comment; 0 at the end.
     pub(crate) fn next_significant_char(&self, mut p: i32) -> i32 {
         loop {

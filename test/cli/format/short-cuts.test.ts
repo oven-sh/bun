@@ -4333,6 +4333,41 @@ describe("JavaScript that is deep, long or full of comments", () => {
       [[]],
     ));
 
+  // A row is looked through once, not once for each of its comments.
+  test.skipIf(!hasFlag)("many rows of 500 comments take no longer than on the long way", async () => {
+    const row = "/* c */ ".repeat(500);
+    const times = isDebug || isASAN ? 25 : 100;
+    using dir = tempDir("format-short-cuts", {
+      "a.js": `a(${row}b);\n`.repeat(times),
+      "b.js": `x = [${row}];\n`.repeat(times),
+      "c.js": `function f() ${row}{}\n`.repeat(times),
+    });
+    const cpu = async (own: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "fmt",
+          "--check",
+          "--no-config",
+          "--no-editorconfig",
+          "--log-level=silent",
+          "--threads=1",
+          ...own,
+          ".",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await proc.exited;
+      // (Windows counts in ticks of 1/64 s)
+      return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+    };
+    // 0.8 in a release build, and 12 when each comment looked past its row.
+    expect((await cpu([])) / (await cpu(["--no-short-cuts"]))).toBeLessThan(4);
+  });
+
   // What is asked about every item of a list, every comment of a row or every token of a line is not answered by going through the list, the row or the line.
   // A row has the name of the file, what stands before the unit, the unit, what stands behind it, how many units the shorter text has, and flags. A unit "a¦b¦c" is a
   // nest: so many times "a", then "b", then so many times "c". With these numbers the longer text took 12 to 16 times as long as the shorter one, between 0.3 s and 2 s in a
@@ -4368,6 +4403,17 @@ describe("JavaScript that is deep, long or full of comments", () => {
     // `a || (b || c)` is `(a || b) || c`
     ["a.js", "x = ", "a || (¦a¦)", ";\n", 1500],
     ["a.js", "x = ", "z || ((¦a¦) || (p || q))", ";\n", 700],
+    // a row of comments
+    ["a.js", "a(", "/* c */ ", "b);\n", 8000],
+    ["a.js", "a;\n", "/* c */ ", "\n", 8000],
+    ["a.js", "function f() ", "/* c */ ", "{}\n", 8000],
+    ["a.js", "function f(", "/* c */ ", ") {}\n", 8000],
+    ["a.js", "if (a) b; ", "/* c */ ", "else c;\n", 8000],
+    ["a.js", "x = !(a &&\n b ", "/* c */ ", ");\n", 8000],
+    ["a.js", "x = { a ", "/* c */ ", "() {} };\n", 8000],
+    ["a.js", "", "/**\n * c\n */", "\na;\n", 8000],
+    ["a.ts", "type A = ", "/* c */ ", "| B | C;\n", 8000],
+    ["a.ts", "type A = { ", "/* c */ ", "[K in B]: C };\n", 8000],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

@@ -56,6 +56,24 @@ pub(crate) struct Comments {
     pub(crate) gap_behind: i32,
     /// behind a `(`, the first character of the token that follows it
     pub(crate) gap_in_parentheses: i32,
+    /// next_char_index() behind the comments between the two tokens, if `gap_next_of` is `gap_last`
+    pub(crate) gap_next: i32,
+    pub(crate) gap_next_of: i32,
+    // ---- What is the same for a comment and the next one in a row, so that a row is looked through once: see the functions that ask.
+    /// the comment that is_own_line() was asked about last, and the answer
+    pub(crate) own_line_of: i32,
+    pub(crate) is_own_line: bool,
+    /// the comments for which is_end_of_line() has the same answer, and the answer
+    pub(crate) end_of_line_from: i32,
+    pub(crate) end_of_line_to: i32,
+    pub(crate) is_end_of_line: bool,
+    /// what was looked for last from a place that depends on the nodes around a comment alone: what, from where, and where it is
+    pub(crate) sought: [i32; 3],
+    /// see has_newline_before_comment_from(): from where, up to where there is no line break, and up to where there is one (or 0)
+    pub(crate) lines_from: [[i32; 3]; 2],
+    /// see should_attach_to_union_type_first_element(): the type, from where on its line was looked through, up to where, and whether that is the type
+    pub(crate) union_line: [i32; 3],
+    pub(crate) union_line_is_clear: bool,
     /// see is_asked_first(): a bit for each word of a node
     pub(crate) asked: Vec<u64>,
     pub(crate) h_placement: i32,
@@ -88,12 +106,36 @@ impl Comments {
             gap_before: 0,
             gap_behind: 0,
             gap_in_parentheses: 0,
+            gap_next: 0,
+            gap_next_of: NO_COMMENT,
+            own_line_of: NO_COMMENT,
+            is_own_line: false,
+            end_of_line_from: 0,
+            end_of_line_to: NO_COMMENT,
+            is_end_of_line: false,
+            sought: [0; 3],
+            lines_from: [[0; 3]; 2],
+            union_line: [0; 3],
+            union_line_is_clear: false,
             asked: Vec::new(),
             h_placement: 0,
             h_is_last: false,
         }
     }
 }
+
+/// (-1 is the comment before the first one)
+const NO_COMMENT: i32 = -2;
+
+// What is looked for: see Comments::sought.
+const SOUGHT_BRACKET: i32 = 1;
+const SOUGHT_ELSE: i32 = 2;
+const SOUGHT_LAST_PAREN: i32 = 3;
+const SOUGHT_PAREN: i32 = 4;
+const SOUGHT_EQUALS: i32 = 5;
+const SOUGHT_ARROW: i32 = 6;
+const SOUGHT_NEXT: i32 = 7;
+const SOUGHT_LINE_BREAK: i32 = 8;
 
 const OWN_LINE: i32 = 1;
 const OWN_BLOCK: i32 = 2;
@@ -339,6 +381,57 @@ impl Quick {
             self.comments.gap_in_parentheses = self.next_significant_char(behind + 1);
         }
         (self.comments.gap_before, self.comments.gap_behind)
+    }
+
+    /// next_char_index() behind the comment at hand. What is between two comments of a row is passed by it, so it is the same for all of them.
+    fn next_index_behind_comment(&mut self) -> i32 {
+        self.characters_around_comment(self.comments.h_comment);
+        if self.comments.gap_next_of != self.comments.gap_last {
+            self.comments.gap_next_of = self.comments.gap_last;
+            self.comments.gap_next = self.next_char_index(self.comments.h_end);
+        }
+        self.comments.gap_next
+    }
+
+    fn next_char_behind_comment(&mut self) -> i32 {
+        let index = self.next_index_behind_comment();
+        self.t.at(index)
+    }
+
+    /// What `find` finds from `from` on, which it is asked once for all the comments in a row.
+    fn seek(&mut self, what: i32, from: i32, find: impl FnOnce(&Self, i32) -> i32) -> i32 {
+        let [known_what, known_from, found] = self.comments.sought;
+        if known_what == what && known_from == from {
+            return found;
+        }
+        let found = find(self, from);
+        self.comments.sought = [what, from, found];
+        found
+    }
+
+    /// Is there a line break between `from`, which depends on the nodes around the comment at hand alone, and that comment? What was looked through
+    /// for the comments before it is not looked through again. Who asks from another place for the same comment is another `who`.
+    fn has_newline_before_comment_from(&mut self, from: i32, who: usize) -> bool {
+        let to = self.comments.h_start;
+        let Some(&[known_from, without, with]) = self.comments.lines_from.get(who) else {
+            return self.has_newline_in_range(from, to);
+        };
+        let mut start = from;
+        if known_from == from && without <= to {
+            if with != 0 && with <= to {
+                return true;
+            }
+            start = without;
+        }
+        let found = self.has_newline_in_range(start, to);
+        if let Some(known) = self.comments.lines_from.get_mut(who) {
+            *known = if found {
+                [from, start, to]
+            } else {
+                [from, to, 0]
+            };
+        }
+        found
     }
 
     /// Is the comment at hand, `i`, in a place where both ways are known to print it alike? The two give comments to nodes in ways of their
@@ -829,37 +922,71 @@ impl Quick {
         {
             return;
         }
-        // comment indices are in source order, so sort the indices: an insertion sort on the linked list
-        let mut sorted: i32 = -1;
-        let mut current = self.comments.map.at(slot + 1);
-        while current >= 0 {
-            let following = self.lexer.c.at(current * C_STRIDE + C_NEXT);
-            if sorted < 0 || current < sorted {
-                self.lexer.c.put(current * C_STRIDE + C_NEXT, sorted);
-                sorted = current;
-            } else {
-                let mut p = sorted;
-                loop {
-                    let q = self.lexer.c.at(p * C_STRIDE + C_NEXT);
-                    if q < 0 || q > current {
-                        break;
-                    }
-                    p = q;
+        // Comment indices are in source order, so sort the indices. The list is a few runs that are in order, most often one: each turn
+        // merges every run with the one behind it.
+        let mut first = self.comments.map.at(slot + 1);
+        loop {
+            let mut rest = first;
+            let mut last: i32 = -1;
+            let mut runs = 0;
+            while rest >= 0 {
+                let mut a = rest;
+                let a_end = self.end_of_run(a);
+                let mut b = self.next_comment(a_end);
+                rest = -1;
+                if b >= 0 {
+                    let b_end = self.end_of_run(b);
+                    rest = self.next_comment(b_end);
+                    self.lexer.c.put(a_end * C_STRIDE + C_NEXT, -1);
+                    self.lexer.c.put(b_end * C_STRIDE + C_NEXT, -1);
                 }
-                self.lexer.c.put(
-                    current * C_STRIDE + C_NEXT,
-                    self.lexer.c.at(p * C_STRIDE + C_NEXT),
-                );
-                self.lexer.c.put(p * C_STRIDE + C_NEXT, current);
+                while b >= 0 {
+                    if a > b {
+                        (a, b) = (b, a);
+                    }
+                    // `a` goes on for as long as it is before `b`
+                    if last < 0 {
+                        first = a;
+                    } else {
+                        self.lexer.c.put(last * C_STRIDE + C_NEXT, a);
+                    }
+                    loop {
+                        last = a;
+                        a = self.next_comment(a);
+                        if a < 0 || a > b {
+                            break;
+                        }
+                    }
+                    if a < 0 {
+                        (a, b) = (b, -1);
+                    }
+                }
+                // what is left of the one that is longer
+                if last < 0 {
+                    first = a;
+                } else {
+                    self.lexer.c.put(last * C_STRIDE + C_NEXT, a);
+                }
+                last = self.end_of_run(a);
+                runs += 1;
             }
-            current = following;
+            if runs <= 1 {
+                self.comments.map.put(slot + 1, first);
+                self.comments.map.put(slot + 2, last);
+                return;
+            }
         }
-        self.comments.map.put(slot + 1, sorted);
-        let mut last = sorted;
-        while self.lexer.c.at(last * C_STRIDE + C_NEXT) >= 0 {
-            last = self.lexer.c.at(last * C_STRIDE + C_NEXT);
+    }
+
+    /// The last comment of the list that starts with `comment` before one that is out of order.
+    fn end_of_run(&self, mut comment: i32) -> i32 {
+        loop {
+            let next = self.next_comment(comment);
+            if next < comment {
+                return comment;
+            }
+            comment = next;
         }
-        self.comments.map.put(slot + 2, last);
     }
 
     pub(crate) fn is_meaningful_empty_statement(&self, node: i32) -> bool {
@@ -1145,7 +1272,7 @@ impl Quick {
         return true;
     }
 
-    pub(crate) fn is_own_line(&self, comment: i32) -> bool {
+    pub(crate) fn is_own_line(&mut self, comment: i32) -> bool {
         let at = comment * C_STRIDE;
         let mut start = self.lexer.c.at(at + C_START);
         let preceding = self.lexer.c.at(at + C_PRECEDING);
@@ -1158,19 +1285,30 @@ impl Quick {
                 {
                     break;
                 }
+                if i == self.comments.own_line_of {
+                    // from here on this is the way that was gone for that one
+                    self.comments.own_line_of = comment;
+                    return self.comments.is_own_line;
+                }
                 start = self.lexer.c.at(o + C_START);
                 i -= 1;
             }
         }
-        return self.has_newline_before(start);
+        self.comments.own_line_of = comment;
+        self.comments.is_own_line = self.has_newline_before(start);
+        return self.comments.is_own_line;
     }
 
-    pub(crate) fn is_end_of_line(&self, comment: i32) -> bool {
+    pub(crate) fn is_end_of_line(&mut self, comment: i32) -> bool {
+        // (each of them has the same node behind it and nothing but blanks between it and the next one)
+        if self.comments.end_of_line_from <= comment && comment <= self.comments.end_of_line_to {
+            return self.comments.is_end_of_line;
+        }
         let at = comment * C_STRIDE;
         let mut end = self.lexer.c.at(at + C_END);
         let following = self.lexer.c.at(at + C_FOLLOWING);
+        let mut i = comment + 1;
         if following != 0 {
-            let mut i = comment + 1;
             while i < self.lexer.c_count {
                 let o = i * C_STRIDE;
                 if self.lexer.c.at(o + C_FOLLOWING) != following
@@ -1182,7 +1320,10 @@ impl Quick {
                 i += 1;
             }
         }
-        return self.has_newline(end);
+        self.comments.end_of_line_from = comment;
+        self.comments.end_of_line_to = i - 1;
+        self.comments.is_end_of_line = self.has_newline(end);
+        return self.comments.is_end_of_line;
     }
 
     pub(crate) fn break_ties(&mut self) {
@@ -1365,7 +1506,7 @@ impl Quick {
     }
 
     /// A block comment on one line right before a union type goes to the first type of the union.
-    pub(crate) fn should_attach_to_union_type_first_element(&self, node: i32) -> bool {
+    pub(crate) fn should_attach_to_union_type_first_element(&mut self, node: i32) -> bool {
         if (self.n.at(node) & 0xff) != k::UnionType
             || !self.comments.h_is_block
             || self.has_newline_in_range(self.comments.h_start, self.comments.h_end)
@@ -1375,6 +1516,13 @@ impl Quick {
         }
         let end = self.n.at(node + 1);
         let mut p = self.comments.h_end;
+        // Whoever starts between two comments that were passed last time gets as far as that.
+        let [known_node, known_from, known_to] = self.comments.union_line;
+        if known_node == node && known_from <= p && p <= known_to {
+            return self.comments.union_line_is_clear;
+        }
+        let from = p;
+        let mut is_clear = true;
         while p < end {
             let c = self.t.at(p);
             if c == 32 || c == 9 {
@@ -1382,27 +1530,27 @@ impl Quick {
                 continue;
             }
             let comment = self.comment_at(p);
-            if comment < 0 {
-                return false;
-            }
             // a comment counts as so many spaces, but a line break in it stays one
-            if self.has_newline_in_range(p, self.lexer.c.at(comment * C_STRIDE + C_END)) {
-                return false;
+            if comment < 0
+                || self.has_newline_in_range(p, self.lexer.c.at(comment * C_STRIDE + C_END))
+            {
+                is_clear = false;
+                break;
             }
             p = self.lexer.c.at(comment * C_STRIDE + C_END);
         }
-        return true;
+        self.comments.union_line = [node, from, p];
+        self.comments.union_line_is_clear = is_clear;
+        return is_clear;
     }
 
     pub(crate) fn add_leading_comment_to_possible_union_type(&mut self, node: i32) -> bool {
-        self.add_leading(
-            if self.should_attach_to_union_type_first_element(node) {
-                self.n.at(self.n.at(node + 4) + 1)
-            } else {
-                node
-            },
-            self.comments.h_comment,
-        );
+        let to = if self.should_attach_to_union_type_first_element(node) {
+            self.n.at(self.n.at(node + 4) + 1)
+        } else {
+            node
+        };
+        self.add_leading(to, self.comments.h_comment);
         return true;
     }
 
@@ -1440,7 +1588,11 @@ impl Quick {
             return false;
         }
         if self.comments.h_end
-            < self.index_of_outside_comments(91, self.n.at(self.comments.h_enclosing + 1))
+            < self.seek(
+                SOUGHT_BRACKET,
+                self.n.at(self.comments.h_enclosing + 1),
+                |q, from| q.index_of_outside_comments(91, from),
+            )
         {
             self.add_dangling(self.comments.h_enclosing, self.comments.h_comment);
             return true;
@@ -1510,7 +1662,7 @@ impl Quick {
         } else if !self.is_abstract_method(self.comments.h_enclosing) {
             return false;
         }
-        if self.next_char(self.comments.h_end) != 59 {
+        if self.next_char_behind_comment() != 59 {
             return false;
         }
         self.add_trailing(self.comments.h_enclosing, self.comments.h_comment);
@@ -1525,14 +1677,13 @@ pub(crate) fn is_function_like(kind: i32) -> bool {
 }
 
 impl Quick {
-    pub(crate) fn is_in_argument_or_parameter_parentheses(&self, node: i32) -> bool {
+    pub(crate) fn is_in_argument_or_parameter_parentheses(&mut self, node: i32) -> bool {
         if self.comments.h_start >= self.n.at(node + 2)
             || self.comments.h_end <= self.n.at(node + 1)
         {
             return false;
         }
-        return self.previous_significant_char(self.comments.h_start) == 40
-            && self.next_significant_char(self.comments.h_end) == 41;
+        return self.characters_around_comment(self.comments.h_comment) == (40, 41);
     }
 
     pub(crate) fn handle_comment_in_empty_parens(&mut self) -> bool {
@@ -1561,10 +1712,7 @@ impl Quick {
 
     pub(crate) fn handle_conditional_expression_comments(&mut self) -> bool {
         let same_line = self.comments.h_preceding != 0
-            && !self.has_newline_in_range(
-                self.n.at(self.comments.h_preceding + 2),
-                self.comments.h_start,
-            );
+            && !self.has_newline_before_comment_from(self.n.at(self.comments.h_preceding + 2), 0);
         if (self.comments.h_preceding == 0 || !same_line)
             && (self.comments.h_enclosing_kind == k::ConditionalExpression
                 || self.comments.h_enclosing_kind == k::ConditionalType)
@@ -1596,7 +1744,7 @@ impl Quick {
         if (pk == k::ComponentParameter || pk == k::RestElement)
             && (self.comments.h_enclosing_kind == k::ComponentDeclaration
                 || self.comments.h_enclosing_kind == k::DeclareComponent)
-            && self.next_char(self.comments.h_end) == 41
+            && self.next_char_behind_comment() == 41
         {
             self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
             return true;
@@ -1608,7 +1756,7 @@ impl Quick {
             || pk == k::RestElement
             || pk == k::ParameterProperty)
             && self.is_real_function_like(self.comments.h_enclosing_kind)
-            && self.next_char(self.comments.h_end) == 41
+            && self.next_char_behind_comment() == 41
         {
             self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
             return true;
@@ -1618,8 +1766,7 @@ impl Quick {
             && is_function_like(self.comments.h_enclosing_kind)
             && self.n.at(self.comments.h_enclosing + 5) == self.comments.h_following
         {
-            if self.next_char_index(self.comments.h_end) == self.n.at(self.comments.h_following + 1)
-            {
+            if self.next_index_behind_comment() == self.n.at(self.comments.h_following + 1) {
                 self.add_block_statement_first_comment(
                     self.comments.h_following,
                     self.comments.h_comment,
@@ -1644,7 +1791,7 @@ impl Quick {
         if self.comments.h_enclosing_kind != k::IfStatement || self.comments.h_following == 0 {
             return false;
         }
-        if self.next_char(self.comments.h_end) == 41 {
+        if self.next_char_behind_comment() == 41 {
             self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
             return true;
         }
@@ -1657,30 +1804,28 @@ impl Quick {
             && self.comments.h_following == self.n.at(self.comments.h_enclosing + 6)
         {
             // find the `else`
-            let mut else_index = self.n.at(consequent + 2);
-            loop {
-                else_index = self.index_of_outside_comments(101, else_index);
-                if else_index < 0 {
-                    break;
+            let else_index = self.seek(SOUGHT_ELSE, self.n.at(consequent + 2), |q, from| {
+                let mut else_index = from;
+                loop {
+                    else_index = q.index_of_outside_comments(101, else_index);
+                    if else_index < 0
+                        || (q.t.at(else_index + 1) == 108
+                            && q.t.at(else_index + 2) == 115
+                            && q.t.at(else_index + 3) == 101)
+                    {
+                        return else_index;
+                    }
+                    else_index += 1;
                 }
-                if self.t.at(else_index + 1) == 108
-                    && self.t.at(else_index + 2) == 115
-                    && self.t.at(else_index + 3) == 101
-                {
-                    break;
-                }
-                else_index += 1;
-            }
+            });
             if self.comments.h_start >= else_index {
                 self.add_leading(self.comments.h_following, self.comments.h_comment);
                 return true;
             }
             if self.comments.h_preceding_kind != k::BlockStatement
                 && self.is_single_line_comment()
-                && !self.has_newline_in_range(
-                    self.n.at(self.comments.h_preceding + 2),
-                    self.comments.h_start,
-                )
+                && !self
+                    .has_newline_before_comment_from(self.n.at(self.comments.h_preceding + 2), 0)
             {
                 self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
                 return true;
@@ -1698,7 +1843,7 @@ impl Quick {
         {
             return false;
         }
-        if self.next_char(self.comments.h_end) == 41 {
+        if self.next_char_behind_comment() == 41 {
             self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
             return true;
         }
@@ -1717,7 +1862,7 @@ impl Quick {
         {
             return false;
         }
-        if self.next_char(self.comments.h_end) == 125 {
+        if self.next_char_behind_comment() == 125 {
             self.add_dangling(self.comments.h_enclosing, self.comments.h_comment);
             return true;
         }
@@ -1852,7 +1997,11 @@ impl Quick {
             return false;
         }
         if self.comments.h_start
-            > self.last_index_of_outside_comments(41, self.n.at(self.comments.h_following + 1))
+            > self.seek(
+                SOUGHT_LAST_PAREN,
+                self.n.at(self.comments.h_following + 1),
+                |q, from| q.last_index_of_outside_comments(41, from),
+            )
         {
             self.add_leading(self.comments.h_following, self.comments.h_comment);
             return true;
@@ -1913,8 +2062,12 @@ impl Quick {
                 || self.comments.h_enclosing_kind == k::ObjectProperty
                 || self.is_abstract_method(self.comments.h_enclosing))
             && self.n.at(self.comments.h_enclosing + 4) == self.comments.h_preceding
-            && self.next_char(self.comments.h_end) == 40
-            && self.next_char(self.n.at(self.comments.h_preceding + 2)) != 58
+            && self.next_char_behind_comment() == 40
+            && self.seek(
+                SOUGHT_NEXT,
+                self.n.at(self.comments.h_preceding + 2),
+                Self::next_char,
+            ) != 58
         {
             self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
             return true;
@@ -1923,14 +2076,12 @@ impl Quick {
             && self.comments.h_following == 0
             && self.comments.h_placement == 0
         {
-            self.add_trailing(
-                if self.next_char(self.comments.h_end) == 40 {
-                    self.comments.h_preceding
-                } else {
-                    self.comments.h_enclosing
-                },
-                self.comments.h_comment,
-            );
+            let to = if self.next_char_behind_comment() == 40 {
+                self.comments.h_preceding
+            } else {
+                self.comments.h_enclosing
+            };
+            self.add_trailing(to, self.comments.h_comment);
             return true;
         }
         if self.comments.h_preceding_kind == k::Decorator
@@ -2031,7 +2182,11 @@ impl Quick {
         if self.t.at(closing) != 41 || self.comments.h_end > closing {
             return false;
         }
-        let opening = self.index_of_outside_comments(40, self.n.at(self.comments.h_preceding + 2));
+        let opening = self.seek(
+            SOUGHT_PAREN,
+            self.n.at(self.comments.h_preceding + 2),
+            |q, from| q.index_of_outside_comments(40, from),
+        );
         if opening < 0 || self.comments.h_start <= opening {
             return false;
         }
@@ -2068,9 +2223,10 @@ impl Quick {
         if self.comments.h_enclosing_kind == k::TypeAlias
             && self.comments.h_following != 0
             && self.comments.h_start
-                >= self.index_of_outside_comments(
-                    61,
+                >= self.seek(
+                    SOUGHT_EQUALS,
                     self.n.at(self.n.at(self.comments.h_enclosing + 4) + 2),
+                    |q, from| q.index_of_outside_comments(61, from),
                 )
         {
             return self.add_leading_comment_to_possible_union_type(self.comments.h_following);
@@ -2107,11 +2263,14 @@ impl Quick {
                 || self.comments.h_preceding_kind == k::BinaryExpression)
         {
             let right = self.n.at(self.comments.h_preceding + 5);
-            if self.has_newline_in_range(
+            let right_start = self.n.at(right + 1);
+            if self.seek(
+                SOUGHT_LINE_BREAK,
                 self.n.at(self.n.at(self.comments.h_enclosing + 4) + 1),
-                self.n.at(right + 1),
-            ) && self.is_single_line_comment()
-                && !self.has_newline_in_range(self.n.at(right + 1), self.comments.h_start)
+                |q, from| i32::from(q.has_newline_in_range(from, right_start)),
+            ) != 0
+                && self.is_single_line_comment()
+                && !self.has_newline_before_comment_from(right_start, 1)
             {
                 self.add_trailing(right, self.comments.h_comment);
                 return true;
@@ -2128,14 +2287,17 @@ impl Quick {
             return false;
         }
         // the `=>` before the body
-        let mut arrow = self.n.at(self.n.at(self.comments.h_enclosing + 5) + 1);
-        loop {
-            arrow = self.last_index_of_outside_comments(61, arrow);
-            if arrow < 0 || self.t.at(arrow + 1) == 62 {
-                break;
+        let body = self.n.at(self.comments.h_enclosing + 5);
+        let arrow = self.seek(SOUGHT_ARROW, self.n.at(body + 1), |q, from| {
+            let mut arrow = from;
+            loop {
+                arrow = q.last_index_of_outside_comments(61, arrow);
+                if arrow < 0 || q.t.at(arrow + 1) == 62 {
+                    return arrow;
+                }
+                arrow -= 1;
             }
-            arrow -= 1;
-        }
+        });
         if !(self.comments.h_end < arrow) {
             self.add_block_or_not_comment(self.comments.h_following, self.comments.h_comment);
             return true;
@@ -2186,7 +2348,7 @@ impl Quick {
         if self.comments.h_enclosing_kind != k::ArrowFunctionExpression {
             return false;
         }
-        let index = self.next_char_index(self.comments.h_end);
+        let index = self.next_index_behind_comment();
         if self.t.at(index) == 61 && self.t.at(index + 1) == 62 {
             self.add_dangling(self.comments.h_enclosing, self.comments.h_comment);
             let v0 = self.comments.h_comment * C_STRIDE + C_FLAGS;
@@ -2197,7 +2359,7 @@ impl Quick {
     }
 
     pub(crate) fn handle_function_name_comments(&mut self) -> bool {
-        if self.next_char(self.comments.h_end) != 40 {
+        if self.next_char_behind_comment() != 40 {
             return false;
         }
         if self.comments.h_preceding != 0 && is_function_like(self.comments.h_enclosing_kind) {
@@ -2308,6 +2470,10 @@ impl Quick {
 
     /// merge_nestled_jsdoc_comments: a doc comment that starts where another ends is one comment with it.
     pub(crate) fn merge_nestled_jsdoc_comments(&mut self) {
+        const GONE: i32 = -1;
+        let mut any_gone = false;
+        // Whether the comment behind the one at hand is indentable, if that is known. Two that are make one that is.
+        let mut behind: Option<bool> = None;
         let mut i = self.lexer.c_count - 2;
         while i >= self.lexer.c_base {
             let at = i * C_STRIDE;
@@ -2330,8 +2496,26 @@ impl Quick {
                     any_gone = true;
                 }
             }
+            behind = this;
             i -= 1;
         }
+        if !any_gone {
+            return;
+        }
+        let mut to = self.lexer.c_base;
+        let mut from = self.lexer.c_base;
+        while from < self.lexer.c_count {
+            if self.lexer.c.at(from * C_STRIDE + C_START) != GONE {
+                if to != from {
+                    self.lexer
+                        .c
+                        .move_within(to * C_STRIDE, from * C_STRIDE, (from + 1) * C_STRIDE);
+                }
+                to += 1;
+            }
+            from += 1;
+        }
+        self.set_comment_count(to);
     }
 
     pub(crate) fn attach_comments(&mut self, program: i32) -> R<()> {
@@ -2347,6 +2531,12 @@ impl Quick {
         self.comments.path_pos = 0;
         self.comments.tie_count = 0;
         self.comments.gap_last = -1;
+        self.comments.gap_next_of = NO_COMMENT;
+        self.comments.own_line_of = NO_COMMENT;
+        self.comments.end_of_line_to = NO_COMMENT;
+        self.comments.sought = [0; 3];
+        self.comments.lines_from = [[0; 3]; 2];
+        self.comments.union_line = [0; 3];
         self.comments.asked.clear();
         self.push_level(program);
         let mut i = self.lexer.c_base;
@@ -2448,25 +2638,3 @@ impl Quick {
         Ok(())
     }
 }
-        const GONE: i32 = -1;
-        let mut any_gone = false;
-        // Whether the comment behind the one at hand is indentable, if that is known. Two that are make one that is.
-        let mut behind: Option<bool> = None;
-            behind = this;
-        if !any_gone {
-            return;
-        }
-        let mut to = self.lexer.c_base;
-        let mut from = self.lexer.c_base;
-        while from < self.lexer.c_count {
-            if self.lexer.c.at(from * C_STRIDE + C_START) != GONE {
-                if to != from {
-                    self.lexer
-                        .c
-                        .move_within(to * C_STRIDE, from * C_STRIDE, (from + 1) * C_STRIDE);
-                }
-                to += 1;
-            }
-            from += 1;
-        }
-        self.set_comment_count(to);

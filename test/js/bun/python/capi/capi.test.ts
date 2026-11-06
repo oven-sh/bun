@@ -102,6 +102,8 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   const refusedToTake =
     "Python: Py_INCREF was called by a thread that does not hold the GIL; the count stays as it was, " +
     "and from now on no count falls: whatever C owns is held for ever\n";
+  const refusedWithoutGIL =
+    "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n";
   const notThisOne = "the C API serves the first Python interpreter of a process, and that is not this one";
 
   test.concurrent(
@@ -115,6 +117,20 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     },
     limit,
   );
+
+  for (const taker of ["the indicator", "a tuple", "a list"]) {
+    test.concurrent(
+      `a function that takes a reference over for ${taker} says what becomes of it if the caller is refused`,
+      async () => {
+        expect(await run("here/without_gil.py", "without_gil", {}, `gives back to ${taker}`)).toEqual({
+          stdout: "(True, True)\n0\nTrue\nNone\n(True, True)\n",
+          stderr: refusedWithoutGIL + refusedToGiveBack,
+          exitCode: 0,
+        });
+      },
+      limit,
+    );
+  }
 
   test.concurrent(
     "Py_DECREF in a thread without the GIL is refused while the thread ends",
@@ -146,7 +162,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
       const answers = "3221225472 1 0 1 1 1 -1 -1 1 | 1 1 1 1\n";
       expect(await run("here/without_gil.py", "without_gil", {}, "asks")).toEqual({
         stdout: answers.repeat(2),
-        stderr: "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n",
+        stderr: refusedWithoutGIL,
         exitCode: 0,
       });
     },
@@ -318,8 +334,6 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     limit,
   );
 
-  const refusedWithoutGIL =
-    "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n";
   for (const what of ["an exception", "a type"]) {
     test.concurrent(
       `a worker's JS that calls the API with ${what} is refused, and that is all: nobody counts references to it`,
@@ -362,10 +376,30 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     limit,
   );
 
+  test.concurrent(
+    "the books of a call do not depend on for whom C runs further out",
+    async () => {
+      const books = "ValueError: raised by C; RuntimeError('from the destructor'); C owns [0, 0, 0], [1], [0]\n";
+      expect(await runInTwo("realm_books.mjs")).toEqual({
+        stdout:
+          `main: ${books}main, inside C that main runs: ${books}main, inside C that the realm runs: ${books}` +
+          "later: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n" +
+          "C owns: [1]\nmain calls it: Thing\nC owns: [1]\nthe realm calls it: Thing\nC owns: [1]\n" +
+          "the realm calls it, inside C that the realm runs: Thing\nC owns: [1]\n" +
+          "what C owns is alive, and is: True the one that C owns\n",
+        // (The C that the realm runs asks for the length of a list.)
+        stderr: refusedToEnter,
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
+
   for (const [others, mainToo] of [
     [0, false],
     [16, false],
     [0, true],
+    [16, true],
   ] as const) {
     const main = mainToo ? `main has the API: ImportError: ${notThisOne}\n` : "";
     test.concurrent(
@@ -404,6 +438,18 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     async () => {
       expect(await run("here/null_type.py", "ownership")).toEqual({
         stdout: "SystemError _PyErr_SetObject: the exception is NULL\n".repeat(3),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
+
+  test.concurrent(
+    "a tuple that C has raised is the program's",
+    async () => {
+      expect(await run("here/raised_tuple.py", "ownership")).toEqual({
+        stdout: "SystemError bad argument to internal function\n(4,) found found\n",
         stderr: "",
         exitCode: 0,
       });

@@ -39,6 +39,9 @@ if sys.argv[2].startswith("gives back"):
     # It is not given back: the count is as it was, and other counts go on as before.
     if sys.argv[2] == "gives back":
         print(lib.change_in_another_thread(thing, 1))
+    elif sys.argv[2].startswith("gives back to "):
+        # To a function that takes it over.
+        print(lib.change_in_another_thread(thing, 3 + ["the indicator", "a tuple", "a list"].index(sys.argv[2][14:])))
     else:
         # By what is destroyed with the thread, down to the last of it.
         print(lib.change_in_another_thread(thing, 2), lib.rounds_at_the_end())

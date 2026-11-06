@@ -51,13 +51,19 @@ tuple_changed_after_a_look = declare("tuple_changed_after_a_look", py_object, LO
 set_item_of_a_tuple_owned_twice = declare("set_item_of_a_tuple_owned_twice", c_int, py_object)
 make_tuple_and_keep_it = declare("make_tuple_and_keep_it", py_object, py_object)
 put_tuple_into_list_and_keep_it = declare("put_tuple_into_list_and_keep_it", py_object, py_object)
+put_tuple_into_tuple_and_keep_it = declare("put_tuple_into_tuple_and_keep_it", py_object, py_object)
 set_item_of_kept_tuple = declare("set_item_of_kept_tuple", c_int, py_object)
 give_back_kept_tuple = declare("give_back_kept_tuple", None)
+fill_tuple_that_a_tuple_has_taken_over = declare("fill_tuple_that_a_tuple_has_taken_over", py_object, py_object)
+fill_tuples_that_a_list_has_taken_over = declare("fill_tuples_that_a_list_has_taken_over", py_object, c_long)
+fill_tuple_that_was_appended = declare("fill_tuple_that_was_appended", py_object, py_object, c_int)
+fill_tuple_that_two_lists_have = declare("fill_tuple_that_two_lists_have", py_object, py_object)
 list_of_floats = declare("list_of_floats", py_object, c_long)
 raise_object = declare("raise_object", None, py_object, py_object)
 raise_string = declare("raise_string", None, py_object, c_char_p)
 raise_none = declare("raise_none", None, py_object)
 raise_and_return = declare("raise_and_return", py_object, py_object, py_object)
+raise_and_return_what_is_no_object = declare("raise_and_return_what_is_no_object", py_object, py_object)
 
 
 class Thing:
@@ -160,11 +166,17 @@ changed = tuple_changed_after_a_look(LOOKS(lambda t: hashes.append((hash(t), t =
 print(changed, hashes == [(hash((4,)), True)])
 print(attempt(set_item, changed, 0, 99), changed)
 # What C has given away it fills no longer, though it owns one reference again.
-for give in (make_tuple_and_keep_it, lambda item: put_tuple_into_list_and_keep_it(item)[0]):
+for give in (make_tuple_and_keep_it, lambda item: put_tuple_into_list_and_keep_it(item)[0], lambda item: put_tuple_into_tuple_and_keep_it(item)[0]):
     given = give(4)
     found = {given: "found"}
     print(attempt(set_item_of_kept_tuple, 5), given, found.get(given), found.get((4,)), found.get((5,)), list(found))
     give_back_kept_tuple()
+# The one reference may be a container's.
+print(attempt(fill_tuple_that_a_tuple_has_taken_over, 7))
+print(attempt(fill_tuples_that_a_list_has_taken_over, 3))
+print(attempt(fill_tuple_that_was_appended, 7, True))
+print(attempt(fill_tuple_that_was_appended, 7, False))
+print(attempt(fill_tuple_that_two_lists_have, 7))
 
 print("--- lists")
 print(list_of_floats(0), list_of_floats(3), len(list_of_floats(100000)), list_of_floats(100000)[-1])
@@ -192,4 +204,5 @@ print(attempt(raise_object, 5, "x"), "|", attempt(raise_object, int, "x"))
 
 print("--- what C raised is raised, whatever it returned, and by the call that raised it")
 print(attempt(raise_and_return, KeyError, [1]), "|", count([1]) > 1)
+print(attempt(raise_and_return_what_is_no_object, KeyError))
 print("done")

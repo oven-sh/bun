@@ -168,3 +168,72 @@ def identities_agree():
         all(cast(id(t), py_object).value is t for t in types),
         all(_ctypes.PyObj_FromPtr(id(t)) is t for t in types),
     ))
+
+
+# How many references C owns. Only with the API.
+def owned(libraries, *objects):
+    lib = ctypes.PyDLL(f"{libraries}/libownership.so")
+    lib.count.argtypes = [py_object]
+    lib.count.restype = c_long
+    return [lib.count(x) - lib.count(Thing()) for x in objects]
+
+
+# The books that ctypes keeps of its own calls: the reference that comes with a result is taken over; what C raised is thrown, and the indicator's reference given up, after a call and
+# after a library has gone; Python's own Py_INCREF() counts, and Py_DECREF() gives it back. What C is left with: nothing, but for the one that Python has taken, while it has it.
+looked_at = []
+
+
+def books(libraries):
+    lib = ctypes.PyDLL(f"{libraries}/libownership.so")
+    lib.list_of_floats.argtypes = [c_long]
+    lib.list_of_floats.restype = py_object
+    lib.raise_instance.argtypes = [py_object]
+    lib.raise_instance.restype = None
+    result = lib.list_of_floats(1)
+    raised = ValueError("raised by C")
+    thrown = attempt(lib.raise_instance, raised)
+    goes = ctypes.PyDLL(f"{libraries}/libgoes.so")
+    goes.when_it_goes(1)
+    try:
+        _ctypes.dlclose(goes._handle)
+    except SystemError as e:
+        raised_as_it_went = e.__cause__
+    thing = Thing()
+    _ctypes.Py_INCREF(thing)
+    taken = owned(libraries, thing)
+    _ctypes.Py_DECREF(thing)
+    looked_at.extend([result, raised, raised_as_it_went, thing])
+    return f"{thrown}; {raised_as_it_went!r}; C owns {owned(libraries, result, raised, raised_as_it_went)}, {taken}, {owned(libraries, thing)}"
+
+
+def books_later(libraries):
+    return str(owned(libraries, *looked_at))
+
+
+# A callback that returns an object to which C owns one reference. Its address, as a str: that gets into another realm.
+def make_callback(libraries):
+    global lib_that_holds, thing, ref_to_thing, callback
+    lib_that_holds = ctypes.PyDLL(f"{libraries}/libreferences.so")
+    lib_that_holds.hold.argtypes = [py_object]
+    lib_that_holds.held.restype = py_object
+    thing = Thing()
+    thing.name = "the one that C owns"
+    ref_to_thing = weakref.ref(thing)
+    lib_that_holds.hold(thing)
+    callback = CFUNCTYPE(py_object)(lambda: thing)
+    return str(cast(callback, c_void_p).value)
+
+
+def call_by_address(address):
+    return type(CFUNCTYPE(py_object)(int(address))()).__name__
+
+
+def owned_of_thing(libraries):
+    return str(owned(libraries, thing))
+
+
+def drop_thing_and_ask_c():
+    global thing
+    thing = None
+    gc.collect()
+    return f"{ref_to_thing() is not None} {attempt(lambda: lib_that_holds.held(0).name)}"

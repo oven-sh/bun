@@ -37,6 +37,12 @@ SystemError: bad argument to internal function
 SystemError: bad argument to internal function (5,)
 SystemError: bad argument to internal function (4,) found found None [(4,)]
 SystemError: bad argument to internal function (4,) found found None [(4,)]
+SystemError: bad argument to internal function (4,) found found None [(4,)]
+((7,),)
+[(0, 0), (1, 1), (2, 4)]
+[(7,)]
+SystemError: bad argument to internal function
+SystemError: bad argument to internal function
 --- lists
 [] [0.5, 1.5, 2.5] 100000 99999.5
 SystemError: bad argument to internal function
@@ -81,4 +87,5 @@ LookupError: in __init__ ('x',) | LookupError: in __init__ ('text',) | LookupErr
 SystemError: _PyErr_SetObject: exception 5 is not a BaseException subclass | SystemError: _PyErr_SetObject: exception <class 'int'> is not a BaseException subclass
 --- what C raised is raised, whatever it returned, and by the call that raised it
 KeyError:  | True
+KeyError: 
 done

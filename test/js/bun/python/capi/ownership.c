@@ -76,8 +76,77 @@ PyObject *put_tuple_into_list_and_keep_it(PyObject *item)
     PyList_SetItem(list, 0, tuple);
     return list;
 }
+PyObject *put_tuple_into_tuple_and_keep_it(PyObject *item)
+{
+    PyObject *outer = PyTuple_New(1);
+    PyObject *tuple = PyTuple_New(1);
+    if (!outer || !tuple || PyTuple_SetItem(tuple, 0, Py_NewRef(item)))
+        return NULL;
+    kept_tuple = Py_NewRef(tuple);
+    PyTuple_SetItem(outer, 0, tuple);
+    return outer;
+}
 int set_item_of_kept_tuple(PyObject *item) { return PyTuple_SetItem(kept_tuple, 0, Py_NewRef(item)); }
 void give_back_kept_tuple(void) { Py_CLEAR(kept_tuple); }
+
+/* What C raises the program gets, whatever it is. */
+void raise_tuple_and_keep_it(PyObject *item)
+{
+    kept_tuple = PyTuple_New(1);
+    PyTuple_SetItem(kept_tuple, 0, Py_NewRef(item));
+    PyErr_SetRaisedException(Py_NewRef(kept_tuple));
+}
+
+/* "Put it in, then fill it": from then on one Py_DECREF of the container frees all. The one reference is the container's. */
+PyObject *fill_tuple_that_a_tuple_has_taken_over(PyObject *item)
+{
+    PyObject *outer = PyTuple_New(1), *inner = PyTuple_New(1);
+    if (!outer || !inner || PyTuple_SetItem(outer, 0, inner))
+        return NULL;
+    if (PyTuple_SetItem(inner, 0, Py_NewRef(item))) {
+        Py_DECREF(outer);
+        return NULL;
+    }
+    return outer;
+}
+PyObject *fill_tuples_that_a_list_has_taken_over(long n)
+{
+    PyObject *list = PyList_New(n);
+    for (long i = 0; list && i < n; i++) {
+        PyObject *pair = PyTuple_New(2);
+        if (!pair || PyList_SetItem(list, i, pair) || PyTuple_SetItem(pair, 0, PyLong_FromLong(i)) || PyTuple_SetItem(pair, 1, PyLong_FromLong(i * i)))
+            Py_CLEAR(list);
+    }
+    return list;
+}
+/* The list takes a reference of its own. While C has its own too, there are two. */
+PyObject *fill_tuple_that_was_appended(PyObject *item, int gives_its_reference_back_first)
+{
+    PyObject *list = PyList_New(0), *tuple = PyTuple_New(1);
+    if (!list || !tuple || PyList_Append(list, tuple))
+        return NULL;
+    if (gives_its_reference_back_first)
+        Py_DECREF(tuple);
+    int status = PyTuple_SetItem(tuple, 0, Py_NewRef(item));
+    if (!gives_its_reference_back_first)
+        Py_DECREF(tuple);
+    if (status)
+        Py_CLEAR(list);
+    return list;
+}
+/* In two containers there are two. */
+PyObject *fill_tuple_that_two_lists_have(PyObject *item)
+{
+    PyObject *lists = PyTuple_New(2), *tuple = PyTuple_New(1);
+    PyTuple_SetItem(lists, 0, PyList_New(0));
+    PyTuple_SetItem(lists, 1, PyList_New(0));
+    PyList_Append(PyTuple_GetItem(lists, 0), tuple);
+    PyList_Append(PyTuple_GetItem(lists, 1), tuple);
+    Py_DECREF(tuple);
+    if (PyTuple_SetItem(tuple, 0, Py_NewRef(item)))
+        Py_CLEAR(lists);
+    return lists;
+}
 
 PyObject *list_of_floats(long n)
 {
@@ -96,4 +165,10 @@ PyObject *raise_and_return(PyObject *type, PyObject *object)
 {
     PyErr_SetNone(type);
     return Py_NewRef(object);
+}
+/* What is returned beside an exception nobody looks at. */
+PyObject *raise_and_return_what_is_no_object(PyObject *type)
+{
+    PyErr_SetNone(type);
+    return (PyObject *)0x10;
 }

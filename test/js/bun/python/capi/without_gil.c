@@ -17,6 +17,23 @@ static void *give_back(void *object)
     return NULL;
 }
 
+/* To a function that takes a reference over, whatever comes of the call. */
+static void *hand_over_to_indicator(void *object)
+{
+    PyErr_SetRaisedException((PyObject *)object);
+    return NULL;
+}
+static void *hand_over_to_tuple(void *object)
+{
+    PyTuple_SetItem((PyObject *)object, 0, (PyObject *)object);
+    return NULL;
+}
+static void *hand_over_to_list(void *object)
+{
+    PyList_SetItem((PyObject *)object, 0, (PyObject *)object);
+    return NULL;
+}
+
 /* What is destroyed with a thread is destroyed in rounds, for as long as a destructor sets a value again. This one is there in every round. */
 static pthread_key_t key;
 static int rounds;
@@ -44,7 +61,8 @@ long change_in_another_thread(PyObject *object, int what)
     pthread_t thread;
     if (what == 2 && pthread_key_create(&key, give_back_in_every_round))
         return -1;
-    if (pthread_create(&thread, NULL, what == 2 ? give_back_at_the_end : what ? give_back : take, object))
+    void *(*const does[])(void *) = {take, give_back, give_back_at_the_end, hand_over_to_indicator, hand_over_to_tuple, hand_over_to_list};
+    if (pthread_create(&thread, NULL, does[what], object))
         return -1;
     pthread_join(thread, NULL);
     return (long)(Py_REFCNT(object) - before);

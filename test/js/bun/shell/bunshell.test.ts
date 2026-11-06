@@ -1746,6 +1746,25 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo hi | ${BUN} -e 'process.exit(69)'`.exitCode(69).stdout("").runAsTest("last exit code 3");
 
+    TestBuilder.command`X=echo; Y=cat; $X hi | $Y | cat`.stdout("hi\n").runAsTest("builtins named by variables");
+    TestBuilder.command`${"echo"} hi | cat | ${"cat"}`.stdout("hi\n").runAsTest("builtins named by interpolation");
+    TestBuilder.command`(echo hi; echo there) | cat | (cat)`.stdout("hi\nthere\n").runAsTest("subshells and a builtin");
+
+    const echoStdin = `${$.escape(BUN)} -e 'process.stdin.pipe(process.stdout)'`;
+    for (const pipeline of [
+      "cat big.txt | cat | cat",
+      "Y=cat; cat big.txt | $Y | cat",
+      `cat big.txt | ${echoStdin} | cat`,
+      `${echoStdin} < big.txt | cat | ${echoStdin}`,
+      "(cat big.txt) | cat | (cat)",
+    ]) {
+      const big = Buffer.alloc(3_000_000, "0123456789abcde\n").toString();
+      TestBuilder.command`${{ raw: pipeline }}`
+        .file("big.txt", big)
+        .stdout(stdout => expect(stdout === big).toBe(true))
+        .runAsTest(`more than a pipe holds: ${pipeline.replaceAll(echoStdin, "bun")}`);
+    }
+
     test.skipIf(!isWindows).each([
       ["empty.exe", "", "Inappropriate file type or format"],
       ["text.exe", "this is not an executable", "unknown error"],

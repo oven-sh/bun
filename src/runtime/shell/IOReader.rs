@@ -145,6 +145,13 @@ impl IOReader {
         this
     }
 
+    /// Whether `fd` is a pipe that was made for the event loop.
+    #[cfg(windows)]
+    pub(crate) fn set_nonblocking(&self, nonblocking: bool) {
+        let flag = bun_io::pipe_reader::ReaderFlags::NONBLOCKING;
+        self.reader().flags.set(flag, nonblocking);
+    }
+
     /// `interp` must outlive this reader (it owns the IO struct that holds this `Rc`).
     #[inline]
     pub(crate) fn set_interp(&self, interp: &Interpreter) {

@@ -451,7 +451,7 @@ describe.concurrent("--update-snapshots", () => {
     expect(result).toMatchObject({
       snapshot: unreadable,
       stderr: expect.stringContaining(
-        `error: --update-snapshots left ${JSON.stringify(join("__snapshots__", "a.test.ts.snap"))} as it is: the file doesn't parse\n` +
+        `error: --update-snapshots left "${join("__snapshots__", "a.test.ts.snap")}" as it is: the file doesn't parse\n` +
           "note: A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. " +
           "A test that is skipped, filtered out, test.failing or a todo with a body does not.\n" +
           "note: Fix the snapshot file, or delete it and run --update-snapshots again.\n",

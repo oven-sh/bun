@@ -93,7 +93,7 @@ describe("a snapshot file that bun test can't write", () => {
   const withUnused = stored + '\nexports[`no test has this name 1`] = `"b"`;\n';
   const matches = `test("matches", () => { expect("a").toMatchSnapshot(); });`;
   const inline = `test("inline", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
-  const quoted = (name: string) => JSON.stringify(join("__snapshots__", name + ".snap"));
+  const quoted = (name: string) => `"${join("__snapshots__", name + ".snap")}"`;
 
   // The modes are restored before `dir` is disposed, so that `rmSync` can remove the tree.
   function readOnly(files: Record<string, string>, directory: "read-only" | "writable" = "read-only") {

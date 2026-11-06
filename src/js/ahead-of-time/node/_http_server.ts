@@ -5085,7 +5085,7 @@ function endWithoutSocket(
     // for its drain, a small one was left in the socket's buffer. Any other socket counts its own.
     const socket = res[kSocket] as $Node.HttpServerSocket | null;
     const unsent =
-      res[kNeedDrain] || socket?.[kClosedWithUnsentData] || socket?.writableLength! > 0
+      res[kNeedDrain] || socket?.[kClosedWithUnsentData] || (socket?.writableLength ?? 0) > 0
         ? (socket?.errored ?? $ERR_STREAM_DESTROYED("write"))
         : undefined;
     queueTick2(finishResponse, res, unsent);

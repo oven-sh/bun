@@ -624,8 +624,11 @@ describe("@types/bun integration test", () => {
           "",
         )}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n${FAKE_TIMERS_TYPES}`,
     );
+    // The root has to be the path TypeScript resolves `import "bun"` to (the real path), or
+    // the program holds every bun-types declaration twice.
+    const bunTypesIndex = await realpath(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"));
     const program = ts.createProgram({
-      rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
+      rootNames: [bunTypesIndex, join(dir, "Bindgen.d.ts"), pairs],
       options: { ...DEFAULT_COMPILER_OPTIONS, types: [], skipLibCheck: false },
     });
     const source = program.getSourceFile(pairs)!;

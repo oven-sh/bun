@@ -8,7 +8,7 @@
 //! <the output>
 //! ```
 
-use crate::{Bundle, Count, Failure, Flags, Format, output_line};
+use crate::{Bundle, Count, Failure, Flags, Format, both_ways, failing_way, output_line};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -87,29 +87,32 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     other_options += 1;
                     continue;
                 };
-                let actual = match format(name, input, &options) {
-                    Ok((actual, _)) => actual,
-                    Err(Failure::SyntaxError) => b"<SyntaxError>".to_vec(),
-                    Err(Failure::Other) => b"<the formatter failed>".to_vec(),
-                };
-                // The library that writes oxfmt's snapshots turns every `\r\n` into `\n`.
-                let actual = if flavor == b"oxfmt" {
-                    strings::replace_owned(&actual, b"\r\n", b"\n")
-                } else {
-                    actual
-                };
-                count.add(actual == expected);
-                if actual != expected {
+                let actual = both_ways(&options).map(|options| {
+                    let actual = match format(name, input, &options) {
+                        Ok((actual, _)) => actual,
+                        Err(Failure::SyntaxError) => b"<SyntaxError>".to_vec(),
+                        Err(Failure::Other) => b"<the formatter failed>".to_vec(),
+                    };
+                    // The library that writes oxfmt's snapshots turns every `\r\n` into `\n`.
+                    match flavor == b"oxfmt" {
+                        true => strings::replace_owned(&actual, b"\r\n", b"\n"),
+                        false => actual,
+                    }
+                });
+                let failing = failing_way(&actual, |it| *it == expected);
+                count.add(failing.is_none());
+                if let Some(way) = failing {
                     output_line!(
-                        "FAIL {} {} {}",
+                        "FAIL {} {} {}{way}",
                         BStr::new(flavor),
                         BStr::new(name),
                         BStr::new(line)
                     );
+                    let [short, long] = &actual;
                     flags.write_report(
                         &[flavor, b" ", name, b" ", line].concat(),
                         &expected,
-                        &actual,
+                        if *short == expected { long } else { short },
                         input,
                     );
                 }

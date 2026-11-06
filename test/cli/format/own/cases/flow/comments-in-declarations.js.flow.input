@@ -1,0 +1,94 @@
+declare function a /* 1 */ (b: number): void;
+
+declare function c
+// 1
+(b: number): void;
+
+declare function d /* prettier-ignore */ (b: number): void;
+
+declare function d1<T> /* 1 */ (): void;
+
+declare function d2<T> // 1
+(): void;
+
+declare function d3<T>
+// 1
+(b: T): void;
+
+declare function d4 /* 1 */ <T> /* 2 */ (): void;
+
+declare export function d5<T> /* 1 */ (): void;
+
+declare function e(/* 1 */): void;
+
+declare function f(): // 1
+void;
+
+declare function g(): void /* 1 */;
+
+declare function h(x: mixed): boolean %checks(x) /* 1 */ ;
+
+declare function i(x: mixed): /* 1 */ boolean %checks(x);
+
+declare function i1(x: mixed): typeof y /* 1 */;
+
+declare function i2(x: mixed): typeof y // 1
+;
+
+declare hook useA /* 1 */ (): void;
+
+declare component A() // 1
+;
+
+declare component B(a: 1) /* 1 */;
+
+declare export component C( // 1
+a: 1) renders D;
+
+declare export component E(a: 1)
+// 1
+renders F;
+
+declare type G /* 1 */ // 2
+= 1;
+
+declare export default H /* 1 */;
+
+declare module.exports /* 1 */ : I;
+
+opaque type J = /* 1 */ K;
+
+opaque type L = M /* 1 */;
+
+declare opaque type N /* 1 */;
+
+export opaque type O = P // 1
+;
+
+component Q(a /* 1 */ as b: B) {}
+
+component R(a: B) // 1
+renders C {}
+
+hook useB() // 1
+{}
+
+type S<T /* 1 */ : U> = V;
+
+type W<+ /* 1 */ T> = V;
+
+x = (a /* 1 */ : B);
+
+x = (a: B /* 1 */);
+
+const { y, z }
+// 1
+: C = d;
+
+import { type /* 1 */ as a1 } from "x";
+
+enum E1 of /* 1 */ string { A = "a" }
+
+enum E2 { /* 1 */ ... }
+
+enum E3 { A, /* 1 */ ... }

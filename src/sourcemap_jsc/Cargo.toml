@@ -10,11 +10,12 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bstr.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_io.workspace = true
+bun_js_parser.workspace = true
+bun_js_printer.workspace = true
 bun_jsc.workspace = true
 bun_ast.workspace = true
 bun_options_types.workspace = true
@@ -23,5 +24,4 @@ bun_paths.workspace = true
 # re-gated on bun_runtime::bake::production::PerThread. Dep dropped to keep
 # this crate's transitive surface minimal during B-2.
 bun_sourcemap.workspace = true
-bun_url.workspace = true
 bun_wyhash.workspace = true

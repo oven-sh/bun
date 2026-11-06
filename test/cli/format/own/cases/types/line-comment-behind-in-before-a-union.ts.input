@@ -1,0 +1,11 @@
+type A = {
+  [
+    K in // c
+      | keyof WithoutIndexSignature<TTypeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee>
+      | keyof WithoutIndexSignature<TWith>
+  ]: 1;
+};
+type B = {
+  [K in // c
+  keyof T]: 1;
+};

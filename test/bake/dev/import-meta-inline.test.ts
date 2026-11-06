@@ -26,7 +26,7 @@ export default function (req, meta) {
   },
   async test(dev) {
     const response = await dev.fetch("/");
-    const json = await response.json();
+    const json: any = await response.json();
 
     // Check that all properties are strings, not undefined
     expect(typeof json.dir).toBe("string");
@@ -108,7 +108,7 @@ export default function (req, meta) {
   },
   async test(dev) {
     const response = await dev.fetch("/api/v1/handler");
-    const json = await response.json();
+    const json: any = await response.json();
 
     expect(json.file).toBe("handler.ts");
     expect(json.path).toContain(platformPath("routes/api/v1/handler.ts"));
@@ -182,7 +182,7 @@ export default function BlogPost(req, meta) {
   async test(dev) {
     // Test single segment
     const post1 = await dev.fetch("/blog/hello");
-    const json1 = await post1.json();
+    const json1: any = await post1.json();
 
     expect(json1.slug).toEqual(["hello"]);
     expect(json1.title).toBe("Hello");
@@ -198,7 +198,7 @@ export default function BlogPost(req, meta) {
 
     // Test multiple segments
     const post2 = await dev.fetch("/blog/2024/tech/bun-framework");
-    const json2 = await post2.json();
+    const json2: any = await post2.json();
 
     expect(json2.slug).toEqual(["2024", "tech", "bun-framework"]);
     expect(json2.title).toBe("2024 Tech Bun-framework");
@@ -210,7 +210,7 @@ export default function BlogPost(req, meta) {
 
     // Test empty slug (just /blog/)
     const post3 = await dev.fetch("/blog/");
-    const json3 = await post3.json();
+    const json3: any = await post3.json();
 
     expect(json3.slug).toEqual([]);
     expect(json3.title).toBe("");
@@ -261,7 +261,7 @@ export default function GettingStarted(req, meta) {
   async test(dev) {
     // Test static route - should match api.ts, not catch-all
     const apiResponse = await dev.fetch("/docs/api");
-    const apiJson = await apiResponse.json();
+    const apiJson: any = await apiResponse.json();
 
     expect(apiJson.type).toBe("static");
     expect(apiJson.page).toBe("API Documentation");
@@ -271,7 +271,7 @@ export default function GettingStarted(req, meta) {
 
     // Test another static route
     const startResponse = await dev.fetch("/docs/getting-started");
-    const startJson = await startResponse.json();
+    const startJson: any = await startResponse.json();
 
     expect(startJson.type).toBe("static");
     expect(startJson.page).toBe("Getting Started");
@@ -281,7 +281,7 @@ export default function GettingStarted(req, meta) {
     // Test catch-all route - should match for non-static paths
     const guideResponse = await dev.fetch("/docs/guides/advanced/optimization");
     expect(guideResponse.status).toBe(200);
-    const guideJson = await guideResponse.json();
+    const guideJson: any = await guideResponse.json();
 
     expect(guideJson.type).toBe("catch-all");
     expect(guideJson.path).toEqual(["guides", "advanced", "optimization"]);
@@ -296,7 +296,7 @@ export default function GettingStarted(req, meta) {
     });
 
     const updatedResponse = await dev.fetch("/docs/tutorials/intro");
-    const updatedJson = await updatedResponse.json();
+    const updatedJson: any = await updatedResponse.json();
 
     expect(updatedJson.type).toBe("dynamic-catch-all");
     expect(updatedJson.file).toBe("[...path].ts");

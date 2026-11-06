@@ -1,0 +1,29 @@
+# Bun.serve({ routes: { "/": handler } })
+# The host goes over the own properties of `routes` and calls each value that is a function. What `routes` inherits from Object.prototype is no route:
+# nobody calls hasOwnProperty, toString or Object with a request, and no value that nobody describes comes back from such a call.
+# RUN: valueflow-results
+# CHECK: -> f1 BuiltinCallback PerEvent
+# RUN(USED): valueflow-solve used
+# USED: run BunServe
+# USED-NOT: run ObjectPrototypeHasOwnProperty
+# USED-NOT: run ObjectPrototype__defineGetter__
+# USED-NOT: run ObjectPrototypeIsPrototypeOf
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Routes" fields=[{key="/" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Server" fields=[{key="routes" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = Builtin builtin=BunServe
+    v4 = Call v3, -, v2
+    Return
+}
+function f1 name="handler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

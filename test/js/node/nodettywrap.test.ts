@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { isatty } from "node:tty";
 
 test("process.binding('tty_wrap')", () => {
-  // @ts-expect-error
-  const tty_wrap = process.binding("tty_wrap");
+  const tty_wrap: any = process.binding("tty_wrap");
 
   expect(tty_wrap).toBeDefined();
   expect(tty_wrap).toHaveProperty("TTY");

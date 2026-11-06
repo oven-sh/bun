@@ -200,8 +200,13 @@ pub fn replace_package_manager_run(
                 if delimiter > 0 {
                     if strings::has_prefix_comptime(&script[start..], b"npm run ") {
                         append_bun_run(copy_script);
-                        copy_script.push(b' ');
                         entry_i += b"npm run ".len();
+                        let rewritten =
+                            append_npm_run_in_workspaces(copy_script, &script[entry_i..]);
+                        if rewritten == 0 {
+                            copy_script.push(b' ');
+                        }
+                        entry_i += rewritten;
                         delimiter = 0;
                         continue;
                     }
@@ -249,6 +254,104 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
+/// npm takes `-w` / `--workspaces` anywhere, `bun run` only in front. Returns the `args` consumed.
+fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
+    use bun_core::strings;
+
+    let end = strings::index_of_any(args, b";&|\r\n").unwrap_or(args.len());
+    let command = args[..end].trim_ascii_end();
+    if strings::index_of_any(command, b"'\"()$`\\#").is_some() {
+        return 0;
+    }
+
+    let mut flags: Vec<u8> = Vec::new();
+    let mut rest: Vec<u8> = Vec::new();
+    let mut selects_workspaces = false;
+    let mut tokens = strings::tokenize_any(command, b" \t");
+    while let Some(token) = tokens.next() {
+        let workspace = match token {
+            b"-w" | b"--workspace" => tokens.next(),
+            b"--workspaces" | b"--ws" => {
+                selects_workspaces = true;
+                flags.extend_from_slice(b" --workspaces");
+                continue;
+            }
+            b"--if-present" => {
+                flags.extend_from_slice(b" --if-present");
+                continue;
+            }
+            b"--" => {
+                for passed_on in core::iter::once(token).chain(tokens) {
+                    rest.push(b' ');
+                    rest.extend_from_slice(passed_on);
+                }
+                break;
+            }
+            _ => match token
+                .strip_prefix(b"--workspace=")
+                .or_else(|| token.strip_prefix(b"-w="))
+            {
+                Some(workspace) => Some(workspace),
+                None => {
+                    rest.push(b' ');
+                    rest.extend_from_slice(token);
+                    continue;
+                }
+            },
+        };
+        // It must not be the next flag, or a word with a redirect attached to it.
+        let Some(workspace) = workspace.filter(|workspace| {
+            !workspace.is_empty()
+                && workspace[0] != b'-'
+                && strings::index_of_any(workspace, b"<>").is_none()
+        }) else {
+            return 0;
+        };
+        selects_workspaces = true;
+        flags.extend_from_slice(b" --filter=");
+        // npm also accepts the workspace's folder. `--filter` tells a path from a name by the
+        // leading dot.
+        if strings::contains_char(workspace, b'/') && !matches!(workspace[0], b'@' | b'.' | b'/') {
+            flags.extend_from_slice(b"./");
+        }
+        flags.extend_from_slice(workspace);
+    }
+
+    if !selects_workspaces {
+        return 0;
+    }
+    out.extend_from_slice(&flags);
+    out.extend_from_slice(&rest);
+    command.len()
+}
+
+/// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`
+/// file to the environment.
+pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
+
+impl<'a> ScriptArgv<'a> {
+    pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
+        let (null, script) = (core::ptr::null(), script.as_ptr());
+        let (exec, no_env_file) = (c"exec".as_ptr(), c"--no-env-file".as_ptr());
+        let argv = match shell {
+            Some(sh) if cfg!(unix) => [sh.as_ptr(), c"-c".as_ptr(), script, null, null],
+            _ => [
+                bun_core::self_exe_path()?.as_ptr(),
+                exec,
+                no_env_file,
+                script,
+                null,
+            ],
+        };
+        Ok(Self(argv, core::marker::PhantomData))
+    }
+
+    /// The null-terminated array `spawn_process` takes.
+    pub fn as_ptr(&self) -> *const *const c_char {
+        self.0.as_ptr()
+    }
+}
+
 pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) package_name: Box<[u8]>,
 
@@ -283,13 +386,26 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
-pub struct InstallCtx<'a> {
-    pub(crate) entry_id: entry::Id,
-    /// Raw `*mut` for the same reason as
-    /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
-    /// mutate Installer state from inside an exit-handler callback.
-    pub(crate) installer: *mut Installer<'a>,
+/// The linker, not the script's cwd, determines what gets removed when an optional dependency's
+/// script fails.
+pub enum InstallCtx<'a> {
+    Isolated {
+        entry_id: entry::Id,
+        /// A raw `*mut`, because `on_task_complete` and `start_task` mutate it from an exit-handler
+        /// callback.
+        installer: *mut Installer<'a>,
+    },
+    /// The package is `node_modules/<package_name>` of this tree.
+    Hoisted {
+        tree_id: crate::lockfile_real::tree::Id,
+        unfinished: UnfinishedScripts,
+    },
 }
+
+/// The packages that the hoisted linker placed and whose scripts haven't all run yet. Main thread
+/// only.
+pub(crate) type UnfinishedScripts =
+    std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
 
 impl<'a> InstallCtx<'a> {
     /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
@@ -301,9 +417,16 @@ impl<'a> InstallCtx<'a> {
     /// loop, so no other `&`/`&mut Installer` overlaps the returned borrow.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn installer_mut(&self) -> &mut Installer<'a> {
+    fn isolated(&self) -> Option<(entry::Id, &mut Installer<'a>)> {
+        let Self::Isolated {
+            entry_id,
+            installer,
+        } = *self
+        else {
+            return None;
+        };
         // SAFETY: see fn doc.
-        unsafe { &mut *self.installer }
+        Some((entry_id, unsafe { &mut *installer }))
     }
 }
 
@@ -392,7 +515,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
+    #[inline(never)]
     fn maybe_finished(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return;
         }
@@ -473,8 +598,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe {
             if !(*this).has_incremented_alive_count {
                 (*this).has_incremented_alive_count = true;
-                // .monotonic is okay because because this value is only used by hoisted installs, which
-                // only use this type on the main thread.
+                // Relaxed is enough, because it's only read and written on the main thread.
                 let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -493,7 +617,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unsafe {
                 if (*this).has_incremented_alive_count {
                     (*this).has_incremented_alive_count = false;
-                    // .monotonic is okay because because this value is only used by hoisted installs.
+                    // Relaxed is enough, because it's only read and written on the main thread.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
                 Self::ensure_not_in_heap(this);
@@ -533,9 +657,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             replace_package_manager_run(&mut copy_script, original_script)?;
             copy_script.push(0);
 
-            // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
-            let combined_script: &mut ZStr =
-                ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
+            let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
+            let argv = ScriptArgv::new((*this).shell_bin, combined_script)?;
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
                 Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
@@ -561,30 +684,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(combined_script.as_bytes())
             );
 
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
-                [
-                    (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    c"-c".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            } else {
-                [
-                    bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    c"exec".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            };
-            const _: () = assert!(
-                core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
-            );
-
             // OWNERSHIP:
             // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
             // `spawn_process_windows` does `heap::take(ptr)` on the
@@ -596,16 +695,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // passed to libuv) and take SOLE ownership from
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
-            let spawn_options = SpawnOptions {
-                stdin: if (*this).foreground {
-                    bun_spawn::Stdio::Inherit
-                } else {
+            let (log_level, foreground) = ((*manager).options.log_level, (*this).foreground);
+            let output = || {
+                if log_level == crate::LogLevel::Silent {
                     bun_spawn::Stdio::Ignore
-                },
-
-                stdout: if (*manager).options.log_level == crate::LogLevel::Silent {
-                    bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                } else if log_level.is_verbose() || foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
                     #[cfg(unix)]
@@ -616,31 +710,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     {
                         // Ownership of this raw heap allocation transfers to
                         // `spawn_process_windows`, which `heap::take`s it into
-                        // `spawned.stdout`.
+                        // `spawned.{stdout,stderr}`.
                         bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                             bun_core::ffi::zeroed::<uv::Pipe>(),
                         ))
                             as bun_spawn::windows::UvPipePtr)
                     }
-                },
-                stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
-                    bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                }
+            };
+            let spawn_options = SpawnOptions {
+                stdin: if foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
-                    #[cfg(unix)]
-                    {
-                        bun_spawn::Stdio::Buffer
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        // Ownership transfers to `spawned.stderr`.
-                        bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                            bun_core::ffi::zeroed::<uv::Pipe>(),
-                        ))
-                            as bun_spawn::windows::UvPipePtr)
-                    }
+                    bun_spawn::Stdio::Ignore
                 },
+                stdout: output(),
+                stderr: output(),
                 cwd: Box::<[u8]>::from(cwd),
 
                 #[cfg(windows)]
@@ -650,6 +735,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 },
 
                 stream: false,
+                // The kernel kills the child when bun dies, so no script outlives the install.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
                 ..Default::default()
             };
 
@@ -661,34 +749,42 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let spawned = match bun_spawn::spawn_process(
-                &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
-                // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-                argv.as_mut_ptr().cast(),
-                (*this).envp.as_ptr().cast::<*const c_char>(),
-            ) {
-                Ok(Ok(s)) => s,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                        // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                        // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                        // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                        // and `uv_close`+free them explicitly here — otherwise the heap
-                        // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Allocation
-                        // happens inline (see OWNERSHIP note above), so the error
-                        // path must be handled explicitly.
-                        let mut spawn_options = spawn_options;
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
+            // `envp` is shared by the whole chain. These two variables differ per script.
+            let lifecycle_event = [
+                b"npm_lifecycle_event=".as_slice(),
+                (*this).script_name(),
+                b"\0",
+            ]
+            .concat();
+            let lifecycle_script = [
+                b"npm_lifecycle_script=".as_slice(),
+                &original_script[..],
+                b"\0",
+            ]
+            .concat();
+            let chain_envp = (*this).envp.as_slice();
+            let mut envp: Vec<*const c_char> = chain_envp[..chain_envp.len() - 1].to_vec();
+            envp.extend([
+                lifecycle_event.as_ptr().cast::<c_char>(),
+                lifecycle_script.as_ptr().cast::<c_char>(),
+                core::ptr::null(),
+            ]);
+            let spawned =
+                match bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) {
+                    Ok(Ok(s)) => s,
+                    res => {
+                        #[cfg(windows)]
+                        {
+                            // On error, this function still owns the `uv::Pipe`s, because
+                            // `WindowsStdio` has no `Drop`.
+                            let mut spawn_options = spawn_options;
+                            spawn_options.stdout.deinit();
+                            spawn_options.stderr.deinit();
+                        }
+                        res??;
+                        unreachable!();
                     }
-                    res??;
-                    unreachable!();
-                }
-            };
+                };
             #[cfg(windows)]
             let mut spawned = spawned;
 
@@ -804,16 +900,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
+                // Write the raw bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
+                let _ = Output::error_writer().write_all(stdout.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
+                let _ = Output::error_writer().write_all(stderr.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stderr.clear();
                 stderr.shrink_to_fit();
             }
@@ -833,8 +930,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         if self.has_incremented_alive_count {
             self.has_incremented_alive_count = false;
-            // .monotonic is okay because because this value is only used by hoisted installs, which
-            // only use this type on the main thread.
+            // Relaxed is enough, because it's only read and written on the main thread.
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
 
@@ -846,14 +942,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Exited(exit) => {
                 if exit.code > 0 {
                     if self.optional {
-                        if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
-                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
-                        self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
+                        self.discard_failed_optional_package();
                         return;
                     }
                     self.print_output();
@@ -863,6 +952,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bstr::BStr::new(&self.package_name),
                         exit.code,
                     );
+                    // Git dependencies are the only dependencies whose `prepare` scripts run.
+                    if self.scripts.is_dependency && self.script_name().ends_with(b"prepare") {
+                        bun_core::note!(
+                            "devDependencies of a git dependency are not installed before its prepare scripts"
+                        );
+                    }
+                    self.discard_packages_with_unfinished_scripts();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
@@ -885,22 +981,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     }
                 }
 
-                if let Some(ctx) = &self.ctx {
-                    match self.current_script_index {
-                        // preinstall
-                        0 => {
-                            let installer = ctx.installer_mut();
-                            let previous_step = installer.store.entries.items_step()
-                                [ctx.entry_id.get() as usize]
-                                .swap(Step::Binaries as u32, Ordering::Release);
-                            debug_assert!(previous_step == Step::RunPreinstall as u32);
-                            installer.start_task(ctx.entry_id);
-                            self.decrement_pending_script_tasks();
-                            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                            return;
-                        }
-                        _ => {}
+                if let Some((entry_id, installer)) =
+                    self.ctx.as_ref().and_then(InstallCtx::isolated)
+                {
+                    // preinstall
+                    if self.current_script_index == 0 {
+                        let previous_step = installer.store.entries.items_step()
+                            [entry_id.get() as usize]
+                            .swap(Step::Binaries as u32, Ordering::Release);
+                        debug_assert!(previous_step == Step::RunPreinstall as u32);
+                        installer.start_task(entry_id);
+                        self.decrement_pending_script_tasks();
+                        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+                        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                        return;
                     }
                 }
 
@@ -926,6 +1020,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                     err.name(),
                                 ),
                             );
+                            self.discard_packages_with_unfinished_scripts();
                             Global::exit(1);
                         }
                         return;
@@ -939,10 +1034,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     );
                 }
 
-                if let Some(ctx) = &self.ctx {
-                    let installer = ctx.installer_mut();
+                if let Some((entry_id, installer)) =
+                    self.ctx.as_ref().and_then(InstallCtx::isolated)
+                {
                     let previous_step = installer.store.entries.items_step()
-                        [ctx.entry_id.get() as usize]
+                        [entry_id.get() as usize]
                         .swap(Step::Done as u32, Ordering::Release);
                     if bun_core::Environment::CI_ASSERT {
                         debug_assert!(self.current_script_index != 0);
@@ -950,18 +1046,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             previous_step == Step::RunPostInstallAndPrePostPrepare as u32
                         );
                     }
-                    let _ = previous_step;
-                    installer.on_task_complete(ctx.entry_id, CompleteState::Success);
+                    installer.on_task_complete(entry_id, CompleteState::Success);
                 }
 
                 // the last script finished
+                self.forget_unfinished_scripts();
                 self.decrement_pending_script_tasks();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             }
             Status::Signaled(signal) => {
                 self.print_output();
-                let signal_code = bun_sys::SignalCode::from(signal);
+                let signal_code = bun_sys::SignalCode(signal);
 
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
@@ -969,26 +1065,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
+                self.discard_packages_with_unfinished_scripts();
 
-                // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
-                // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
-                // `raise_ignoring_panic_handler` path is preserved.
-                Global::raise_ignoring_panic_handler(
-                    Status::Signaled(signal)
-                        .signal_code()
-                        .unwrap_or(bun_core::SignalCode::SIGTERM),
-                );
+                Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
             }
             Status::Err(err) => {
                 if self.optional {
-                    if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
-                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Release);
-                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                    }
-                    self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
+                    self.discard_failed_optional_package();
                     return;
                 }
 
@@ -998,6 +1081,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 );
+                self.discard_packages_with_unfinished_scripts();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1050,26 +1134,61 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn deinit_and_delete_package(&mut self) {
+    fn forget_unfinished_scripts(&self) {
+        if let Some(InstallCtx::Hoisted {
+            tree_id,
+            unfinished,
+        }) = &self.ctx
+        {
+            unfinished.borrow_mut().retain(|(tree, folder_name)| {
+                tree != tree_id || **folder_name != *self.package_name
+            });
+        }
+    }
+
+    /// Both linkers treat a package that's at its final path as installed. Removing these packages
+    /// makes the next install run their scripts.
+    fn discard_packages_with_unfinished_scripts(&self) {
+        Output::flush();
+        if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
+            for (tree_id, folder_name) in unfinished.borrow().iter() {
+                crate::package_installer::remove_placed_package(
+                    &self.manager().lockfile,
+                    *tree_id,
+                    folder_name,
+                );
+            }
+        } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
+        {
+            installer.discard_entries_with_unfinished_scripts(entry_id);
+        }
+    }
+
+    /// Frees `self`.
+    fn discard_failed_optional_package(&mut self) {
+        self.forget_unfinished_scripts();
+        self.decrement_pending_script_tasks();
+        let deleted = match self.ctx.take() {
+            Some(InstallCtx::Hoisted { tree_id, .. }) => {
+                crate::package_installer::remove_placed_package(
+                    &self.manager().lockfile,
+                    tree_id,
+                    &self.package_name,
+                );
+                true
+            }
+            Some(ctx) => ctx
+                .isolated()
+                .is_some_and(|(entry_id, installer)| installer.leave_out_entry(entry_id)),
+            None => false,
+        };
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
-                "deleting optional dependency '{}' due to failed '{}' script",
+                "{} optional dependency '{}' due to failed '{}' script",
+                if deleted { "deleting" } else { "skipping" },
                 bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
             );
-        }
-        'try_delete_dir: {
-            let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
-                break 'try_delete_dir;
-            };
-            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            // Close this fd: this path returns to the install loop without
-            // exiting, so the HANDLE/fd would otherwise persist for the rest of
-            // the install on every failed optional-dependency lifecycle script.
-            let Ok(dir) = bun_sys::Dir::open(dirname) else {
-                break 'try_delete_dir;
-            };
-            let _ = dir.delete_tree(basename);
         }
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -1136,6 +1255,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
                 err.name(),
             );
+            lss.discard_packages_with_unfinished_scripts();
             Global::exit(1);
         }
 

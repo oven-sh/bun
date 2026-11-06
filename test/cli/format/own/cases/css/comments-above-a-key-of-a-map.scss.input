@@ -1,0 +1,30 @@
+$icons: (
+  a: (left: 253, top: 73),
+  /* block */
+  b: (left: 1, top: 169),
+  // line
+  c: (left: 1, top: 169),
+  /* same line */ d: (left: 1, top: 169),
+  // one
+  // two
+  e: (f: (g: 1)),
+  // above a plain value
+  h: 1
+);
+$map: (
+  /* comment */
+  key1: value,
+
+  // comment
+  key2: value,
+
+  /* comment */ /* comment */
+  key3: value,
+  (/* c */ a: /* d */ 1): 2,
+);
+$breakpoints: (
+  // small
+  sm: 576px,
+  md: 768px
+);
+$z: (/* a */ b: 1, c: 2);

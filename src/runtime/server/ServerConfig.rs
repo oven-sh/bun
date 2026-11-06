@@ -9,8 +9,9 @@ use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
+use bun_removable_features::{Feature, is_removed};
 use bun_url::URL;
-pub use http_method::{Method, Optional as MethodOptional};
+pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
@@ -18,11 +19,11 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
-pub use crate::socket::ssl_config::SSLConfig;
+pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
 
-pub struct ServerConfig {
+pub(crate) struct ServerConfig {
     pub(crate) address: Address,
     pub(crate) idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub(crate) has_idle_timeout: bool,
@@ -109,7 +110,7 @@ impl Default for ServerConfig {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Tcp {
         port: u16,
         hostname: Option<ZBox>,
@@ -127,10 +128,20 @@ impl Default for Address {
     }
 }
 
+impl Address {
+    #[inline]
+    pub(crate) fn is_unix(&self) -> bool {
+        match self {
+            Address::Unix(_) => true,
+            Address::Tcp { .. } => false,
+        }
+    }
+}
+
 // ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DevelopmentOption {
+pub(crate) enum DevelopmentOption {
     Development,
     Production,
     DevelopmentWithoutHmr,
@@ -168,12 +179,12 @@ impl ServerConfig {
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-pub struct RouteDeclaration {
+pub(crate) struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
 }
 
-pub enum RouteMethod {
+pub(crate) enum RouteMethod {
     Any,
     Specific(Method),
 }
@@ -199,7 +210,7 @@ impl Default for RouteDeclaration {
 }
 
 // TODO: rename to StaticRoute.Entry
-pub struct StaticRouteEntry {
+pub(crate) struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub(crate) route: AnyRoute,
     pub method: MethodOptional,
@@ -262,7 +273,7 @@ impl ServerConfig {
         &mut self,
     ) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
-        // `self.config = self.config.clone_for_reloading_static_routes()?;`.
+        // `*config = config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
         // place on `self` (idle_timeout, development, reuse_port, http1/http3,
         // etc. retained; resources gone), ensuring the assignment-drop of the
@@ -565,60 +576,19 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
-/// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
-/// (`&'static [u8]`-backed, consumed by `Framework::auto`). The duplication is a
-/// layering wart and this conversion stands in for an arena-dupe until the two
-/// structs unify. All bytes are duped into `arena` so the resulting `&'static`
-/// slices live as long as `UserOptions.arena`.
-fn convert_file_system_router_type(
-    arena: &bun_alloc::Arena,
-    src: crate::bake::FileSystemRouterType,
-) -> crate::bake::bake_body::FileSystemRouterType {
-    use crate::bake::bake_body as bb;
-    // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
-    // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically.
-    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
-    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
-    fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
-        bb::arena_erase(arena.alloc_slice_copy(bytes))
-    }
-    fn dupe_slice_of(
-        arena: &bun_alloc::Arena,
-        v: &[std::borrow::Cow<'static, [u8]>],
-    ) -> &'static [&'static [u8]] {
-        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
-        bb::arena_erase(arena.alloc_slice_copy(&inner))
-    }
-
-    bb::FileSystemRouterType {
-        root: dupe(arena, src.root.as_ref()),
-        prefix: dupe(arena, src.prefix.as_ref()),
-        entry_server: dupe(arena, src.entry_server.as_ref()),
-        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
-        ignore_underscores: src.ignore_underscores,
-        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
-        extensions: dupe_slice_of(arena, &src.extensions),
-        style: src.style,
-        allow_layouts: src.allow_layouts,
-    }
-}
-
 impl ServerConfig {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
-        arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
+        arg: JSValue,
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
-        let vm = arguments.vm;
+        let vm = global.bun_vm();
         let env = vm.env_loader();
+        // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
+        // of the default one. Taken first: it is for this one call, even when an option throws.
+        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
 
         let mut args = ServerConfig {
-            address: Address::Tcp {
-                port: 3000,
-                hostname: None,
-            },
             development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
@@ -634,56 +604,41 @@ impl ServerConfig {
             reuse_port: env.get(b"NODE_UNIQUE_ID").is_some(),
             ..ServerConfig::default()
         };
-        let mut has_hostname = false;
+        let mut hostname: Option<ZBox> = None;
+        let mut unix: Option<ZBox> = None;
 
         if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
             args.development = DevelopmentOption::Production;
         }
 
-        if arguments.vm.transpiler.options.production {
+        if vm.transpiler.options.production {
             args.development = DevelopmentOption::Production;
         }
 
         // Set tcp port from env / options
-        {
-            let port = 'brk: {
-                const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
+        let mut port: u16 = 'brk: {
+            const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
 
-                for port_env in PORT_ENV {
-                    if let Some(port) = env.get(port_env) {
-                        if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
-                            break 'brk _port;
-                        }
+            for port_env in PORT_ENV {
+                if let Some(port) = env.get(port_env) {
+                    if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
+                        break 'brk _port;
                     }
                 }
-
-                if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
-                    break 'brk port;
-                }
-
-                match &args.address {
-                    Address::Tcp { port, .. } => *port,
-                    _ => unreachable!(),
-                }
-            };
-            if let Address::Tcp { port: p, .. } = &mut args.address {
-                *p = port;
             }
-        }
-        let mut port = match &args.address {
-            Address::Tcp { port, .. } => *port,
-            _ => unreachable!(),
+
+            if let Some(port) = vm.transpiler.options.transform_options.port {
+                break 'brk port;
+            }
+
+            3000
         };
 
-        if let Some(origin) = &arguments.vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
         // NOTE: SSLConfig drops automatically when `args` drops on error path.
-
-        let Some(arg) = arguments.next() else {
-            return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
-        };
 
         if !arg.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
@@ -752,18 +707,13 @@ impl ServerConfig {
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                // NOTE: bake owns the arena (created below and moved into
-                // `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
-                js_string_allocations: crate::bake::StringRefList::EMPTY,
                 user_routes: &mut args.static_routes,
                 global,
+                may_start_development_server: opts.may_start_development_server,
             };
             let init_ctx = &mut init_ctx_;
-            // arena/Vec are owned locals; drop on `?` automatically. Ownership
-            // transfers to args.bake on the success path via mem::take below.
-            // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // Vec<StaticRouteEntry> drops elements (which deref route)
             // automatically on error.
@@ -931,63 +881,66 @@ impl ServerConfig {
                 });
             }
 
+            if bake_pages && !init_ctx.framework_router_list.is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"bun bake\" does not support a route with \"dir\" and \"style\". Add a framework to bake.config.ts instead."
+                )));
+            }
+
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if !init_ctx.dedupe_html_bundle_map.is_empty()
+            if (!init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
+                || bake_pages)
+                && (!is_removed(Feature::Bundler) || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
-                    use crate::bake::bake_body as bb;
                     use bun_options_types::schema::api::DotEnvBehavior;
-
-                    // NOTE: the arena is created here and moved into
-                    // `UserOptions` (lives until `args.bake` is dropped).
-                    let arena = bun_alloc::Arena::new();
-
-                    let root = bb::arena_dupe_z(
-                        &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                    );
-
-                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Type
-                    // duplication; remove once the two structs unify.
-                    let router_types: Vec<bb::FileSystemRouterType> =
-                        core::mem::take(&mut init_ctx.framework_router_list)
-                            .into_iter()
-                            .map(|t| convert_file_system_router_type(&arena, t))
-                            .collect();
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
+                    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+                    let bake_framework = global.bun_vm().bake_framework.get();
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
+                    let framework = match bake_framework {
+                        Some(object) if bake_pages => {
+                            match crate::bake::Framework::from_js(
+                                object,
+                                global,
+                                &mut bundler_options,
+                            ) {
+                                Ok(framework) => framework,
+                                Err(err) => {
+                                    bundler_options.destroy_plugin();
+                                    return Err(err);
+                                }
+                            }
+                        }
+                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
+                        _ => crate::bake::Framework::auto(
+                            resolver,
+                            core::mem::take(&mut init_ctx.framework_router_list),
+                        ),
+                    };
 
                     let mut user_options = crate::bake::UserOptions {
-                        arena,
-                        allocations: core::mem::replace(
-                            &mut init_ctx.js_string_allocations,
-                            crate::bake::StringRefList::EMPTY,
+                        arena: bun_alloc::Arena::new(),
+                        root: bun_core::ZBox::from_bytes(
+                            bun_paths::fs::FileSystem::instance().top_level_dir(),
                         ),
-                        root,
                         framework,
-                        bundler_options: bb::SplitBundlerOptions::default(),
+                        bundler_options,
                     };
 
                     let o = &vm.transpiler.options.transform_options;
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {
-                            // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
-                            // owned by the long-lived `transform_options`; dupe
-                            // into the arena so the `&'static [u8]` field is
-                            // backed by `UserOptions.arena`.
-                            user_options.bundler_options.client.env_prefix = o
-                                .serve_env_prefix
-                                .as_deref()
-                                .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
+                            user_options
+                                .bundler_options
+                                .client
+                                .env_prefix
+                                .clone_from(&o.serve_env_prefix);
                             user_options.bundler_options.client.env = DotEnvBehavior::prefix;
                         }
                         DotEnvBehavior::load_all => {
@@ -1078,11 +1031,7 @@ impl ServerConfig {
                     },
                 ));
             }
-            let p = number as u16;
-            if let Address::Tcp { port: tp, .. } = &mut args.address {
-                *tp = p;
-            }
-            port = p;
+            port = number as u16;
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
@@ -1104,24 +1053,20 @@ impl ServerConfig {
             if !host_str.slice().is_empty() {
                 // Does not reject interior
                 // NUL; the C `bind()` consumer will simply truncate at it.
-                let hostname = ZBox::from_bytes(host_str.slice());
-                if let Address::Tcp { hostname: h, .. } = &mut args.address {
-                    *h = Some(hostname);
-                }
-                has_hostname = true;
+                hostname = Some(ZBox::from_bytes(host_str.slice()));
             }
         }
 
-        if let Some(unix) = arg.get_stringish(global, "unix")? {
-            let unix_str = unix.to_utf8();
+        if let Some(unix_value) = arg.get_stringish(global, "unix")? {
+            let unix_str = unix_value.to_utf8();
             if !unix_str.slice().is_empty() {
-                if has_hostname {
+                if hostname.is_some() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Cannot specify both hostname and unix",
                     )));
                 }
 
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                unix = Some(ZBox::from_bytes(unix_str.slice()));
             }
         }
 
@@ -1143,6 +1088,11 @@ impl ServerConfig {
                 if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
+                    }
+                    if is_removed(Feature::Bundler) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
+                        )));
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
@@ -1249,7 +1199,7 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
-                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item)? else {
+                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item, true)? else {
                             // Backwards-compatibility; we ignored empty tls objects.
                             continue;
                         };
@@ -1272,7 +1222,7 @@ impl ServerConfig {
                     }
                 }
             } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
+                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
                     args.ssl_config = Some(ssl_config);
                 }
             }
@@ -1281,7 +1231,7 @@ impl ServerConfig {
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
-            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
+            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg, true)? {
                 args.ssl_config = Some(ssl_config);
             }
         }
@@ -1296,7 +1246,12 @@ impl ServerConfig {
                 "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
+        args.address = match unix {
+            Some(path) => Address::Unix(path),
+            None => Address::Tcp { port, hostname },
+        };
+
+        if !args.http1 && !args.http2 && args.address.is_unix() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
@@ -1379,13 +1334,12 @@ impl ServerConfig {
                 args.base_uri = buf.into_boxed_slice();
             }
         } else {
-            let hostname: &[u8] = if has_hostname {
-                match &args.address {
-                    Address::Tcp { hostname, .. } => hostname.as_ref().unwrap().as_bytes(),
-                    _ => unreachable!(),
-                }
-            } else {
-                b"0.0.0.0"
+            let hostname: &[u8] = match &args.address {
+                Address::Tcp {
+                    hostname: Some(hostname),
+                    ..
+                } => hostname.as_bytes(),
+                Address::Tcp { hostname: None, .. } | Address::Unix(_) => b"0.0.0.0",
             };
 
             let needs_brackets: bool =
@@ -1473,8 +1427,9 @@ impl ServerConfig {
 }
 
 #[derive(Clone, Copy)]
-pub struct FromJSOptions {
+pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
+    pub(crate) may_start_development_server: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
@@ -1486,7 +1441,7 @@ pub struct FromJSOptions {
     pub(crate) previous_routes: bool,
 }
 
-pub struct UserRouteBuilder {
+pub(crate) struct UserRouteBuilder {
     pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

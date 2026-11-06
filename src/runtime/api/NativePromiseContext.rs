@@ -13,8 +13,8 @@
 //! let cell = native_promise_context::create(global, ctx);
 //! promise.then_with_value(global, cell, on_resolve, on_reject)?;
 //!
-//! // In on_resolve/on_reject:
-//! let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
+//! // In on_resolve/on_reject, with `context: b.nativePromiseContext("crate::..::RequestContext")` in the schema:
+//! let Some(ctx) = context else { return; };
 //! // ... process ...
 //! ctx.deref_();
 //! ```
@@ -53,7 +53,7 @@ type DebugHTTPSServerMuxRequestContext =
 /// storage beyond the JSCell header.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     HTTPServerRequestContext,
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
@@ -66,10 +66,14 @@ pub enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
+    /// The pump of an S3 stream upload (`S3UploadStreamWrapper`).
+    S3UploadStream,
+    /// A `Bun.cron()` job whose tick returned a promise.
+    CronJob,
 }
 
 impl Tag {
-    pub const COUNT: usize = 10;
+    pub(crate) const COUNT: usize = 12;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -84,6 +88,8 @@ impl Tag {
             7 => Tag::DebugHTTPSServerMuxRequestContext,
             8 => Tag::HTMLRewriterSuspension,
             9 => Tag::HTMLRewriterPipeFree,
+            10 => Tag::S3UploadStream,
+            11 => Tag::CronJob,
             _ => unreachable!(),
         }
     }
@@ -118,6 +124,12 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromis
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
+impl NativePromiseContextType for crate::webcore::s3::client::S3UploadStreamWrapper {
+    const TAG: Tag = Tag::S3UploadStream;
+}
+impl NativePromiseContextType for crate::api::cron::CronJob {
+    const TAG: Tag = Tag::CronJob;
+}
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
 // opaquely (never dereferenced by the C++ side), so the FFI itself has no
@@ -131,6 +143,7 @@ unsafe extern "C" {
         held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
+    safe fn Bun__NativePromiseContext__takeHeld(value: JSValue) -> JSValue;
 }
 
 /// The cell owns the caller's claim on `ctx` until `take()` transfers it back
@@ -153,6 +166,11 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
 }
 
+/// Clears the cell's `held` slot and returns its old value (`JSValue::ZERO` if it was empty).
+pub(crate) fn take_held(cell: JSValue) -> JSValue {
+    Bun__NativePromiseContext__takeHeld(cell)
+}
+
 /// Called from the C++ destructor when a cell is collected with a non-null
 /// pointer (i.e., `take()` was never called — the Promise was GC'd without
 /// settling).
@@ -162,8 +180,13 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
 /// deinit() which detaches responses, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
+#[inline(never)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+    bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(Cron, Bun__NativePromiseContext__destroy);
     let tag = Tag::from_raw(tag);
     clear_remembered_cell(ctx, tag);
     DeferredDerefTask::schedule(ctx, tag);
@@ -202,7 +225,8 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerMuxRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+            Tag::CronJob => (*ctx.cast::<crate::api::cron::CronJob>()).tick_cell_collected(),
+            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
         }
     }
 }
@@ -234,6 +258,10 @@ impl Taskable for DeferredDerefTask {
     /// script-free, so do it.
     unsafe fn release_unrun(this: *mut Self) {
         Self::run_from_js_thread(this as usize);
+    }
+    /// A deferred deref; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -273,10 +301,7 @@ impl DeferredDerefTask {
 
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::new(
-            <DeferredDerefTask as Taskable>::TAG,
-            (addr | (tag as usize)) as *mut (),
-        );
+        let task = Task::init((addr | (tag as usize)) as *mut DeferredDerefTask);
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         vm.event_loop_ref().enqueue_task(task);
@@ -325,6 +350,18 @@ impl DeferredDerefTask {
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     );
                 }
+                Tag::S3UploadStream => {
+                    // The pump's promise was collected unsettled (the script running it is gone):
+                    // as a rejection with no reason.
+                    (*ctx.cast::<crate::webcore::s3::client::S3UploadStreamWrapper>())
+                        .handle_reject_stream(JSValue::ZERO);
+                }
+                Tag::CronJob => {
+                    // The tick's promise was collected unsettled.
+                    crate::api::cron::CronJob::tick_promise_collected(NonNull::new_unchecked(
+                        ctx.cast::<crate::api::cron::CronJob>(),
+                    ));
+                }
             }
         }
     }
@@ -353,3 +390,9 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<crate::webcore::s3::client::S3UploadStreamWrapper>()
+        > DeferredDerefTask::TAG_MASK
+);
+const _: () =
+    assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

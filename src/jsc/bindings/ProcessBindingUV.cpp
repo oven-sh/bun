@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
 #include "ZigGlobalObject.h"
+#include "headers.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapInlines.h"
@@ -174,7 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
         RETURN_IF_EXCEPTION(scope, {});
         arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(entry.description)));
         RETURN_IF_EXCEPTION(scope, {});
-        map->set(globalObject, JSC::jsNumber(entry.value), arr);
+        JSC__JSMap__set(map, globalObject, JSValue::encode(JSC::jsNumber(entry.value)), JSValue::encode(arr));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -188,12 +189,12 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     // spreads it ({...process.binding("uv")} in internal/test/binding.ts).
     auto bindingObject = JSC::constructEmptyObject(globalObject);
     EnsureStillAliveScope ensureStillAlive(bindingObject);
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, bindingObject, "errname"_s, JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 
     for (auto& entry : uvErrnoEntries)
         bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, entry.name)), JSC::jsNumber(entry.value));
 
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "getErrorMap"_s), JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, bindingObject, "getErrorMap"_s, JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
 
     return bindingObject;
 }

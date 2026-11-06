@@ -1,0 +1,20 @@
+# console.log(crypto.subtle.generateKey())
+# `crypto.subtle` is an instance that native code made before: nobody follows it. The table does not list every method of its class, and what such a method answers may say itself how it is printed:
+# a CryptoKey does. HostChoosesOperands (h7) goes up.
+# RUN: valueflow-why timeline
+# CHECK: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="crypto" [isFreeName]
+    v2 = PropGet v1 key="subtle"
+    v3 = PropGet v2 key="generateKey"
+    v4 = Call v3, v2 calleeKey="generateKey"
+    v5 = PropGet v0 key="console" [isFreeName]
+    v6 = PropGet v5 key="log"
+    v7 = Call v6, v5, v4 calleeKey="log"
+    v8 = Undefined
+    Return v8
+}

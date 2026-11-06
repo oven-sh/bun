@@ -6,7 +6,7 @@
  * crash-report decoder: a crash-report URL carries the enabled-feature set as
  * a VLQ-encoded bitset, and the `features` array here maps bit index → name.
  * Native builds generate it by running the freshly built binary with
- * `scripts/features.mjs` (→ `crash_handler.getFeatureData()`); a
+ * `scripts/features.ts` (→ `crash_handler.getFeatureData()`); a
  * cross-compiled binary can't run on the build host, but every field is a
  * build-time constant we already know:
  *
@@ -88,7 +88,7 @@ export function parsePackedFeaturesList(cwd: string): string[] {
 /**
  * Build the features.json payload for a binary that can't be executed on
  * the build host. Field set and meaning match `crash_handler.getFeatureData()`
- * (src/runtime/api/crash_handler_jsc.rs) / scripts/features.mjs.
+ * (src/runtime/api/crash_handler_jsc.rs) / scripts/features.ts.
  */
 export function crossFeaturesJson(cfg: { cwd: string; version: string; canary: boolean; revision: string }): string {
   return JSON.stringify({

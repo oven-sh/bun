@@ -1,0 +1,82 @@
+# Of the text behind a check a string is only expected. So what is written in place of the object asks: a string is scanned, and for anything else the object is made
+# Where the check admits no string, the way of a string stays whole until the check is settled
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion
+# STATISTIC: ChecksReplacedByGuards = 5
+# STATISTIC: URLsLeftUnbuilt = 3
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="textBehindCheck" parameters=[{type=anything}] results=[{type=string}] {
+    v1 = Check v0 expectedType=string
+    v2 = Builtin builtin=URLSearchParams
+    v3 = Construct v2, -, v1
+    v4 = AssumeType v3 provenType=URLSearchParams
+    v5 = PropGet v4 key="toString"
+    v6 = Call v5, v4
+    v7 = AssumeType v6 provenType=string
+    v8 = Add v7, v7
+    v9 = AssumeType v8 provenType=string
+    Return v9
+# CHECK: [[expectedText]]: anything ~ string = Expect {{*}} expectedType=string
+# CHECK-NOT: = CallBuiltin -, [[expectedText]] overload=CompilerHelpersScanPlainQuery/0
+# CHECK: = Construct {{*}}, -, [[expectedText]]
+# CHECK: ([[plainText]]: string):
+# CHECK-NEXT: = CallBuiltin -, [[plainText]] overload=CompilerHelpersScanPlainQuery/0
+}
+
+function f1 name="textBehindCheckUnderHandler" parameters=[{type=anything}, {type=anything}] results=[{type=string}] {
+    v2 = Check v0 expectedType=Array
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    v5 = Check v4 expectedType=string
+    v6 = Builtin builtin=URLSearchParams
+    v7 = Construct v6, -, v5
+    v8 = AssumeType v7 provenType=URLSearchParams
+    v9 = PropGet v8 key="toString"
+    v10 = Call v9, v8
+    v11 = AssumeType v10 provenType=string
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    Return v11
+  b3() role=IterationCleanup subject=v3:
+    v13 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v13
+# CHECK: [[expected]]: anything ~ string = Expect {{*}} expectedType=string
+# CHECK-NOT: = CallBuiltin -, [[expected]] overload=CompilerHelpersScanPlainQuery/0
+# CHECK: ([[text]]: string) handler=b3():
+# CHECK-NEXT: = CallBuiltin -, [[text]] overload=CompilerHelpersScanPlainQuery/0
+}
+
+function f2 name="stringWhereTheCheckAdmitsNone" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
+    v2 = Check v0 expectedType=Array
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    v5 = Check v4 expectedType=object
+    v6 = Builtin builtin=URLSearchParams
+    v7 = Construct v6, -, v5
+    v8 = AssumeType v7 provenType=URLSearchParams
+    v9 = PropGet v8 key="size"
+    v10 = AssumeType v9 provenType=number
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    Return v10
+  b3() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+# CHECK: [[expectedObject]]: anything ~ object = Expect {{*}} expectedType=object
+# CHECK: [[testOfObject]]: boolean{{*}} = TypeTest [[expectedObject]] testedType=string
+# CHECK-NEXT: Branch [[testOfObject]] -> taken [[whereString]](| 0)
+# CHECK: [[whereString]]([[query]]: string)
+# CHECK-NEXT: [[packed]]: {{*}} = CallBuiltin -, [[query]] overload=CompilerHelpersScanPlainQuery/0
+# CHECK: Jump -> next {{*}}({{*}}, [[query]], [[packed]])
+# CHECK-NOT: Unreachable
+}

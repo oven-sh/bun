@@ -43,7 +43,9 @@ impl Walker<'_, '_> {
         self.push_task(Task::MarkCreated(id), context);
         let flags = self.hir[function].flags;
         let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);
-        if can_be_suspended && self.hir.runtime_function_kind(function) != FnKind::Arrow {
+        let is_strict = self.bound.is_strict_scope(context.lexical_scope);
+        let is_arrow = self.hir.runtime_function_kind(function) == FnKind::Arrow;
+        if can_be_suspended && is_strict && !is_arrow {
             self.use_this(context);
         }
         if can_be_suspended {

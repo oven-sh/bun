@@ -103,16 +103,11 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
 
 pub(crate) fn gives_data(loader: Loader) -> bool {
     match loader {
-        Loader::Jsx
-        | Loader::Js
-        | Loader::Ts
-        | Loader::Tsx
-        | Loader::Wasm
-        | Loader::Napi
-        | Loader::Bunsh
+        Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Napi => false,
+        Loader::Bunsh
         | Loader::Md
-        | Loader::Html => false,
-        Loader::Css
+        | Loader::Html
+        | Loader::Css
         | Loader::File
         | Loader::Json
         | Loader::Jsonc

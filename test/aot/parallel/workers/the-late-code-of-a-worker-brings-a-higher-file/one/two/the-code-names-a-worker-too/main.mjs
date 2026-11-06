@@ -1,6 +1,6 @@
-// The code of the Worker is put together twice: what it imports lies higher than every file found before, so the folders of the executable go one deeper than the first text says.
-// The text of the first time goes out of the program. While it stayed, the name of the Worker in it, spelled for the depth of that time, named a file that is not there, and the build warned of a Worker that would not load.
-// Build prints: 0 x warn: TS100081: This Worker may start from a file that isn't compiled, and then it fails to load: /$bunfs/_.._/_.._/lib/posts.mjs. Add the file as an entry point, or write its path as new URL("./file", import.meta.url)
+// The code of the Worker holds the URL of lib/names-a-worker.mjs, a file above the entry point, and names by it the Worker that it starts and a file one folder higher than every other, which nothing else leads to.
+// How that URL reads hangs on the highest file, so the build follows the code first and puts it together for the depth that it finds. It stopped at the higher file: TS100087.
+// The URL, not the path of the folder: on Windows a path holds backslashes, and between the quotes of the code they are escapes.
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import { start } from "../lib/names-a-worker.mjs";
 console.log(await start());

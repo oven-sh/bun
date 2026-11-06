@@ -36,13 +36,19 @@ type Program = keyof typeof programs;
 
 const data = [
   ".env.local",
+  "deploy.sh",
+  "guide.md",
   "id.pem",
   "lang-en.json",
   "locales/.env.local",
+  "locales/deploy.sh",
   "locales/en.json",
+  "locales/guide.md",
   "locales/notes.txt",
+  "locales/page.html",
   "node_modules/tables/data/en.json",
   "notes.txt",
+  "page.html",
   "run.log",
   "src/notes.txt",
   "table.json",
@@ -110,7 +116,11 @@ const plainAnswer = (program: Program, name: string) =>
   answersIn(program, "tool", [bunExe(), join(directory, program, "tool/main.cjs"), name]);
 
 test.each([
-  ["a-folder", ["en", "en.json", "notes.txt"], ["locales/en.json", "locales/notes.txt"]],
+  [
+    "a-folder",
+    ["en", "en.json", "notes.txt"],
+    ["locales/deploy.sh", "locales/en.json", "locales/guide.md", "locales/notes.txt", "locales/page.html"],
+  ],
   ["a-pattern-of-exports", ["en"], ["node_modules/tables/data/en.json"]],
   ["the-start-of-the-name-of-a-file", ["en", "en.json"], ["lang-en.json"]],
   ["nothing-but-an-end", ["table", "locales/en"], ["lang-en.json", "locales/en.json", "table.json"]],

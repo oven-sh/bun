@@ -46,6 +46,17 @@ const handedToSocket = (side: "listen" | "connect", handler: string, binaryType 
     "listener.stop(true);",
     "handed",
   ].join("\n");
+/** What the `data` handler of a datagram socket is handed. */
+const handedDatagram = (binaryType: string) =>
+  [
+    "const { promise, resolve } = Promise.withResolvers();",
+    `const handlers = { data: (socket, data) => resolve(data) };`,
+    `const socket = await Bun.udpSocket({ hostname: "127.0.0.1", binaryType: "${binaryType}", socket: handlers });`,
+    'socket.send("a", socket.port, "127.0.0.1");',
+    "const handed = await promise;",
+    "socket.close();",
+    "handed",
+  ].join("\n");
 const opened = 'open(socket) {\n  socket.write("a");\n  resolve(socket);\n}';
 const told = "data: (socket, data) => resolve(data)";
 
@@ -423,6 +434,7 @@ export const calls: Record<string, string[]> = {
     'Bun.spawnSync({ cmd: ["echo", "aaaa"], maxBuffer: 1 })',
   ],
   "Bun.udpSocket": ["const asked = Bun.udpSocket({});\n(await asked).close();\nasked"],
+  "Bun.udpSocket > ArrayBuffer Buffer Uint8Array": ["buffer", "arraybuffer", "uint8array"].map(handedDatagram),
   "Bun.write": [
     `${temporary}\nBun.write(folder + "/a", "a")`,
     `${temporary}\nBun.write(Bun.file(folder + "/b"), new Response("b"))`,

@@ -21,10 +21,11 @@ const linear =
   weighs +
   "function once() { const list = []; let sum = 0; for (let i = 0; i < size; i++) { list.push(i); sum = (sum + weigh(i)) | 0; } return sum + list.length; }\n" +
   runsItsPasses;
-// And besides, for each element, all that came before it is walked.
+// And besides, for each element, all that came before it is walked. A turn of that walk costs a third of a turn of weigh(): under 700 turns the clock read a growth of 7.02,
+// where up to 9 passes for linear. Under 100 it reads over 12.
 const square =
   takesItsSize +
-  weighs +
+  weighs.replace("700", "100") +
   "function seek(list) { let at = -1; for (let i = 0; i < list.length; i++) if (list[i] === -1) at = i; return at; }\n" +
   "function once() { const list = []; let sum = 0; for (let i = 0; i < size; i++) { list.push(i); sum = (sum + weigh(i) + seek(list)) | 0; } return sum + list.length; }\n" +
   runsItsPasses;

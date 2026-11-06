@@ -1,4 +1,4 @@
-const file = import.meta.dirname + "/job.mjs";
+const file = import.meta.url + "/../job.mjs";
 const code = 'import("' + file + '").then(job => postMessage(job.said), error => postMessage("threw " + error.name))';
 const wait = worker =>
   new Promise(done => {

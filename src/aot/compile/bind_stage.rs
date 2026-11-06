@@ -11,7 +11,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span};
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
-use crate::load::loaders::gives_data;
+use crate::load::loaders::{gives_data, loader_by_path};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId};
 use crate::modules::{
@@ -22,6 +22,7 @@ use bun_ast::Loader;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::hir::{ExprId, NodeData};
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId};
+use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::SharedSort;
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
@@ -80,9 +81,14 @@ fn name_data_files_found_by_patterns(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
     left_out: &LeftOutCode,
+    loaders: &[(Vec<u8>, Loader)],
 ) {
     let (files, sources) = (view.files(), view.sources);
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
+    let is_data = |file: FileId| {
+        let by_name = loader_by_path(loaders, files.file_name(file), CodeImportKind::Import);
+        gives_data(sources.loader(file)) && gives_data(by_name)
+    };
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let Some((answers, _)) = files.answers(file) else {
             continue;
@@ -95,7 +101,7 @@ fn name_data_files_found_by_patterns(
             };
             let data = found
                 .iter()
-                .filter(|&&found| is_kept(found) && gives_data(sources.loader(found)));
+                .filter(|&&found| is_kept(found) && is_data(found));
             let mut names: Vec<&[u8]> = data
                 .map(|&found| sources.module_paths(found).display_path)
                 .collect();
@@ -435,7 +441,13 @@ impl Build<'_> {
                 steps.end_with(|| format!("{project_name}: root folders that paths spell"));
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
                 if !self.options.aot.runs_in_place {
-                    name_data_files_found_by_patterns(&mut self.diagnostics, view, &left_out);
+                    let loaders = &self.options.load.loaders;
+                    name_data_files_found_by_patterns(
+                        &mut self.diagnostics,
+                        view,
+                        &left_out,
+                        loaders,
+                    );
                 }
                 crate::test_run_loads::warn_where_every_file_may_load_again(
                     &mut self.diagnostics,

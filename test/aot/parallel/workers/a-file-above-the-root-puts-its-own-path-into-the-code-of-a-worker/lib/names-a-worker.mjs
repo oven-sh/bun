@@ -1,7 +1,7 @@
 const code =
   'const inner = new Worker("' +
-  import.meta.dirname +
-  '/posts.mjs"); inner.onmessage = event => postMessage(event.data); inner.onerror = () => postMessage("error inside");';
+  import.meta.url +
+  '/../posts.mjs"); inner.onmessage = event => postMessage(event.data); inner.onerror = () => postMessage("error inside");';
 export const start = () =>
   new Promise(done => {
     const worker = new Worker("data:text/javascript," + encodeURIComponent(code));

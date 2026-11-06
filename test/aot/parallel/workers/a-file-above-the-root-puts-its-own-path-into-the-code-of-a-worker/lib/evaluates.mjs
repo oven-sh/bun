@@ -3,8 +3,8 @@ export const start = () =>
   new Promise(done => {
     const worker = new Worker(
       'import("' +
-        import.meta.dirname +
-        '/named-in-the-text-alone.mjs").then(job => job.said, error => "threw " + error.name).then(said => require("node:worker_threads").parentPort.postMessage(said))',
+        import.meta.url +
+        '/../named-in-the-text-alone.mjs").then(job => job.said, error => "threw " + error.name).then(said => require("node:worker_threads").parentPort.postMessage(said))',
       { eval: true },
     );
     worker.on("message", said => (worker.terminate(), done("said " + said)));

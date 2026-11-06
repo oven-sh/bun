@@ -33,6 +33,8 @@ static INITIAL_FILTER_BYTES: [u8; 256] = [
 pub(crate) struct Doc {
     /// Somebody has written more than reserve() promises: commands are lost, and the file is refused.
     pub(crate) overflowed: bool,
+    /// A writer that cannot stop the run has met something rare, one of `rare`: the file is refused when the document is done. -1 if none has.
+    pub(crate) met_rare: i32,
     pub(crate) d_pos: i32,
     pub(crate) d_cap: i32,
     pub(crate) prop_count: i32,
@@ -85,6 +87,7 @@ impl Doc {
     pub(crate) fn new() -> Self {
         Self {
             overflowed: false,
+            met_rare: -1,
             d_pos: 0,
             d_cap: 65536,
             prop_count: 0,
@@ -241,6 +244,7 @@ impl Quick {
         }
         self.doc.d_pos = DOC_START;
         self.doc.overflowed = false;
+        self.doc.met_rare = -1;
         self.doc.last_fill_at = 0;
         self.doc.suffix_possible = true;
         self.doc.line_count = 0;

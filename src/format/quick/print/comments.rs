@@ -9,7 +9,7 @@ use crate::doc::ALIGN_MARK_ROOT;
 use crate::lexer::{C_FLAGS, C_STRIDE, CF_BLOCK, CF_INDENTABLE, CF_PLAIN};
 use crate::print::statics::{SPACE, TWO_SPACES};
 use crate::scan::is_space;
-use crate::{Quick, Words};
+use crate::{Quick, Words, rare};
 
 impl Quick {
     pub(crate) fn trim_end(&self, start: i32, mut end: i32) -> i32 {
@@ -40,6 +40,12 @@ impl Quick {
             p += 1;
         }
         return saw_newline;
+    }
+
+    /// Is there a `*/` in T[start, end)?
+    #[cold]
+    fn has_comment_end(&self, start: i32, end: i32) -> bool {
+        bun_core::strings::contains(self.t.sub(start, end), b"*/")
     }
 
     /// A piece of a comment. Of a plain one the width is known.
@@ -88,6 +94,7 @@ impl Quick {
             let is_jsdoc = self.t.at(s + 2) == 42 && self.t.at(s + 3) != 42;
             let mut line_start = s;
             let mut first = true;
+            let mut is_looked_through = false;
             let mut p = s;
             loop {
                 while p < e && self.t.at(p) != 10 {
@@ -119,6 +126,14 @@ impl Quick {
                         self.text(SPACE);
                     }
                     self.piece(from, end, plain);
+                    // Two comments that are one (merge_nestled_jsdoc_comments()): whether two blanks at the end of a line stay is asked
+                    // of the first one here, and of each by the long way.
+                    if end != p && !is_looked_through {
+                        is_looked_through = true;
+                        if self.has_comment_end(s, e - 2) {
+                            self.doc.met_rare = rare::COMMENT;
+                        }
+                    }
                     if is_jsdoc
                         && end - line_start != 1
                         && p - line_start >= 2

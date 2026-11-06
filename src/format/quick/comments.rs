@@ -602,11 +602,10 @@ impl Quick {
         if c.h_is_block
             && behind == 40
             && self.t.at(c.h_start + 2) == 42
-            && ((form == MID_BLOCK
-                && (self.parse.typed == TYPED_FLOW
-                    || inside == k::ConditionalExpression
-                    // (at the start of a statement Prettier writes a `;` before it)
-                    || !self.options.semi))
+            && (((self.parse.typed == TYPED_FLOW || inside == k::ConditionalExpression)
+                && (form == MID_BLOCK || self.is_type_cast_comment(i)))
+                // (at the start of a statement Prettier writes a `;` before it)
+                || (form == MID_BLOCK && !self.options.semi)
                 // (an object at the start of a statement has parentheses of its own on the long way)
                 || c.gap_in_parentheses == 123)
         {
@@ -623,16 +622,25 @@ impl Quick {
             k::ConditionalExpression | k::ConditionalType => true,
             // before the `:` of a type
             _ if behind == 58 => false,
-            // behind the last item of a pattern that has a type, or all there is between brackets
+            // before the `%checks` of Flow
+            _ if behind == 37 && self.parse.typed == TYPED_FLOW => false,
+            // behind the last item of a pattern that has a type, all there is between brackets, or where an element is left out
             k::ObjectPattern | k::ArrayPattern => {
-                c.h_following_kind != k::TypeAnnotation && !(before == 91 && behind == 93)
+                c.h_following_kind != k::TypeAnnotation
+                    && !(before == 91 && behind == 93)
+                    && !(behind == 44 && (before == 44 || before == 91))
             }
+            // one of several
+            k::JSXClosingFragment | k::JSXClosingElement => i == c.gap_last,
+            // between two words: behind `in`, `out` or `const`, before `extends`
+            k::TypeParameter => !(is_part_of_word(before) && is_part_of_word(behind)),
             // in braces with nothing else in them, which may be hugged; on the line of a member that has no separator
             k::TypeLiteral | k::InterfaceBody => {
                 (inside == k::InterfaceBody || c.h_preceding != 0 || c.h_following != 0)
                     && !(form == END_BLOCK && is_part_of_word(before))
             }
             // between the key and the parameters, on the line of their `(`, or all there is between `(` and `)`
+            // (in a method with a private name: a node of another type in Babel's tree, which fewer rules are for)
             k::ObjectMethod | k::ClassMethod => {
                 !((is_part_of_word(before) || before == 63 || before == 93)
                     && behind != 44
@@ -640,6 +648,10 @@ impl Quick {
                     && behind != 93
                     && !(before == 40 && (c.h_placement == CF_END_OF_LINE || behind == 41))
                     && !(behind == 123 && form != MID_BLOCK && before != 40 && before != 44)
+                    // (in parentheses around the key)
+                    && !(behind == 41 && c.h_preceding == self.n.at(c.h_enclosing + 4))
+                    && (self.mode.is_type_script
+                        || (self.n.at(self.n.at(c.h_enclosing + 4)) & 0xff) != k::PrivateName)
             }
             // behind a modifier, the key or the value; behind a word of an import or an export
             // (behind the value of a field with a private name: a node of another type in Babel's tree, which fewer rules are for)

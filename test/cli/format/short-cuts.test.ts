@@ -6005,6 +6005,23 @@ describe("what the quick way for scripts is asked about, and what is done around
       ["a.ts", "", "f((() => {})!, () => {});\n"],
       ["a.ts", "", "compose((() => {})!, (() => {})!);\n"],
       ["a.ts", "", "f(a(() => {})!, b);\n"],
+      // A method with a private name is a node of another type in Babel's tree.
+      ["a.js", "", "class A {\n  #foo(a,\n  // c\n  ) {}\n}\n"],
+      ["a.ts", "", "class A {\n  #foo(a,\n  // c\n  ) {}\n}\n"],
+      // Comments: where an element of a pattern is left out, two in a closing tag, between two words of a type parameter, before
+      // `%checks`, in parentheses around a key, a cast of JSDoc on a line of its own.
+      ["a.js", "", "[ /* c */ , ] = a;\n"],
+      ["a.jsx", "", "a = <>b</ /* c1 */ /* c2 */>;\n"],
+      ["a.jsx", "", "a = <b>c</b /* c1 */ /* c2 */>;\n"],
+      ["a.js.flow", "", "type A<in /* c */ T> = B;\n"],
+      ["a.js.flow", "", "function a(b: number): boolean /* c */ %checks { return !!b; }\n"],
+      ["a.js", "", "class A { [(a\n// c\n)]() {} }\n"],
+      ["a.js", "", "x = y ?\n/** @type {X} */ (a ? b : c) : z;\n"],
+      ["a.js.flow", "", "function g() {\n/** @type {X} */ (new.target);\n}\n"],
+      ["a.js.flow", "", "/**\n * a\n */\n(b: string);\n\ntype A = {\n  /**\n   * c\n   */\n  (d: string): void,\n};\n"],
+      // Two doc comments that are one, and two blanks at the end of a line.
+      ["a.ts", "", "/*\n * a\n *//**\n * b  \n * c\n */\nx;\n"],
+      ["a.ts", "", "/**\n * a  \n * b\n *//*\n * c  \n * d\n */\nx;\n"],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

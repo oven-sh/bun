@@ -567,6 +567,9 @@ impl Quick {
         if self.doc.overflowed {
             return Err(self.stop(why::BUG));
         }
+        if self.doc.met_rare >= 0 {
+            return Err(self.rare(self.doc.met_rare));
+        }
         self.stage(2);
         self.print_doc(DOC_START, stub)?;
         self.nothing_lost()?;

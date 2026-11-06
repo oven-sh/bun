@@ -945,6 +945,8 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
  */
 const webkitWarningFlags: readonly string[] = [
   "-Wcast-align",
+  "-Wvla",
+  "-Walloca",
   "-Wformat-security",
   "-Wmissing-format-attribute",
   "-Wpointer-arith",

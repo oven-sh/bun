@@ -120,9 +120,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StmtData::STry(mut sr) => Self::s_try(p, stmts, stmt, &mut *sr),
             StmtData::SSwitch(mut sr) => Self::s_switch(p, stmts, stmt, &mut *sr),
             StmtData::SNamespace(mut sr) => Self::s_namespace(p, stmts, stmt, &mut *sr),
-            StmtData::STsImportEquals(sr) => {
+            StmtData::STsImportEquals(sr) if TYPESCRIPT => {
                 Self::s_ts_import_equals(p, stmts, stmt, &sr, was_after_after_const_local_prefix)
             }
+            // Only the TypeScript parser makes one.
+            StmtData::STsImportEquals(_) => unreachable!(),
 
             // Only used by the bundler for lazy export ASTs.
             StmtData::SLazyExport(_) => unreachable!(),

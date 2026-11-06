@@ -1123,7 +1123,7 @@ impl<'a> Parser<'a> {
                 .is_some_and(|cache| cache.input_hash.is_some());
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
-            let stmts = if p.has_ts_import_equals {
+            let stmts = if TS && p.has_ts_import_equals {
                 let mut list = bun_alloc::vec_from_iter_in(stmts.iter().copied(), p.arena);
                 list.push(p.s(S::TsImportEquals { local: None }, bun_ast::Loc::EMPTY));
                 list.into_bump_slice_mut()
@@ -1288,7 +1288,7 @@ impl<'a> Parser<'a> {
                         // Advance the shared-slice cursor past this enum's scopes.
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
-                    js_ast::StmtData::STsImportEquals(alias) => {
+                    js_ast::StmtData::STsImportEquals(alias) if TS => {
                         if let Some(local) = alias.local {
                             p.defer_ts_import_equals(&local);
                             deferred_ts_import_equals.push((parts.len(), local, stmt.loc));

@@ -4525,7 +4525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
         let stmt = self.s(stmt, loc);
-        // A `declare` block has a scope of its own, and drops its statements.
+        // A `declare` block drops its statements. `declare global` has no scope of its own, and forgets them itself.
         if self.current_scope == self.module_scope {
             self.chai_imports.0.push(stmt);
             self.did_apply_test_feature = true;

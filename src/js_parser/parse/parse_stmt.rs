@@ -1894,6 +1894,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
+                    let chai_imports = p.chai_imports.0.len();
                     // The decorators belong to this statement, not to the statements in its body.
                     opts.ts_decorators = None;
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
@@ -1901,6 +1902,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
                     p.discard_scopes_up_to(scope_index);
+                    // This block has no scope of its own, so `remember_chai_import` took its imports.
+                    p.chai_imports.0.truncate(chai_imports);
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 

@@ -48,6 +48,10 @@ pub(crate) enum Syntax {
 /// The start and the end of the front matter of `text`, if it has any. It starts with the text. In MDX it can also
 /// follow lines of spaces and tabs: remark-parse 8 offers every block to Prettier's front matter tokenizer until one
 /// has made a node, and such a line makes none.
+///
+/// remark also reads what is in a block quote or in a footnote definition before it makes the node for it, so Prettier
+/// finds front matter at the start of the first one too. That is not followed: for `> ---\n> **a**: b\n> ---` Prettier
+/// prints the text outside of the quote.
 fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
     let mut start = 0;
     if syntax == Syntax::Mdx {
@@ -67,8 +71,12 @@ fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
 }
 
 /// Prettier parses a text with spaces in place of the front matter. That only makes a difference if something follows
-/// the front matter on its last line. In that case this returns the text with the spaces.
+/// the front matter on its last line. In that case this returns the text with the spaces. For MDX there are none:
+/// remark-parse 8 goes on behind the front matter.
 pub(crate) fn blank_front_matter(text: &[u8], syntax: Syntax) -> Option<Vec<u8>> {
+    if syntax == Syntax::Mdx {
+        return None;
+    }
     let (start, end) = front_matter_of(text, syntax)?;
     if matches!(text.get(end), None | Some(b'\n')) {
         return None;
@@ -94,8 +102,12 @@ pub(crate) fn parse(
     let Some((start, end)) = front_matter_of(original, syntax) else {
         return parse_lines(text, tree, syntax, 0);
     };
-    let is_blanked = !matches!(original.get(end), None | Some(b'\n'));
-    let first_line = if is_blanked { end - 3 } else { end + 1 };
+    let first_line = match original.get(end) {
+        None | Some(b'\n') => end + 1,
+        Some(_) if syntax == Syntax::Mdx => end,
+        // The last line of the front matter, which is three spaces in `text`.
+        Some(_) => end - 3,
+    };
     let root = parse_lines(text, tree, syntax, first_line)?;
     let node = tree.add(Kind::FrontMatter, start as u32, end as u32);
     tree.prepend(root, node);

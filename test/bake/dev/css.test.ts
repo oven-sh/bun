@@ -1242,6 +1242,7 @@ devTest("css module with a composes of an unknown name is a build error", {
     "index.ts": `
       import styles from "./styles.module.css";
       console.log("title:" + styles.title.split(" ").length);
+      globalThis.titleClass = styles.title.split(" ").find(name => name.startsWith("title"));
       import.meta.hot.accept();
     `,
   },
@@ -1262,17 +1263,20 @@ devTest("css module with a composes of an unknown name is a build error", {
       );
     });
     await c.expectMessage("title:2");
-    // The same error after a good build.
+    const title = "." + (await c.js<string>`globalThis.titleClass`);
+    await c.style(title).color.expect.toBe("red");
+    // The same error after a good build. The page keeps its last good stylesheet.
     await dev.write(
       "styles.module.css",
       `
         .title {
           composes: missing;
-          color: red;
+          color: blue;
         }
       `,
       { errors: [error] },
     );
+    await c.style(title).color.expect.toBe("red");
     await dev.write(
       "styles.module.css",
       `

@@ -938,7 +938,7 @@ fn finalize_bundle_inner(
     w_int!(i32, -1);
 
     let css_chunks = &*css_chunks_mut;
-    // If a chunk failed to print, the page keeps its last good stylesheet.
+    // If a chunk failed above (print error or `composes` error), the page keeps its last good stylesheet.
     let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
         !chunk
             .compile_results_for_chunk
@@ -949,6 +949,10 @@ fn finalize_bundle_inner(
                     bundler::CompileResult::Css { result: Err(_), .. }
                 )
             })
+            && !result
+                .css_module_errors
+                .iter()
+                .any(|(failed, _)| failed.get() == chunk.entry_point.source_index())
     };
     let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {

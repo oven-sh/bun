@@ -2242,13 +2242,18 @@ struct ModulesToEvict {
     bool hasLoadSettled { false };
 };
 
-static JSC::JSPromise* pendingLoadOf(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
+} // namespace Zig
+
+JSC::JSPromise* Bun::pendingLoadOf(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
 {
     JSC::JSPromise* promise = entry->loadPromise();
     if (!promise && entry->status() == JSC::ModuleRegistryEntry::Status::Fetching)
         promise = entry->ensureModulePromise(globalObject);
     return promise && promise->status() == JSC::JSPromise::Status::Pending ? promise : nullptr;
 }
+
+namespace Zig {
+using Bun::pendingLoadOf;
 
 // JSC parks the error of a failed import() in a new entry that nothing fetches, so a module that imports it would wait forever.
 static bool isNeverFetched(JSC::ModuleRegistryEntry* entry)

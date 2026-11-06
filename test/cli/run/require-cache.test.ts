@@ -581,6 +581,263 @@ describe.concurrent("require.cache", () => {
     });
   });
 
+  // A module that its importer left behind is not loading: the importer's graph
+  // load failed, or its link failed, or a sibling threw while it evaluated. The
+  // dependency fetched fine and never evaluated. `delete require.cache[dep]`
+  // must evict it, or the next import() of the importer keeps linking the
+  // stale record for the life of the process (#48004).
+  describe("delete require.cache[esm] of a module that its importer left unevaluated", () => {
+    // Writes entry.mjs, bad.mjs and dep.mjs, then loads entry three times: good,
+    // broken (`breakStep2`), fixed. Step 3 must see the fixed dep.mjs.
+    const reloader = (breakStep2: string, load: string) => `
+      const { writeFileSync } = require("node:fs");
+      const { join } = require("node:path");
+      const entry = join(__dirname, "entry.mjs");
+      const dep = join(__dirname, "dep.mjs");
+      const bad = join(__dirname, "bad.mjs");
+      const result = {};
+      const load = async step => {
+        delete require.cache[entry];
+        delete require.cache[dep];
+        delete require.cache[bad];
+        try {
+          result[step] = ${load};
+        } catch (err) {
+          result[step] = "error: " + err.message;
+        }
+      };
+      const good = 'import "./bad.mjs";\\nimport { value } from "./dep.mjs";\\nexport default value;\\n';
+      (async () => {
+        writeFileSync(entry, good);
+        writeFileSync(bad, "export const ok = 1;\\n");
+        writeFileSync(dep, "export const value = 1;\\n");
+        await load(1);
+        writeFileSync(dep, "export const value = 2;\\n");
+        ${breakStep2}
+        await load(2);
+        writeFileSync(entry, good);
+        writeFileSync(bad, "export const ok = 3;\\n");
+        writeFileSync(dep, "export const value = 3;\\n");
+        await load(3);
+        result.depInCache = dep in require.cache;
+        console.log(JSON.stringify(result));
+      })();
+    `;
+    const viaImport = "(await import(entry)).default";
+    const viaRequire = "require(entry).default";
+    const linkFails = `writeFileSync(dep, "export const renamed = 2;\\n");`;
+    const loadFails = `writeFileSync(entry, 'import { value } from "./dep.mjs";\\nimport "./missing.mjs";\\nexport default value;\\n');`;
+    const siblingThrows = `writeFileSync(bad, "throw new Error('boom');\\n");`;
+    const linkError = (dir: string) =>
+      "error: Export named 'value' not found in module '" + join(dir, "dep.mjs") + "'.";
+    const loadError = (dir: string) =>
+      "error: Cannot find module './missing.mjs' imported from " + join(dir, "entry.mjs");
+
+    async function run(dir: string, env = bunEnv) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reload.cjs"],
+        env,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("the importer failed to link", async () => {
+      using dir = tempDir("require-cache-delete-unlinked", { "reload.cjs": reloader(linkFails, viaImport) });
+      const { stdout, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ 1: 1, 2: linkError(String(dir)), 3: 3, depInCache: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("the importer failed to link, via require()", async () => {
+      using dir = tempDir("require-cache-delete-unlinked-require", { "reload.cjs": reloader(linkFails, viaRequire) });
+      const { stdout, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ 1: 1, 2: linkError(String(dir)), 3: 3, depInCache: true });
+      expect(exitCode).toBe(0);
+    });
+
+    // The failed load leaves dep.mjs's transpile on the thread pool, so dep.mjs
+    // is still fetching when step 3 deletes it, and the delete is a no-op. The
+    // synchronous transpiler settles the fetch before the load fails.
+    test("the importer failed to load its other imports", async () => {
+      using dir = tempDir("require-cache-delete-unloaded", { "reload.cjs": reloader(loadFails, viaImport) });
+      const { stdout, stderr, exitCode } = await run(String(dir), {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ 1: 1, 2: loadError(String(dir)), 3: 3, depInCache: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("the importer failed to load its other imports, via require()", async () => {
+      using dir = tempDir("require-cache-delete-unloaded-require", { "reload.cjs": reloader(loadFails, viaRequire) });
+      const { stdout, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ 1: 1, 2: loadError(String(dir)), 3: 3, depInCache: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a sibling import threw while it evaluated", async () => {
+      using dir = tempDir("require-cache-delete-linked", { "reload.cjs": reloader(siblingThrows, viaImport) });
+      const { stdout, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ 1: 1, 2: "error: boom", 3: 3, depInCache: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a sibling import threw while it evaluated, via require()", async () => {
+      using dir = tempDir("require-cache-delete-linked-require", { "reload.cjs": reloader(siblingThrows, viaRequire) });
+      const { stdout, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ 1: 1, 2: "error: boom", 3: 3, depInCache: true });
+      expect(exitCode).toBe(0);
+    });
+
+    async function runMain(dir: string, env = bunEnv) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    // The dependency has loaded, but the importer's load waits for a sibling.
+    // The delete is honoured: the importer keeps the record it loaded, and any
+    // later request for the key, from the sibling or from a later import(),
+    // loads the file again.
+    test("a loaded dependency of a load that is still pending is evicted", async () => {
+      using dir = tempDir("require-cache-delete-pending-importer", {
+        "main.mjs": `
+          import { writeFileSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import { join } from "node:path";
+          const cache = createRequire(import.meta.url).cache;
+          globalThis.__result = { evaluated: 0 };
+          const { promise: gate, resolve: release } = Promise.withResolvers();
+          const { promise: reached, resolve: markReached } = Promise.withResolvers();
+          Bun.plugin({
+            name: "slow",
+            setup(build) {
+              build.onLoad({ filter: /slow\\.mjs$/ }, async () => {
+                markReached();
+                await gate;
+                return { contents: 'import { value } from "./dep.mjs";\\nexport const slow = value;', loader: "js" };
+              });
+            },
+          });
+          const dep = join(import.meta.dir, "dep.mjs");
+          const entry = import("./entry.mjs");
+          // dep.mjs was requested before slow.mjs. One turn settles its load.
+          await reached;
+          await new Promise(resolve => setImmediate(resolve));
+          delete cache[dep];
+          writeFileSync(dep, "globalThis.__result.evaluated++;\\nexport const value = 2;\\n");
+          release();
+          const ns = await entry;
+          globalThis.__result.entry = ns.default;
+          globalThis.__result.slow = ns.slow;
+          globalThis.__result.dep = (await import("./dep.mjs")).value;
+          console.log(JSON.stringify(globalThis.__result));
+        `,
+        "entry.mjs": `
+          import { value } from "./dep.mjs";
+          import { slow } from "./slow.mjs";
+          export default value;
+          export { slow };
+        `,
+        "dep.mjs": `
+          globalThis.__result.evaluated++;
+          export const value = 1;
+        `,
+        "slow.mjs": ``,
+      });
+      const result = await runMain(String(dir), { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
+      expect(result).toEqual({ evaluated: 2, entry: 1, slow: 2, dep: 2 });
+    });
+
+    // entry.mjs is evaluating when deleter.mjs runs, and dep.mjs is linked but
+    // has yet to run. The delete is honoured: entry.mjs runs the record it
+    // linked, the next import() loads the file again.
+    test("a linked sibling deleted while another sibling's top level runs is evicted", async () => {
+      using dir = tempDir("require-cache-delete-linked-sibling", {
+        "main.mjs": `
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          globalThis.__result = { evaluated: 0 };
+          globalThis.__result.entry = (await import("./entry.mjs")).default;
+          writeFileSync(join(import.meta.dir, "dep.mjs"), "globalThis.__result.evaluated++;\\nexport const value = 2;\\n");
+          globalThis.__result.dep = (await import("./dep.mjs")).value;
+          console.log(JSON.stringify(globalThis.__result));
+        `,
+        "entry.mjs": `
+          import "./deleter.mjs";
+          import { value } from "./dep.mjs";
+          export default value;
+        `,
+        "deleter.mjs": `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          delete require.cache[require.resolve("./dep.mjs")];
+        `,
+        "dep.mjs": `
+          globalThis.__result.evaluated++;
+          export const value = 1;
+        `,
+      });
+      expect(await runMain(String(dir))).toEqual({ evaluated: 2, entry: 1, dep: 2 });
+    });
+
+    // The key is registered twice: evaluated as JavaScript, and fetching as text
+    // for importer.mjs. The delete takes both, so it is a no-op while either is
+    // in flight: importer2.mjs joins the fetch instead of starting its own.
+    test("a key whose other import type is still loading stays", async () => {
+      using dir = tempDir("require-cache-delete-typed-variant", {
+        "main.mjs": `
+          import { createRequire } from "node:module";
+          import { join } from "node:path";
+          import "./a.mjs";
+          const cache = createRequire(import.meta.url).cache;
+          const result = { onLoadCalls: 0 };
+          const { promise: gate, resolve: release } = Promise.withResolvers();
+          const { promise: reached, resolve: markReached } = Promise.withResolvers();
+          Bun.plugin({
+            name: "slow text",
+            setup(build) {
+              build.onLoad({ filter: /a\\.mjs$/ }, async () => {
+                result.onLoadCalls++;
+                markReached();
+                await gate;
+                return { contents: "text " + result.onLoadCalls, loader: "text" };
+              });
+            },
+          });
+          const importer = import("./importer.mjs");
+          await reached;
+          delete cache[join(import.meta.dir, "a.mjs")];
+          const importer2 = import("./importer2.mjs");
+          release();
+          result.importer = (await importer).default;
+          result.importer2 = (await importer2).default;
+          console.log(JSON.stringify(result));
+        `,
+        "a.mjs": `export const a = 1;`,
+        "importer.mjs": `import text from "./a.mjs" with { type: "text" }; export default text;`,
+        "importer2.mjs": `import text from "./a.mjs" with { type: "text" }; export default text;`,
+      });
+      expect(await runMain(String(dir))).toEqual({ onLoadCalls: 1, importer: "text 1", importer2: "text 1" });
+    });
+  });
+
   // These tests are extra slow in debug builds
   describe("files transpiled and loaded don't leak file paths", () => {
     test("via require()", async () => {

@@ -655,6 +655,62 @@ describe.concurrent("bundler", () => {
     // Without splitting everything is the entry module itself, which require.cache does not list.
     stdout: splitting => (splitting ? "0\ntrue 1\nfresh 1" : "0\nfalse 1\nsingle 1"),
   });
+  // A chunk that a failed import() left fetched and linked but never evaluated (bad throws first) can be deleted. An
+  // importer that is kept (other) links the record it already holds, a re-created importer (root) gets a fresh record:
+  // dep runs once more for each, root's first.
+  graphCase("RegistryDeleteUnevaluated", {
+    files: {
+      "/entry.ts": /* js */ `
+        const cache = import.meta.require.cache;
+        const g = globalThis as any;
+        g.__n = { dep: 0 };
+        g.__paths = {};
+        g.__throw = false;
+        const slashes = (p: string) => p.replaceAll("\\\\", "/");
+        const keyOf = (path: string) => Object.keys(cache).find(k => slashes(k) === slashes(path));
+        await import("./root");
+        const keys = Object.fromEntries(Object.entries(g.__paths).map(([name, path]) => [name, keyOf(path as string)]));
+        if (keys.root === undefined) {
+          console.log("single", g.__n.dep);
+        } else {
+          for (const key of Object.values(keys)) delete cache[key as string];
+          g.__throw = true;
+          let failed;
+          try { await import(keys.root); } catch (e) { failed = e.message; }
+          console.log(failed, g.__n.dep);
+          for (const name of ["dep", "root", "bad"]) delete cache[keys[name] as string];
+          g.__throw = false;
+          const root = await import(keys.root);
+          console.log(root.value, root.both, g.__n.dep);
+        }
+      `,
+      "/root.ts": /* js */ `
+        import "./bad";
+        import { value as otherValue } from "./other";
+        import { value } from "./dep";
+        (globalThis as any).__paths.root = import.meta.path;
+        export { value };
+        export const both = otherValue + value;
+      `,
+      "/bad.ts": /* js */ `
+        (globalThis as any).__paths.bad = import.meta.path;
+        if ((globalThis as any).__throw) throw new Error("boom");
+        export const ok = 1;
+      `,
+      "/other.ts": /* js */ `
+        import { value as depValue } from "./dep";
+        (globalThis as any).__paths.other = import.meta.path;
+        export const value = depValue + 10;
+      `,
+      "/dep.ts": /* js */ `
+        (globalThis as any).__paths.dep = import.meta.path;
+        export const value = ++(globalThis as any).__n.dep;
+      `,
+    },
+    entries: ["/entry.ts", "/root.ts", "/bad.ts", "/other.ts", "/dep.ts"],
+    // Without splitting everything is the entry module itself, which require.cache does not list.
+    stdout: splitting => (splitting ? "boom 1\n2 15 3" : "single 1"),
+  });
   // RegistryDelete for a module that reads imports: deleting its registry entry and importing the key again gives the
   // loader a second record of the same module next to the first, whose functions are hot by then. Both keep running,
   // each against the bindings it links to: imports the graph resolves to another chunk, a named import of a builtin

@@ -613,12 +613,17 @@ impl Quick {
         return self.t.at(p) >= 0xc4 && self.t.at(p) <= 0xca && (self.t.at(p + 1) & 0xc0) == 0x80;
     }
 
-    /// word_end() for a name that may hold such letters (`ɵfac`). The text is measured in bytes, so it is taken for wider than it is, which does no harm.
-    pub(crate) fn latin_word_end(&self, mut p: i32) -> i32 {
+    /// word_end() for a name that may hold such letters (`ɵfac`). The text is measured in bytes, so it is taken for wider than it is. That does no harm where it has to fit.
+    /// What is on several lines because it does not fit on one is left to the parser.
+    pub(crate) fn latin_word_end(&mut self, mut p: i32) -> i32 {
         loop {
             p = self.word_end(p);
             if !self.is_latin_letter(p) {
                 return p;
+            }
+            self.fast.breaks_here = false;
+            if self.fast.line_breaks != 0 {
+                self.fast.too_long = true;
             }
             p += 2;
         }

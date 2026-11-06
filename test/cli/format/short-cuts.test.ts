@@ -5946,6 +5946,24 @@ describe("what the quick way for scripts is asked about, and what is done around
       ["a.js", "", "b;\n//\fprettier-ignore\na  =  1;\n"],
       ["a.js", "", "b;\n//\t\u000bprettier-ignore\na  =  1;\n"],
       ["a.ts", "", "class A {\n  b = 1;\n  /*\u000bprettier-ignore*/\n  a  =  1;\n}\n"],
+      // Letters of two bytes and one column: what is on several lines fits on one.
+      [
+        "a.ts",
+        "",
+        `class A {\n  \u0275\u0275\u0275(\n    ${"a".repeat(25)}: string,\n    ${"b".repeat(26)}: string,\n  ) {\n    x;\n  }\n}\n`,
+      ],
+      [
+        "a.ts",
+        "",
+        `const c = ${"a".repeat(20)}(\n  ${"b".repeat(20)} as i0.\u0275\u0275${"c".repeat(20)},\n  d,\n);\n`,
+      ],
+      // U+007F counts for the width of a text that has nothing else in it but printable ASCII.
+      ["a.js", "--print-width=21", 'const q = gql`\n  {\n    a(b: "\\\\u007f\\\\"", c: 1)\n  }\n`;\n'],
+      [
+        "a.js",
+        "--print-width=23",
+        'const q = gql`\n  {\n    a(b: "\\\\u007f\\\\u007f\\\\t\\\\"", c: 1) @ddd\n  }\n`;\n',
+      ],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

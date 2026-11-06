@@ -535,9 +535,12 @@ fn is_tag(c: i32) -> bool {
 }
 
 impl Quick {
-    /// Prettier's getStringWidth over UTF-8.
+    /// Prettier's getStringWidth over UTF-8: `ir::width::string_width` of the long way.
     pub(crate) fn text_width(&self, start: i32, end: i32) -> i32 {
         let mut width: i32 = 0;
+        // The length of a text from U+0020 to U+007F is its width. In any other text U+007F has no width.
+        let mut deletes: i32 = 0;
+        let mut is_plain = true;
         let mut p = start;
         while p < end {
             // eight bytes of printable ASCII at a time
@@ -558,11 +561,16 @@ impl Quick {
             if c < 0x80 {
                 // (`#`, `*` or a digit with a keycap behind it is one emoji of two columns: one for each of the two)
                 p += 1;
-                if c >= 0x20 && c != 0x7f {
+                if c == 0x7f {
+                    deletes += 1;
+                } else if c >= 0x20 {
                     width += 1;
+                } else {
+                    is_plain = false;
                 }
                 continue;
             }
+            is_plain = false;
             let (c, next) = self.character_at(p, end);
             if c >= 0x4e00 && c <= 0x9fff {
                 // the unified ideographs, without a look into the tables
@@ -586,6 +594,9 @@ impl Quick {
                 _ if is_in(WIDE, c) => 2,
                 _ => 1,
             };
+        }
+        if is_plain {
+            width += deletes;
         }
         return width;
     }

@@ -985,7 +985,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match e_.index.data {
             // A second visit finds the field of an `accessor #x` here. No scope lists that field by name.
-            Data::EPrivateIdentifier(private) if p.is_accessor_storage(private.ref_) => {}
+            Data::EPrivateIdentifier(private)
+                if matches!(private.ref_.tag(), js_ast::base::RefTag::Symbol)
+                    && p.is_accessor_storage(private.ref_) => {}
             Data::EPrivateIdentifier(mut private) => {
                 let name = p.load_name_from_ref(private.ref_);
                 let result = p.find_symbol(e_.index.loc, name).expect("unreachable");
@@ -1056,7 +1058,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 BStr::new(name)
                             ),
                         );
-                    } else if let Some(storage) = p.accessor_storage(kind, private.ref_) {
+                    } else if matches!(
+                        kind,
+                        js_ast::symbol::Kind::PrivateGetSetPair
+                            | js_ast::symbol::Kind::PrivateStaticGetSetPair
+                    ) && !p.plain_accessors.is_empty()
+                        && let Some(storage) = p.accessor_storage(private.ref_)
+                    {
                         // What the getter and the setter of an `accessor #x` do, without the call.
                         p.ignore_usage(private.ref_);
                         p.record_usage(storage);

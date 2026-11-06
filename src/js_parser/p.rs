@@ -176,6 +176,7 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_len: usize,
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
+    plain_accessors_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -645,6 +646,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
+    /// Every undecorated `accessor #x`, in the order of their symbols.
     pub(crate) plain_accessors: List<'a, crate::lower::lower_decorators::PlainAccessor>,
 
     /// `(inner_class_ref, class name)` of each enclosing class whose body
@@ -3282,6 +3284,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `into_bump_slice()` leaks the BumpVec into the arena and returns
             // a `&'a [T]` for that allocation.
             self.scope_order_to_visit = buf.into_bump_slice();
+        }
+
+        if !self.plain_accessors.is_empty() {
+            self.name_accessor_storage_fields();
         }
 
         self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
@@ -8285,6 +8291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_len: self.scopes_in_order.len(),
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
+            plain_accessors_len: self.plain_accessors.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8341,9 +8348,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for ref_ in stale {
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
-            self.plain_accessors
-                .retain(|accessor| (accessor.name.inner_index() as usize) < snapshot.symbols_len);
         }
+        self.plain_accessors.truncate(snapshot.plain_accessors_len);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }

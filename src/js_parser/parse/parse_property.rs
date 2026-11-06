@@ -739,13 +739,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .declare_symbol(declare, key.loc, name)
                             .expect("unreachable");
                         if is_plain_accessor {
-                            // No scope lists the field by name. The lowering names it.
+                            // No scope lists the field by name. It gets its own name before the visit.
                             let storage = p.new_symbol(field, name);
                             VecExt::append(&mut p.current_scope_mut().generated, storage);
                             p.plain_accessors.push(PlainAccessor {
                                 name: private.ref_,
                                 storage,
-                                class_body: p.current_scope_ref(),
                             });
                         }
                     }

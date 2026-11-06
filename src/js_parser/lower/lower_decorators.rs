@@ -89,7 +89,6 @@ pub(crate) struct PlainAccessor {
     pub(crate) name: Ref,
     /// The `#private` field of its value.
     pub(crate) storage: Ref,
-    pub(crate) class_body: js_ast::StoreRef<js_ast::Scope>,
 }
 
 /// `accessor #x` with no decorators.
@@ -243,97 +242,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"_accessor_storage"
     }
 
-    /// The name of `prop` when it is a `#private` one.
-    fn private_key_name(&self, prop: &Property) -> Option<&'a [u8]> {
-        match prop.key?.data {
-            js_ast::ExprData::EPrivateIdentifier(private) => Some(
-                self.symbols[private.ref_.inner_index() as usize]
-                    .original_name
-                    .slice(),
-            ),
-            _ => None,
-        }
-    }
-
     /// Whether `field` has the value of an undecorated `accessor #x`.
     pub(crate) fn is_accessor_storage(&self, field: Ref) -> bool {
-        let mut accessors = self.plain_accessors.iter();
-        accessors.any(|accessor| accessor.storage.eql(field))
+        let listed = self.plain_accessors.as_slice();
+        let at = listed.binary_search_by_key(&field.inner_index(), |accessor| {
+            accessor.storage.inner_index()
+        });
+        at.is_ok_and(|at| listed[at].storage.eql(field))
     }
 
-    /// The `#private` field with the value of `name`, an undecorated `accessor #x`.
-    pub(crate) fn accessor_storage(&self, kind: js_ast::symbol::Kind, name: Ref) -> Option<Ref> {
-        use js_ast::symbol::Kind;
-        if !matches!(
-            kind,
-            Kind::PrivateGetSetPair | Kind::PrivateStaticGetSetPair
-        ) {
-            return None;
-        }
-        let mut accessors = self.plain_accessors.iter();
-        let found = accessors.find(|accessor| accessor.name.eql(name));
-        found.map(|accessor| accessor.storage)
+    /// The `#private` field with the value of `name`, when `name` is an undecorated `accessor #x`.
+    pub(crate) fn accessor_storage(&self, name: Ref) -> Option<Ref> {
+        let listed = self.plain_accessors.as_slice();
+        let at = listed
+            .binary_search_by_key(&name.inner_index(), |accessor| accessor.name.inner_index());
+        let accessor = listed[at.ok()?];
+        accessor.name.eql(name).then_some(accessor.storage)
     }
 
-    /// The `#private` field for the value of `accessor`, under a name that reaches it from every place that reaches `accessor`.
-    fn accessor_storage_field(&mut self, accessor: Ref, taken: &mut BumpVec<'a, &'a [u8]>) -> Ref {
-        let accessor_name: &'a [u8] = self.symbols[accessor.inner_index() as usize]
-            .original_name
-            .slice();
-        let mut listed = self.plain_accessors.iter();
-        let listed = listed.find(|listed| listed.name.eql(accessor)).copied();
-        let listed = listed.expect("the parser lists every undecorated `accessor #x`");
-        let mut name = self.bump_name3(accessor_name, b"_accessor_storage", b"");
-        let mut suffix = 1u32;
-        while taken.contains(&name)
-            || self.enclosing_scope_declares(name)
-            || self.scope_below_declares(listed.class_body, name)
-        {
-            suffix += 1;
-            name = bun_alloc::arena_format!(
-                in self.arena,
-                "{}_accessor_storage{}",
-                bstr::BStr::new(accessor_name),
-                suffix
-            )
-            .into_bump_str()
-            .as_bytes();
-        }
-        taken.push(name);
-        self.symbols[listed.storage.inner_index() as usize].original_name =
-            js_ast::StoreStr::new(name);
-        listed.storage
-    }
-
-    fn enclosing_scope_declares(&self, name: &[u8]) -> bool {
-        let mut scope = Some(self.current_scope_ref());
-        while let Some(current) = scope {
-            if current.members.contains_key(name) {
-                return true;
+    /// Names the field of every undecorated `accessor #x`: `#x_accessor_storage`, then digits when the file declares a `#private` name of that form.
+    pub(crate) fn name_accessor_storage_fields(&mut self) {
+        const STEM: &[u8] = b"_accessor_storage";
+        let mut declared_digits: Option<usize> = None;
+        for symbol in self.symbols.iter() {
+            if !js_ast::Symbol::is_kind_private(symbol.kind) {
+                continue;
             }
-            scope = current.parent;
-        }
-        false
-    }
-
-    /// Whether a scope in `scope` declares `name`.
-    fn scope_below_declares(&self, scope: js_ast::StoreRef<js_ast::Scope>, name: &[u8]) -> bool {
-        let mut pending = BumpVec::new_in(self.arena);
-        pending.extend(scope.children.slice().iter().copied());
-        while let Some(current) = pending.pop() {
-            if current.members.contains_key(name) {
-                return true;
+            let name = symbol.original_name.slice();
+            let digits = name
+                .iter()
+                .rev()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            if name[..name.len() - digits].ends_with(STEM) {
+                declared_digits = declared_digits.max(Some(digits));
             }
-            pending.extend(current.children.slice().iter().copied());
         }
-        false
+        // One digit more than any declared name has there, so no declared name is equal.
+        let mut suffix = BumpVec::<u8>::new_in(self.arena);
+        if let Some(digits) = declared_digits {
+            suffix.push(b'1');
+            suffix.extend(core::iter::repeat_n(b'0', digits));
+        }
+        for at in 0..self.plain_accessors.len() {
+            let PlainAccessor { name, storage } = self.plain_accessors[at];
+            let accessor_name: &'a [u8] = self.symbols[name.inner_index() as usize]
+                .original_name
+                .slice();
+            let field = self.bump_name3(accessor_name, STEM, &suffix);
+            self.symbols[storage.inner_index() as usize].original_name =
+                js_ast::StoreStr::new(field);
+        }
     }
 
     /// Turns `prop`, an `accessor #x`, into the field under it. Returns `get #x` and `set #x`.
     fn split_plain_private_accessor(
         &mut self,
         prop: &mut Property,
-        taken: &mut BumpVec<'a, &'a [u8]>,
         loc: bun_ast::Loc,
     ) -> [Property; 2] {
         let key = prop.key.expect("a class member has a key");
@@ -343,7 +308,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let accessor_name: &'a [u8] = self.symbols[accessor.ref_.inner_index() as usize]
             .original_name
             .slice();
-        let storage = self.accessor_storage_field(accessor.ref_, taken);
+        let storage = self.accessor_storage(accessor.ref_);
+        let storage = storage.expect("the parser lists every undecorated `accessor #x`");
 
         // The field would name an anonymous function after itself.
         let accessor_name = self.new_expr(E::EString::init(accessor_name), loc);
@@ -1076,19 +1042,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::new_in(bump),
         ];
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
-        // The `#private` names of a class in which an `accessor #x` needs a new one.
-        let mut private_names = BumpVec::<&'a [u8]>::new_in(bump);
-        if class
-            .properties
-            .slice()
-            .iter()
-            .any(is_plain_private_accessor)
-        {
-            for prop in class.properties.slice() {
-                private_names.extend(p.private_key_name(prop));
-            }
-        }
-
         for slot in class.properties.slice_mut().iter_mut() {
             let mut prop = core::mem::take(slot);
             if prop.kind == PropertyKind::ClassStaticBlock {
@@ -1098,7 +1051,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Not the field `#x`: `#x in this` is true before the first field runs.
             if is_plain_private_accessor(&prop) {
-                members.extend(p.split_plain_private_accessor(&mut prop, &mut private_names, loc));
+                members.extend(p.split_plain_private_accessor(&mut prop, loc));
             }
 
             let key = prop.key.expect("a class member has a key");

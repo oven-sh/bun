@@ -1922,9 +1922,9 @@ describe("ES Decorators", () => {
     });
 
     test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
-      // Its name is not one the class, a class around it or a class in it
-      // declares, and its initializer runs as the field it is: no new.target,
-      // any constructor, a storage of its own for each evaluation of the class.
+      // Its name is not one that the file declares, and its initializer runs
+      // as the field it is: no new.target, any constructor, a storage of its
+      // own for each evaluation of the class.
       const { stdout, stderr, exitCode } = await runDecorator(`
         const dec = (v, ctx) => {};
         class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
@@ -1941,6 +1941,27 @@ describe("ES Decorators", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],["around","nested"],null,1,[0,1]]\n');
       expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("the private field of an undecorated accessor #x has a name that the file does not declare", () => {
+      const print = (source: string) => new Bun.Transpiler({ loader: "js" }).transformSync(source);
+      expect(print("class A { accessor #x = 1 }")).toContain("#x_accessor_storage = 1;");
+      // A number follows when the file declares a #private name of that form. It has one digit more than any of them.
+      const declared = "class A { accessor #x = 1 } class B { #y_accessor_storage = 2 }";
+      expect(print(declared)).toContain("#x_accessor_storage1 = 1;");
+      const nested = "class A { accessor #x = 1; static B = class { #x_accessor_storage12 = 2 } }";
+      expect(print(nested)).toContain("#x_accessor_storage100 = 1;");
+      const itself = "class A { accessor #x_accessor_storage = 1 }";
+      expect(print(itself)).toContain("#x_accessor_storage_accessor_storage1 = 1;");
+    });
+
+    test.concurrent("an undecorated accessor #x in an arrow function that TypeScript parses twice", () => {
+      // "(b) : c => class {}" is first parsed as an arrow function with a return type. That parse is thrown away.
+      const source = "const pick = a ? (b) : c => class { accessor #p = c; static read(o: any) { return o.#p } };";
+      const printed = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+      expect(printed).toContain("get #p() {");
+      expect(printed).toContain("#p_accessor_storage = c;");
+      expect(printed).toContain("return o.#p_accessor_storage;");
     });
 
     test.concurrent("a read or a write of an undecorated accessor #x names its private field", async () => {
@@ -2069,6 +2090,28 @@ describe("ES Decorators", () => {
       expect(around.stdout).toContain("#acc_accessor_storage = 2");
       expect(around.exitCode).toBe(0);
     });
+
+    test("many undecorated accessor #x in one class transpile in linear time", () => {
+      // Each accessor is read 32 times. 16 times the accessors took 83 times as long when a read looked through a list of them.
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const time = (count: number) => {
+        const indexes = Array.from({ length: count }, (_, i) => i);
+        const fields = indexes.map(i => `accessor #p${i} = ${i};`).join("\n");
+        const reads = indexes.map(i => ` + this.#p${i}`.repeat(32)).join("");
+        const source = `class C {\n${fields}\nsum() { return 0${reads}; }\n}\n`;
+        let best = Infinity;
+        for (let run = 0; run < 2; run++) {
+          const start = performance.now();
+          const printed = transpiler.transformSync(source);
+          best = Math.min(best, performance.now() - start);
+          expect(printed).toContain(`#p${count - 1}_accessor_storage = ${count - 1};`);
+        }
+        return best;
+      };
+      const small = time(250);
+      const large = time(4000);
+      expect(large).toBeLessThan(small * 16 * 2.5);
+    }, 30_000);
   });
 
   describe("accessor with TypeScript annotations", () => {

@@ -768,6 +768,63 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  // With --parallel a worker describes the failure and the coordinator writes it.
+  it.each([[[]], [["--parallel=2"]]])("reports a failed assertion count with the count of the check %j", async args => {
+    await using tmpDir = tempDir("junit-assertion-count", {
+      "package.json": "{}",
+      "passes.test.js": `test("passes", () => {});`,
+      // Vitest checks the count when the test function ends, so afterEach runs after the check.
+      "count.test.js": `
+        import { afterEach, describe, expect, test } from "vitest";
+        describe("afterEach calls expect()", () => {
+          afterEach(() => { expect(1).toBe(1); });
+          test("fails once", () => { expect.assertions(1); });
+          test("fails twice", { retry: 1 }, () => { expect.assertions(1); });
+        });
+        describe("afterEach throws", () => {
+          afterEach(() => { throw new Error("afterEach"); });
+          test("fails once", () => { expect.assertions(1); });
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", ...args, "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const testcases = Array.from(
+      xmlContent.matchAll(
+        /<testcase name="([^"]*)" classname="([^"]*)"[^>]* assertions="(\d+)">([\s\S]*?)<\/testcase>/g,
+      ),
+      ([, name, classname, assertions, failures]) => ({
+        name: `${classname} > ${name}`,
+        // The expect() call of afterEach is in the total.
+        assertions: Number(assertions),
+        failures: Array.from(failures.matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g), match => match.slice(1)),
+      }),
+    );
+    const tooFew = ["AssertionError", "Expected more assertions, but only received 0"];
+    expect(testcases).toEqual([
+      { name: "afterEach calls expect() > fails once", assertions: 1, failures: [["failure", ...tooFew]] },
+      {
+        name: "afterEach calls expect() > fails twice",
+        assertions: 1,
+        failures: [
+          ["failure", ...tooFew],
+          ["rerunFailure", ...tooFew],
+        ],
+      },
+      { name: "afterEach throws > fails once", assertions: 0, failures: [["failure", ...tooFew]] },
+    ]);
+    expect(proc.exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",

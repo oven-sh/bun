@@ -167,6 +167,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
+    /// `(expected, received)` of the check that set `result` to `FailBecauseExpectedAssertionCount`. Hooks that run later still change the two fields above.
+    pub(crate) failed_assertion_count: (u32, u32),
     pub(crate) maybe_skip: bool,
     pub(crate) context: Option<Strong>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
@@ -201,6 +203,7 @@ impl ExecutionSequence {
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
+            failed_assertion_count: (0, 0),
             maybe_skip: false,
             context: None,
             pending_matchers: 0,
@@ -321,20 +324,30 @@ impl ExecutionSequence {
         self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
+    /// Jest's check, at the end of the sequence. Vitest checks once, when the test callback ends, and never a hook on its own.
     fn check_expect_assertions(&mut self) {
+        if self.expect_assertions == ExpectAssertions::NotSet {
+            return;
+        }
+        // SAFETY: arena-owned entry
+        if self.test_entry.or(self.first_entry).is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest()) {
+            return;
+        }
+        self.evaluate_expect_assertions();
+    }
+
+    fn evaluate_expect_assertions(&mut self) {
+        let received = self.expect_call_count;
         let failure = match self.expect_assertions {
-            ExpectAssertions::NotSet => return,
-            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Result::FailBecauseExpectedHasAssertions,
-            ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
-                Result::FailBecauseExpectedAssertionCount
-            }
-            ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => {
-                self.expect_assertions = ExpectAssertions::NotSet;
-                return;
-            }
+            ExpectAssertions::AtLeastOne if received == 0 => Result::FailBecauseExpectedHasAssertions,
+            ExpectAssertions::Exact(expected) if received != expected => Result::FailBecauseExpectedAssertionCount,
+            ExpectAssertions::NotSet | ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => return,
         };
         if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
             self.result = failure;
+            if let ExpectAssertions::Exact(expected) = self.expect_assertions {
+                self.failed_assertion_count = (expected, received);
+            }
         }
     }
 }
@@ -663,7 +676,7 @@ impl Execution {
             }
             if entry.calling.is_vitest() {
                 if Some(entry_ptr) == sequence.test_entry {
-                    sequence.check_expect_assertions();
+                    sequence.evaluate_expect_assertions();
                 }
                 let left_around_all = entry.around == Some((Around::All, AroundPhase::TearDown));
                 if let (true, Some(scope)) = (left_around_all, entry.base.parent) {
@@ -865,7 +878,7 @@ impl Execution {
                 .or_else(|| {
                     test_command::TestFailure::from_result(
                         sequence.result,
-                        sequence.expect_call_count,
+                        sequence.failed_assertion_count.1,
                     )
                 })
                 .unwrap_or_default();

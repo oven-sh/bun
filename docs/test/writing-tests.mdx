@@ -507,6 +507,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                            |
 | `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                          |
 | Hook registered while a test runs                         | an error, or runs after that test    | never runs                                                           |
+| `expect.assertions()`, `expect.hasAssertions()`           | checked after the `afterEach` hooks  | checked when the test callback ends, before the `afterEach` hooks    |
 | `.not.toMatchObject()` with a value that isn't an object  | an error                             | passes                                                               |
 | `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
 | `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |

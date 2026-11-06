@@ -152,8 +152,7 @@ const writtenByWarnings = b.memberOfValue(
   b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
 );
 
-// Once the program replaces write() of a whole stream, the native console (src/jsc/ConsoleObject.rs) writes each message
-// through it as node's kWriteToConsole does: a one-shot 'error' listener around write(), and a callback that adds one again.
+// The native console writes through a replaced write() as node's kWriteToConsole does (BunProcess.cpp Bun__Process__writeThroughStdioStream).
 const writtenByConsole = (cell: string, failed: string) => {
   const listener = { this: b.nativeCell(cell), args: [b.string, b.nativeCell(consoleNoopCell)], result: b.dropped };
   return [

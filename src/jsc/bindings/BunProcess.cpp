@@ -4137,8 +4137,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleNoop, (JSC::JSGlobalObject*, Cal
     return JSValue::encode(jsUndefined());
 }
 
-// The callback of the console's write through a replaced `write`: node's createWriteErrorHandler. An error that the stream has not
-// emitted yet arrives as an 'error' event, which the one-shot listener keeps from becoming an uncaught exception.
+// The callback of the console's write through a replaced `write`: node's createWriteErrorHandler.
 static EncodedJSValue consoleWriteFailed(JSC::JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, int fd)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -4191,8 +4190,7 @@ void Process::addNoopErrorListener(Zig::GlobalObject* globalObject, JSObject* st
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// Hands one console message to the replaced `write` of the stream for fd, as node's kWriteToConsole does with ignoreErrors on:
-// an error from the write is dropped, except a stack overflow. Zero means it threw.
+// One console message to the replaced `write` of the stream for fd, as node's kWriteToConsole does. Zero means it threw.
 extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::GlobalObject* globalObject, int32_t fd, JSC::EncodedJSValue text)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -86,6 +86,26 @@ static size_t tagOf(JSGlobalObject* globalObject, JSValue value)
     return tag;
 }
 
+// `value instanceof Error` without Error[Symbol.hasInstance]. Bun has one Error.prototype where Jest on Node has two, so a Proxy of an error that the runtime made is an Error here only.
+static ALWAYS_INLINE bool inheritsErrorPrototype(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
+{
+    // V8's RangeError when getPrototypeOf traps never end the chain.
+    constexpr unsigned maxProxies = 1000;
+    unsigned proxies = 0;
+    for (JSObject* current = value.getObject(); current;) {
+        if (current->type() == ProxyObjectType && ++proxies > maxProxies) {
+            throwStackOverflowError(globalObject, scope);
+            return false;
+        }
+        JSValue prototype = current->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (prototype == globalObject->errorPrototype())
+            return true;
+        current = prototype.getObject();
+    }
+    return false;
+}
+
 extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, EncodedJSValue encodedObject)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -94,21 +114,13 @@ extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, Enc
     RETURN_IF_EXCEPTION(scope, SnapshotKind::Object);
     if (tag > 0 && tag < std::size(tags))
         return tags[tag].second;
-    // `object instanceof Error`, with V8's RangeError when getPrototypeOf traps never end the chain.
-    constexpr unsigned maxProxies = 1000;
-    unsigned proxies = 0;
-    for (JSObject* current = object.getObject(); current;) {
-        if (current->type() == ProxyObjectType && ++proxies > maxProxies) {
-            throwStackOverflowError(globalObject, scope);
-            return SnapshotKind::Object;
-        }
-        JSValue prototype = current->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, SnapshotKind::Object);
-        if (prototype == globalObject->errorPrototype())
-            return SnapshotKind::Error;
-        current = prototype.getObject();
-    }
-    return SnapshotKind::Object;
+    return inheritsErrorPrototype(globalObject, scope, object) ? SnapshotKind::Error : SnapshotKind::Object;
+}
+
+extern "C" bool SnapshotFormat__inheritsErrorPrototype(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return inheritsErrorPrototype(globalObject, scope, JSValue::decode(encodedValue));
 }
 
 // Vitest's `inspect()` truncates Object, Array, Map and Set by dropping items.

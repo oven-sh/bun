@@ -594,11 +594,15 @@ describe("source map remapping of the printed stack", () => {
     const { out, stderr, exitCode } = await run({
       "main.js": `
         const frame = stack => stack.split("\\n")[1];
+        const cjs = frame(require("./sub/plain.cjs"));
+        // On Windows, a path that depends on the current drive.
+        const withoutDrive = process.cwd().replace(/^[A-Za-z]:/, "");
         console.log(JSON.stringify({
-          path: [frame(require("./sub/plain.cjs")), frame((await import("./sub/plain.mjs")).default)],
+          path: [cjs, frame((await import("./sub/plain.mjs")).default), cjs],
           blob: [
             frame(require(URL.createObjectURL(Bun.file("sub/plain.cjs")))),
             frame((await import(URL.createObjectURL(Bun.file("./sub/../sub/plain.mjs")))).default),
+            frame(require(URL.createObjectURL(Bun.file(require("node:path").join(withoutDrive, "sub", "plain.cjs"))))),
           ],
         }));`,
       "sub/plain.cjs": "module.exports = new Error().stack;\n",

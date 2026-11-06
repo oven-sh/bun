@@ -1559,7 +1559,7 @@ mod vm_loader_ctx {
                     .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
             },
             blob_loader(b) => blob(b).get_loader(&*this),
-            // Returned slices borrow blob heap storage that lives until
+            // Returned slices are interned or borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
             blob_store_path(b) => blob_module_path(blob(b)),
@@ -4561,7 +4561,7 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
 /// source map, and what the map's `sources` and the module's `import()` are resolved against.
 fn blob_module_path(blob: &crate::webcore::Blob) -> Option<&[u8]> {
     let filename = blob.store_path()?;
-    if !blob.needs_to_read_file() || bun_paths::is_absolute(filename) {
+    if !blob.needs_to_read_file() || bun_paths::is_fully_qualified(filename) {
         return Some(filename);
     }
     // `path.resolve(filename)`. `bun_paths` would take a `\` in a POSIX file name for a separator.

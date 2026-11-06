@@ -323,6 +323,8 @@ pub(crate) struct Formatter<'a> {
     /// Set by `did_older_bun_print`. The cell turns true once the output has diverged, so printing can stop.
     like_older_bun: Option<&'a core::cell::Cell<bool>>,
     same_as_older_bun: bool,
+    /// Set by `print_snapshot` for Bun's format. A failure message and `did_older_bun_print` print a `URL` as `URL {}`.
+    in_snapshot: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
     ancestors: ObjectList,
@@ -358,6 +360,7 @@ impl<'a> Formatter<'a> {
             snapshot_format: SnapshotFormat::Bun,
             like_older_bun: None,
             same_as_older_bun: true,
+            in_snapshot: false,
             output_length: None,
             ancestors: ObjectList::default(),
             copied: 0,
@@ -1708,6 +1711,18 @@ impl<'a> Formatter<'a> {
                         self, &mut writer, value,
                     )? {
                         return Ok(());
+                    } else if self.in_snapshot
+                        && js_type == JSType::DOMWrapper
+                        && let Some(href) = href_of(self.global_this, value)
+                    {
+                        self.same_as_older_bun = false;
+                        // JSX array children print with `quote_strings` off.
+                        let prev_quote_strings = core::mem::replace(&mut self.quote_strings, true);
+                        let global = self.global_this;
+                        let printed = Tag::get(href, global)
+                            .and_then(|tag| self.format::<W, ENABLE_ANSI_COLORS>(tag, writer.ctx, href, global));
+                        self.quote_strings = prev_quote_strings;
+                        return printed;
                     } else if js_type != JSType::DOMWrapper {
                         if value.is_callable() {
                             return self.print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(
@@ -3110,6 +3125,15 @@ fn has_index(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<bo
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasIndex(global, value, index))
 }
 
+/// The string `url.href` returns, read from the native `URL` so no `toJSON` or getter of the program runs.
+fn href_of(global: &JSGlobalObject, value: JSValue) -> Option<JSValue> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__hrefOf(global: &JSGlobalObject, value: JSValue) -> JSValue;
+    }
+    let href = SnapshotFormat__hrefOf(global, value);
+    (!href.is_empty()).then_some(href)
+}
+
 /// Iteration count of `for (let i = 0; i < value.length; i++)`.
 fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
     unsafe extern "C" {
@@ -3525,7 +3549,7 @@ impl bun_io::Write for ExpectedText<'_> {
 
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
-    /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// They printed DOM nodes as plain objects, accessors as `[native code]`, non-enumerable properties, and a `URL` as `URL {}`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);
@@ -3554,6 +3578,7 @@ impl JestPrettyFormat {
         formatter.serializers = Self::serializers(global)?;
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
+            formatter.in_snapshot = true;
             let tag = Tag::get(value, global)?;
             let mut bridge = AsFmt::new(out);
             formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;

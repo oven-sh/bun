@@ -4147,7 +4147,10 @@ console.log(resolve.length)
             return {
               stdout,
               error: lines.find(l => l.startsWith("error: ")),
-              at: lines.find(l => l.startsWith("at "))?.split(/[\\/]/).pop(),
+              at: lines
+                .find(l => l.startsWith("at "))
+                ?.split(/[\\/]/)
+                .pop(),
               exitCode,
             };
           }),

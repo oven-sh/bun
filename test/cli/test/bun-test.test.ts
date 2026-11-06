@@ -3978,6 +3978,20 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
     expect(stdout).toContain("the process answers: alive");
   });
 
+  test("a concurrent test that times out does not kill the processes of another", async () => {
+    const { stdout } = await run({
+      source: `
+        test.concurrent("a", never, ${short});
+        test.concurrent("b", async () => {
+          const child = ${echo};
+          await sleep(${due1});
+          console.log("the process answers:", await (${answer})(child));
+        }, ${limit});`,
+      results: ["(fail) a", "(pass) b"],
+    });
+    expect(stdout).toContain("the process answers: alive");
+  });
+
   test("a fire for the limit of a test that has ended does not kill the processes of the file", async () => {
     const { stdout } = await run({
       source: `

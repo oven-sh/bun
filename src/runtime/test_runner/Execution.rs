@@ -514,16 +514,10 @@ impl Execution {
             // A queued completion ends the entry first, unless pending matchers keep it open (`waits_for_matchers`).
             let completion_ends_it = sequence.pending_matchers == 0 || sequence.maybe_skip;
             let queue = &buntest.result_queue;
-            let is_settled = (0..queue.readable_length()).any(|i| match queue.peek_item(i) {
-                RefDataValue::Execution { group_index: group, entry_data: Some(queued) } => {
-                    completion_ends_it && group == group_index && queued == entry_data
-                }
-                RefDataValue::TimedOut { group_index: group, entry_data: queued } => {
-                    group == group_index && queued == entry_data
-                }
-                _ => false,
-            });
-            if is_settled {
+            let is_its_completion = |queued| {
+                matches!(queued, RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry_data)
+            };
+            if completion_ends_it && (0..queue.readable_length()).any(|i| is_its_completion(queue.peek_item(i))) {
                 continue;
             }
             let _ = buntest.result_queue.write_item(RefDataValue::TimedOut { group_index, entry_data });

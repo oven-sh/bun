@@ -1543,6 +1543,16 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(exitCode).toBe(0);
       });
 
+      test("--update-snapshots leaves it as it is when its test is skipped", async () => {
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js": tests.replace(`test("inner"`, `test.skip("inner"`),
+          "__snapshots__/a.test.js.snap": appendedTo,
+        });
+        const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+        expect(snap(dir)).toBe(appendedTo);
+        expect(exitCode).toBe(0);
+      });
+
       test("is not looked for in a file whose keys are in the runner's order, which Bun has not appended to", async () => {
         const sorted = headers[format] + entries[format].replace("[Function]", "[Function: named]");
         using dir = tempDir("snapshot-sorted", { "a.test.js": body, "__snapshots__/a.test.js.snap": sorted });
@@ -1705,13 +1715,14 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         describe.skip("skipped block", () => { test("inside", () => { expect("i").toMatchSnapshot(); }); });
       });
     `;
-    // values must already be in Vitest's key order. Only the jest branch sorts.
-    const file = (format: "jest" | "vitest", values: Record<string, string>) => {
+    const formats = ["bun", "jest", "vitest"] as const;
+    // values must already be in Vitest's key order. Only the jest branch sorts. Bun's format has Jest's keys in the order of the file.
+    const file = (format: (typeof formats)[number], values: Record<string, string>) => {
       let entries = Object.entries(values);
-      if (format === "jest") {
+      if (format !== "vitest") {
         entries = entries.map(([key, value]) => [key.replace(" > hint", ": hint").replaceAll(" > ", " "), value]);
-        entries.sort(([a], [b]) => (a < b ? -1 : 1));
       }
+      if (format === "jest") entries.sort(([a], [b]) => (a < b ? -1 : 1));
       return headers[format] + entries.map(([key, value]) => `\nexports[\`${key}\`] = \`"${value}"\`;\n`).join("");
     };
     const before = {
@@ -1728,7 +1739,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       "d > todo 1": "t",
     };
 
-    test.each(["jest", "vitest"] as const)(
+    test.each(formats)(
       "%s: what no test asks for goes, what a skipped or failed test would ask for stays",
       async format => {
         using dir = tempDir("snapshot-obsolete", {
@@ -1737,8 +1748,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         });
         const { stderr, exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
         expect(stderr).toContain("2 passed, 2 added");
-        const after = {
-          "d > added 1": "added",
+        const kept = {
           "d > changed 1": "new value",
           "d > fails before 1": "f",
           "d > fewer 1": "one",
@@ -1747,12 +1757,14 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
           "d > skipped 1": "s",
           "d > skipped block > inside 1": "i",
         };
+        // Bun's format keeps the order of the file, so the new entry is the last one.
+        const after = format === "bun" ? { ...kept, "d > added 1": "added" } : { "d > added 1": "added", ...kept };
         expect(snap(dir)).toBe(file(format, after));
         expect(exitCode).toBe(1);
       },
     );
 
-    test.each(["jest", "vitest"] as const)("%s: with a filter, only what has no test goes", async format => {
+    test.each(formats)("%s: with a filter, only what has no test goes", async format => {
       using dir = tempDir("snapshot-obsolete-filter", {
         "a.test.js": importing(format === "vitest" ? "vitest" : null) + tests,
         "__snapshots__/a.test.js.snap": file(format, before),
@@ -1765,6 +1777,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
 
     // How Jest 30 and Vitest 5 write the key, and they keep the entry too.
     test.each([
+      ["bun", "new\nline 1"],
       ["jest", "new\\\\nline 1"],
       ["vitest", "new\nline 1"],
     ] as const)("%s: the entry of a skipped test with a line break in its name stays", async (format, key) => {
@@ -1804,7 +1817,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       expect(exitCode).toBe(0);
     });
 
-    test.each(["jest", "vitest"] as const)("%s: without it, nothing goes", async format => {
+    test.each(formats)("%s: without it, nothing goes", async format => {
       using dir = tempDir("snapshot-obsolete-kept", {
         "a.test.js": `test("t", () => { expect(1).toMatchSnapshot(); });`,
         "__snapshots__/a.test.js.snap": headers[format] + "\nexports[`gone 1`] = `0`;\n\nexports[`t 1`] = `1`;\n",
@@ -1814,7 +1827,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       expect(exitCode).toBe(0);
     });
 
-    test.each(["jest", "vitest"] as const)("%s: a file that nothing is left of is removed", async format => {
+    test.each(formats)("%s: a file that nothing is left of is removed", async format => {
       using dir = tempDir("snapshot-obsolete-file", {
         "a.test.js": `test("t", () => { expect(1).toMatchInlineSnapshot(\`1\`); });`,
         "__snapshots__/a.test.js.snap": headers[format] + "\nexports[`t 1`] = `1`;\n",
@@ -1822,6 +1835,163 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
       expect(readdirSync(join(String(dir), "__snapshots__"))).toEqual([]);
       expect(exitCode).toBe(0);
+    });
+
+    // Three tests have three entries. A run leaves two of the tests out, or one does not get to its snapshot.
+    // Then a run without the flag follows in which test "two" prints another value. It fails if the entry of "two" is still there.
+    describe.each(formats)("%s: the entries of the tests that a run leaves out stay", format => {
+      const form = (one: string, two: string, three: string, beforeOne = "", beforeTwo = "") => `
+        ${one}("one", () => { ${beforeOne}expect("v1").toMatchSnapshot(); });
+        ${two}("two", () => { ${beforeTwo}expect(process.env.V).toMatchSnapshot(); });
+        ${three}("three", () => { expect("v3").toMatchSnapshot(); });
+      `;
+      const plain = form("test", "test", "test");
+      const boom = `throw new Error("before the snapshot line"); `;
+      const stored = file(format, { "one 1": "v1", "three 1": "v3", "two 1": "v2" });
+
+      test.each([
+        ["every test runs", ["--update-snapshots"], plain],
+        ["-t one without the flag", ["-t", "one"], plain],
+        ["-t one", ["--update-snapshots", "-t", "one"], plain],
+        ["two and three are test.skip", ["--update-snapshots"], form("test", "test.skip", "test.skip")],
+        ["--only, and one is test.only", ["--update-snapshots", "--only"], form("test.only", "test", "test")],
+        ["two and three are test.todo with a body", ["--update-snapshots"], form("test", "test.todo", "test.todo")],
+        ["two throws before its snapshot", ["--update-snapshots"], form("test", "test", "test", "", boom)],
+        [
+          "--bail, and one fails before its snapshot",
+          ["--update-snapshots", "--bail"],
+          form("test", "test", "test", boom),
+        ],
+        ["-t selects no test", ["--update-snapshots", "-t", "nothing-has-this-name"], plain],
+      ])("%s", async (_, args, tests) => {
+        using dir = tempDir("snapshot-left-out", { "a.test.js": tests, "__snapshots__/a.test.js.snap": stored });
+        await runTests(String(dir), { CI: "false", V: "v2" }, ...args, "./a.test.js");
+        expect(snap(dir)).toBe(stored);
+
+        writeFileSync(join(String(dir), "a.test.js"), plain);
+        const { stderr, exitCode } = await runTests(String(dir), { CI: "false", V: "changed" }, "./a.test.js");
+        expect(stderr).toContain("2 passed, 1 failed");
+        expect(snap(dir)).toBe(stored);
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    describe.each(formats)("%s: a test that did not run to the end keeps its entries", format => {
+      // The key of a snapshot that a hook takes is the name of its scope, then "(unnamed)".
+      const hooked = (scope: string) => (format === "vitest" ? `${scope} > (unnamed) 1` : `${scope} (unnamed) 1`);
+      const update = async (files: Record<string, string>, ...args: string[]) => {
+        using dir = tempDir("snapshot-not-to-the-end", files);
+        const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots", ...args);
+        return { snap: snap(dir), exitCode };
+      };
+
+      test("a todo with a body, but not one that reached its snapshot or one with no body", async () => {
+        const tests = `
+          test.todo("with a body", () => { expect("b").toMatchSnapshot(); });
+          test.todo("with no body");
+          test("ran", () => { expect("r").toMatchSnapshot(); });
+        `;
+        const before = { "ran 1": "r", "with a body 1": "b", "with no body 1": "n" };
+        const kept = { "ran 1": "r", "with a body 1": "b" };
+        expect(await update({ "a.test.js": tests, "__snapshots__/a.test.js.snap": file(format, before) })).toEqual({
+          snap: file(format, kept),
+          exitCode: 0,
+        });
+        // --todo runs the body. It throws after the first snapshot, so the second entry stays too.
+        const throws = tests.replace(`expect("b").toMatchSnapshot();`, `expect("new").toMatchSnapshot(); throw 1;`);
+        const two = { "ran 1": "r", "with a body 1": "b", "with a body 2": "c" };
+        expect(
+          await update({ "a.test.js": throws, "__snapshots__/a.test.js.snap": file(format, two) }, "--todo"),
+        ).toEqual({ snap: file(format, { ...two, "with a body 1": "new" }), exitCode: 0 });
+      });
+
+      test("a test.failing that throws before its snapshot", async () => {
+        const before = { "ran 1": "r", "wip 1": "w" };
+        const result = await update({
+          "a.test.js": `
+            test.failing("wip", () => { throw new Error("boom"); expect("w").toMatchSnapshot(); });
+            test("ran", () => { expect("r").toMatchSnapshot(); });
+          `,
+          "__snapshots__/a.test.js.snap": file(format, before),
+        });
+        expect(result).toEqual({ snap: file(format, before), exitCode: 0 });
+      });
+
+      test("a beforeAll or afterAll hook whose tests were left out, or that threw", async () => {
+        const before = { [hooked("left out")]: "b", [hooked("throws")]: "a", "top 1": "t" };
+        const result = await update(
+          {
+            "a.test.js": `
+              test("top", () => { expect("t").toMatchSnapshot(); });
+              describe("left out", () => {
+                beforeAll(() => { expect("b").toMatchSnapshot(); });
+                test("other", () => {});
+              });
+              describe("throws", () => {
+                afterAll(() => { throw new Error("boom"); expect("a").toMatchSnapshot(); });
+                test("top too", () => {});
+              });
+            `,
+            "__snapshots__/a.test.js.snap": file(format, before),
+          },
+          "-t",
+          "top",
+        );
+        expect(result).toEqual({ snap: file(format, before), exitCode: 1 });
+      });
+
+      test("a hook that ran and takes no snapshot anymore does not", async () => {
+        const result = await update({
+          "a.test.js": `
+            describe("scope", () => {
+              beforeAll(() => {});
+              test("ran", () => { expect("r").toMatchSnapshot(); });
+            });
+          `,
+          "__snapshots__/a.test.js.snap": file(format, { [hooked("scope")]: "b", "scope > ran 1": "r" }),
+        });
+        expect(result).toEqual({ snap: file(format, { "scope > ran 1": "r" }), exitCode: 0 });
+      });
+
+      // The second run of the file doesn't register the test again: the module that has it is in the module cache.
+      test.each([["--rerun-each=2"], ["./a.test.js", "./a.test.js"]])(
+        "a skipped test of a module that the file imports, with %s",
+        async (...args) => {
+          const before = { "ran 1": "r", "shared 1": "s" };
+          const result = await update(
+            {
+              "shared.js": `test.skip("shared", () => { expect("s").toMatchSnapshot(); });`,
+              "a.test.js": `import "./shared.js";\ntest("ran", () => { expect("r").toMatchSnapshot(); });`,
+              "__snapshots__/a.test.js.snap": file(format, before),
+            },
+            ...args,
+          );
+          expect(result).toEqual({ snap: file(format, before), exitCode: 0 });
+        },
+      );
+
+      test.each([[[]], [["./a.test.js", "./a.test.js"]]])(
+        "the tests after the line where a describe() callback throws (%j)",
+        async args => {
+          const result = await update(
+            {
+              "a.test.js": `
+                test("top", () => { expect("new").toMatchSnapshot(); });
+                describe("scope", () => {
+                  throw new Error("boom");
+                  test("late", () => { expect("l").toMatchSnapshot(); });
+                });
+              `,
+              "__snapshots__/a.test.js.snap": file(format, { "gone 1": "g", "scope > late 1": "l", "top 1": "old" }),
+            },
+            ...args,
+          );
+          expect(result).toEqual({
+            snap: file(format, { "gone 1": "g", "scope > late 1": "l", "top 1": "new" }),
+            exitCode: 1,
+          });
+        },
+      );
     });
   });
 });

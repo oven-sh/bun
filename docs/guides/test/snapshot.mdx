@@ -79,7 +79,7 @@ Ran 1 test across 1 file. [101.00ms]
 
 ---
 
-To update snapshots, use the `--update-snapshots` flag.
+To update snapshots, use the `--update-snapshots` flag. Bun writes the snapshots whose value changed.
 
 ```sh terminal icon="terminal"
 bun test --update-snapshots
@@ -92,7 +92,7 @@ test/snap.test.ts:
 
  1 pass
  0 fail
- snapshots: +1 added  # the snapshot was regenerated
+ snapshots: +1 added  # the value changed, so the snapshot was regenerated
  1 expect() calls
 Ran 1 test across 1 file. [102.00ms]
 ```

@@ -50,6 +50,10 @@ bun test --update-snapshots
 
 Do this when you've intentionally changed the output. In CI environments, Bun does not write new snapshots unless you pass this flag.
 
+`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore. It keeps the entries of a test that did not run to the end: a test that was skipped, that `-t` or `test.only` filtered out, or that failed.
+
+A snapshot file in Bun's format keeps the order of its entries. New entries go at the end. When Bun changes or removes an entry, it writes the whole file again, so comments and manual formatting in the file are lost.
+
 ## Inline Snapshots
 
 For smaller values, use `.toMatchInlineSnapshot()`. Bun stores inline snapshots directly in your test file:
@@ -294,7 +298,7 @@ A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, 
 
 Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.
 
-With `--update-snapshots`, Bun removes entries that no test uses anymore from a file in Jest's or Vitest's format. It keeps entries for tests that were skipped, filtered out or failed. A file in Bun's format keeps only the entries of tests that ran.
+`--update-snapshots` follows the [same rules](#updating-snapshots) in all three formats. Bun keeps a file in Jest's or Vitest's format sorted by key, as those runners do.
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 

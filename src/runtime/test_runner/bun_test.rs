@@ -2370,6 +2370,8 @@ pub(crate) struct ExecutionEntry {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+    /// It was registered with a callback. `callback` is dropped for a skipped test and for a todo that won't run.
+    pub(crate) has_body: bool,
 
     pub(crate) next: Option<*mut ExecutionEntry>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
@@ -2397,6 +2399,7 @@ impl ExecutionEntry {
             added_in_phase: phase,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
+            has_body: cb.is_some(),
             timespec: Timespec::EPOCH,
             next: None,
             failure_skip_past: None,

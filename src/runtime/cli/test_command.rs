@@ -5558,7 +5558,16 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
-                reporter.jest.snapshots.remove_obsolete(buntest);
+                if !reporter.jest.snapshots.remove_obsolete(buntest) {
+                    reporter.jest.current_file.print_if_needed();
+                    let top_level_dir = FileSystem::instance().top_level_dir();
+                    pretty_error!(
+                        "<r><red>error<r>: Failed to parse snapshot file for: {}\n<blue>note<r><d>:<r> --update-snapshots replaces a snapshot file that doesn't parse only when every test of the file runs to the end\n",
+                        bstr::BStr::new(resolve_path::relative(top_level_dir, file_path))
+                    );
+                    Output::flush();
+                    reporter.jest.unhandled_errors_between_tests += 1;
+                }
                 drop(buntest_strong);
             }
 

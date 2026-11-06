@@ -4,7 +4,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
 
-use super::super::bun_test::{self, ExecutionEntry, RefDataValue};
+use super::super::bun_test::{self, DescribeScope, ExecutionEntry, RefDataValue};
 use super::super::execution::{ExecutionSequence, ExpectAssertions};
 use super::super::jest::{FileColumns as _, Jest};
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
@@ -13,17 +13,28 @@ use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 /// `with_empty_names` keeps `describe("")` blocks in the name, which only Jest's snapshot format does.
 #[optimize(size)]
 pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empty_names: bool) -> Vec<u8> {
-    let mut names: Vec<&[u8]> = vec![entry.base.name.as_deref().unwrap_or(b"(unnamed)")];
-    let mut parent = entry.base.parent;
+    // SAFETY: the `BunTest` that owns `entry` owns its enclosing scopes.
+    let parent = entry.base.parent.map(|scope| unsafe { &*scope });
+    full_name(entry.base.name.as_deref().unwrap_or(b"(unnamed)"), parent, separator, with_empty_names)
+}
+
+/// The full name of what is called `name` in the scope `parent`. A hook is called `(unnamed)`.
+#[optimize(size)]
+pub(crate) fn full_name<'a>(
+    name: &'a [u8],
+    mut parent: Option<&'a DescribeScope>,
+    separator: &[u8],
+    with_empty_names: bool,
+) -> Vec<u8> {
+    let mut names: Vec<&[u8]> = vec![name];
     while let Some(scope) = parent {
-        // SAFETY: the `BunTest` that owns `entry` owns its enclosing scopes.
-        let scope = unsafe { &*scope };
         if let Some(name) = scope.base.name.as_deref() {
             if with_empty_names || !name.is_empty() {
                 names.push(name);
             }
         }
-        parent = scope.base.parent;
+        // SAFETY: the `BunTest` that owns a scope owns its enclosing scopes.
+        parent = scope.base.parent.map(|scope| unsafe { &*scope });
     }
     names.reverse();
     names.join(separator)

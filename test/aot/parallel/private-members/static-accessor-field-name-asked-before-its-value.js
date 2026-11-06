@@ -1,4 +1,4 @@
-// `#name in value` for a `static accessor` field: a static field and a static block ask before its value. A subclass, an object of no class, a number and undefined are asked, read and stored to. The getter and the setter are on the class as soon as the class is. A read or a store that fails quotes another name than plain Bun: errors/places-throw-with-another-text-or-column.js
+// `#name in value` for a `static accessor` field: a static field and a static block ask before its value. A subclass, an object of no class, a number and undefined are asked, read and stored to. The getter and the setter are on the class as soon as the class is. A read or a store that fails quotes another name than plain Bun: errors/messages-quote-an-accessor-field-as-it-is-written.js
 const lines = [];
 function attempt(label, run, words = false) {
   try {

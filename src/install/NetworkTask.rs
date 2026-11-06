@@ -731,7 +731,7 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
                 http_proxy,
-                tls_props: npm::registry::registry_tls_config(scope),
+                tls_props: pm.registry_tls_config(scope),
                 proxy_settings: pm.proxy_settings(),
                 idle_timeout_seconds: pm.idle_timeout_seconds(),
                 ..Default::default()
@@ -922,9 +922,13 @@ impl NetworkTask {
         // the identical pattern in `for_manifest` above.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
-        let tls_props = pm.options
-            .tarball_credentials(scope, &url, normalized)
-            .and_then(npm::registry::registry_tls_config);
+        let tls_props = match authorization {
+            Authorization::AllowAuthorization => pm
+                .options
+                .tarball_credentials(scope, &url, normalized)
+                .and_then(|registry| pm.registry_tls_config(registry)),
+            Authorization::NoAuthorization => None,
+        };
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),

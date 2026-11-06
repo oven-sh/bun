@@ -506,6 +506,28 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     limit,
   );
 
+  for (const [number, result] of [
+    ["the id() of a list", "['the list']"],
+    ["a number", "ValueError: the memory does not hold a reference to an object"],
+  ]) {
+    for (const [state, stdout] of [
+      ["not set up", `${result}\n`],
+      ["set up", `1 ${result} 1\n`],
+    ]) {
+      test.concurrent(
+        `no reference comes with a number that a callback returns, whatever its caller takes it for (${number}; the API is ${state})`,
+        async () => {
+          expect(await run("here/another_prototype.py", "ownership", {}, number, state)).toEqual({
+            stdout,
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+        limit,
+      );
+    }
+  }
+
   test.concurrent(
     "a tuple that C changes after its hash was asked for",
     async () => {

@@ -3561,6 +3561,7 @@ impl bun_io::Write for ExpectedText<'_> {
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// They printed `expect.arrayContaining()` as `ExpectArrayContaining {}`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);

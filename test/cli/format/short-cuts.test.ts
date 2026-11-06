@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
 
 // A formatter takes a short cut where the output is known without the general machinery. `--no-short-cuts` turns all of
 // them off, and the output has to be the same. Each language has a `describe` of its own.
@@ -9,40 +12,42 @@ import { join } from "node:path";
 // The flag is only compiled into debug and canary builds.
 const hasFlag = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
+/** No configuration but the flags, and nothing is said but warnings and errors. */
+const plainly = ["--no-config", "--no-editorconfig", "--log-level=warn"];
+
+/**
+ * Formats a copy of `files` in place with `flags`, and another one with `--no-short-cuts` too. Returns, for the short
+ * cuts and for the long way, what is in the files afterwards, with a character for each byte, and what the run said.
+ * `paths` are the arguments that say what to format.
+ */
+async function formatBothWays(files: Record<string, string>, flags: string[], paths = ["."]) {
+  using dir = tempDir("format-short-cuts", { short: files, long: files });
+  const format = async (way: "short" | "long", own: string[]) => {
+    const cwd = join(String(dir), way);
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--write", ...flags, ...own, ...paths],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = Object.keys(files).map(name => [name, readFileSync(join(cwd, name), "latin1")]);
+    return { files: Object.fromEntries(written) as Record<string, string>, stdout, stderr, exitCode };
+  };
+  return await Promise.all([format("short", []), format("long", ["--no-short-cuts"])]);
+}
+
 /** Formats `texts` as files with the extension of `name`, with and without the short cuts. Returns what differs. */
 async function differences(name: string, texts: string[], flags: string[]) {
   const files = Object.fromEntries(texts.map((text, index) => [`${index}/${name}`, text]));
-  const results = await Promise.all(
-    [[], ["--no-short-cuts"]].map(async own => {
-      const dir = tempDir("format-short-cuts", files);
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "fmt",
-          "--write",
-          "--no-config",
-          "--no-editorconfig",
-          "--log-level=warn",
-          ...flags,
-          ...own,
-          ".",
-        ],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { dir, said: `${stdout}${stderr}`.split("\n").sort().join("\n"), exitCode };
-    }),
-  );
-  const [short, long] = results;
+  const [short, long] = await formatBothWays(files, [...plainly, ...flags]);
   const different = texts.flatMap((text, index) => {
-    const [a, b] = results.map(it => readFileSync(join(String(it.dir), `${index}/${name}`), "utf8"));
+    const [a, b] = [short.files[`${index}/${name}`], long.files[`${index}/${name}`]];
     return a === b ? [] : [{ text, short: a, long: b }];
   });
-  for (const it of results) it.dir[Symbol.dispose]();
-  return { different, said: [short.said, short.exitCode], expected: [long.said, long.exitCode] };
+  const said = (it: typeof short) => [`${it.stdout}${it.stderr}`, it.exitCode];
+  return { different, said: said(short), expected: said(long) };
 }
 
 function expectSame(name: string, texts: string[], options: string[][]) {
@@ -246,7 +251,7 @@ describe("YAML", () => {
       "format-short-cuts",
       Object.fromEntries(formatted.map((text, index) => [`${index}.yaml`, text])),
     );
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "."],
       cwd: String(dir),
       env: bunEnv,
@@ -309,40 +314,15 @@ describe("JSON", () => {
 });
 
 describe("GraphQL", () => {
-  // The flag is only compiled into debug and canary builds.
-  const hasFlag = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
-
   /** Formats `texts` as files, with and without the short cuts. */
   async function format(texts: string[], flags: string[]) {
     const files = Object.fromEntries(texts.map((text, index) => [`${index}.graphql`, text]));
-    return await Promise.all(
-      [[], ["--no-short-cuts"]].map(async own => {
-        using dir = tempDir("format-short-cuts-graphql", files);
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "fmt",
-            "--write",
-            "--no-config",
-            "--no-editorconfig",
-            "--log-level=warn",
-            ...flags,
-            ...own,
-            ".",
-          ],
-          cwd: String(dir),
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return {
-          texts: texts.map((_, index) => readFileSync(join(String(dir), `${index}.graphql`), "utf8")),
-          said: `${stdout}${stderr}`.split("\n").sort().join("\n"),
-          exitCode,
-        };
-      }),
-    );
+    const ways = await formatBothWays(files, [...plainly, ...flags]);
+    return ways.map(it => ({
+      texts: texts.map((_, index) => it.files[`${index}.graphql`]),
+      said: `${it.stdout}${it.stderr}`,
+      exitCode: it.exitCode,
+    }));
   }
 
   const long = "a".repeat(30);
@@ -906,7 +886,7 @@ describe("Markdown", () => {
     for (const input of inputs) {
       const [short, long] = await Promise.all(
         [[], ["--no-short-cuts"]].map(async own => {
-          await using proc = Bun.spawn({
+          await using proc = spawn({
             cmd: [bunExe(), "fmt", "--no-config", "--no-editorconfig", "--stdin-filepath=a.md", ...own],
             cwd: String(dir),
             env: bunEnv,
@@ -1009,23 +989,9 @@ exports.__unstable__loadDesignSystem = async () => ({
       "a.md":
         '<a class="p-4 flex"></a>\n\nb <a class="p-4 flex">c</a>\n\n```jsx\n<a className="p-4 flex" />;\n```\n\n```html\n<a class="p-4 flex"></a>\n```\n',
     };
-    const [short, long] = await Promise.all(
-      [[], ["--no-short-cuts"]].map(async own => {
-        using dir = tempDir("format-short-cuts", files);
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "fmt", "--write", "--log-level=warn", ...own, "a.mdx", "a.md"],
-          cwd: String(dir),
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const [mdx, md] = ["a.mdx", "a.md"].map(name => readFileSync(join(String(dir), name), "utf8"));
-        return { mdx, md, stdout, stderr, exitCode };
-      }),
-    );
+    const [short, long] = await formatBothWays(files, ["--log-level=warn"], ["a.mdx", "a.md"]);
     expect(short).toEqual(long);
-    expect(short.mdx).toStartWith('<a className="flex p-4" />\n\n<A className="flex p-4">b</A>\n');
+    expect(short.files["a.mdx"]).toStartWith('<a className="flex p-4" />\n\n<A className="flex p-4">b</A>\n');
     expect(short.exitCode).toBe(0);
   });
 });
@@ -1361,24 +1327,7 @@ describe.skipIf(!hasFlag)("style sheets", () => {
 
   test.concurrent.each(sets.map(set => set.join(" ")))("with and without them: %s", async set => {
     const options = set.split(" ").filter(Boolean);
-    const run = async (flags: string[]) => {
-      const dir = tempDir("fmt-short-cuts", cases);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--threads=1", ...options, ...flags, "."],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const files = Object.fromEntries(
-        Object.keys(cases).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
-      );
-      dir[Symbol.dispose]();
-      const withoutTime = (text: string) => text.replace(/\[[\d.]+m?s\]/g, "");
-      return { files, stdout: withoutTime(stdout), stderr: withoutTime(stderr), exitCode };
-    };
-    const [short, long] = await Promise.all([run([]), run(["--no-short-cuts"])]);
+    const [short, long] = await formatBothWays(cases, [...plainly, "--threads=1", ...options]);
     expect(short).toEqual(long);
   });
 
@@ -1408,32 +1357,8 @@ describe.skipIf(!hasFlag)("style sheets", () => {
 
 /** Formats `files` with `options`, with and without short cuts, and returns what differs. */
 async function difference(files: Record<string, string>, options: string[]) {
-  const printed = await Promise.all(
-    [[], ["--no-short-cuts"]].map(async own => {
-      using dir = tempDir("format-short-cuts", files);
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "fmt",
-          "--write",
-          "--no-config",
-          "--no-editorconfig",
-          "--log-level=warn",
-          ...options,
-          ...own,
-          ".",
-        ],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const texts = readdirSync(String(dir)).map(name => [name, readFileSync(join(String(dir), name), "utf8")]);
-      return { texts: Object.fromEntries(texts), stdout, stderr, exitCode };
-    }),
-  );
-  return printed;
+  const printed = await formatBothWays(files, [...plainly, ...options]);
+  return printed.map(({ files: texts, ...said }) => ({ texts, ...said }));
 }
 
 describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
@@ -2435,35 +2360,10 @@ describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators
 
 /** Formats `files` with `options`, with and without short cuts. Returns what is written and said each way. */
 async function bothWays(files: Record<string, string>, options: string[]) {
-  using dir = tempDir("fmt-short-cuts", {
-    short: files,
-    long: files,
-  });
-  const run = async (name: string, flags: string[]) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "fmt",
-        "--write",
-        "--no-config",
-        "--no-editorconfig",
-        "--log-level=warn",
-        ...options,
-        ...flags,
-        ".",
-      ],
-      env: bunEnv,
-      cwd: join(String(dir), name),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const written = Object.fromEntries(
-      Object.keys(files).map(file => [file, readFileSync(join(String(dir), name, file), "utf8")]),
-    );
-    return { written, stdout, stderr, exitCode };
-  };
-  const [short, long] = await Promise.all([run("short", []), run("long", ["--no-short-cuts"])]);
+  const [short, long] = (await formatBothWays(files, [...plainly, ...options])).map(({ files: written, ...said }) => ({
+    written,
+    ...said,
+  }));
   return { short, long };
 }
 
@@ -3605,8 +3505,8 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
   /** Formats `files` with `flags`, and returns what they are afterwards. */
   async function format(files: Record<string, string>, flags: string[]) {
     using dir = tempDir("format-short-cuts", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fmt", "--write", "--no-editorconfig", "--log-level=silent", ...flags, "."],
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--write", "--no-editorconfig", "--log-level=error", ...flags, "."],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -3614,7 +3514,7 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const texts = Object.fromEntries(
-      Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
+      Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
     );
     return { texts, stderr, exitCode };
   }
@@ -3702,9 +3602,9 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
       // oxfmt has no line for all of a union, and counts the line breaks between two arguments.
       "union.ts": `type ${"A".repeat(40)} = "${"b".repeat(20)}" | "${"c".repeat(20)}";\n`,
       // For oxfmt the value of a native event handler in Vue is a script, whose quotes are written as entities.
-      "handlers.vue": `<template>\\n  <div onclick="${"a".repeat(50)}('b'); c()" onfocus="d('e')"></div>\\n</template>\\n`,
-      "loop-body.js": `for (x in y) var a = 1, b = 2;\\nwhile (x) var e = 1, f = 2;\\n`,
-      "intrinsic.ts": `type A = (intrinsic);\\ntype B = (intrinsic) | C;\\n`,
+      "handlers.vue": `<template>\n  <div onclick="${"a".repeat(50)}('b'); c()" onfocus="d('e')"></div>\n</template>\n`,
+      "loop-body.js": `for (x in y) var a = 1, b = 2;\nwhile (x) var e = 1, f = 2;\n`,
+      "intrinsic.ts": `type A = (intrinsic);\ntype B = (intrinsic) | C;\n`,
       "comma-on-its-line.js": `a(\n  "b"\n,\n  async () => {}\n);\n`,
       "parenthesis-on-its-line.js": `a(o,\n(\n[{"":l}]))\n`,
       "empty-line-in-chain.js": `e=a.\n\ne(wo)\n`,
@@ -3712,14 +3612,18 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     };
     const [short, long] = await Promise.all([format(all, flags), format(all, [...flags, "--no-short-cuts"])]);
     expect(short).toEqual(long);
-    expect(long.texts).not.toEqual(all);
+    // oxfmt takes neither Flow, nor types in JavaScript, nor a rest parameter with a `?`.
+    const others = ["types-in-javascript.js", "rest-parameter.ts"];
+    const rejected = Object.keys(all).filter(name => name.startsWith("flow-") || others.includes(name));
+    expect(Array.from(long.stderr.matchAll(/^ {4}at ([^:\n]+)/gm), match => match[1]).sort()).toEqual(rejected.sort());
+    expect(long.exitCode).toBe(2);
   });
 });
 
 /** Formats `files` in place, and returns what they are afterwards. */
 async function formatInPlace(files: Record<string, string>, flags: string[]) {
   using dir = tempDir("format-short-cuts", files);
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "fmt", "--no-editorconfig", "--log-level=silent", ...flags, "."],
     cwd: String(dir),
     env: bunEnv,
@@ -3728,7 +3632,7 @@ async function formatInPlace(files: Record<string, string>, flags: string[]) {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   const formatted = Object.fromEntries(
-    Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
+    Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
   );
   return { formatted, stderr, exitCode };
 }
@@ -4048,8 +3952,8 @@ describe("Handlebars", () => {
   });
 
   test.skipIf(!hasFlag)("what has been formatted", async () => {
-    const dir = tempDir("format-short-cuts", Object.fromEntries(texts.map((text, index) => [`${index}.hbs`, text])));
-    await using proc = Bun.spawn({
+    using dir = tempDir("format-short-cuts", Object.fromEntries(texts.map((text, index) => [`${index}.hbs`, text])));
+    await using proc = spawn({
       cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--log-level=silent", "."],
       cwd: String(dir),
       env: bunEnv,
@@ -4058,7 +3962,6 @@ describe("Handlebars", () => {
     });
     await proc.exited;
     const formatted = texts.map((_, index) => readFileSync(join(String(dir), `${index}.hbs`), "utf8"));
-    dir[Symbol.dispose]();
     const { different, said, expected } = await differences("a.hbs", formatted, []);
     expect(different).toEqual([]);
     expect(said).toEqual(expected);
@@ -4080,7 +3983,7 @@ describe("Handlebars", () => {
       "format-short-cuts",
       Object.fromEntries(formatted.map((text, index) => [`${index}.hbs`, text])),
     );
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "."],
       cwd: String(dir),
       env: bunEnv,
@@ -6640,7 +6543,7 @@ it.each\`
   test("a class with many decorators takes linear time where it is refused", async () => {
     using dir = tempDir("format-short-cuts", { "a.js": "@a // c\n".repeat(isDebug ? 2_000 : 40_000) + "class A {}\n" });
     const cpu = async (own: string[]) => {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, "a.js"],
         cwd: String(dir),
         env: bunEnv,

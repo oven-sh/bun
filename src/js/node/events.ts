@@ -64,7 +64,8 @@ let setNativeDefaultMaxListeners: ((n: number) => void) | undefined;
 // `process` keeps its listeners in native code, which has a copy of the default.
 function setDefaultMaxListeners(n: number) {
   defaultMaxListeners = n;
-  (setNativeDefaultMaxListeners ??= $newCppFunction("BunProcess.cpp", "jsFunctionSetDefaultMaxListeners", 1))(n);
+  setNativeDefaultMaxListeners ??= $newCppFunction("BunProcess.cpp", "jsFunctionSetDefaultMaxListeners", 1);
+  setNativeDefaultMaxListeners!(n);
 }
 
 interface MaxListenersExceededWarning extends Error {

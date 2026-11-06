@@ -51,7 +51,10 @@ let BASE_FIXTURE_DIR: string;
 let BUN_TYPES_BUILD_DIR: string;
 
 beforeAll(async () => {
-  TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
+  // tmpdir() can contain a symlink (/var on macOS). TypeScript realpaths the files it
+  // resolves through node_modules, so a program rooted at the logical path loads every
+  // bun-types declaration twice, once under each path. Root everything at the real path.
+  TEMP_DIR = await realpath(await mkdtemp(join(tmpdir(), "bun-types-test-")));
   BASE_FIXTURE_DIR = join(TEMP_DIR, "base-fixture");
   BUN_TYPES_BUILD_DIR = join(TEMP_DIR, "bun-types");
   const bunTypesBuildDir = BUN_TYPES_BUILD_DIR;

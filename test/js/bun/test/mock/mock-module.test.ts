@@ -897,6 +897,35 @@ describe.concurrent("the original of a mocked module", () => {
     },
   );
 
+  test.each(["mock.module", "vi.mock", "jest.mock"])(
+    "require() does not call an async factory of %s() that awaits, and returns the original until an import has",
+    async mockModule => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "mod.cjs": `exports.value = "real";`,
+          "waits.test.ts": `
+            import { expect, jest, mock, test, vi } from "bun:test";
+            const calls = vi.hoisted(() => []);
+            ${mockModule}("./mod", async () => (calls.push("./mod"), await 1, { value: "mocked" }));
+            ${mockModule}("./mod.cjs", async () => (calls.push("./mod.cjs"), await 1, { value: "mocked" }));
+            ${mockModule}("cjs-pkg", async () => (calls.push("cjs-pkg"), await 1, { hello: () => "mocked" }));
+            ${mockModule}("node:os", async () => (calls.push("node:os"), await 1, { platform: () => "mocked" }));
+            const required = () => [require("./mod").value, require("./mod.cjs").value, require("cjs-pkg").hello(), require("node:os").platform()];
+            test("a file, a CommonJS file, a package and a builtin", async () => {
+              const originals = ["real", "real", "real-hello", process.platform];
+              expect([required(), required(), calls]).toEqual([originals, originals, []]);
+              const imported = [await import("./mod"), await import("./mod.cjs"), await import("cjs-pkg"), await import("node:os")];
+              expect([imported[0].value, imported[1].value, imported[2].hello(), imported[3].platform()]).toEqual(Array(4).fill("mocked"));
+              expect([required(), calls]).toEqual([Array(4).fill("mocked"), ["./mod", "./mod.cjs", "cjs-pkg", "node:os"]]);
+            });
+          `,
+        },
+        1,
+      );
+    },
+  );
+
   test("jest.requireActual", async () => {
     await expectFixturesToPass(
       {

@@ -3245,12 +3245,12 @@ it("removeAllListeners('warning') silences the default print", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
-// node builds the warning only for a string: `new Error(warning)`, then `name`, `code` and `detail` as own enumerable
-// properties. An Error that the caller passes is emitted as it is.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L164-L169
+// node makes the warning only for a string: `new Error(warning)`, then `name`, `code` and `detail` as own enumerable
+// properties. It writes nothing to an Error that the caller passes.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L145-L169
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L194-L198
 // Every expected value is what node v26.3.0 prints for the same script.
-describe("emitWarning builds the warning as node's createWarningObject does", () => {
+describe("the warning that process.emitWarning makes", () => {
   async function run(script, ...flags) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...flags, "-e", script],
@@ -3317,6 +3317,37 @@ describe("emitWarning builds the warning as node's createWarningObject does", ()
       [["name", "code", "detail"], '{"name":"Warning","code":"","detail":""}', [all, all, all]],
       // A detail that is not a string is left out.
       [["name"], '{"name":"Warning"}', [all, "absent", "absent"]],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `emitWarning(warning, ctor)`: only an object that is not a function and not an array is the options.
+  it.concurrent("a function as the second argument is the ctor, not the options", async () => {
+    const { seen, exitCode } = await run(
+      `const seen = [];
+       process.on("warning", w => seen.push([w.message, w.name, JSON.stringify(w)]));
+       process.on("exit", () => console.log(JSON.stringify(seen)));
+       function withOptionNames() {}
+       Object.assign(withOptionNames, { type: "FromFunction", code: "FROM_FUNCTION", detail: "from the function" });
+       class WithStaticCode {
+         static code = 1;
+       }
+       process.emitWarning("function", withOptionNames);
+       process.emitWarning("class", WithStaticCode);
+       process.emitWarning("proxy of a function", new Proxy(withOptionNames, {}));
+       process.emitWarning("proxy of an object", new Proxy({ type: "T", code: "C" }, {}));
+       try {
+         process.emitWarning("proxy of an array", new Proxy([], {}));
+       } catch (error) {
+         seen.push(["proxy of an array", error.code]);
+       }`,
+    );
+    expect(seen).toEqual([
+      ["proxy of an array", "ERR_INVALID_ARG_TYPE"],
+      ["function", "Warning", '{"name":"Warning"}'],
+      ["class", "Warning", '{"name":"Warning"}'],
+      ["proxy of a function", "Warning", '{"name":"Warning"}'],
+      ["proxy of an object", "T", '{"name":"T","code":"C"}'],
     ]);
     expect(exitCode).toBe(0);
   });

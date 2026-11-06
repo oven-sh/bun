@@ -359,11 +359,7 @@ const emitsWarningOnNextTick = [
     capability: "js",
     throws: true,
     uses: {
-      warning: [
-        b.retained,
-        b.storedIn(b.nativeCell(handedWarningsCell)),
-        formattedInErrorMessage,
-      ],
+      warning: [b.retained, b.storedIn(b.nativeCell(handedWarningsCell)), formattedInErrorMessage],
       ...warningOptionUses,
     },
     implementation: b.hostCall,

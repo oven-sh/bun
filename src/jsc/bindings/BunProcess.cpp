@@ -2488,7 +2488,14 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
             return jsUndefined();
     }
 
-    if (!type.isNull() && type.isObject() && !isJSArray(type)) {
+    // `typeof type === 'object' && !ArrayIsArray(type)`: a function is the `ctor`, and a Proxy of an array is an array.
+    bool typeIsOptions = type.isObject() && !type.isCallable();
+    if (typeIsOptions) {
+        typeIsOptions = !JSC::isArray(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (typeIsOptions) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -2528,7 +2535,6 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
         RETURN_IF_EXCEPTION(scope, {});
         // Not createError(): it asserts that the message is not empty, and `new Error("")` is valid.
         errorInstance = ErrorInstance::create(vm, globalObject->errorStructure(), s, JSValue());
-        // Own enumerable properties, and only of the Error made here:
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L196-L198
         if (!type.toBoolean(globalObject)) type = jsString(vm, String("Warning"_s));
         errorInstance->putDirect(vm, vm.propertyNames->name, type);

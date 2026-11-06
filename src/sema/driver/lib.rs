@@ -674,6 +674,13 @@ pub enum Meanwhile<'a> {
 ///
 /// They have the stack of the dedicated pool's threads. They are never waited for: a thread that comes late finds
 /// nothing to do.
+///
+/// What one thread writes for another goes through `state`. `for_each` writes `region` and `wanted` and then opens
+/// `state` (`Release`). A thread joins by modifying `state` (`Acquire`), so it sees both, and leaves by modifying it again
+/// (`Release`), so `for_each`, which reads `state` until it counts nobody (`Acquire`), sees all that the thread has done.
+/// Every other access to `state` modifies the value that is there, which hands on what the writers before have
+/// published. `generation` only says when to look at `state` again. `called_up` and `started` are counts that nothing
+/// else depends on.
 pub struct StandingThreads {
     /// What the threads are called, before their number.
     name: &'static str,
@@ -724,7 +731,8 @@ impl StandingThreads {
         if wanted > self.wanted.load(Ordering::Relaxed)
             && self.wanted.fetch_max(wanted, Ordering::Relaxed) < wanted
         {
-            // Those that were one too many for the region look again.
+            // Those that were one too many for the region look again. `Release`: whoever sees this generation sees the
+            // new `wanted`.
             self.generation.fetch_add(1, Ordering::Release);
             bun_threading::Futex::wake(&self.generation, u32::MAX);
         }
@@ -740,6 +748,8 @@ impl StandingThreads {
 
     /// False if all have been started.
     fn starts_thread(self: &Arc<StandingThreads>) -> bool {
+        // A thread sees what the one that started it had seen, so none of the chain takes `called_up` for less than it
+        // was when `call_up` started the first.
         let count = self.called_up.load(Ordering::Relaxed);
         let is_missing = |started: usize| (started < count).then_some(started + 1);
         if (self.started)
@@ -775,9 +785,11 @@ impl StandingThreads {
                 continue;
             }
             seen = generation;
+            // `state` is read with `Acquire` too: a thread can find it open before it sees the generation of the region,
+            // and it compares with `wanted` before it modifies `state`.
             let joined = self
                 .state
-                .try_update(Ordering::Acquire, Ordering::Relaxed, |state| {
+                .try_update(Ordering::Acquire, Ordering::Acquire, |state| {
                     let is_open = state & StandingThreads::IS_CLOSED == 0;
                     let wanted = self.wanted.load(Ordering::Relaxed);
                     (is_open && state / StandingThreads::ONE_THREAD < wanted).then_some(
@@ -833,7 +845,8 @@ impl StandingThreads {
             Meanwhile::Helps => region.work_off(),
             Meanwhile::Does(something) => _ = region.panic.catch(something),
         }
-        // Without a single thread, the pool is asked, which says what is wrong.
+        // Without a single thread, the pool is asked. If it can't start one either, it says what is wrong and ends the
+        // process: `exit_without_any_thread`. While there is no thread, this one alone writes `called_up`.
         if threads > 0 && self.called_up.load(Ordering::Relaxed) == 0 {
             region_pool().each((), |(), (), _| region.work_off(), &mut [()]);
         }
@@ -845,7 +858,8 @@ impl StandingThreads {
             }
             bun_threading::Futex::wait_forever(&self.state, state);
         }
-        // One that joins now finds nothing to do, but looks at the region to find that out.
+        // One that joins now finds nothing to do, but looks at the region to find that out. The bit says nothing about
+        // anything else in memory.
         self.state
             .fetch_or(StandingThreads::IS_CLOSED, Ordering::Relaxed);
         loop {

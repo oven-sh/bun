@@ -580,6 +580,7 @@ declare global {
       [kSocketTimeoutTimer]?: Timeout;
       [kKeepAliveTimeoutSet]?: boolean;
       [kKeepAliveIdleStart]?: number;
+      [kClosedWithUnsentData]?: boolean;
     }
 
     /** A connection of the native listener: the class `Socket` of this module, which extends `net.Socket`. */
@@ -5079,7 +5080,7 @@ function endWithoutSocket(
     // Node's condition also has `writableLength`: bytes of earlier writes that never left. There those writes have
     // failed the socket, or end() never calls back. A closed native handle counts none: a large write still waits
     // for its drain, a small one was left in the socket's buffer. Any other socket counts its own.
-    const socket = res[kSocket] as $Node.HttpServerSocket | null;
+    const socket = res[kSocket];
     const unsent =
       res[kNeedDrain] || socket?.[kClosedWithUnsentData] || (socket?.writableLength ?? 0) > 0
         ? (socket?.errored ?? $ERR_STREAM_DESTROYED("write"))

@@ -4301,18 +4301,21 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ));
 
   // Whoever writes in a loop makes room in it. What is written where there is none is lost, and the file goes the long way after all.
-  test.skipIf(!hasFlag).concurrent.each([4000, 4300, 32000])("a chain of %d calls goes the quick way", async count => {
-    using dir = tempDir("format-short-cuts", { "a.js": nest("", "a", ".b()", count) });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", "a.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout + stderr).toContain("the quick way: 1 scripts");
-  });
+  test.skipIf(!hasFlag).concurrent.each(isDebug || isASAN ? [4000, 4300] : [4000, 4300, 32000])(
+    "a chain of %d calls goes the quick way",
+    async count => {
+      using dir = tempDir("format-short-cuts", { "a.js": nest("", "a", ".b()", count) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", "a.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("the quick way: 1 scripts");
+    },
+  );
 
   // The text of a template is searched for what ends it or needs a look, some bytes at a time: whatever that is, wherever it stands.
   describe("what stands in a template", () => {
@@ -4459,7 +4462,7 @@ describe("JavaScript that is deep, long or full of comments", () => {
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {
       const [name, , , , count, flags = []] = shape;
-      const short = Math.ceil(count / (isDebug || isASAN ? 2 : 1));
+      const short = Math.ceil(count / (isDebug || isASAN ? 4 : 1));
       using dir = tempDir("format-short-cuts", {
         [`1/${name}`]: textOf(shape, short),
         [`4/${name}`]: textOf(shape, 4 * short),

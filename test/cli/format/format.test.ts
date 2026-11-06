@@ -7104,10 +7104,12 @@ exports.format = async text => "by Prettier";
   test.each([
     "type A = { get a(b: number): number };",
     "type A = { set a(): void };",
+    "type A = { set @@iterator(): T };",
     "declare class A { static prototype: T }",
     "declare class A { get a(b: T): T }",
     "async function f() { component A(a = await b) {} }",
     "function* f() { component A(a = yield) {} }",
+    "function* f() { component A(a = yield b) {} }",
     'component A(a = 1) { "use strict"; }',
     "component A() { break; }",
   ])("Flow that Prettier rejects is a syntax error: %j", async code => {

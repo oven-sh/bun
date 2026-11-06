@@ -1910,6 +1910,74 @@ describe.concurrent("an inline snapshot does not say who wrote it", () => {
   });
 });
 
+// Jest and Vitest have no expect.resolvesTo, expect.rejectsTo, expect.not.any() or expect.not.anything().
+describe.concurrent("asymmetric matchers that only Bun has", () => {
+  const snap = (dir: unknown) => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+  const toBeFoo = `expect.extend({ toBeFoo: () => ({ pass: true, message: () => "" }) });\n`;
+
+  test("Bun's format names the promise and the negation", async () => {
+    using dir = tempDir("snapshot-bun-only-matchers", {
+      "a.test.js": `${toBeFoo}
+        const matchers = [
+          expect.not.anything(),
+          expect.not.any(Number),
+          expect.resolvesTo.any(Number),
+          expect.rejectsTo.any(Number),
+          expect.not.resolvesTo.any(Number),
+          expect.resolvesTo.not.any(Number),
+          expect.rejectsTo.anything(),
+          expect.rejectsTo.closeTo(1, 2),
+          expect.resolvesTo.objectContaining({ a: 1 }),
+          expect.rejectsTo.not.stringContaining("a"),
+          expect.resolvesTo.stringMatching(/a/),
+          expect.resolvesTo.not.toBeFoo(1),
+        ];
+        test("t", () => {
+          expect(matchers).toMatchSnapshot();
+          console.log(matchers.map(matcher => Bun.inspect(matcher)).join("\\n"));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = [
+      "NotAnything",
+      "NotAny<Number>",
+      "promise resolved to Any<Number>",
+      "promise rejected to Any<Number>",
+      "promise resolved to NotAny<Number>",
+      "promise resolved to NotAny<Number>",
+      "promise rejected to Anything",
+      "promise rejected to NumberCloseTo 1 (2 digits)",
+    ];
+    expect(stderr).toContain("+1 added");
+    expect(snap(dir)).toBe(
+      headers.bun +
+        "\nexports[`t 1`] = `\n[\n" +
+        printed.map(text => `  ${text},\n`).join("") +
+        '  promise resolved to ObjectContaining {\n    "a": 1,\n  },\n' +
+        '  promise rejected to StringNotContaining "a",\n' +
+        "  promise resolved to StringMatching /a/,\n" +
+        "  promise resolved to not toBeFoo [\n    1,\n  ],\n" +
+        "]\n`;\n",
+    );
+    expect(stdout.slice(stdout.indexOf("NotAnything"))).toBe(
+      printed.join("\n") +
+        "\npromise resolved to ObjectContaining {\n  a: 1,\n}" +
+        '\npromise rejected to StringNotContaining "a"' +
+        "\npromise resolved to StringMatching /a/" +
+        "\npromise resolved to not toBeFoo [ 1 ]\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("toMatchFileSnapshot()", () => {
   const read = (dir: unknown, ...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
   const header = `import { test, expect, describe } from "bun:test";\n`;

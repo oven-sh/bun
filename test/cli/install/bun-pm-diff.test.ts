@@ -2204,9 +2204,9 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       "b/bare.css": `@import "bare-pkg/x.css";\n@import url("https://example.com/r.css");\n` + rule,
       "a/conditional.css": rule,
       "b/conditional.css": `@import url(cond-pkg/y.css) layer(base) supports(display: grid) screen;\n` + rule,
-      // One import is only spelled differently, and the other is a file of the package itself.
+      // The import is only spelled differently.
       "a/kept.css": `@import "kept-pkg/k.css";\n` + rule,
-      "b/kept.css": `@import url("kept-pkg/k.css");\n@import "./local.css";\n` + rule,
+      "b/kept.css": `@import url("kept-pkg/k.css");\n` + rule,
       // The targets of one file are listed in source order.
       "a/order.css": rule,
       "b/order.css": `@preload url(first-pkg/f.png);\n@import "second-pkg/s.css";\n.a { color: red; background: url(third-pkg/t.png) }\n`,
@@ -2220,7 +2220,6 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       "+ ",
       '+ @import "cond-pkg/y.css" layer(base) supports(display: grid) screen;',
       "+ ",
-      '+ @import "./local.css";',
       '+ @preload url("first-pkg/f.png");',
       "+ ",
       '+ @import "second-pkg/s.css";',
@@ -2230,7 +2229,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a CSS target is a URL: a file of the package, a fragment and a data: URL are not module imports", async () => {
+  test("a CSS target that is a file of the package, a fragment or a data: URL is not a module import", async () => {
     const rule = ".a { color: red }\n";
     const parts = ["one", "two", "three", "four", "five", "six"];
     const files = {
@@ -2240,32 +2239,54 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       ...Object.fromEntries(parts.map(part => [`b/parts/${part}.css`, rule])),
       "a/z.js": "module.exports = 1;\n",
       "b/z.js": 'module.exports = require("evil-pkg");\n',
-      // A style sheet cannot import a Node.js builtin.
-      "a/builtin.css": rule,
-      "b/builtin.css": '@import "fs";\n' + rule,
+      // The scheme of a URL has no case.
       "a/data.css": rule,
-      "b/data.css": parts.map((part, i) => `.${part} { background: url(data:image/png;base64,AAAA${i}) }\n`).join(""),
-      // The query and the fragment are not part of the file name.
+      "b/data.css":
+        ".a { background: url(data:image/png;base64,AAAA) }\n.b { background: url(DATA:image/png;base64,BBBB) }\n",
+      // `?v=2` and `#clip` are the document itself. The query and the fragment are not part of a file name.
       "a/fonts.css": rule,
-      "b/fonts.css": "@font-face { font-family: x; src: url(fonts/x.woff2?v=1#iefix) }\n" + rule,
+      "b/fonts.css":
+        '@import "?v=2";\n@font-face { font-family: x; src: url(fonts/x.woff2?v=1#iefix) }\n.a { clip-path: url(#clip) }\n',
       "b/fonts/x.woff2": "wOF2",
-      // `#theme/x.css` is a package.json "imports" alias, and `#clip` is a part of the document.
-      "a/hash.css": rule,
-      "b/hash.css": '@import "#theme/x.css";\n.a { clip-path: url(#clip) }\n',
-      "a/remote.css": rule,
-      "b/remote.css": "@import url(//cdn.example.com/x.css);\n" + rule,
-      // A bare path is relative to the folder of the style sheet, not to the package.
+      // A path is relative to the folder of the style sheet. `./not-shipped.css` does not leave the package.
       "a/styles/main.css": rule,
-      "b/styles/main.css": '@import "sibling.css";\n@import "reset.css";\n' + rule,
+      "b/styles/main.css": '@import "sibling.css";\n@import "../reset.css";\n@import "./not-shipped.css";\n' + rule,
       "b/styles/sibling.css": rule,
       "b/reset.css": rule,
     };
-    const notes = async (...args: string[]) => JSON.parse((await pretty(files, [...args, "--json"])).raw).notes;
-    expect(await notes()).toEqual([
-      "new module imports: fs, #theme/x.css, //cdn.example.com/x.css, reset.css, evil-pkg",
-    ]);
+    const run = async (...args: string[]) => {
+      const { raw, exitCode } = await pretty(files, [...args, "--json"]);
+      return { notes: JSON.parse(raw).notes, exitCode };
+    };
+    expect(await run()).toEqual({ notes: ["new module imports: evil-pkg"], exitCode: 0 });
     // A file that the filter leaves out of the diff is still a file of the package.
-    expect(await notes(":app.css")).toEqual([]);
+    expect(await run(":app.css")).toEqual({ notes: [], exitCode: 0 });
+  });
+
+  test("a CSS target that is not a file of the package is a module import", async () => {
+    const rule = ".a { color: red }\n";
+    const { raw, exitCode } = await pretty(
+      {
+        // `#theme/x.css` is a package.json "imports" alias.
+        "a/alias.css": rule,
+        "b/alias.css": '@import "#theme/x.css";\n' + rule,
+        // A style sheet cannot import a Node.js builtin.
+        "a/builtin.css": rule,
+        "b/builtin.css": '@import "fs";\n' + rule,
+        // A browser reads `/\` as `//`.
+        "a/remote.css": rule,
+        "b/remote.css": '@import url(//cdn.example.com/x.css);\n@import "/\\\\cdn.example.com/y.css";\n' + rule,
+        // `reset.css` is not in the folder of the style sheet, and the other path leaves the package.
+        "a/styles/main.css": rule,
+        "b/styles/main.css": '@import "reset.css";\n@import "../../outside/x.css";\n' + rule,
+        "b/reset.css": rule,
+      },
+      ["--json"],
+    );
+    expect(JSON.parse(raw).notes).toEqual([
+      "new module imports: #theme/x.css, fs, //cdn.example.com/x.css, /\\cdn.example.com/y.css, reset.css, ../../outside/x.css",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.

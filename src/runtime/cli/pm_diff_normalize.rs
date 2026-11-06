@@ -935,12 +935,14 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
             &symbols,
         )
         .ok()?;
-    // `url(#clip)` names a part of the document and a `data:` `url()` holds its own bytes: neither loads a file.
+    // `url(#clip)` and `?v=2` name the document itself and a `data:` `url()` holds its own bytes: none loads a file.
     let loads_a_file = |r: &&bun_ast::ImportRecord| {
         let target = r.path.text;
-        !target.is_empty()
-            && (r.kind != bun_ast::ImportKind::Url
-                || !(target.starts_with(b"#") || target.starts_with(b"data:")))
+        let inline = target.starts_with(b"#")
+            || bun_core::strings::has_prefix_case_insensitive(target, b"data:");
+        !(target.is_empty()
+            || target.starts_with(b"?")
+            || (r.kind == bun_ast::ImportKind::Url && inline))
     };
     let mut imports = Vec::with_capacity(import_records.len());
     imports.extend(

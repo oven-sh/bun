@@ -1115,26 +1115,27 @@ fn is_style_sheet(path: &[u8]) -> bool {
     matches!(normalize::kind_for(path), Some(normalize::Kind::Css))
 }
 
-/// Returns true if `target` names a file of the package itself. `sheet` is the importing file if it is a style sheet.
+/// Returns true if `target` points into the package itself. `sheet` is the importing file if it is a style sheet.
 fn is_own_import(target: &[u8], sheet: Option<&[u8]>, has_file: impl Fn(&[u8]) -> bool) -> bool {
-    let relative = target.starts_with(b".") || target.starts_with(b"/");
     let Some(sheet) = sheet else {
-        return relative;
+        return target.starts_with(b".") || target.starts_with(b"/");
     };
-    // A CSS target is a URL: `//host` is another site, and a bare path is tried against the sheet's folder first.
-    if relative {
-        return !target.starts_with(b"//");
-    }
     let file = &target[..strings::index_of_any(target, b"?#").unwrap_or(target.len())];
-    // A scheme or an escape is not looked up, so such a target stays listed.
-    if strings::index_of_any(file, b":\\%").is_some() {
+    // A URL parser reads a scheme, `%`, `\`, a tab or a line break in its own way, so such a target stays listed.
+    if strings::index_of_any(file, b":\\%\t\n\r").is_some() {
         return false;
     }
+    // `//host` is another site. A path from the root of the site is not looked up.
+    if file.starts_with(b"/") {
+        return !file.starts_with(b"//");
+    }
     use bun_paths::resolve_path::{join, platform};
-    has_file(join::<platform::Posix>(&[
-        bun_paths::dirname_simple(sheet),
-        file,
-    ]))
+    let path = join::<platform::Posix>(&[bun_paths::dirname_simple(sheet), file]);
+    // `./x` is never a package, so it is own unless it leaves this one. A bare path is own if the file exists.
+    if file.starts_with(b".") {
+        return !(path == b".." || path.starts_with(b"../"));
+    }
+    has_file(path)
 }
 
 fn has_terminal_escapes(bytes: &[u8]) -> bool {

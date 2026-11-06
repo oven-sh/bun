@@ -9,16 +9,15 @@ impl Quick {
     /// Prints T[start, end) with a literal line break for every "\n" in it.
     pub(crate) fn slice_with_newlines(&mut self, start: i32, end: i32) {
         let mut from = start;
-        let mut p = start;
-        while p < end {
-            if self.t.at(p) == 10 {
-                self.slice_any(from, p);
-                self.literalline();
-                from = p + 1;
+        loop {
+            let line_end = self.index_of_byte_in_range(b'\n', from, end);
+            self.slice_any(from, line_end);
+            if line_end == end {
+                return;
             }
-            p += 1;
+            self.literalline();
+            from = line_end + 1;
         }
-        self.slice_any(from, end);
     }
 
     /// getPreferredQuote over T[start, end). Returns the quote character.

@@ -856,6 +856,22 @@ impl Quick {
                                 continue 'l1;
                             }
                             if waiting != 0 || eol != 0 || kind == LINE_LITERAL {
+                                // a text of many lines: nothing but the end of a line, if the next one starts at the margin
+                                if waiting == 0
+                                    && eol == 0
+                                    && o <= cap
+                                    && self.printer.it.at(ind + IT_ROOT) == root_indent
+                                    && !self.options.marks_line_breaks_in_texts
+                                {
+                                    if mode == FLAT {
+                                        remeasure = 1;
+                                    }
+                                    self.printer.out.put(o, 10);
+                                    o += 1;
+                                    pos = 0;
+                                    pc += 1;
+                                    continue 'l1;
+                                }
                                 break 's2;
                             }
                             let tabs = self.printer.it.at(ind + IT_TABS);

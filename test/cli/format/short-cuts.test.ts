@@ -4314,6 +4314,43 @@ describe("JavaScript that is deep, long or full of comments", () => {
     expect(stdout + stderr).toContain("the quick way: 1 scripts");
   });
 
+  // The text of a template is searched for what ends it or needs a look, some bytes at a time: whatever that is, wherever it stands.
+  describe("what stands in a template", () => {
+    const lengths = [0, 1, 7, 8, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81, 127, 128, 129, 300];
+    const stops = [
+      "",
+      "${b}",
+      "$",
+      "$$",
+      "$ {",
+      "\\`",
+      "\\\\",
+      "\n",
+      "\n\n",
+      " \n",
+      "\t",
+      "\x7f",
+      "é",
+      "😀",
+      "\\\n",
+      "\\é",
+      "\\${",
+      "$\\{",
+      "{",
+      "}",
+    ];
+    expectSame(
+      "a.js",
+      lengths.flatMap(length =>
+        stops.flatMap(stop => [
+          `x = \`${"a".repeat(length)}${stop}${"a".repeat(length)}\`;\n`,
+          `x = \`${"a".repeat(length)}${stop}`,
+        ]),
+      ),
+      [[], ["--end-of-line=crlf"], ["--print-width=20", "--use-tabs"]],
+    );
+  });
+
   // Where a comment belongs is asked of what stands next to it, comments aside, whatever separates them.
   const ascii = [" ", "\t", "\n", "\r\n", "\r", "\x0b", "\x0c", "", ",", ";", " , "];
   const beyondAscii = ["\u00a0", "\u2028", "\u2029", "\ufeff", "\u3000"];

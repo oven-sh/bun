@@ -3,6 +3,7 @@
 
 use crate::lexer::{C_END, C_START, C_STRIDE};
 use crate::{Bytes, Quick, Words, bytes_before, where_byte_is};
+use bun_core::strings;
 
 impl Quick {
     pub(crate) fn skip_spaces(&self, mut p: i32) -> i32 {
@@ -90,6 +91,25 @@ impl Quick {
             p += 16;
         }
         return false;
+    }
+
+    /// Where `byte` is in T[start, end); `end` if it is not. Most often it is near.
+    pub(crate) fn index_of_byte_in_range(&self, byte: u8, start: i32, end: i32) -> i32 {
+        let mut p = start;
+        while p < end {
+            let found = where_byte_is(self.t.u128_at(p), byte);
+            if found != 0 {
+                return end.min(p + bytes_before(found));
+            }
+            p += 16;
+            if p == start + 64 {
+                return match strings::index_of_char(self.t.sub(p, end), byte) {
+                    Some(more) => p + more as i32,
+                    None => end,
+                };
+            }
+        }
+        return end;
     }
 
     pub(crate) fn skip_inline_comment(&self, p: i32) -> i32 {

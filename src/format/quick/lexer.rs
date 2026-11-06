@@ -11,6 +11,7 @@ use bun_core::lexer::{
     is_identifier_start, is_recent_identifier_part, is_recent_identifier_start,
     is_type_script_identifier_part,
 };
+use bun_core::strings;
 
 /// What [`Quick::save`] gives.
 #[derive(Clone, Copy)]
@@ -1497,6 +1498,30 @@ impl Quick {
         let mut p = from;
         let mut flags: i32 = 0;
         loop {
+            // To the next "`", "$", "\\" or byte that is not printable ASCII, which most often is on this line.
+            let near = p + 64;
+            loop {
+                let v = self.t.u128_at(p);
+                let stops = where_not_printable(v)
+                    | where_byte_is(v, b'`')
+                    | where_byte_is(v, b'$')
+                    | where_byte_is(v, b'\\');
+                if stops != 0 {
+                    p += bytes_before(stops);
+                    break;
+                }
+                p += 16;
+                if p == near {
+                    p += match strings::index_of_needs_escape_for_java_script_string(
+                        self.t.sub(p, self.text.src_end),
+                        b'`',
+                    ) {
+                        Some(plain) => plain as i32,
+                        None => self.text.src_end - p,
+                    };
+                    break;
+                }
+            }
             let c = self.t.at(p);
             if c == 96 {
                 flags |= F_TAIL;

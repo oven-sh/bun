@@ -502,7 +502,13 @@ impl Quick {
 
     /// T[start, end), whatever it holds.
     pub(crate) fn slice_any(&mut self, start: i32, end: i32) {
-        self.slice_w(start, end, self.text_width(start, end));
+        let width = self.text_width(start, end);
+        if width == end - start {
+            // a column for each byte: printable ASCII
+            self.slice(start, end);
+        } else {
+            self.slice_w(start, end, width);
+        }
     }
 }
 fn is_in(table: &[(u32, u32)], c: i32) -> bool {

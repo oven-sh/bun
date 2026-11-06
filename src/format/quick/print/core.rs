@@ -498,7 +498,12 @@ impl Quick {
                 return Ok(());
             }
             k::TemplateElement => {
-                self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2));
+                // (behind a backslash the lexer does not look)
+                if (self.n.at(n) & (F_SLOW_TEXT | F_ESCAPE)) == 0 {
+                    self.slice(self.n.at(n + 1), self.n.at(n + 2));
+                } else {
+                    self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2));
+                }
                 return Ok(());
             }
             k::ExpressionStatement => {

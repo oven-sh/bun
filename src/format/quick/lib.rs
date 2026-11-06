@@ -529,6 +529,49 @@ pub(crate) fn zeros<T: Default + Clone>(length: i32) -> Vec<T> {
     vec![T::default(); length.max(0) as usize]
 }
 
+/// No buffer has more items than this: bytes of text, words of the tree or of the document, entries of a stack. So a position or a length takes 26 bits, which is what
+/// the narrowest place has that packs one with something else (`op::Nop` and `op::IndentIfBreakOpen` of doc.rs), and sums of a few of them are far from the largest number.
+/// (The tests of this crate come to the limits with small texts.)
+pub(crate) const LARGEST: i32 = if cfg!(test) { 1 << 18 } else { 1 << 26 };
+
+/// How long a buffer of `length` items becomes that has to hold `need` of them, if it may. It becomes much larger: memory that is not written to costs nothing.
+pub(crate) fn larger(length: i32, need: i32) -> Option<i32> {
+    if !(0..=LARGEST).contains(&need) {
+        return None;
+    }
+    let mut length = length.clamp(16, LARGEST);
+    while length < need {
+        length = if length < (1 << 22) {
+            length * 8
+        } else {
+            length * 2
+        };
+    }
+    Some(length.min(LARGEST))
+}
+
+/// Makes room for `need` items and `spare` more, and keeps the first `used`. False if that is more than a buffer may hold: it then stays as it is.
+/// This is the one way in which a buffer grows.
+#[cold]
+#[inline(never)]
+pub(crate) fn grow<T: Default + Copy>(
+    buffer: &mut Vec<T>,
+    used: i32,
+    need: i32,
+    spare: i32,
+) -> bool {
+    let Some(length) = larger(buffer.len() as i32 - spare, need) else {
+        return false;
+    };
+    let mut next = zeros::<T>(length + spare);
+    let used = clamp(used, buffer.len().min(next.len()));
+    if let (Some(to), Some(from)) = (next.get_mut(..used), buffer.get(..used)) {
+        to.copy_from_slice(from);
+    }
+    *buffer = next;
+    true
+}
+
 /// A quotient without its fraction; 0 for a divisor of 0.
 pub(crate) fn div(a: i32, b: i32) -> i32 {
     if b == 0 { 0 } else { a.wrapping_div(b) }
@@ -554,6 +597,8 @@ pub struct Quick {
     /// One of [`rare`].
     pub(crate) which_rare: Cell<i32>,
     stack_check: bun_core::StackCheck,
+    /// Not 0: why the run is over, see end_run().
+    ended: i32,
     pub(crate) dialect: Dialect,
     had_bom: bool,
     redone: i32,
@@ -613,6 +658,7 @@ impl Quick {
             why: Cell::new(why::NONE),
             which_rare: Cell::new(rare::OTHER),
             stack_check: bun_core::StackCheck::default(),
+            ended: why::NONE,
             dialect: Dialect::of_name(Language::JavaScript, b""),
             had_bom: false,
             redone: 0,
@@ -747,9 +793,80 @@ impl Quick {
         }
     }
 
+    /// A run starts.
+    pub(crate) fn start_run(&mut self) {
+        self.why.set(why::NONE);
+        self.which_rare.set(rare::OTHER);
+        self.ended = why::NONE;
+        self.stack_check = bun_core::StackCheck::init();
+    }
+
+    /// A run is over. What a very large text has needed is not kept for the next one: there is a scratch for each thread, and whoever goes the long way
+    /// with such a text needs memory too.
+    pub(crate) fn give_back_what_is_large(&mut self) {
+        let lengths = self.t.len()
+            | self.n.len()
+            | self.d.len()
+            | self.printer.out.len()
+            | self.lexer.c.len();
+        // (one of them has half of what it may have, or more)
+        if lengths >= (LARGEST / 2) as usize {
+            self.give_back();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn give_back(&mut self) {
+        let guests = self.lend_guests(None);
+        let redone = self.redone;
+        let (why, which_rare, failed_at) =
+            (self.why.get(), self.which_rare.get(), self.failed_at.get());
+        let fresh = Self::new();
+        #[cfg(feature = "stages")]
+        let fresh = Self {
+            no_guests: self.no_guests,
+            stages: self.stages,
+            keep_stages: self.keep_stages,
+            kept: std::mem::take(&mut self.kept),
+            ..fresh
+        };
+        *self = fresh;
+        self.lend_guests(guests);
+        self.redone = redone;
+        self.why.set(why);
+        self.which_rare.set(which_rare);
+        self.failed_at.set(failed_at);
+    }
+
+    /// Ends the run from a place that has no way to say so to whoever called it (a writer that finds no room). What is written from here on may be lost. It is not
+    /// for long: the next one who asks for room on the stack is told that there is none, and nothing of what a stage leaves behind is read.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn end_run(&mut self, why: i32) {
+        self.ended = why;
+        self.stack_check = bun_core::StackCheck::exhausted();
+    }
+
+    /// grow() for a buffer that is kept whole. Whoever calls this writes without a look at what has become of it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn make_room<T: Default + Copy>(
+        &mut self,
+        buffer: fn(&mut Quick) -> &mut Vec<T>,
+        need: i32,
+    ) {
+        let buffer = buffer(self);
+        if !grow(buffer, buffer.len() as i32, need, 0) {
+            self.end_run(why::TOO_LARGE);
+        }
+    }
+
     /// Nothing of what a stage has left behind is read if part of it is lost.
     pub(crate) fn nothing_lost(&self) -> R<()> {
-        if has_lost_something() {
+        if self.ended != why::NONE {
+            Err(self.stop(self.ended))
+        } else if has_lost_something() {
             Err(self.stop(why::LOST))
         } else {
             Ok(())
@@ -762,7 +879,16 @@ impl Quick {
         if self.stack_check.is_safe_to_recurse() {
             Ok(())
         } else {
-            Err(self.stop(why::STACK))
+            Err(self.no_stack())
         }
+    }
+
+    #[cold]
+    fn no_stack(&self) -> Stop {
+        self.stop(if self.ended != why::NONE {
+            self.ended
+        } else {
+            why::STACK
+        })
     }
 }

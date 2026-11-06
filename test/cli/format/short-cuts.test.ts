@@ -4508,6 +4508,41 @@ describe("JavaScript that is deep, long or full of comments", () => {
 });
 
 describe("scripts that are too much for the quick way", () => {
+  // Its buffers have a limit. What comes to one goes the long way, soon and without much memory.
+  const isSlow = isDebug || isASAN;
+  const nest = (open: string, middle: string, close: string, depth: number) =>
+    `x = ${open.repeat(depth)}${middle}${close.repeat(depth)};\n`;
+
+  /** Formats `text` both ways. Returns what each has printed and said, and the most memory that it had, in MiB. */
+  async function bothWays(name: string, text: string) {
+    return await Promise.all(
+      [[], ["--no-short-cuts"]].map(async own => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fmt", "--no-config", "--no-editorconfig", `--stdin-filepath=${name}`, ...own],
+          cwd: "/",
+          env: bunEnv,
+          stdin: Buffer.from(text),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { printed: [stdout, stderr, exitCode], memory: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+      }),
+    );
+  }
+
+  test.skipIf(!hasFlag || isSlow).concurrent.each([
+    // The tree grows with the square of the depth.
+    ["a.js", nest("a || (", "a", ")", 20000)],
+    // Every line is indented by one level more than the line before it.
+    ["a.js", nest("a ** ", "a", "", 40000)],
+    ["a.js", nest("f(", "", ")", 30000)],
+  ])("%s %#", async (name, text) => {
+    const [short, long] = await bothWays(name, text);
+    expect(short.printed).toEqual(long.printed);
+    expect(short.memory).toBeLessThan(long.memory + 700);
+  });
+
   describe("escapes beyond the last character", () =>
     expectSame(
       "a.js",

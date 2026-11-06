@@ -220,8 +220,9 @@ impl Default for Options {
     }
 }
 
-/// A file that is longer is refused, so that sums of positions stay far from the largest number.
-const LONGEST_FILE: usize = 1 << 28;
+/// A file that is longer is refused at once. One that is as long has room in the buffers, which have a limit of their own ([`crate::LARGEST`]): four bytes of text,
+/// four words of the tree and of the document and four bytes of output for each of its bytes.
+pub(crate) const LONGEST_FILE: usize = (crate::LARGEST / 4) as usize;
 /// Columns are products of levels and the width of one.
 const DEEPEST_HOST: i32 = 1 << 12;
 
@@ -235,8 +236,11 @@ pub fn format(
     out: &mut Vec<u8>,
 ) -> Result<(), Refused> {
     out.clear();
-    if text.len() > LONGEST_FILE
-        || options.tab_width < 1
+    if text.len() > LONGEST_FILE {
+        scratch.why.set(why::TOO_LARGE);
+        return Err(Refused);
+    }
+    if options.tab_width < 1
         || options.print_width < 1
         || !(0..=DEEPEST_HOST).contains(&options.indentation)
     {
@@ -256,10 +260,12 @@ pub fn format(
                     out.pop();
                 }
             }
+            scratch.give_back_what_is_large();
             Ok(())
         }
         Err(Stop) => {
             scratch.forget_run();
+            scratch.give_back_what_is_large();
             Err(Refused)
         }
     }
@@ -286,8 +292,7 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     }
     let length = text.len() as i32;
     let _losses = OwnLosses::start();
-    scratch.why.set(why::NONE);
-    scratch.stack_check = bun_core::StackCheck::init();
+    scratch.start_run();
     scratch.set_options(options, dialect);
     scratch.source_buffer(length, 0);
     scratch.t.set_all(text, SRC_BASE);
@@ -302,7 +307,9 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     if stands.is_err() {
         scratch.forget_run();
     }
-    matches!(stands, Ok(true)) && scratch.nothing_lost().is_ok()
+    let stands = matches!(stands, Ok(true)) && scratch.nothing_lost().is_ok();
+    scratch.give_back_what_is_large();
+    stands
 }
 
 /// What `formatAttributeValue()` of language-html puts around the document of an expression.
@@ -344,7 +351,13 @@ pub fn format_expression(
     out.clear();
     let text = expression.text;
     if text.len() > LONGEST_FILE
-        || options.tab_width < 1
+        || expression.before.len() > LONGEST_FILE
+        || expression.after.len() > LONGEST_FILE
+    {
+        scratch.why.set(why::TOO_LARGE);
+        return Err(Refused);
+    }
+    if options.tab_width < 1
         || options.print_width < 1
         || !(0..=DEEPEST_HOST).contains(&options.indentation)
         || options.end_of_line != EndOfLine::Lf
@@ -386,10 +399,12 @@ pub fn format_expression(
     match done {
         Ok(()) => {
             out.extend_from_slice(scratch.printer.out.sub(0, scratch.printer.out_length));
+            scratch.give_back_what_is_large();
             Ok(())
         }
         Err(Stop) => {
             scratch.forget_run();
+            scratch.give_back_what_is_large();
             Err(Refused)
         }
     }
@@ -403,8 +418,7 @@ impl Quick {
         options: &Options,
     ) -> R<()> {
         let length = expression.text.len() as i32 + 3;
-        self.why.set(why::NONE);
-        self.stack_check = bun_core::StackCheck::init();
+        self.start_run();
         self.set_options(options, dialect);
         self.source_buffer(length, 0);
         self.t.put(SRC_BASE, 40);
@@ -468,9 +482,7 @@ impl Quick {
 
     fn format_buffer(&mut self, text: &[u8], dialect: Dialect, options: &Options) -> R<()> {
         let mut length = text.len() as i32;
-        self.why.set(why::NONE);
-        self.which_rare.set(rare::OTHER);
-        self.stack_check = bun_core::StackCheck::init();
+        self.start_run();
         self.set_options(options, dialect);
         self.source_buffer(length, 0);
         self.t.set_all(text, SRC_BASE);

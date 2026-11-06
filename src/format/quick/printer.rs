@@ -13,8 +13,7 @@ use crate::doc::{
     G_HAS_FILL, G_PURE, LINE_HARD, LINE_LITERAL, LINE_NORMAL, LINE_SOFT, STANDING_BELOW, op,
 };
 use crate::options::{EOL_CR, EOL_CRLF, EOL_LF};
-use crate::text::much_larger;
-use crate::{Bytes, Quick, R, Stop, Words, copy_block, rare, why, zeros};
+use crate::{Bytes, Quick, R, Stop, Words, copy_block, grow, rare, why, zeros};
 
 pub(crate) struct Printer {
     pub(crate) out: Vec<u8>,
@@ -130,9 +129,7 @@ impl Quick {
         from: i32,
     ) -> i32 {
         if self.printer.it_pos + IT_STRIDE > (self.printer.it.len() as i32) {
-            let mut grown = zeros::<i32>(self.printer.it.len() as i32 * 2);
-            grown.set_all(&self.printer.it, 0);
-            self.printer.it = grown;
+            self.make_room(|q| &mut q.printer.it, self.printer.it_pos + IT_STRIDE);
         }
         let r = self.printer.it_pos;
         self.printer.it_pos = r + IT_STRIDE;
@@ -198,9 +195,7 @@ impl Quick {
         };
         let total = old_length + tabs + spaces + length;
         if self.printer.ib_pos + total > (self.printer.ib.len() as i32) {
-            let mut grown = zeros::<u8>((self.printer.ib_pos + total) * 2);
-            grown.set_all(&self.printer.ib, 0);
-            self.printer.ib = grown;
+            self.make_room(|q| &mut q.printer.ib, self.printer.ib_pos + total);
         }
         let at = self.printer.ib_pos;
         let old = self.printer.it.at(r + IT_PREFIX);
@@ -293,29 +288,28 @@ impl Quick {
     }
 
     pub(crate) fn grow_out(&mut self, need: i32) -> R<()> {
-        // (a tab width of 5000 and a file of 200 KB on one line give 420 MB)
-        if need < 0 || need >= HUGE - 2 * OUT_MARGIN {
+        // (a tab width of 5000 and a file of 200 KB on one line give 420 MB, a nest of 10,000 levels 200 MB)
+        let used = self.printer.out.len() as i32;
+        if !grow(
+            &mut self.printer.out,
+            used,
+            need.saturating_add(2 * OUT_MARGIN),
+            0,
+        ) {
             return Err(self.stop(why::TOO_LARGE));
         }
-        let need = need + 2 * OUT_MARGIN;
-        let mut cap = self.printer.out_cap;
-        while cap < need {
-            cap = much_larger(cap);
-        }
-        if cap >= HUGE {
-            cap = HUGE.wrapping_sub(1);
-        }
-        let mut grown = zeros::<u8>(cap);
-        grown.set_all(&self.printer.out, 0);
-        self.printer.out = grown;
-        self.printer.out_cap = cap;
+        self.printer.out_cap = self.printer.out.len() as i32;
         Ok(())
     }
 
     pub(crate) fn grow_stack(&mut self) {
-        let mut grown = zeros::<i32>(self.printer.st.len() as i32 * 2);
-        grown.set_all(&self.printer.st, 0);
-        self.printer.st = grown;
+        self.make_room(|q| &mut q.printer.st, self.printer.st.len() as i32 + 1);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_stack_of_fits(&mut self) {
+        self.make_room(|q| &mut q.printer.fs, self.printer.fs.len() as i32 + 1);
     }
 
     /// Does what starts at `pc` fit into `rem` columns, up to the first possible line break?
@@ -403,9 +397,7 @@ impl Quick {
                     }
                     if (w & 31) == op::IndentLine {
                         if fsp + 2 > (self.printer.fs.len() as i32) {
-                            let mut grown = zeros::<i32>(self.printer.fs.len() as i32 * 2);
-                            grown.set_all(&self.printer.fs, 0);
-                            self.printer.fs = grown;
+                            self.grow_stack_of_fits();
                         }
                         fsp += 1;
                     } else if (w & 31) == op::DedentLine {
@@ -444,9 +436,7 @@ impl Quick {
                             continue;
                         }
                         if fsp + 2 > (self.printer.fs.len() as i32) {
-                            let mut grown = zeros::<i32>(self.printer.fs.len() as i32 * 2);
-                            grown.set_all(&self.printer.fs, 0);
-                            self.printer.fs = grown;
+                            self.grow_stack_of_fits();
                         }
                         self.printer.fs.put(fsp, mode);
                         fsp += 1;
@@ -476,9 +466,7 @@ impl Quick {
                         return false;
                     }
                     if fsp + 2 > (self.printer.fs.len() as i32) {
-                        let mut grown = zeros::<i32>(self.printer.fs.len() as i32 * 2);
-                        grown.set_all(&self.printer.fs, 0);
-                        self.printer.fs = grown;
+                        self.grow_stack_of_fits();
                     }
                     self.printer.fs.put(fsp, mode);
                     fsp += 1;
@@ -505,9 +493,7 @@ impl Quick {
                 }
                 op::IndentOpen | op::AlignOpen | op::AlignTextOpen | op::IndentIfBreakOpen => {
                     if fsp + 2 > (self.printer.fs.len() as i32) {
-                        let mut grown = zeros::<i32>(self.printer.fs.len() as i32 * 2);
-                        grown.set_all(&self.printer.fs, 0);
-                        self.printer.fs = grown;
+                        self.grow_stack_of_fits();
                     }
                     fsp += 1;
                     pc += if (w & 31) == op::AlignTextOpen { 2 } else { 1 };
@@ -554,9 +540,7 @@ impl Quick {
                 }
                 op::Call => {
                     if fsp + 2 > (self.printer.fs.len() as i32) {
-                        let mut grown = zeros::<i32>(self.printer.fs.len() as i32 * 2);
-                        grown.set_all(&self.printer.fs, 0);
-                        self.printer.fs = grown;
+                        self.grow_stack_of_fits();
                     }
                     self.printer.fs.put(fsp, pc + 1);
                     fsp += 1;
@@ -580,7 +564,7 @@ impl Quick {
                             rem - (if mode == BREAK {
                                 self.first_word_length(self.d.at(pc + 1))
                             } else {
-                                self.d.at(pc + 2) & 0xffffff
+                                ((w as u32) >> 5) as i32
                             }) - pending_space;
                         if rem < 0 {
                             return false;
@@ -673,7 +657,10 @@ impl Quick {
         let width = self.options.print_width;
         let eol = self.options.end_of_line;
         if self.doc.group_ids + 1 > (self.printer.group_mode.len() as i32) {
-            self.printer.group_mode = zeros::<u8>((self.doc.group_ids + 1) * 2);
+            // (this is also what keeps the number of a group within the bits that a command has for it)
+            if !grow(&mut self.printer.group_mode, 0, self.doc.group_ids + 1, 0) {
+                return Err(self.stop(why::TOO_LARGE));
+            }
         } else {
             self.printer
                 .group_mode
@@ -1493,14 +1480,16 @@ impl Quick {
         let length = ((self.d.at(pc) as u32) >> 5) as i32;
         let mut p = self.d.at(pc + 1);
         let end = p + length;
-        let behind = ((self.d.at(pc + 2) as u32) >> 24) as i32;
+        let behind = self.d.at(pc + 2);
         let tabs = self.printer.it.at(ind + IT_TABS);
         let spaces = self.printer.it.at(ind + IT_SPACES);
         if spaces == HUGE {
             return Err(self.stop(why::REDO));
         }
         // at worst every word stands on a line of its own
-        let need = o + length + ((length + 1) >> 1).wrapping_mul(tabs + spaces + 1) + 64;
+        let need = ((length + 1) >> 1)
+            .saturating_mul(tabs + spaces + 1)
+            .saturating_add(o + length + 64);
         if need > self.printer.out_cap - OUT_MARGIN {
             self.grow_out_to(need)?;
         }
@@ -1579,7 +1568,9 @@ impl Quick {
                 p += 1;
             }
         }
-        let need = o + length + lines.wrapping_mul(if delta > 0 { delta } else { 0 }) + 64;
+        let need = lines
+            .saturating_mul(delta.max(0))
+            .saturating_add(o + length + 64);
         if need > self.printer.out_cap - OUT_MARGIN {
             self.grow_out_to(need)?;
         }
@@ -1967,9 +1958,7 @@ impl Quick {
                 }
                 op::SuffixOpen => {
                     if self.printer.sx_end + 3 > (self.printer.sx.len() as i32) {
-                        let mut grown = zeros::<i32>(self.printer.sx.len() as i32 * 2);
-                        grown.set_all(&self.printer.sx, 0);
-                        self.printer.sx = grown;
+                        self.make_room(|q| &mut q.printer.sx, self.printer.sx_end + 3);
                     }
                     self.printer.sx.put(self.printer.sx_end, pc + 1);
                     self.printer.sx.put(self.printer.sx_end + 1, mode);

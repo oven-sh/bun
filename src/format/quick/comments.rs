@@ -16,7 +16,7 @@ use crate::lexer::{
     CF_BLOCK, CF_CLAIMED, CF_INDENTABLE, CF_PLAIN,
 };
 use crate::parse::core::TYPED_FLOW;
-use crate::{Quick, R, Words, rare, why, zeros};
+use crate::{LARGEST, Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct Comments {
     // ---- node -> its comments: an open addressing table of [node, first, last]
@@ -820,10 +820,10 @@ impl Quick {
         self.comments.map_room = 16;
     }
 
-    pub(crate) fn make_room_in_map(&mut self, count: i32) {
+    pub(crate) fn make_room_in_map(&mut self, count: i32) -> R<()> {
         if count <= self.comments.map_room {
             self.comments.map_room -= count;
-            return;
+            return Ok(());
         }
         let old = self
             .comments
@@ -831,6 +831,9 @@ impl Quick {
             .sub(0, (self.comments.map_mask + 1) * 3)
             .to_vec();
         let used = ((self.comments.map_mask + 1) >> 2) - self.comments.map_room;
+        if used + count > LARGEST / 16 {
+            return Err(self.stop(why::TOO_LARGE));
+        }
         let mut size = self.comments.map_mask + 1;
         while (size >> 2) < used + count {
             size *= 2;
@@ -855,6 +858,7 @@ impl Quick {
             }
             i += 3;
         }
+        Ok(())
     }
 
     pub(crate) fn map_slot(&self, node: i32) -> i32 {
@@ -1068,9 +1072,7 @@ impl Quick {
 
     pub(crate) fn push_child(&mut self, child: i32) {
         if self.comments.ch_pos >= (self.comments.ch.len() as i32) {
-            let mut grown = zeros::<i32>(self.comments.ch.len() as i32 * 2);
-            grown.set_all(&self.comments.ch, 0);
-            self.comments.ch = grown;
+            self.make_room(|q| &mut q.comments.ch, self.comments.ch_pos + 1);
         }
         self.comments.ch.put(self.comments.ch_pos, child);
         self.comments.ch_pos += 1;
@@ -1171,9 +1173,7 @@ impl Quick {
             i += 1;
         }
         if self.comments.path_pos + 3 > (self.comments.path.len() as i32) {
-            let mut grown = zeros::<i32>(self.comments.path.len() as i32 * 2);
-            grown.set_all(&self.comments.path, 0);
-            self.comments.path = grown;
+            self.make_room(|q| &mut q.comments.path, self.comments.path_pos + 3);
         }
         self.comments.path.put(self.comments.path_pos, node);
         self.comments.path.put(self.comments.path_pos + 1, first);
@@ -2565,7 +2565,7 @@ impl Quick {
         if count == self.lexer.c_base {
             return Ok(());
         }
-        self.make_room_in_map(count - self.lexer.c_base);
+        self.make_room_in_map(count - self.lexer.c_base)?;
         self.comments.ch_pos = 0;
         self.comments.path_pos = 0;
         self.comments.tie_count = 0;
@@ -2656,9 +2656,7 @@ impl Quick {
                             self.break_ties();
                         }
                         if self.comments.tie_count >= (self.comments.ties.len() as i32) {
-                            let mut grown = zeros::<i32>(self.comments.ties.len() as i32 * 2);
-                            grown.set_all(&self.comments.ties, 0);
-                            self.comments.ties = grown;
+                            self.make_room(|q| &mut q.comments.ties, self.comments.tie_count + 1);
                         }
                         self.comments.ties.put(self.comments.tie_count, i);
                         self.comments.tie_count += 1;

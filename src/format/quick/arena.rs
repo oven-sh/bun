@@ -12,8 +12,7 @@
 //! What a kind or a flag means is the business of each language. The arena only grows while a file is formatted: a
 //! language that is embedded in another one appends its tree behind the host's.
 
-use crate::text::much_larger;
-use crate::{Numbers, Quick, Words, zeros};
+use crate::{LARGEST, Numbers, Quick, Words, grow, why, zeros};
 
 pub(crate) struct Arena {
     pub(crate) n_pos: i32,
@@ -40,9 +39,9 @@ impl Quick {
     pub(crate) fn reset_ast(&mut self, expected_words: i32) {
         // (Some words more: the parsers ask for what they expect once more, on top of the few words that are taken by then. And at least twice what there was:
         // memory that is not written to costs nothing, a new array for every file that is larger than all before it does.)
-        if expected_words + 64 > self.arena.n_cap {
-            self.arena.n_cap = (expected_words + 64).max(much_larger(self.arena.n_cap));
-            self.n = zeros::<i32>(self.arena.n_cap + SPARE);
+        if (expected_words + 64).min(LARGEST) > self.arena.n_cap {
+            self.arena.n_pos = 0;
+            self.grow_ast((expected_words + 64).min(LARGEST));
         }
         self.n.put(0, 0);
         self.n.put(1, 0);
@@ -55,14 +54,11 @@ impl Quick {
     #[cold]
     #[inline(never)]
     pub(crate) fn grow_ast(&mut self, need: i32) {
-        let mut cap = self.arena.n_cap;
-        while cap < need {
-            cap = much_larger(cap);
+        if grow(&mut self.n, self.arena.n_pos, need, SPARE) {
+            self.arena.n_cap = self.n.len() as i32 - SPARE;
+        } else {
+            self.end_run(why::TOO_LARGE);
         }
-        let mut next = zeros::<i32>(cap + SPARE);
-        next.set_all(self.n.sub(0, self.arena.n_pos), 0);
-        self.n = next;
-        self.arena.n_cap = cap;
     }
 
     pub(crate) fn reserve_ast(&mut self, words: i32) {
@@ -273,9 +269,7 @@ impl Quick {
     #[cold]
     #[inline(never)]
     fn grow_list(&mut self) {
-        let mut next = zeros::<i32>(self.arena.ls.len() as i32 * 2);
-        next.set_all(&self.arena.ls, 0);
-        self.arena.ls = next;
+        self.make_room(|q| &mut q.arena.ls, self.arena.ls_pos + 4);
     }
 
     pub(crate) fn list_truncate(&mut self, mark: i32) {

@@ -11,7 +11,7 @@
 use crate::doc::{G_CAN_BREAK, G_WILL_BREAK, op};
 use crate::holes::FILTER_QUOT;
 use crate::lang::lang;
-use crate::{Bytes, Quick, R, Words, why};
+use crate::{Bytes, LARGEST, Quick, R, Words, why};
 use std::any::Any;
 
 /// The language of a text in a template: one of Prettier's parsers.
@@ -169,6 +169,9 @@ impl Quick {
     }
 }
 
+/// What the command has room for, and more than a line has columns.
+const WIDEST_ALIGNMENT: i32 = 1 << 24;
+
 /// Where something that is open starts in the document, for the call that closes it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Open(i32);
@@ -261,7 +264,8 @@ impl Sink<'_> {
             let start = self.source_at + offset as i32;
             return (start, start + text.len() as i32);
         }
-        let length = text.len().min(1 << 26) as i32;
+        // (for one that is too long there is no room)
+        let length = text.len().min(LARGEST as usize + 1) as i32;
         self.q.reserve_gen(length);
         let start = self.q.text.gen_pos;
         self.q.t.set_all(text, start);
@@ -407,7 +411,8 @@ impl Sink<'_> {
     /// `align(n, ..)` for a number above 0.
     pub fn align_open(&mut self, n: i32) {
         self.room();
-        self.q.align_open(n.clamp(0, 1 << 24));
+        self.is_uncertain |= n > WIDEST_ALIGNMENT;
+        self.q.align_open(n.clamp(0, WIDEST_ALIGNMENT));
     }
 
     /// `align(text, ..)`: the lines start with `text`, which is ASCII. Blanks stay blanks where tabs indent.

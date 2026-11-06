@@ -80,9 +80,10 @@ pub(crate) const PADDING: i32 = 1624; // staticText(" ".repeat(128))
 impl Quick {
     pub(crate) fn push_cell(&mut self, start: i32, end: i32) {
         if self.print_jest_each.cell_top + 3 > (self.print_jest_each.cells.len() as i32) {
-            let mut grown = zeros::<i32>(self.print_jest_each.cells.len() as i32 * 2);
-            grown.set_all(&self.print_jest_each.cells, 0);
-            self.print_jest_each.cells = grown;
+            self.make_room(
+                |q| &mut q.print_jest_each.cells,
+                self.print_jest_each.cell_top + 3,
+            );
         }
         self.print_jest_each
             .cells
@@ -106,9 +107,10 @@ impl Quick {
 
     pub(crate) fn push_row(&mut self) {
         if self.print_jest_each.row_top + 3 > (self.print_jest_each.rows.len() as i32) {
-            let mut grown = zeros::<i32>(self.print_jest_each.rows.len() as i32 * 2);
-            grown.set_all(&self.print_jest_each.rows, 0);
-            self.print_jest_each.rows = grown;
+            self.make_room(
+                |q| &mut q.print_jest_each.rows,
+                self.print_jest_each.row_top + 3,
+            );
         }
         self.print_jest_each
             .rows
@@ -230,7 +232,7 @@ impl Quick {
             r += 3;
         }
         if columns > (self.print_jest_each.widths.len() as i32) {
-            self.print_jest_each.widths = zeros::<i32>(columns * 2);
+            self.make_room(|q| &mut q.print_jest_each.widths, columns);
         }
         self.print_jest_each.widths.fill_range(0, 0, columns);
         let mut r = row_base;

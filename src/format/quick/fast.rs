@@ -6002,7 +6002,8 @@ impl Quick {
     /// The same where the column is the guess as it stands.
     pub(crate) fn prepare_at(&mut self, start: i32, indentation: i32) -> bool {
         let mut columns = self.options.print_width - indentation - self.options.guess_margin;
-        if columns < 2 {
+        // (the document has twelve bits for the column of lines that stand: see standing())
+        if columns < 2 || indentation > 4095 {
             return fast_refuse(refusal::Narrow, start);
         }
         if columns > 400 {

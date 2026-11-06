@@ -262,9 +262,7 @@ impl Quick {
     pub(crate) fn push_comment(&mut self, start: i32, end: i32, flags: i32) {
         let at = self.lexer.c_count * C_STRIDE;
         if at + C_STRIDE > (self.lexer.c.len() as i32) {
-            let mut grown = zeros::<i32>(self.lexer.c.len() as i32 * 2);
-            grown.set_all(&self.lexer.c, 0);
-            self.lexer.c = grown;
+            self.make_room(|q| &mut q.lexer.c, at + C_STRIDE);
         }
         self.lexer.c.put(at, start);
         self.lexer.c.put(at + 1, end);
@@ -352,9 +350,7 @@ impl Quick {
     pub(crate) fn mark(&mut self) -> i32 {
         let m = self.lexer.marks_top;
         if m + 9 > (self.lexer.marks.len() as i32) {
-            let mut grown = zeros::<i32>(self.lexer.marks.len() as i32 * 2);
-            grown.set_all(&self.lexer.marks, 0);
-            self.lexer.marks = grown;
+            self.make_room(|q| &mut q.lexer.marks, m + 9);
         }
         self.lexer.marks.put(m, self.lexer.pos);
         self.lexer.marks.put(m + 1, self.lexer.tok);

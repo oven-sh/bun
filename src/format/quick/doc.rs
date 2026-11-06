@@ -12,10 +12,12 @@
 //!   willBreak(doc)        `wb_count`, sampled by whoever asks
 //!   fits()                `acc_w` is the width of everything written so far if printed flat, so a group knows its flat
 //!                         width when it closes. The printer then rejects a group that is too wide without reading it.
+//!
+//! A command has five bits for what it is and 27, in two cases 26, for a length of text, a distance or a position in the stream, or the number of a group. They are enough
+//! because neither the texts nor the stream get longer than [`LARGEST`]: nobody looks at a single length.
 
-use crate::text::much_larger;
 use crate::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, WIDE};
-use crate::{Bytes, Numbers, Quick, R, Words, rare, zeros};
+use crate::{Bytes, LARGEST, Numbers, Quick, R, Words, grow, rare, why, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -154,7 +156,7 @@ pub(crate) mod op {
     /// [op | target << 5]                       target: a detached doc's Skip
     pub(crate) const Call: i32 = 20;
     pub(crate) const Ret: i32 = 21;
-    /// [op]; or [op | len << 5] [start] [width | behind << 24]: a whole fill of words, see words()
+    /// [op]; or [op | len << 5] [start] [behind]: a whole fill of words, see words()
     pub(crate) const FillOpen: i32 = 22;
     /// [op | len << 5]                          len: the words up to the next mark
     pub(crate) const FillItem: i32 = 23;
@@ -221,16 +223,14 @@ impl Quick {
 
     pub(crate) fn es_reserve(&mut self) {
         if self.doc.es_pos + 16 > (self.doc.es.len() as i32) {
-            let mut grown = zeros::<i32>(self.doc.es.len() as i32 * 2);
-            grown.set_all(&self.doc.es, 0);
-            self.doc.es = grown;
+            self.make_room(|q| &mut q.doc.es, self.doc.es_pos + 16);
         }
     }
 
     pub(crate) fn reset_doc(&mut self, expected_words: i32) {
-        if expected_words > self.doc.d_cap {
-            self.doc.d_cap = expected_words.max(much_larger(self.doc.d_cap));
-            self.d = zeros::<i32>(self.doc.d_cap);
+        self.doc.d_pos = 0;
+        if expected_words.min(LARGEST) > self.doc.d_cap {
+            self.grow_doc(expected_words.min(LARGEST));
         }
         let mut kind: i32 = 0;
         while kind < 4 {
@@ -258,21 +258,22 @@ impl Quick {
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn grow_doc(&mut self) {
+    pub(crate) fn grow_doc(&mut self, need: i32) {
         if self.doc.d_pos > self.doc.d_cap {
             self.doc.overflowed = true;
         }
-        self.doc.d_cap = much_larger(self.doc.d_cap);
-        let mut grown = zeros::<i32>(self.doc.d_cap);
-        grown.set_all(self.d.sub(0, self.doc.d_pos), 0);
-        self.d = grown;
+        if grow(&mut self.d, self.doc.d_pos, need, 0) {
+            self.doc.d_cap = self.d.len() as i32;
+        } else {
+            self.end_run(why::TOO_LARGE);
+        }
     }
 
     /// Every writer below trusts that there is room. Whoever writes in a loop calls this once per turn.
     #[inline(always)]
     pub(crate) fn reserve(&mut self) {
         if self.doc.d_pos + 1024 > self.doc.d_cap {
-            self.grow_doc();
+            self.grow_doc(self.doc.d_pos + 1024);
         }
     }
 
@@ -1361,9 +1362,9 @@ impl Quick {
         self.doc.fill_mark = self.doc.es.at(self.doc.es_pos);
     }
 
-    /// fill(join(line, words)) as one command, [FillOpen | length << 5] [start] [length | behind << 24], where the words are those of
-    /// T[start, end): printable ASCII, one blank between two words and none at either end; two words at least, less than 16 MB.
-    /// `behind`: the width (up to 255) of the text that follows the last word, which belongs to the last item of the fill.
+    /// fill(join(line, words)) as one command, [FillOpen | length << 5] [start] [behind], where the words are those of
+    /// T[start, end): printable ASCII, one blank between two words and none at either end; two words at least.
+    /// `behind`: the width of the text that follows the last word, which belongs to the last item of the fill.
     /// Only while `short_cuts` is on, no filter is set and lines are lines: where the end of a line takes more than a line feed and blanks
     /// (a comment waits for it, another end of line, a prefix), the printer gives up, and the file is formatted again.
     pub(crate) fn words(&mut self, start: i32, end: i32, behind: i32) {
@@ -1373,7 +1374,7 @@ impl Quick {
         self.doc.last_fill_at = p + 1;
         self.d.put(p, op::FillOpen | (width << 5));
         self.d.put(p + 1, start);
-        self.d.put(p + 2, width | (behind << 24));
+        self.d.put(p + 2, behind);
         self.doc.d_pos = p + 3;
         self.doc.line_count += 1;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
@@ -1507,6 +1508,10 @@ impl Quick {
 
     pub(crate) fn cache_set(&mut self, key: i32, doc: i32) {
         if self.doc.cache_count * 2 > self.doc.cache_mask {
+            if self.doc.cache_mask >= LARGEST / 4 {
+                // (a table that is full has no end for who looks for a free slot)
+                return self.end_run(why::TOO_LARGE);
+            }
             let old = self
                 .doc
                 .cache
@@ -1535,9 +1540,7 @@ impl Quick {
         }
         self.doc.cache.put(slot + 1, doc);
         if self.doc.cache_log_pos >= (self.doc.cache_log.len() as i32) {
-            let mut grown = zeros::<i32>(self.doc.cache_log.len() as i32 * 2);
-            grown.set_all(&self.doc.cache_log, 0);
-            self.doc.cache_log = grown;
+            self.make_room(|q| &mut q.doc.cache_log, self.doc.cache_log_pos + 1);
         }
         self.doc.cache_log.put(self.doc.cache_log_pos, key);
         self.doc.cache_log_pos += 1;

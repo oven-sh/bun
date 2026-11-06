@@ -989,11 +989,7 @@ pub(crate) const LINK_EMPTY_LINE_AFTER: i32 = 1;
 impl Quick {
     pub(crate) fn ch_reserve(&mut self, words: i32) {
         if self.print_call.ch_top + words > (self.print_call.ch.len() as i32) {
-            let mut grown = zeros::<i32>(
-                (self.print_call.ch.len() as i32 * 2).max(self.print_call.ch_top + words),
-            );
-            grown.set_all(&self.print_call.ch, 0);
-            self.print_call.ch = grown;
+            self.make_room(|q| &mut q.print_call.ch, self.print_call.ch_top + words);
         }
     }
 

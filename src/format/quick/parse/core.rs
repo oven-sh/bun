@@ -1622,9 +1622,7 @@ impl Quick {
         if after == AFTER_REFUSED {
             let base = self.parse.known_blocks_count;
             if base + count > (self.parse.known_blocks.len() as i32) {
-                let mut grown = zeros::<i32>((base + count) * 2);
-                grown.set_all(&self.parse.known_blocks, 0);
-                self.parse.known_blocks = grown;
+                self.make_room(|q| &mut q.parse.known_blocks, base + count);
             }
             let mut i: i32 = 0;
             while i < count {
@@ -2212,7 +2210,7 @@ impl Quick {
             i += 4;
         }
         if top + 4 > self.parse.labels.len() as i32 {
-            self.parse.labels.resize((top + 4) as usize * 2, 0);
+            self.make_room(|q| &mut q.parse.labels, top + 4);
         }
         self.parse.labels.put(top, self.n.at(name + 1));
         self.parse.labels.put(top + 1, self.n.at(name + 2));
@@ -3547,7 +3545,7 @@ impl Quick {
             i += 3;
         }
         if top + 3 > self.parse.private_names.len() as i32 {
-            self.parse.private_names.resize((top + 3) as usize * 2, 0);
+            self.make_room(|q| &mut q.parse.private_names, top + 3);
         }
         self.parse.private_names.put(top, start);
         self.parse.private_names.put(top + 1, end);

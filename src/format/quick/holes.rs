@@ -116,9 +116,7 @@ impl Quick {
             .put(self.holes.level * STRIDE + 3, self.holes.holes_used);
         self.holes.level += 1;
         if (self.holes.level + 1) * STRIDE > (self.holes.lv.len() as i32) {
-            let mut grown = zeros::<i32>(self.holes.lv.len() as i32 * 2);
-            grown.set_all(&self.holes.lv, 0);
-            self.holes.lv = grown;
+            self.make_room(|q| &mut q.holes.lv, (self.holes.level + 1) * STRIDE);
         }
         let at = self.holes.level * STRIDE;
         self.holes.lv.put(at, flags);
@@ -137,9 +135,7 @@ impl Quick {
         }
         self.holes.hole_top += count;
         if self.holes.hole_top > (self.holes.holes.len() as i32) {
-            let mut grown = zeros::<i32>(self.holes.hole_top * 2);
-            grown.set_all(&self.holes.holes, 0);
-            self.holes.holes = grown;
+            self.make_room(|q| &mut q.holes.holes, self.holes.hole_top);
         }
         self.load();
     }

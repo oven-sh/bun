@@ -547,9 +547,7 @@ impl Quick {
         // The other language may write a line suffix in front of an expression.
         self.set_suffix_possible(true);
         if base + count > (self.print_embed.ex.len() as i32) {
-            let mut grown = zeros::<i32>((base + count) * 2);
-            grown.set_all(&self.print_embed.ex, 0);
-            self.print_embed.ex = grown;
+            self.make_room(|q| &mut q.print_embed.ex, base + count);
         }
         self.print_embed.ex_top = base + count;
         let mut i: i32 = 1;

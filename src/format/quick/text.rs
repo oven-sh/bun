@@ -12,7 +12,7 @@
 //! place: enter_source() puts a 0 before and behind the range and leave_source() puts the two bytes back. A lexer stops at
 //! a 0 and a scan to the left does too, so neither needs an "end of input" test, and nothing is copied.
 
-use crate::{Quick, Stop, Words, rare, why, zeros};
+use crate::{Quick, Stop, Words, grow, rare, why};
 
 pub(crate) struct Text {
     /// Somebody has written more than reserve_gen() was asked for: bytes are lost, and the file is refused.
@@ -45,22 +45,14 @@ impl Quick {
         self.rare(rare::OTHER)
     }
 }
-// A buffer that is too small gives way to one that is much larger: memory that is not written to costs nothing.
-pub(crate) fn much_larger(size: i32) -> i32 {
-    return if size < (1 << 22) { size * 8 } else { size * 2 };
-}
-
 impl Quick {
     /// `used`: how much of the buffer is to be kept.
     pub(crate) fn grow_text(&mut self, need: i32, used: i32) {
-        let mut cap = self.text.t_cap;
-        while cap < need {
-            cap = much_larger(cap);
+        if grow(&mut self.t, used, need, 0) {
+            self.text.t_cap = self.t.len() as i32;
+        } else {
+            self.end_run(why::TOO_LARGE);
         }
-        let mut next = zeros::<u8>(cap);
-        next.set_all(self.t.sub(0, used), 0);
-        self.t = next;
-        self.text.t_cap = cap;
     }
 
     /// Makes room for a file of `length` bytes and returns the buffer to fill from SRC_BASE on. The first `have` bytes of the file are there already.

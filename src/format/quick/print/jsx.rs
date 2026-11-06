@@ -127,9 +127,7 @@ pub(crate) const WHITESPACE: i32 = 8;
 impl Quick {
     pub(crate) fn jx_push(&mut self, type_: i32, a: i32, b: i32) {
         if self.print_jsx.jx_top + 3 > (self.print_jsx.jx.len() as i32) {
-            let mut grown = zeros::<i32>(self.print_jsx.jx.len() as i32 * 2);
-            grown.set_all(&self.print_jsx.jx, 0);
-            self.print_jsx.jx = grown;
+            self.make_room(|q| &mut q.print_jsx.jx, self.print_jsx.jx_top + 3);
         }
         self.print_jsx.jx.put(self.print_jsx.jx_top, type_);
         self.print_jsx.jx.put(self.print_jsx.jx_top + 1, a);

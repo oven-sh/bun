@@ -2114,6 +2114,14 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
+    /// A check that says no at every depth. For code that has another reason
+    /// to end a recursion and whose frames ask this check anyway.
+    #[inline]
+    pub const fn exhausted() -> Self {
+        Self {
+            cached_stack_end: usize::MAX,
+        }
+    }
     /// Stack reserved for the work a frame does before the next check. One
     /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
     /// path that measures ~160 KB under a sanitizer and a few KB without one.

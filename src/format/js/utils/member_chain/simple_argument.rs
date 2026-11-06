@@ -16,11 +16,16 @@ impl<'a, 'f> SimpleArgument<'a, 'f> {
     }
 
     pub(crate) fn is_simple(self) -> bool {
-        is_simple(self.0, 0, self.1)
+        is_simple(self.0, 0, false, self.1)
     }
 
     pub(crate) fn is_simple_with_depth(self, depth: u8) -> bool {
-        is_simple(self.0, depth, self.1)
+        is_simple(self.0, depth, false, self.1)
+    }
+
+    /// What is in the parentheses of `/** @type {A} */ (b)` is simple, or the argument itself if it is no type cast.
+    pub(crate) fn is_simple_in_cast_parentheses(self) -> bool {
+        is_simple(self.0, 0, true, self.1)
     }
 }
 
@@ -32,7 +37,8 @@ fn is_short_pattern(pattern: &[u8], flavor: Flavor) -> bool {
     }
 }
 
-fn is_simple<'a>(e: Expr<'a>, depth: u8, f: &Formatter<'a>) -> bool {
+/// `is_unwrapped`: the parentheses around `e` itself don't count.
+fn is_simple<'a>(e: Expr<'a>, depth: u8, mut is_unwrapped: bool, f: &Formatter<'a>) -> bool {
     if depth >= 2 {
         return false;
     }
@@ -44,7 +50,7 @@ fn is_simple<'a>(e: Expr<'a>, depth: u8, f: &Formatter<'a>) -> bool {
     while let Some(mut e) = next {
         loop {
             // `/** @type {A} */ (b)` is a `ParenthesizedExpression`.
-            if is_cast_target_that_hides_its_kind(e, f) {
+            if !std::mem::take(&mut is_unwrapped) && is_cast_target_that_hides_its_kind(e, f) {
                 return false;
             }
             e = match e.kind() {
@@ -71,7 +77,7 @@ fn is_simple<'a>(e: Expr<'a>, depth: u8, f: &Formatter<'a>) -> bool {
                             !prop.key().is_some_and(Key::is_computed)
                                 && prop
                                     .value()
-                                    .is_some_and(|value| is_simple(value, depth + 1, f))
+                                    .is_some_and(|value| is_simple(value, depth + 1, false, f))
                         }
                         _ => false,
                     }) =>
@@ -82,7 +88,7 @@ fn is_simple<'a>(e: Expr<'a>, depth: u8, f: &Formatter<'a>) -> bool {
                     if elements.iter().all(|element| match element.kind() {
                         ExprKind::Missing => true,
                         ExprKind::Spread(_) => false,
-                        _ => is_simple(element, depth + 1, f),
+                        _ => is_simple(element, depth + 1, false, f),
                     }) =>
                 {
                     break;
@@ -121,11 +127,14 @@ fn are_simple<'a>(arguments: List<'a, Expr<'a>>, depth: u8, f: &Formatter<'a>) -
     arguments.len() + usize::from(depth) <= 2
         && arguments
             .iter()
-            .all(|argument| is_simple(argument, depth + 1, f))
+            .all(|argument| is_simple(argument, depth + 1, false, f))
 }
 
 /// No text of the template has a line break, and all substitutions are simple.
 fn is_simple_template_literal<'a>(template: Template<'a>, depth: u8, f: &Formatter<'a>) -> bool {
     (0..template.quasi_count()).all(|i| !bun_core::strings::contains_char(template.raw(i), b'\n'))
-        && template.exprs().iter().all(|e| is_simple(e, depth, f))
+        && template
+            .exprs()
+            .iter()
+            .all(|e| is_simple(e, depth, false, f))
 }

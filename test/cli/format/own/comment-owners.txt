@@ -110,6 +110,17 @@ casts/in-a-chain-of-operators.js
 108 124 L LogicalExpression 125 138 -
 149 165 L ParenthesizedExpression 166 174 -
 194 210 L ParenthesizedExpression 211 321 -
+casts/last-argument-behind-a-function-that-is-hugged.js
+97 134 L ParenthesizedExpression 135 139 -
+187 208 L ParenthesizedExpression 209 220 -
+261 277 L ParenthesizedExpression 278 293 -
+340 356 L ParenthesizedExpression 357 369 -
+409 425 L ParenthesizedExpression 426 452 -
+427 443 L ParenthesizedExpression 444 451 -
+492 508 L ParenthesizedExpression 509 523 -
+563 579 L ParenthesizedExpression 580 614 -
+654 670 L ParenthesizedExpression 671 693 -
+734 750 L ParenthesizedExpression 751 758 -
 casts/member-of-a-cast-in-a-cast.js
 62 102 L ParenthesizedExpression 103 206 -
 111 140 L MemberExpression 141 200 -

@@ -165,45 +165,67 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
 // The tick requested an eden collection whether or not there was anything to collect (#48013: a server with 190 MB live
 // that allocated 1.5 MB/s got one per second, each reclaiming under 1%, where JSC's own pacing would have waited for the
 // heap to double). The tick now requests one only once the program has allocated 1/16 of JSC's own allocation budget
-// since the last request. Here 100k objects (about 10 MB) are built and collected before MARK, so the budget is at least
-// 10 MB; the 4 KB per 20 ms tick after it adds up to some 500 KB, under the 600 KB a second request needs. The first
-// tick after MARK may request one (its reference is the last request before the heap was built). Before: one per tick,
-// about 100 on a release build. A debug build also tells the two apart, unlike the counts above: the trickle goes
-// through the allocator's slow path, which is what lets a requested collection run to its end on a parked debug build.
-test("the tick does not request an eden collection that could free little of the live heap", async () => {
-  using dir = tempDir("gc-tick-large-heap", {
-    "child.js": `
-      globalThis.live = [];
-      for (let i = 0; i < 100_000; i++) live.push({ id: i, name: "row-" + i });
-      Bun.gc(true);
-      console.error("MARK");
-      const fill = "x".repeat(80);
-      let n = 0;
-      const id = setInterval(() => {
-        const arr = [];
-        for (let i = 0; i < 40; i++) arr.push({ i, s: fill + i });
-        globalThis.sink = arr;
-        if (++n >= 100) { clearInterval(id); process.exit(0); }
-      }, 20);
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(String(dir), "child.js")],
-    env: {
-      ...bunEnv,
-      BUN_GC_TIMER_DISABLE: undefined,
-      BUN_GC_TIMER_INTERVAL: "20",
-      BUN_IDLE_GC_SECONDS: "0",
-      BUN_JSC_logGC: "1",
+// since the last request. Both cases build and collect 100k objects (about 10 MB) before MARK, so the budget is at least
+// 10 MB and a request needs 600 KB of allocation, then allocate `objectsPerTick` objects of about 100 bytes every 20 ms
+// for 100 ticks. A debug build tells the two apart too, unlike the counts above: the allocation goes through the
+// allocator's slow path, which is what lets a requested collection run to its end on a parked debug build.
+describe("the tick requests an eden collection only once the allocation adds up", () => {
+  async function edenCollectionsAfterMark(objectsPerTick: number) {
+    using dir = tempDir("gc-tick-large-heap", {
+      "child.js": `
+        globalThis.live = [];
+        for (let i = 0; i < 100_000; i++) live.push({ id: i, name: "row-" + i });
+        Bun.gc(true);
+        console.error("MARK");
+        const fill = "x".repeat(80);
+        let n = 0;
+        const id = setInterval(() => {
+          const arr = [];
+          for (let i = 0; i < ${objectsPerTick}; i++) arr.push({ i, s: fill + i });
+          globalThis.sink = arr;
+          if (++n >= 100) { clearInterval(id); process.exit(0); }
+        }, 20);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "child.js")],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: "20",
+        BUN_IDLE_GC_SECONDS: "0",
+        BUN_JSC_logGC: "1",
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const log = stderr.slice(stderr.indexOf("MARK"));
+    expect(exitCode, log).toBe(0);
+    return { eden: (log.match(/=> EdenCollection/g) ?? []).length, log };
+  }
+
+  // 40 objects a tick add up to some 500 KB, under the 600 KB a request needs. The first tick after MARK may request one
+  // (its reference is the last request before the heap was built). Before: one per tick, about 100 on a release build.
+  test.concurrent(
+    "a trickle that could free little of the live heap gets none",
+    async () => {
+      const { eden, log } = await edenCollectionsAfterMark(40);
+      expect(eden, log).toBeLessThanOrEqual(2);
     },
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const log = stderr.slice(stderr.indexOf("MARK"));
-  const eden = (log.match(/=> EdenCollection/g) ?? []).length;
-  expect(eden, log).toBeLessThanOrEqual(2);
-  expect(exitCode).toBe(0);
+    15_000, // A debug build takes 4 s to build the heap and run the ticks.
+  );
+
+  // 2000 objects a tick add up to 20 MB: 9 collections on release and debug builds, 2 of them from JSC's own budget (what
+  // the program gets with the timer off).
+  test.concurrent(
+    "an allocation that adds up gets them",
+    async () => {
+      const { eden, log } = await edenCollectionsAfterMark(2000);
+      expect(eden, log).toBeGreaterThanOrEqual(4);
+    },
+    15_000,
+  );
 });
 
 // After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,

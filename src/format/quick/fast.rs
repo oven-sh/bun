@@ -6074,8 +6074,6 @@ impl Quick {
                 return fast_refuse(refusal::Wide, start);
             }
         }
-        #[cfg(feature = "tally")]
-        crate::tally::read(start, p, self.fast.out == 0);
         self.fast.ready_stands = self.fast.out == 0
             && self.fast.source_indent == self.fast.least_column
             && self.fast.column == self.fast.least_column
@@ -6846,7 +6844,5 @@ impl Quick {
     }
 }
 pub(crate) fn fast_refuse(_reason: i32, _start: i32) -> bool {
-    #[cfg(feature = "tally")]
-    crate::tally::refused(_reason, _start);
     return false;
 }

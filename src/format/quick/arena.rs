@@ -90,8 +90,6 @@ impl Quick {
         if n + size > self.arena.n_cap {
             self.grow_ast(n + size);
         }
-        #[cfg(feature = "tally")]
-        crate::tally::node(head, start, end);
         self.n.put_several(n, [head, start, end, 0]);
         self.arena.n_pos = n + size;
         return n;
@@ -103,10 +101,6 @@ impl Quick {
         let n = self.arena.n_pos;
         if n + COUNT as i32 > self.arena.n_cap {
             self.grow_ast(n + COUNT as i32);
-        }
-        #[cfg(feature = "tally")]
-        if let [head, start, end, ..] = *words.as_slice() {
-            crate::tally::node(head, start, end);
         }
         self.n.put_several(n, words);
         self.arena.n_pos = n + COUNT as i32;

@@ -1104,8 +1104,6 @@ impl Quick {
         }
         self.lexer.tok_start = p;
         self.lexer.tok_flags = 0;
-        #[cfg(feature = "tally")]
-        crate::tally::token(p);
         if (CT.at(c) & C_ASCII_START) != 0 {
             // nearly every second token
             return self.next_name(p, c);

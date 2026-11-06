@@ -8,7 +8,7 @@
 //! escapes for what a template cannot hold as it is) happens while the guest writes: every text goes through the filter
 //! that the printer of the template has set (`holes.rs`). So a guest must not split a placeholder over two texts.
 
-use crate::doc::{G_CAN_BREAK, G_WILL_BREAK, op};
+use crate::doc::op;
 use crate::holes::FILTER_QUOT;
 use crate::lang::lang;
 use crate::{Bytes, LARGEST, Quick, R, Words, why};
@@ -526,16 +526,6 @@ impl Sink<'_> {
     pub fn call(&mut self, detached: Detached) {
         self.room();
         self.q.call(detached.0);
-    }
-
-    /// `willBreak(doc)`
-    pub fn will_break(&self, detached: Detached) -> bool {
-        (self.q.d.at(detached.0 + 1) & G_WILL_BREAK) != 0
-    }
-
-    /// `canBreak(doc)`
-    pub fn can_break(&self, detached: Detached) -> bool {
-        (self.q.d.at(detached.0 + 1) & G_CAN_BREAK) != 0
     }
 
     /// True if nothing is printed for it.

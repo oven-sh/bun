@@ -19,6 +19,7 @@
 //!   guess, and the file is formatted again without short cuts.
 //! - Whoever calls itself, directly or not, asks `self.stack()?` first.
 
+#![forbid(unsafe_code)]
 #![allow(
     clippy::needless_late_init,
     clippy::if_same_then_else,
@@ -43,8 +44,6 @@ mod printer;
 mod root;
 mod scan;
 mod stands;
-#[cfg(feature = "tally")]
-pub mod tally;
 #[cfg(test)]
 mod tests;
 mod text;

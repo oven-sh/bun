@@ -473,6 +473,10 @@ impl Quick {
         let head = self.n.at(n);
         let k = head & 0xff;
         if MAY_NEED_PARENS.at(k) == 0 {
+            debug_assert!(
+                !self.rules_ask_for_parens(n),
+                "needs_parens_slow() has a rule for the kind {k}, which MAY_NEED_PARENS leaves out",
+            );
             return Ok(false);
         }
         if k == k::Identifier {
@@ -490,9 +494,26 @@ impl Quick {
                 && (((head as u32) >> SUB_SHIFT) as i32 == tk::In
                     || ((head as u32) >> SUB_SHIFT) as i32 == tk::Pipeline))
         {
+            debug_assert!(
+                !self.rules_ask_for_parens(n),
+                "needs_parens_slow() has a rule for the kind {k} in the kind {pk}, which PARENS_LOOK leaves out",
+            );
             return Ok(false);
         }
         return self.needs_parens_slow(n, head, parent, ph);
+    }
+
+    /// What the rules say about a node that a table has answered for. A debug build asks for every such node, so that the tables and the rules stay in step.
+    fn rules_ask_for_parens(&self, n: i32) -> bool {
+        let (why, which_rare, failed_at) =
+            (self.why.get(), self.which_rare.get(), self.failed_at.get());
+        let parent = self.n.at(n + 3);
+        let answer = self.needs_parens_slow(n, self.n.at(n), parent, self.n.at(parent));
+        // (a rule that stops the run has said why)
+        self.why.set(why);
+        self.which_rare.set(which_rare);
+        self.failed_at.set(failed_at);
+        matches!(answer, Ok(true))
     }
 
     pub(crate) fn needs_parens_slow(&self, n: i32, head: i32, parent: i32, ph: i32) -> R<bool> {

@@ -459,3 +459,86 @@ print(gc.get_stats()[2]["collections"] - before, finalized > 0)
   },
   30_000,
 );
+
+// A full collection of the engine's own that was under way when gc.collect() was called used to be taken for the one asked
+// for. That one followed and freed what the first had found, and the addresses went to gc.garbage.
+test.concurrent("gc.collect() with DEBUG_SAVEALL right behind a collection that nobody waits for", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    `
+import gc
+import bun
+
+gc.set_debug(gc.DEBUG_SAVEALL)
+class C:
+    def __init__(self, n):
+        self.n = n; self.me = self; self.payload = [n, str(n), (n, n + 1)] * 4
+
+whole = broken = 0
+for r in range(40):
+    for j in range(40):
+        C(r * 100 + j)
+    if r % 2:
+        bun.gc(False)   # Asked for, not waited for. It may well free them first: then there is nothing to save.
+    gc.collect()
+    for x in gc.garbage:
+        if type(x) is C:
+            if x.me is x and x.payload[1] == str(x.n) and len(x.payload) == 12:
+                whole += 1
+            else:
+                broken += 1
+            x.me = None
+    x = None
+    gc.garbage.clear()
+print(whole > 0, broken)
+`,
+    // So that the collection that is not waited for is a full one.
+    { BUN_JSC_useGenerationalGC: "0" },
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("True 0\n");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isDebug || isASAN)(
+  "gc.collect() with DEBUG_SAVEALL at any point of the engine's own cycle",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `
+import gc, random
+
+class A: pass
+class D:
+    def __del__(self): pass
+
+random.seed(1)
+keep = [{i: (i, str(i))} for i in range(20000)]
+whole = broken = 0
+for r in range(20):
+    for i in range(random.randrange(100, 40000)):
+        a = A(); b = A(); a.other = b; b.other = a; a.data = [i, str(i)]
+        if i % 1000 == 0:
+            a.d = D()
+    del a, b
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    gc.collect()
+    gc.set_debug(0)
+    o = None
+    for o in gc.garbage:
+        if type(o) is A:
+            if o.other.other is o:
+                whole += 1
+            else:
+                broken += 1
+    del gc.garbage[:], o
+    gc.collect()
+print(whole > 0, broken)
+`,
+      // Full collections come often, so one is under way at some of the calls: without it one run in twelve died, with it all.
+      { BUN_JSC_heapGrowthMaxIncrease: "0.25" },
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("True 0\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

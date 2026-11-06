@@ -16,6 +16,8 @@ export const knownToday: Record<string, string> = {
   "bundler_minify: minify/BunRequireStatement":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/IdentifiersDollarStillUsableWhenReferenced": "bundled: code bytes 2739 -> 2684",
+  "bundler_minify: minify/ImportMetaHotNonNullAssertionTreeShaking":
+    'each file: the build: 1 | import"./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"; bundled: code bytes 985 -> 613, Builtin 2 -> 1, CallDirect 2 -> 1, ModuleBuiltin 2 -> 0',
   "bundler_minify: minify/ImportMetaHotTreeShaking":
     'each file: the build: 1 | import"./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"; bundled: code bytes 2970 -> 233, operations 169 -> 19',
   "bundler_minify: minify/Infinity":

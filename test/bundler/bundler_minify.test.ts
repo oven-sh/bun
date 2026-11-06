@@ -1096,6 +1096,32 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
+  // The types declare `import.meta.hot` as optional, so strict TypeScript code writes `import.meta.hot!.x`.
+  // The non-null assertion is stripped before the fold, so the output matches the unasserted form.
+  itBundled("minify/ImportMetaHotNonNullAssertionTreeShaking", {
+    files: {
+      "/entry.ts": `
+        import { value } from "./other.ts";
+        capture(import.meta.hot!);
+        import.meta.hot!.accept(() => {"FAIL";value});
+        import.meta.hot!.dispose(() => {"FAIL";value});
+        capture(import.meta.hot!.accept());
+        capture(import.meta.hot!.data);
+        capture(import.meta.hot!.data.value ??= "hello");
+      `,
+      "other.ts": `
+        capture("hello");
+        export const value = "hello";
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"hello"', "void 0", "void 0", "{}", '"hello"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("FAIL");
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+    },
+  });
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `

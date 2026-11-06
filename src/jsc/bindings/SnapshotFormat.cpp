@@ -364,3 +364,30 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
     }
     return false;
 }
+
+namespace Bun {
+
+// The names that deepEquals reads of an event (those of for-in), without the methods and the constants that it inherits.
+void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, PropertyNameArrayBuilder& names)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder enumerated(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    event->getPropertyNames(globalObject, enumerated, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (const Identifier& name : enumerated) {
+        for (JSObject* holder = event; holder; holder = holder->getPrototypeDirect().getObject()) {
+            PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool hasOwn = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!hasOwn)
+                continue;
+            bool isAccessor = (slot.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)) != 0;
+            if (holder == event || isAccessor)
+                names.add(name);
+            break;
+        }
+    }
+}
+
+}

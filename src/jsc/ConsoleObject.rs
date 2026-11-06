@@ -5115,6 +5115,15 @@ pub mod formatter {
                 };
             }
 
+            // In a failure message the walk of the Object arm prints what `deepEquals` reads of an event.
+            if self.is_snapshot && self.snapshot.output_length.is_some() {
+                if *remove_before_recurse {
+                    self.visited_remove(value);
+                }
+                *remove_before_recurse = true;
+                return self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event);
+            }
+
             let event_type_value: JSValue = 'brk: {
                 let Some(value_) = value.get(self.global_this, "type")? else {
                     break 'brk JSValue::UNDEFINED;
@@ -5700,10 +5709,12 @@ pub mod formatter {
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             } else if is_snapshot {
+                let is_failure_message = iter.formatter.snapshot.output_length.is_some();
                 let is_same = value.for_each_property_ordered_calling_getters(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
+                    is_failure_message,
                 )?;
                 iter.formatter.snapshot.same_as_older_bun &= is_same;
             } else if ordered_properties {

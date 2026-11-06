@@ -4351,6 +4351,9 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.js", "x = ", "(¦a¦ ? b : c)", ";\n", 3000, ["--print-width=10000000"]],
     ["a.jsx", "x = ", "(¦<a />¦ ? b : c)", ";\n", 3000, ["--print-width=10000000"]],
     ["a.jsx", "x = ", "(¦a¦ ? b : c)", " ? <b /> : c;\n", 3000, ["--print-width=10000000"]],
+    // `a || (b || c)` is `(a || b) || c`
+    ["a.js", "x = ", "a || (¦a¦)", ";\n", 1500],
+    ["a.js", "x = ", "z || ((¦a¦) || (p || q))", ";\n", 700],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

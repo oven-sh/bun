@@ -6,9 +6,9 @@ use crate::arena::SUB_SHIFT;
 use crate::ast::{
     EXT_AT, F_ACCESSOR, F_AFTER_EMPTY, F_ANY_WIDTH, F_ASYNC, F_AWAIT, F_CHAIN, F_COMPUTED,
     F_DECIDED, F_DEFINITE, F_DELEGATE, F_ESCAPE, F_EXPR_BODY, F_EXT, F_EXTRA, F_GENERATOR, F_LINES,
-    F_OPTIONAL, F_PAREN, F_PREFIX, F_SELF_CLOSING, F_SHORTHAND, F_STANDS, F_STATIC, IK_SHIFT,
-    IK_TYPE, M_CONSTRUCTOR, M_GET, M_MASK, M_METHOD, M_SET, MOD_DECLARE, P_DEFER, P_MODULE, P_NONE,
-    P_SOURCE, V_AWAIT_USING, V_CONST, V_LET, V_USING, V_VAR, k,
+    F_MOVED, F_OPTIONAL, F_PAREN, F_PREFIX, F_SELF_CLOSING, F_SHORTHAND, F_STANDS, F_STATIC,
+    IK_SHIFT, IK_TYPE, M_CONSTRUCTOR, M_GET, M_MASK, M_METHOD, M_SET, MOD_DECLARE, P_DEFER,
+    P_MODULE, P_NONE, P_SOURCE, V_AWAIT_USING, V_CONST, V_LET, V_USING, V_VAR, k,
 };
 use crate::fast::{
     AFTER_BLOCK, AFTER_REFUSED, BLOCK_ARROW, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_CONSTRUCTOR,
@@ -4178,33 +4178,59 @@ impl Quick {
         left: i32,
         right: i32,
     ) -> R<i32> {
-        self.stack()?;
-        // Prettier turns `a || (b || c)` into `(a || b) || c`
-        let r = self.n.at(right);
-        if (r & 0xff) == k::LogicalExpression && ((r as u32) >> SUB_SHIFT) as i32 == op {
-            // (what then stands on the line of the operator before it does not on the long way)
-            if matches!(
-                self.n.at(self.n.at(right + 4)) & 0xff,
-                k::ObjectExpression | k::ArrayExpression | k::JSXElement | k::JSXFragment
-            ) {
-                return Err(self.rare(rare::UNLIKE_PRETTIER));
-            }
-            let inner = self.make_logical(
-                op,
-                self.n.at(left + 1),
-                self.n.at(self.n.at(right + 4) + 2),
-                left,
-                self.n.at(right + 4),
-            )?;
-            return self.make_logical(op, start, end, inner, self.n.at(right + 5));
+        let head = k::LogicalExpression | (op << SUB_SHIFT);
+        if (self.n.at(right) & (0xff | (0xff << SUB_SHIFT))) == head {
+            return self.move_logical(head, start, end, left, right);
         }
-        return Ok(self.node2(
-            k::LogicalExpression | (op << SUB_SHIFT),
-            start,
-            end,
-            left,
-            right,
-        ));
+        return Ok(self.node2(head, start, end, left, right));
+    }
+
+    /// Prettier turns `a || (b || c)` into `(a || b) || c`: the operands of `right` get new nodes, with `left` below them.
+    /// In `a || (b || (c || ..))` that happens to the last operand once for each pair of parentheses. How often it has happened to one of them is the word
+    /// behind the node that is returned (F_MOVED), and a text in which it happens too often is left to the long way.
+    #[cold]
+    fn move_logical(&mut self, head: i32, start: i32, end: i32, left: i32, right: i32) -> R<i32> {
+        const MOST_MOVES: i32 = 16;
+        const KIND_AND_OPERATOR: i32 = 0xff | (0xff << SUB_SHIFT);
+        let mark = self.arena.ls_pos;
+        let mut moves = 0;
+        let mut first = right;
+        while (self.n.at(first) & KIND_AND_OPERATOR) == head {
+            if (self.n.at(first) & F_MOVED) != 0 {
+                moves = moves.max(self.n.at(first + 6));
+            }
+            self.list_push(first);
+            first = self.n.at(first + 4);
+        }
+        if moves == MOST_MOVES {
+            return Err(self.rare(rare::OTHER));
+        }
+        // (what then stands on the line of the operator before it does not on the long way)
+        if matches!(
+            self.n.at(first) & 0xff,
+            k::ObjectExpression | k::ArrayExpression | k::JSXElement | k::JSXFragment
+        ) {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
+        }
+        let left_start = self.n.at(left + 1);
+        let mut moved = self.node2(head, left_start, self.n.at(first + 2), left, first);
+        let mut i = self.arena.ls_pos - 1;
+        while i > mark {
+            let old = self.arena.ls.at(i);
+            moved = self.node2(
+                head,
+                left_start,
+                self.n.at(old + 2),
+                moved,
+                self.n.at(old + 5),
+            );
+            i -= 1;
+        }
+        self.list_truncate(mark);
+        moved = self.node2(head | F_MOVED, start, end, moved, self.n.at(right + 5));
+        let word = self.alloc_ast(1);
+        self.n.put(word, moves + 1);
+        return Ok(moved);
     }
 
     pub(crate) fn parse_expr_op(

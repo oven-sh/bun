@@ -329,6 +329,8 @@ pub(crate) const F_BLANK_LINE: i32 = F_SHORTHAND;
 pub(crate) const F_AFTER_EMPTY: i32 = F_EXTRA;
 /// a type: printed as it is in the source, because of a "prettier-ignore" that belongs to another node
 pub(crate) const F_IGNORED: i32 = F_GENERATOR;
+/// a LogicalExpression with a word more: see make_logical()
+pub(crate) const F_MOVED: i32 = F_EXTRA;
 // sub-kinds of methods: the two low bits of the sub-kind
 pub(crate) const M_METHOD: i32 = 0;
 pub(crate) const M_GET: i32 = 1;

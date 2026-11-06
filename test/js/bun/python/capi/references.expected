@@ -1,0 +1,146 @@
+== what C holds lives
+True Thing('a') True
+None
+== as many times as it was taken
+Thing('b')
+Thing('b')
+None
+== what only C refers to
+0 [] [] True True
+1 [(0, 'item 0', 0.0)] [(0, 'item 0', 0.0)] True True
+500 [(0, 'item 0', 0.0), (1000006000009, 'item 1', 1.0)] [(499002994004491, 'item 499', 499.0)] True True
+3000 [(0, 'item 0', 0.0), (1000006000009, 'item 1', 1.0)] [(2999017994026991, 'item 2999', 2999.0)] True True
+0
+== many at a time, let go in another order
+2000
+1000 [None, Thing(1), None, Thing(3)]
+0 0
+== what hangs off what C holds
+Thing('inner') {'key': [Thing('inner')]}
+None {'key': []}
+== the count
+10
+10
+10
+10
+== identity
+True True True
+0 0
+True
+== constants
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, -1]
+[None, False, True, Ellipsis, NotImplemented, 0, 1, '', b'', ()] [True, True, True, True, True]
+SystemError SystemError
+[9, 18, 36, 64, 128, 0, 0, 0, 0]
+== types
+True
+object object type True 1
+bool bool type True 1
+bytearray bytearray type True 1
+bytes bytes type True 1
+builtin_function_or_method builtin_function_or_method type True 1
+complex complex type True 1
+dict dict type True 1
+ellipsis ellipsis type True 1
+enumerate enumerate type True 1
+filter filter type True 1
+float float type True 1
+frozenset frozenset type True 1
+list list type True 1
+int int type True 1
+map map type True 1
+memoryview memoryview type True 1
+module module type True 1
+property property type True 1
+range range type True 1
+reversed reversed type True 1
+set set type True 1
+slice slice type True 1
+super super type True 1
+traceback traceback type True 1
+tuple tuple type True 1
+type type type True 1
+str str type True 1
+zip zip type True 1
+mappingproxy mappingproxy type True 1
+dict_keys dict_keys type True 1
+dict_values dict_values type True 1
+dict_items dict_items type True 1
+dict_keyiterator dict_keyiterator type True 1
+dict_valueiterator dict_valueiterator type True 1
+dict_itemiterator dict_itemiterator type True 1
+dict_reversekeyiterator dict_reversekeyiterator type True 1
+dict_reversevalueiterator dict_reversevalueiterator type True 1
+dict_reverseitemiterator dict_reverseitemiterator type True 1
+list_iterator list_iterator type True 1
+list_reverseiterator list_reverseiterator type True 1
+tuple_iterator tuple_iterator type True 1
+str_ascii_iterator or str_iterator str_iterator type True 1
+bytes_iterator bytes_iterator type True 1
+bytearray_iterator bytearray_iterator type True 1
+range_iterator range_iterator type True 1
+longrange_iterator longrange_iterator type True 1
+set_iterator set_iterator type True 1
+iterator iterator type True 1
+callable_iterator callable_iterator type True 1
+method_descriptor method_descriptor type True 1
+classmethod_descriptor classmethod_descriptor type True 1
+wrapper_descriptor wrapper_descriptor type True 1
+getset_descriptor getset_descriptor type True 1
+member_descriptor member_descriptor type True 1
+GenericAlias GenericAlias type True 1
+ReferenceType ReferenceType type True 1
+ProxyType ProxyType type True 1
+CallableProxyType CallableProxyType type True 1
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 39, 20, 21, 22, None, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, None, 48, 49, 4, 51, 52, None, 54, 55, 56, 57]
+-1 25 -1 -1 -1 -1
+1 0 1 0 1 1
+1 1 0 0
+(<class 'int'>, <class 'str'>) [<class 'type'>, <class 'object'>] True
+== lent and handed over
+[Thing('e'), 'two', 3, 4.5, None] True 5
+[Thing('e'), 'two', 3, 4.5, None] 5 0
+('IndexError', ('list index out of range',), 'NoneType', 'NoneType') ('IndexError', ('list index out of range',), 'NoneType', 'NoneType') ('IndexError', ('tuple index out of range',), 'NoneType', 'NoneType') ('IndexError', ('tuple index out of range',), 'NoneType', 'NoneType')
+SystemError SystemError SystemError SystemError
+(Thing('f'), Thing('g')) [Thing('g'), Thing('f')] True
+Thing('f') Thing('g')
+None None
+0 [1, Thing('h'), 3]
+('IndexError', ('list assignment index out of range',), 'NoneType', 'NoneType') ('IndexError', ('list assignment index out of range',), 'NoneType', 'NoneType') SystemError SystemError
+Thing('h')
+None
+== numbers
+[True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True]
+1 ('OverflowError', ('Python int too large to convert to C long',), 'NoneType', 'NoneType') ('OverflowError', ('Python int too large to convert to C long',), 'NoneType', 'NoneType') ('TypeError', ("'float' object cannot be interpreted as an integer",), 'NoneType', 'NoneType') ('TypeError', ("'str' object cannot be interpreted as an integer",), 'NoneType', 'NoneType') ('TypeError', ("'NoneType' object cannot be interpreted as an integer",), 'NoneType', 'NoneType')
+42 ('KeyError', ('from __index__',), 'NoneType', 'NoneType') 7
+['0.0', '-0.0', '1.0', '1.5', '-2.0', '1e+308', '5e-324', 'inf', '-inf', '9007199254740992.0', '123456789.0'] ['float', 'float', 'float', 'float'] nan
+[True, True, True, True, True, True, True, True, True, True, True] 3.0 1.0 1.1805916207174113e+21 ('TypeError', ('must be real number, not str',), 'NoneType', 'NoneType') ('TypeError', ('must be real number, not NoneType',), 'NoneType', 'NoneType') ('OverflowError', ('int too large to convert to float',), 'NoneType', 'NoneType')
+2.5 42.0
+[Thing('e'), 'two', 3, 4.5, None] None <class 'int'> <NULL> ('ZeroDivisionError', ('division by zero',), 'NoneType', 'NoneType')
+[True, True, True, True, True, True] ('UnicodeDecodeError', ('utf-8', b'\xff', 0, 1, 'invalid start byte'), 'NoneType', 'NoneType') ('UnicodeDecodeError', ('utf-8', b'\xed\xa0\x80', 0, 1, 'invalid continuation byte'), 'NoneType', 'NoneType')
+== exceptions that C raises
+('ValueError', ('message',), 'NoneType', 'NoneType')
+('KeyError', ('€',), 'NoneType', 'NoneType')
+UnicodeDecodeError
+('ValueError', ('one',), 'NoneType', 'NoneType') ('ValueError', ('one', 2), 'NoneType', 'NoneType') ('ValueError', (), 'NoneType', 'NoneType') ('ValueError', (), 'NoneType', 'NoneType')
+('KeyError', ('a', 'b'), 'NoneType', 'NoneType') ('FileNotFoundError', (2, 'No such file'), 'NoneType', 'NoneType') ('StopIteration', (5,), 'NoneType', 'NoneType')
+True ('given', 1)
+True
+('TypeError', (ValueError('given', 1),), 'NoneType', 'NoneType')
+('IndexError', (), 'NoneType', 'NoneType') ('KeyboardInterrupt', (), 'NoneType', 'NoneType')
+('Mine', ('mine', 5), 'NoneType', 'NoneType') ('LookupError', ('in __init__',), 'NoneType', 'NoneType') ('Mine', ('mine', 'text'), 'NoneType', 'NoneType')
+SystemError SystemError SystemError
+[('ValueError', ('by symbol',)), ('KeyError', ('by symbol',)), ('OSError', ('by symbol',)), ('OSError', ('by symbol',)), ('OSError', ('by symbol',)), ('StopIteration', ('by symbol',)), ('UnicodeWarning', ('by symbol',))]
+('RuntimeError', ('the result was 7',), 'NoneType', 'NoneType') ('ValueError', ('PyObject is NULL',), 'NoneType', 'NoneType') ('TypeError', ('second',), 'NoneType', 'NoneType')
+ZeroDivisionError None False
+['<module>', 'frame_two', 'frame_one']
+== what C sees of them
+[False, <class 'ValueError'>, True, 4611686018427387904, False, ValueError('v'), True, False]
+[False, <class 'KeyError'>, True, 4611686018427387904, False, KeyError('k'), True, False]
+[False, <class 'KeyError'>, True, 4611686018427387904, False, KeyError('k'), True, False]
+[False, <class 'KeyError'>, False, 4611686018427387904, False, KeyError('k'), True, False]
+IndexError('list index out of range') 1000
+[1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1]
+== an exception that C keeps
+Thing('payload') ValueError(Thing('payload'))
+None 0

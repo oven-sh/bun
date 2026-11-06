@@ -6312,3 +6312,82 @@ pub fn f32_length_with_5_digits(n_input: f32) -> usize {
 
     count
 }
+
+#[cfg(test)]
+mod tests {
+    use bstr::BStr;
+
+    use super::{
+        Bump, BundlerStyleSheet, CssRule, DefaultAtRule, ImportKind, ImportRecord, ParserOptions,
+        SrcIndex, StyleSheet,
+    };
+
+    const SHEET: &[u8] = b"@import \"a.css\";\n@import url(b.css) supports(display: grid);\n.c { background: url(d.png) }\n";
+
+    fn kinds_and_paths(records: &[ImportRecord<'static>]) -> Vec<(ImportKind, &'static BStr)> {
+        records
+            .iter()
+            .map(|record| (record.kind, BStr::new(record.path.text)))
+            .collect()
+    }
+
+    fn record_of_each_import_rule(sheet: &StyleSheet<DefaultAtRule>) -> Vec<u32> {
+        sheet
+            .rules
+            .v
+            .iter()
+            .filter_map(|rule| match rule {
+                CssRule::Import(import) => Some(import.import_record_idx),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parser_records_each_import_in_the_list_it_is_given() {
+        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
+        let options = || ParserOptions::default(None);
+        let expected = [
+            (ImportKind::At, BStr::new("a.css")),
+            (ImportKind::AtConditional, BStr::new("b.css")),
+            (ImportKind::Url, BStr::new("d.png")),
+        ];
+
+        let mut records = Vec::new();
+        let Ok((sheet, _)) = StyleSheet::<DefaultAtRule>::parse(
+            arena,
+            SHEET,
+            options(),
+            Some(&mut records),
+            SrcIndex::INVALID,
+        ) else {
+            panic!("`StyleSheet::parse` rejects the sheet");
+        };
+        assert_eq!(kinds_and_paths(&records), expected);
+        assert_eq!(record_of_each_import_rule(&sheet), [0, 1]);
+
+        let mut records = Vec::new();
+        let Ok((sheet, _)) = BundlerStyleSheet::parse_bundler(
+            arena,
+            SHEET,
+            options(),
+            &mut records,
+            SrcIndex::INVALID,
+        ) else {
+            panic!("`parse_bundler` rejects the sheet");
+        };
+        assert_eq!(kinds_and_paths(&records), expected);
+        assert_eq!(record_of_each_import_rule(&sheet), [0, 1]);
+
+        let Ok((sheet, _)) = StyleSheet::<DefaultAtRule>::parse(
+            arena,
+            b"@import \"a.css\";\n",
+            options(),
+            None,
+            SrcIndex::INVALID,
+        ) else {
+            panic!("`StyleSheet::parse` with no list rejects an `@import` rule");
+        };
+        assert_eq!(record_of_each_import_rule(&sheet), [u32::MAX]);
+    }
+}

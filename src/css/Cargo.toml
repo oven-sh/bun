@@ -24,3 +24,7 @@ bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_wyhash.workspace = true
 bun_css_derive = { path = "../css_derive" }
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone" }

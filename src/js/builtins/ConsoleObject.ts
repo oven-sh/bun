@@ -138,14 +138,11 @@ export function write(this: Console & { $writer: $Node.FileSink | undefined }, i
   return wrote;
 }
 
-// The global console hands a message to a replaced process.stdout.write or process.stderr.write
-// here (src/jsc/ConsoleObject.rs). What [kWriteToConsole] below does around stream.write() when
-// ignoreErrors is on: an error from the write is dropped, except a stack overflow.
+// src/jsc/ConsoleObject.rs: one console message to a replaced write, as [kWriteToConsole] does with ignoreErrors on.
 export function writeThroughStream(stream: $Node.Writable, string: string) {
   function noop() {}
   const errorHandler = (err: Error | null) => {
-    // An error that the write callback reports and that the stream did not emit yet arrives as an
-    // 'error' event. The one-shot listener keeps it from becoming an uncaught exception.
+    // An error the callback reports that the stream has not emitted yet arrives as an 'error' event.
     if (err !== null && !stream._writableState?.errorEmitted && stream.listenerCount("error") === 0) {
       stream.once("error", noop);
     }

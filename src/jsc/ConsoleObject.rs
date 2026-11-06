@@ -466,8 +466,7 @@ pub extern "C" fn Bun__Console__onStdioWriteStreamCreated() {
 unsafe extern "C" {
     /// `BunProcess.cpp`. Whether the `write` of the stream for `fd` was replaced. Runs no user code.
     safe fn Bun__Process__isStdioWriteReplaced(global: &JSGlobalObject, fd: i32) -> bool;
-    /// `BunProcess.cpp`. Calls `writeThroughStream` of `ConsoleObject.ts` with the stream for `fd`.
-    /// `[[ZIG_EXPORT(zero_is_throw)]]`.
+    /// `BunProcess.cpp`, `[[ZIG_EXPORT(zero_is_throw)]]`: `writeThroughStream` of `ConsoleObject.ts` with the stream for `fd`.
     safe fn Bun__Process__writeThroughStdioStream(
         global: &JSGlobalObject,
         fd: i32,
@@ -486,8 +485,7 @@ fn is_stdio_write_replaced(global: &JSGlobalObject, use_stderr: bool) -> bool {
         && Bun__Process__isStdioWriteReplaced(global, stdio_fd(use_stderr))
 }
 
-/// The native writer of one stream, held with the stream lock, and whether the
-/// message has to go through a replaced `process.std{out,err}.write` instead.
+/// The native writer of one stream under its lock, and whether a replaced `write` gets the message instead.
 struct ConsoleSink<'a> {
     lock: ConsoleStreamLock,
     native: &'a mut bun_core::io::Writer,
@@ -542,7 +540,6 @@ fn with_console_sink(
 }
 
 /// One call of the replaced `write` with the whole message, as node's `kWriteToConsole` does.
-/// `writeThroughStream` (`ConsoleObject.ts`) drops an error from it, except a stack overflow.
 fn deliver_to_replaced_write(
     global: &JSGlobalObject,
     use_stderr: bool,

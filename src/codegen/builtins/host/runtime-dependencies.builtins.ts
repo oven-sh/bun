@@ -149,8 +149,7 @@ const writtenByWarnings = b.memberOfValue(
   b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
 );
 
-// The native console (src/jsc/ConsoleObject.rs) hands each message to the function with the stream once the program
-// has replaced the stream's write(). Only the whole stream takes a store of write(): the light ones throw.
+// src/jsc/ConsoleObject.rs hands each console message to it once the program has replaced the stream's write().
 const consoleWritesThrough = (cell: string) =>
   b.functionUsed(
     b.functionIn("builtins/ConsoleObject", "writeThroughStream"),

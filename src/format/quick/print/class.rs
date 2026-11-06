@@ -510,8 +510,11 @@ impl Quick {
             let is_exact = (self.n.at(n) & F_EXACT) != 0 && self.mode.is_flow;
             let is_inexact = (self.n.at(n) & F_INEXACT) != 0 && self.mode.is_flow;
             if count == 0 && !has_dangling && !is_inexact {
+                // (the group is what makes a key with it in its brackets more than a text: plain_text_width())
+                let g = self.group_open();
                 self.text(if is_exact { LBRACE_BAR } else { LBRACE });
                 self.text(if is_exact { BAR_RBRACE } else { RBRACE });
+                self.group_close(g);
                 return Ok(());
             }
             let should_break = self.has_dangling_line_comment(n)

@@ -1286,8 +1286,7 @@ impl Snapshots {
     }
 
     fn error_of_open(err: bun_sys::Error) -> Error {
-        // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
-        // not an enum — match arms require structural-eq; use if-chain instead.
+        // `bun_sys::Tag` is a struct with associated consts, so this can't be a `match`.
         if err.syscall == bun_sys::Tag::mkdir {
             Error::FailedToMakeSnapshotDirectory
         } else if err.syscall == bun_sys::Tag::open {

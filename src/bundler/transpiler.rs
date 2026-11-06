@@ -3060,7 +3060,7 @@ impl<'a> Transpiler<'a> {
             alloc,
             entry.contents(),
             opts,
-            Some(&mut import_records),
+            &mut import_records,
             bun_ast::Index::source(0u32),
         ) {
             Ok(v) => v,
@@ -3089,9 +3089,7 @@ impl<'a> Transpiler<'a> {
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()
             },
-            Some(bun_css::ImportInfo::init_outside_of_bundler(
-                &import_records,
-            )),
+            bun_css::ImportInfo::init_outside_of_bundler(&import_records),
             None,
             &symbols,
         ) {

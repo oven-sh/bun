@@ -4761,6 +4761,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// `var [a];` and `for (let { a }; ; ) {}` are syntax errors. A TypeScript `declare` and the
+    /// binding of a for-in or for-of head have no initializer.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn require_pattern_initializer(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        opts: &ParseStatementOptions,
+        binding: &Binding,
+    ) {
+        let is_pattern = matches!(
+            binding.data,
+            js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_)
+        );
+        // `require_initializers` reports "const" and "using".
+        if !is_pattern
+            || kind == js_ast::symbol::Kind::Constant
+            || opts.is_typescript_declare
+            || (opts.is_for_loop_init
+                && (self.lexer.token == js_lexer::T::TIn
+                    || self.lexer.is_contextual_keyword(b"of")))
+        {
+            return;
+        }
+        self.log().add_error(
+            Some(self.source),
+            binding.loc,
+            b"Missing initializer in destructuring declaration",
+        );
+    }
+
     // Generate a TypeScript namespace object for this namespace's scope. If this
     // namespace is another block that is to be merged with an existing namespace,
     // use that earlier namespace's object instead.

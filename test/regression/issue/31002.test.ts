@@ -14,6 +14,10 @@
 // The fix: when the hoisted identifiers vector is empty, drop the whole
 // statement. There is nothing to hoist and no valid `var` output exists.
 //
+// The forms in the bug report have no initializer, so the parser now reports
+// them as syntax errors. The same patterns with an initializer are valid and
+// reach the same code.
+//
 // Run in a subprocess so a reintroduction (panic in the child) doesn't
 // tear down the in-process test runner.
 
@@ -21,14 +25,13 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test.concurrent.each([
-  // Bare `var []` / `var {}` as the only statement in a dead `if` body.
-  // These were the exact forms in the bug report; without the fix, each
-  // one crashed the printer.
-  "if(0)var[]",
-  "if(0)var{}",
+  // `var [] = []` / `var {} = {}` as the only statement in a dead `if` body.
+  // Without the fix, each one crashed the printer.
+  "if(0)var[]=[]",
+  "if(0)var{}={}",
   // Same empty destructuring inside a function body — the DCE path runs
   // per-scope and must not crash regardless of enclosing scope.
-  "function f(){if(0)var[]}",
+  "function f(){if(0)var[]=[]}",
 ])("`%s` does not crash the printer (dead-branch destructuring var with no bindings)", async source => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
@@ -49,6 +52,33 @@ test.concurrent.each([
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each(["if(0)var[]", "if(0)var{}", "function f(){if(0)var[]}"])(
+  "`%s` from the bug report is a syntax error, not a crash",
+  async source => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout,
+      error: stderr.split(/\r?\n/).find(line => line.startsWith("error: ")),
+      signalCode: proc.signalCode,
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      error: "error: Missing initializer in destructuring declaration",
+      signalCode: null,
+      exitCode: 1,
+    });
+  },
+);
 
 test.concurrent("dead-branch destructuring with real identifiers still hoists them as `undefined`", async () => {
   // Regression guard: the fix must not drop destructuring `var`s that do

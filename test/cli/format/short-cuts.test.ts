@@ -5841,6 +5841,29 @@ describe("what the quick way for scripts is asked about, and what is done around
       ],
       [[]],
     ));
+
+  // One row for each kind of text that the two ways printed differently once: the name of the file, the flags, the text.
+  describe("what the quick way prints", () => {
+    const rows: [name: string, flags: string, text: string][] = [
+      // A line comment waits for the end of the line. The first line break that is printed is in a string, ..
+      ["a.ts", "", 'enum E {\n  a = // c1\n    "x\\\ny",\n}\n'],
+      ["a.ts", "", 'interface A {\n  a: // c1\n    "x\\\ny";\n}\n'],
+      ["a.js", "", 'import a from "a" with { // c1\n  type: "x\\\ny" };\n'],
+      // .. or in a block comment.
+      ["a.js", "", "switch (a) {\n  case e: // c1\n  /**\n   * c2\n   */\n  {\n    b;\n  }\n}\n"],
+      ["a.ts", "", "declare function a( // c1\nb: number): \n/**\n * c2\n */\nvoid;\n"],
+    ];
+    for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
+      const [[name, flags]] = group;
+      describe(title, () =>
+        expectSame(
+          name,
+          group.map(row => row[2]),
+          [flags.split(" ").filter(Boolean)],
+        ),
+      );
+    }
+  });
 });
 
 describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them, or that are odd", () => {

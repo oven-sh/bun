@@ -152,6 +152,7 @@ pub(crate) mod op {
     /// [op | len << 5]                          len: contents and SuffixClose
     pub(crate) const SuffixOpen: i32 = 17;
     pub(crate) const SuffixClose: i32 = 18;
+    /// [op | refuses << 5]                      refuses: see no_line_suffix_waits()
     pub(crate) const SuffixBoundary: i32 = 19;
     /// [op | target << 5]                       target: a detached doc's Skip
     pub(crate) const Call: i32 = 20;
@@ -832,6 +833,16 @@ impl Quick {
         }
         // Only matters to a reader that has seen a line suffix; such a reader does not trust flat widths.
         self.d.put(self.doc.d_pos, op::SuffixBoundary);
+        self.doc.d_pos += 1;
+    }
+
+    /// In front of a forced line break in the middle of a text (a comment whose lines are indented): the file is refused if a line
+    /// suffix waits there. Prettier writes it into the text. A literal line says the same by itself.
+    pub(crate) fn no_line_suffix_waits(&mut self) {
+        if !self.doc.suffix_possible {
+            return;
+        }
+        self.d.put(self.doc.d_pos, op::SuffixBoundary | (1 << 5));
         self.doc.d_pos += 1;
     }
 

@@ -114,6 +114,7 @@ impl Quick {
                 let end = self.trim_end(line_start, p);
                 if first {
                     self.piece(line_start, end, plain);
+                    self.no_line_suffix_waits();
                     self.hardline();
                     first = false;
                 } else {

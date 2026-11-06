@@ -537,7 +537,7 @@ impl Quick {
                     continue;
                 }
                 op::SuffixBoundary => {
-                    if has_suffix {
+                    if has_suffix && (w >> 5) == 0 {
                         return false;
                     }
                     pc += 1;
@@ -1733,8 +1733,9 @@ impl Quick {
                     }
                     if (waiting & WAIT_SUFFIX) != 0 {
                         // the comments that wait for the end of the line go first, then this command runs again
-                        // (behind a blank Prettier writes another one before them, the long way does not)
-                        if self.printer.out.at(o - 1) == 32 {
+                        // (behind a blank Prettier writes another one before them, the long way does not; at a line break in a string, a
+                        // template or a comment Prettier writes them into that text)
+                        if self.printer.out.at(o - 1) == 32 || kind == LINE_LITERAL {
                             return Err(self.rare(rare::COMMENT));
                         }
                         self.printer.st.put(sp, pc);
@@ -2011,6 +2012,9 @@ impl Quick {
                     if (waiting & WAIT_SUFFIX) == 0 {
                         pc += 1;
                         break 's0;
+                    }
+                    if (w >> 5) != 0 {
+                        return Err(self.rare(rare::COMMENT));
                     }
                     // comments wait: end the line here
                     self.printer.st.put(sp, pc + 1);

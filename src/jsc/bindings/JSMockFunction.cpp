@@ -29,6 +29,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/RegExpPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ButterflyInlines.h>
@@ -307,6 +308,21 @@ static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, Pro
     return object->type() == ProxyObjectType;
 }
 
+// The traps of a Proxy can hide a property or run script. This is the object that they stand in front of.
+static JSObject* objectBehindTraps(JSObject* object)
+{
+    while (auto* proxy = dynamicDowncast<ProxyObject>(object))
+        object = proxy->target();
+    return object;
+}
+
+// A global object refuses to delete the name of one of its variables, and a direct store would put a property in front of the variable.
+static bool isVariableOf(JSObject* object, PropertyName key)
+{
+    auto* scopeObject = dynamicDowncast<JSSymbolTableObject>(object);
+    return scopeObject && scopeObject->symbolTable()->contains(key.uid());
+}
+
 // Lets a spy replace a property of a locked built-in. No JavaScript may run meanwhile, and the traps of an opaque object are JavaScript.
 class ThroughLockOfBuiltins {
 public:
@@ -320,36 +336,51 @@ private:
     std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> m_allow;
 };
 
-static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
+// An opaque object decides through its own [[DefineOwnProperty]], which for a Proxy is a trap.
+static bool defineOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool shouldThrow)
+{
+    PropertyDescriptor descriptor;
+    if (attributes & PropertyAttribute::Accessor)
+        descriptor.setAccessorDescriptor(uncheckedDowncast<GetterSetter>(storage), attributes);
+    else
+        descriptor.setDescriptor(storage, attributes);
+    return object->methodTable()->defineOwnProperty(object, globalObject, key, descriptor, shouldThrow);
+}
+
+// False if the object kept what it had. Only an index does that without an exception: JSC stores an element that has attributes through [[DefineOwnProperty]].
+static bool putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (isOpaque) {
-        PropertyDescriptor descriptor;
-        if (attributes & PropertyAttribute::Accessor)
-            descriptor.setAccessorDescriptor(uncheckedDowncast<GetterSetter>(storage), attributes);
-        else
-            descriptor.setDescriptor(storage, attributes);
-        scope.release();
-        object->methodTable()->defineOwnProperty(object, globalObject, key, descriptor, true);
-    } else if (attributes & PropertyAttribute::Accessor) {
-        scope.release();
-        object->putDirectAccessor(globalObject, key, uncheckedDowncast<GetterSetter>(storage), attributes);
-    } else if (attributes & PropertyAttribute::CustomAccessorOrValue) {
+    if (isOpaque)
+        RELEASE_AND_RETURN(scope, defineOwnPropertyStorage(globalObject, object, key, storage, attributes, true));
+    if (attributes & PropertyAttribute::Accessor)
+        RELEASE_AND_RETURN(scope, object->putDirectAccessor(globalObject, key, uncheckedDowncast<GetterSetter>(storage), attributes));
+    if (attributes & PropertyAttribute::CustomAccessorOrValue) {
         // putDirectCustomAccessor() asserts that the property is new.
         {
             VM::DeletePropertyModeScope deleteNonConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
             JSCell::deleteProperty(object, globalObject, key);
         }
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, false);
         object->putDirectCustomAccessor(vm, key, storage, attributes);
-    } else if (auto index = parseIndex(key)) {
-        scope.release();
-        object->putDirectIndex(globalObject, *index, storage, attributes, PutDirectIndexLikePutDirect);
-    } else {
-        object->putDirect(vm, key, storage, attributes);
+        return true;
     }
+    if (auto index = parseIndex(key))
+        RELEASE_AND_RETURN(scope, object->putDirectIndex(globalObject, *index, storage, attributes, PutDirectIndexLikePutDirect));
+    object->putDirect(vm, key, storage, attributes);
+    return true;
+}
+
+// For an object that isn't opaque. NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
+[[nodiscard]] static bool deleteOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
+{
+    if (object->inherits<NodeVMGlobalObject>()) {
+        DeletePropertySlot slot;
+        return NodeVMGlobalObject::Base::deleteProperty(object, globalObject, key, slot);
+    }
+    return JSCell::deleteProperty(object, globalObject, key);
 }
 
 static constexpr unsigned descriptorAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor;
@@ -455,6 +486,8 @@ public:
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
+    // The original is what an opaque target showed for a key that it didn't own. Restoring deletes the spy. A target that keeps the spy gets the original as its own.
+    static constexpr unsigned SpyAttributeInherited = 1 << 26;
 
     JSString* jsName()
     {
@@ -851,20 +884,26 @@ public:
         this->setPrototypeParent(globalObject, next && next->kind == JSMockImplementation::Kind::Call ? next->underlyingValue.get() : JSValue());
     }
 
-    bool isAccessorOf(GetterSetter* accessor)
+    // `storage` is getOwnPropertyStorage() of a property.
+    bool isAccessorOf(JSValue storage)
     {
+        auto* accessor = tryJSDynamicCast<GetterSetter*>(storage);
+        if (!accessor)
+            return false;
         if (accessor->getter() == this || accessor->setter() == this)
             return true;
         auto* getter = dynamicDowncast<JSBoundFunction>(accessor->getter());
         return getter && getter->boundThis() == this;
     }
 
-    // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
+    bool isInstalledAs(JSValue storage) { return storage == JSValue(this) || this->isAccessorOf(storage); }
+
+    // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one. See SpyAttributeInherited.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
-    // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
+    // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot, an object that doesn't give the spy up).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1001,24 +1040,32 @@ private:
             unsigned currentAttributes = 0;
             JSValue current = getOwnPropertyStorage(globalObject, target, identifier, currentAttributes);
             RETURN_IF_EXCEPTION(scope, );
-            auto* accessor = tryJSDynamicCast<GetterSetter*>(current);
-            if (!accessor || !this->isAccessorOf(accessor))
+            if (!this->isAccessorOf(current) && isOpaque) {
+                current = getOwnPropertyStorage(globalObject, objectBehindTraps(target), identifier, currentAttributes);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+            if (!this->isAccessorOf(current))
                 return;
         }
 
-        // Behind the lookup above: the global of a node:vm context asks its sandbox, which may be a Proxy.
-        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
-        scope.release();
-        if (original) {
-            putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
-        } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
-            // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
-            DeletePropertySlot slot;
-            NodeVMGlobalObject::Base::deleteProperty(target, globalObject, identifier, slot);
-        } else {
-            JSCell::deleteProperty(target, globalObject, identifier);
+        bool isRestored = false;
+        if (!isOpaque) [[likely]] {
+            // Behind the lookup above: the global of a node:vm context asks its sandbox, which may be a Proxy.
+            ThroughLockOfBuiltins throughLock(globalObject->vm(), false);
+            if (original)
+                isRestored = putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~SpyAttributeAccessor, false);
+            else
+                isRestored = deleteOwnProperty(globalObject, target, identifier);
         }
+        if (isRestored) [[likely]] {
+            scope.release();
+            return;
+        }
+        this->takeSpyOffOrThrow(globalObject, target, scope);
     }
+
+    // Restores through the traps of an opaque object, and is where putBackOriginal() goes when another object refused.
+    void takeSpyOffOrThrow(JSGlobalObject*, JSObject* target, JSC::ThrowScope&);
 
     Recorded m_recorded;
     Configuration m_configuration;
@@ -2950,6 +2997,62 @@ static String propertyKeyForMessage(const Identifier& key)
     return key.isSymbol() ? makeString("Symbol("_s, key.string(), ')') : key.string();
 }
 
+__attribute__((cold, minsize)) NEVER_INLINE void JSMockFunction::takeSpyOffOrThrow(JSGlobalObject* globalObject, JSObject* target, JSC::ThrowScope& scope)
+{
+    // A store or a delete that threw answered false too.
+    RETURN_IF_EXCEPTION(scope, );
+    // A trap that ran may have restored this spy itself.
+    if (m_spyTarget.get() != target)
+        return;
+    auto& vm = globalObject->vm();
+    JSValue original = m_spyOriginal.get();
+    Identifier key = m_spyIdentifier;
+    unsigned attributes = m_spyAttributes;
+    bool isOpaque = attributes & SpyAttributeOpaque;
+    bool isInherited = attributes & SpyAttributeInherited;
+
+    if (isOpaque) {
+        // What a trap answers isn't read: it may say that it deleted what it kept, so the object is looked at behind its traps below.
+        if (original && !isInherited)
+            putOwnPropertyStorage(globalObject, target, key, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), true);
+        else
+            JSCell::deleteProperty(target, globalObject, key);
+        RETURN_IF_EXCEPTION(scope, );
+    } else if (!original && !isVariableOf(target, key)) {
+        // A lock that came after spyOn() is gone through, as spyOn() goes through one that came before: a direct store makes the property configurable again.
+        bool isDeleted;
+        {
+            ThroughLockOfBuiltins throughLock(vm, false);
+            putOwnPropertyStorage(globalObject, target, key, jsUndefined(), 0, false);
+            RETURN_IF_EXCEPTION(scope, );
+            isDeleted = deleteOwnProperty(globalObject, target, key);
+        }
+        RETURN_IF_EXCEPTION(scope, );
+        if (isDeleted)
+            return;
+    }
+
+    // The traps of an opaque object can hide the spy too.
+    JSObject* holder = isOpaque ? objectBehindTraps(target) : target;
+    unsigned currentAttributes = 0;
+    JSValue current = getOwnPropertyStorage(globalObject, holder, key, currentAttributes);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!this->isInstalledAs(current))
+        return;
+
+    // A Proxy that keeps the spy takes the original the way it took the spy, through its defineProperty trap.
+    if (isInherited) {
+        defineOwnPropertyStorage(globalObject, target, key, original, attributes & descriptorAttributes, false);
+        RETURN_IF_EXCEPTION(scope, );
+        current = getOwnPropertyStorage(globalObject, holder, key, currentAttributes);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!this->isInstalledAs(current))
+            return;
+    }
+
+    throwTypeError(globalObject, scope, makeString("Cannot restore the `"_s, propertyKeyForMessage(key), "` property because the object does not allow it to be changed"_s));
+}
+
 static String propertyKeyForFunctionName(const Identifier& key)
 {
     return key.isSymbol() ? makeString('[', key.string(), ']') : key.string();
@@ -3179,7 +3282,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);
+        JSValue original = isOwn ? value : JSValue();
+        if (isOpaque && !isOwn && hasValue) [[unlikely]] {
+            original = value;
+            spyAttributes = (spyAttributes & ~PropertyAttribute::DontDelete) | JSMockFunction::SpyAttributeInherited;
+        }
+        mock->didInstall(object, propertyKey, original, spyAttributes);
         return JSValue::encode(mock);
     }
 
@@ -3256,7 +3364,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | (descriptor.attributes() & PropertyAttribute::DontEnum), isOpaque);
     RETURN_IF_EXCEPTION(scope, {});
 
-    mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
+    spyAttributes |= JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0);
+    if (!storage && isOpaque) {
+        // A `has` trap can say yes to a key that no descriptor shows.
+        storage = descriptor.isAccessorDescriptor() ? JSValue(JSC::GetterSetter::create(vm, globalObject, descriptor.getter(), descriptor.setter())) : descriptor.value();
+        if (storage)
+            spyAttributes |= (descriptor.attributes() & descriptorAttributes & ~PropertyAttribute::DontDelete) | JSMockFunction::SpyAttributeInherited;
+    }
+    mock->didInstall(object, propertyKey, storage, spyAttributes);
     return JSValue::encode(mock);
 }
 

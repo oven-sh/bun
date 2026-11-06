@@ -5102,6 +5102,408 @@ if (isBun) {
       expect(Object.getOwnPropertyDescriptor(Response.prototype, "redirected")).toEqual(original);
     });
 
+    describe("an object that is locked after spyOn()", () => {
+      const key = Symbol("method");
+      const returned = () => "original";
+      class Service {
+        static create() {
+          return "original";
+        }
+        method() {
+          return "original";
+        }
+        [key]() {
+          return "original";
+        }
+        get value() {
+          return "original";
+        }
+        set value(next) {}
+        get handler() {
+          return returned;
+        }
+      }
+      const locks = [
+        ["Object.freeze()", object => Object.freeze(object), Object.isFrozen],
+        ["Object.seal()", object => Object.seal(object), Object.isSealed],
+        // Only the spy's property is locked, and restoring removes that property.
+        ["configurable: false", (object, name) => Object.defineProperty(object, name, { configurable: false }), Object.isExtensible], // prettier-ignore
+      ];
+      const restores = [mocked => mocked.mockRestore(), () => jest.restoreAllMocks()];
+
+      describe.each(flavors)("%s", (_, isVitest, fn, spy) => {
+        test.each(locks)("%s: a spy on an inherited method is restored", (_, lock, isLocked) => {
+          for (const restore of restores) {
+            const object = new Service();
+            const mocked = spy(object, "method").mockReturnValue("spied");
+            lock(object, "method");
+            expect(object.method()).toBe("spied");
+
+            restore(mocked);
+            expect(object.method).toBe(Service.prototype.method);
+            expect([Object.hasOwn(object, "method"), isLocked(object)]).toEqual([false, true]);
+            // It isn't installed any more, so there is nothing to restore.
+            mocked.mockRestore();
+            expect(Object.hasOwn(object, "method")).toBe(false);
+          }
+        });
+
+        test("restoreAllMocks() takes the spy off a Proxy that doesn't delete it", () => {
+          const target = new Service();
+          const proxy = new Proxy(target, { deleteProperty: () => false });
+          spy(proxy, "method").mockReturnValue("spied");
+          expect(proxy.method()).toBe("spied");
+          jest.restoreAllMocks();
+          expect(target.method).toBe(Service.prototype.method);
+        });
+      });
+
+      test("getters, setters, symbol keys, missing keys, statics and a method that a getter returns", () => {
+        class Derived extends Service {}
+        const object = new Service();
+        const spies = [
+          spyOn(object, "value", "get").mockReturnValue("spied"),
+          spyOn(object, "value", "set"),
+          spyOn(object, key).mockReturnValue("spied"),
+          spyOn(object, "handler").mockReturnValue("spied"),
+          spyOn(object, "missing"),
+          spyOn(Derived, "create").mockReturnValue("spied"),
+        ];
+        Object.freeze(object);
+        Object.freeze(Derived);
+        const read = () => [object.value, object[key](), object.handler(), "missing" in object, Derived.create()];
+        expect(read()).toEqual(["spied", "spied", "spied", true, "spied"]);
+
+        for (const mocked of spies) mocked.mockRestore();
+        expect(read()).toEqual(["original", "original", "original", false, "original"]);
+        expect([Reflect.ownKeys(object), Object.hasOwn(Derived, "create")]).toEqual([[], false]);
+        expect([Object.isFrozen(object), Object.isFrozen(Derived)]).toEqual([true, true]);
+      });
+
+      test("a method that the prototype gets while the object is locked shows through", () => {
+        class Derived extends Service {}
+        const object = new Derived();
+        const mocked = spyOn(object, "method");
+        Object.freeze(object);
+        const later = () => "later";
+        Derived.prototype.method = later;
+        mocked.mockRestore();
+        expect(object.method).toBe(later);
+      });
+
+      test.each([
+        ["the spy on the method first", (method, getter) => (method.mockRestore(), getter.mockRestore())],
+        ["the spy on the getter first", (method, getter) => (getter.mockRestore(), method.mockRestore())],
+        ["both with restoreAllMocks()", () => jest.restoreAllMocks()],
+      ])("a spy on the getter of a spied-on inherited method, restoring %s", (_, restore) => {
+        const object = new Service();
+        const method = spyOn(object, "method");
+        const getter = spyOn(object, "method", "get");
+        Object.freeze(object);
+        expect(object.method).toBe(method);
+        expect(getter).toHaveBeenCalledTimes(1);
+
+        restore(method, getter);
+        expect(object.method).toBe(Service.prototype.method);
+        expect(Object.hasOwn(object, "method")).toBe(false);
+      });
+
+      test("a property that replaced the spy is removed, whether or not it is configurable", () => {
+        for (const configurable of [true, false]) {
+          const object = new Service();
+          const mocked = spyOn(object, "method");
+          Object.defineProperty(object, "method", { value: () => "replacement", configurable });
+          expect(object.method()).toBe("replacement");
+          mocked.mockRestore();
+          expect(object.method).toBe(Service.prototype.method);
+          expect(Object.hasOwn(object, "method")).toBe(false);
+        }
+      });
+
+      test("the global of a node:vm context", () => {
+        const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+        const global = vm.runInContext("this", context);
+        const mocked = spyOn(global, "toString").mockReturnValue("spied");
+        Object.defineProperty(global, "toString", { configurable: false });
+        expect(vm.runInContext("toString()", context)).toBe("spied");
+        mocked.mockRestore();
+        expect(vm.runInContext("[toString(), Object.hasOwn(this, 'toString')]", context)).toEqual([
+          "[object Undefined]",
+          false,
+        ]);
+      });
+
+      test("a variable that a script declares in the place of a deleted spy stays", () => {
+        const mocked = spyOn(globalThis, "declaredAfterTheSpy");
+        delete globalThis.declaredAfterTheSpy;
+        vm.runInThisContext("var declaredAfterTheSpy = 'declared';");
+        mocked.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(globalThis, "declaredAfterTheSpy")).toEqual({
+          value: "declared",
+          writable: true,
+          enumerable: true,
+          configurable: false,
+        });
+      });
+    });
+
+    describe("a Proxy that doesn't delete a spy", () => {
+      const returned = () => "original";
+      class Service {
+        method() {
+          return "original";
+        }
+        get value() {
+          return "original";
+        }
+        set value(next) {}
+        get handler() {
+          return returned;
+        }
+      }
+      Service.prototype.count = 1;
+      const kinds = [
+        ["a method", "method", proxy => spyOn(proxy, "method")],
+        ["a getter", "value", proxy => spyOn(proxy, "value", "get")],
+        ["a setter", "value", proxy => spyOn(proxy, "value", "set")],
+        ["a method that a getter returns", "handler", proxy => spyOn(proxy, "handler")],
+        ["a value that is no function", "count", proxy => spyOn(proxy, "count")],
+      ];
+      const cannotRestore = name =>
+        new TypeError(`Cannot restore the \`${name}\` property because the object does not allow it to be changed`);
+
+      test.each(kinds)("%s: the target gets the inherited property as its own", (_, name, spy) => {
+        // `true` is the answer of Vue's readonly(), which deletes nothing.
+        for (const answer of [false, true]) {
+          const target = new Service();
+          const deleteProperty = jest.fn(() => answer);
+          const mocked = spy(new Proxy(target, { deleteProperty }));
+          mocked.mockRestore();
+          expect(deleteProperty).toHaveBeenCalledTimes(1);
+          expect(Object.getOwnPropertyDescriptor(target, name)).toEqual(
+            Object.getOwnPropertyDescriptor(Service.prototype, name),
+          );
+          // It isn't installed any more, so there is nothing to restore.
+          mocked.mockRestore();
+          expect(deleteProperty).toHaveBeenCalledTimes(1);
+        }
+      });
+
+      test("a property that the prototype doesn't let go of comes back configurable", () => {
+        const frozen = Object.freeze({ method() {}, get value() {} }); // prettier-ignore
+        const target = Object.create(frozen);
+        const proxy = new Proxy(target, { deleteProperty: () => false });
+        spyOn(proxy, "method").mockRestore();
+        spyOn(proxy, "value", "get").mockRestore();
+        const { method, value } = Object.getOwnPropertyDescriptors(frozen);
+        expect(Object.getOwnPropertyDescriptors(target)).toEqual({
+          method: { ...method, configurable: true },
+          value: { ...value, configurable: true },
+        });
+      });
+
+      test("the localStorage of happy-dom, which hides the bound copies of its methods and accessors", () => {
+        const target = new Service();
+        for (const name of ["method", "value"]) {
+          const { value, get, set, ...attributes } = Object.getOwnPropertyDescriptor(Service.prototype, name);
+          Object.defineProperty(target, name, {
+            ...attributes,
+            ...(value ? { value: value.bind(target) } : { get: get.bind(target), set: set.bind(target) }),
+          });
+        }
+        const bound = Object.getOwnPropertyDescriptors(target);
+        const storage = new Proxy(target, { deleteProperty: () => false, getOwnPropertyDescriptor: () => undefined });
+
+        const method = spyOn(storage, "method").mockReturnValue("spied");
+        const getter = spyOn(storage, "value", "get").mockReturnValue("spied");
+        expect([storage.method(), storage.value]).toEqual(["spied", "spied"]);
+        method.mockRestore();
+        getter.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(target, "method")).toEqual(bound.method);
+        // The Proxy showed the accessor of the prototype, not the bound copy.
+        expect(Object.getOwnPropertyDescriptor(target, "value")).toEqual(
+          Object.getOwnPropertyDescriptor(Service.prototype, "value"),
+        );
+      });
+
+      test.each([...kinds, ["a missing property", "missing", proxy => spyOn(proxy, "missing")]])(
+        "%s: a Proxy that takes nothing back keeps the spy, and restoring throws",
+        (_, name, spy) => {
+          const target = new Service();
+          let keeps = false;
+          const proxy = new Proxy(target, {
+            deleteProperty: (target, name) => !keeps && Reflect.deleteProperty(target, name),
+            defineProperty: (target, name, descriptor) => !keeps && Reflect.defineProperty(target, name, descriptor),
+          });
+          const mocked = spy(proxy);
+          const other = new Service();
+          spyOn(other, "method");
+          const installed = Object.getOwnPropertyDescriptor(target, name);
+          keeps = true;
+          try {
+            expect(() => mocked.mockRestore()).toThrow(cannotRestore(name));
+            expect(() => jest.restoreAllMocks()).toThrow(cannotRestore(name));
+            expect(Object.getOwnPropertyDescriptor(target, name)).toEqual(installed);
+            expect(Object.hasOwn(other, "method")).toBe(false);
+          } finally {
+            keeps = false;
+            jest.restoreAllMocks();
+          }
+          expect(Object.hasOwn(target, name)).toBe(false);
+        },
+      );
+
+      test.each([
+        ["a missing property", {}, proxy => spyOn(proxy, "missing")],
+        ["a property that only the has trap knows", { has: () => true }, proxy => spyOn(proxy, "missing", "get")],
+      ])("%s has nothing that the target could get back", (_, traps, spy) => {
+        const target = new Service();
+        let keeps = true;
+        const deleteProperty = (target, name) => !keeps && Reflect.deleteProperty(target, name);
+        const mocked = spy(new Proxy(target, { ...traps, deleteProperty }));
+        try {
+          expect(() => mocked.mockRestore()).toThrow(cannotRestore("missing"));
+          expect(Object.hasOwn(target, "missing")).toBe(true);
+        } finally {
+          keeps = false;
+          mocked.mockRestore();
+        }
+        expect(Object.hasOwn(target, "missing")).toBe(false);
+      });
+
+      test("a trap that restores the spy itself, and then answers false", () => {
+        const target = new Service();
+        let isRestoring = false;
+        const proxy = new Proxy(target, {
+          deleteProperty(target, name) {
+            if (isRestoring) return Reflect.deleteProperty(target, name);
+            isRestoring = true;
+            mocked.mockRestore();
+            return false;
+          },
+        });
+        const mocked = spyOn(proxy, "method");
+        mocked.mockRestore();
+        expect(Object.hasOwn(target, "method")).toBe(false);
+      });
+
+      test("a spy that is gone when the trap answers false leaves the target as it is", () => {
+        const target = new Service();
+        // Deletes the spy, and returns undefined.
+        const careless = new Proxy(target, { deleteProperty: (target, name) => void Reflect.deleteProperty(target, name) }); // prettier-ignore
+        spyOn(careless, "method").mockRestore();
+        expect(Object.hasOwn(target, "method")).toBe(false);
+
+        // User code put a property of its own in the place of the spy.
+        const replacement = () => "replacement";
+        const mocked = spyOn(new Proxy(target, { deleteProperty: () => false }), "method");
+        target.method = replacement;
+        mocked.mockRestore();
+        expect(target.method).toBe(replacement);
+      });
+    });
+
+    describe("spies that are left for the end of a test file", () => {
+      const runTests = async files => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("spies-of-a-file", files);
+        const tests = Object.keys(files).filter(name => name.endsWith(".test.js"));
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...tests.map(name => "./" + name)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const lines = stderr.split("\n").filter(line => /^(\w*Error: |\w\.test\.js:$|\((pass|fail)\) )/.test(line));
+        return { lines: lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), exitCode };
+      };
+      const cannotRestore = key =>
+        `TypeError: Cannot restore the \`${key}\` property because the object does not allow it to be changed`;
+
+      test("an object that doesn't delete the spy is restored for the next file", async () => {
+        const result = await runTests({
+          "shared.js": `
+            export class Shared { inherited() { return "original"; } }
+            export const frozen = new Shared();
+            export const behindProxy = new Shared();
+            export const proxy = new Proxy(behindProxy, { deleteProperty: () => false });
+          `,
+          "a.test.js": `
+            import { expect, spyOn, test } from "bun:test";
+            import { frozen, proxy } from "./shared.js";
+            test("a", () => {
+              spyOn(frozen, "inherited").mockReturnValue("spied");
+              Object.freeze(frozen);
+              spyOn(proxy, "inherited").mockReturnValue("spied");
+              expect([frozen.inherited(), proxy.inherited()]).toEqual(["spied", "spied"]);
+            });
+          `,
+          "b.test.js": `
+            import { expect, test } from "bun:test";
+            import { Shared, behindProxy, frozen } from "./shared.js";
+            test("b", () => {
+              expect([frozen.inherited(), Object.hasOwn(frozen, "inherited")]).toEqual(["original", false]);
+              expect(behindProxy.inherited).toBe(Shared.prototype.inherited);
+            });
+          `,
+        });
+        expect(result).toEqual({ lines: ["a.test.js:", "(pass) a", "b.test.js:", "(pass) b"], exitCode: 0 });
+      });
+
+      test("an object that keeps the spy is reported once, under the file that made the spy", async () => {
+        const result = await runTests({
+          "a.test.js": `
+            import { expect, mock, spyOn, test } from "bun:test";
+            test("a", () => {
+              const array = (globalThis.kept = [() => "original"]);
+              const spy = spyOn(array, 0);
+              Object.freeze(array);
+              for (const restore of [() => spy.mockRestore(), () => mock.restore()]) {
+                expect(restore).toThrow(new TypeError(${JSON.stringify(cannotRestore("0").slice("TypeError: ".length))}));
+              }
+              expect(array[0]).toBe(spy);
+            });
+          `,
+          "b.test.js": `
+            import { spyOn, test } from "bun:test";
+            test("b", () => {
+              const object = (globalThis.kept = Object.create([() => "original"]));
+              spyOn(object, 0);
+              Object.freeze(object);
+            });
+          `,
+          "c.test.js": `
+            import { spyOn, test } from "bun:test";
+            class Service { method() {} }
+            test("c", () => {
+              const proxy = (globalThis.kept = new Proxy(new Service(), {}));
+              spyOn(proxy, "method");
+              Object.freeze(proxy);
+            });
+          `,
+          "d.test.js": `import { test } from "bun:test"; test("d", () => {});`,
+        });
+        expect(result).toEqual({
+          lines: [
+            "a.test.js:",
+            "(pass) a",
+            cannotRestore("0"),
+            "b.test.js:",
+            "(pass) b",
+            cannotRestore("0"),
+            "c.test.js:",
+            "(pass) c",
+            cannotRestore("method"),
+            "d.test.js:",
+            "(pass) d",
+          ],
+          exitCode: 1,
+        });
+      });
+    });
+
     test("vi.mockObject() of a prototype whose Symbol.toStringTag getter needs an instance", () => {
       class Tagged {
         #tag = "Tagged";

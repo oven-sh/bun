@@ -833,6 +833,7 @@ describe.concurrent("vi.setConfig", () => {
       ${config}
       const fn = vi.fn(() => "original");
       const object = { method: () => "original" };
+      const frozen = new (class { method() { return "original"; } })();
       fn("top level");
       beforeAll(() => { fn("beforeAll"); });
       beforeEach(() => { fn("beforeEach"); });
@@ -840,11 +841,13 @@ describe.concurrent("vi.setConfig", () => {
         fn("first");
         fn.mockReturnValue("changed");
         vi.spyOn(object, "method").mockReturnValue("spied");
+        vi.spyOn(frozen, "method").mockReturnValue("spied");
+        Object.freeze(frozen);
         vi.stubEnv("STUBBED", "1");
         vi.stubGlobal("stubbed", 1);
       });
       test("second", () => {
-        console.log(JSON.stringify({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), env: process.env.STUBBED, global: typeof stubbed }));
+        console.log(JSON.stringify({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), frozen: [frozen.method(), Object.hasOwn(frozen, "method")], env: process.env.STUBBED, global: typeof stubbed }));
       });
     `;
     const seen = async (
@@ -875,10 +878,14 @@ describe.concurrent("vi.setConfig", () => {
       calls: ["top level", "beforeAll", "beforeEach", "first", "beforeEach"],
       returns: "changed",
       method: "spied",
+      // An inherited method, and the object is frozen after the spy is made.
+      frozen: ["spied", true],
       env: "1",
       global: "number",
     };
     const cleared = { calls: ["beforeEach"] };
+    const reset = { returns: "original", method: "original", frozen: ["original", true] };
+    const restored = { method: "original", frozen: ["original", false] };
 
     test.each([
       ["bun:test", nothing],
@@ -891,13 +898,13 @@ describe.concurrent("vi.setConfig", () => {
     describe.each(["bunfig", "setConfig", "preload"] as const)("through %s", through => {
       test.each([
         [{ clearMocks: true }, cleared],
-        [{ mockReset: true }, { ...cleared, returns: "original", method: "original" }],
-        [{ restoreMocks: true }, { method: "original" }],
+        [{ mockReset: true }, { ...cleared, ...reset }],
+        [{ restoreMocks: true }, restored],
         [{ unstubEnvs: true }, { env: undefined }],
         [{ unstubGlobals: true }, { global: "undefined" }],
         [
           { clearMocks: true, mockReset: true, restoreMocks: true, unstubEnvs: true, unstubGlobals: true },
-          { ...cleared, returns: "original", method: "original", env: undefined, global: "undefined" },
+          { ...cleared, ...reset, ...restored, env: undefined, global: "undefined" },
         ],
       ])("%j", async (options, difference) => {
         expect(await seen("bun:test", options, through)).toEqual({ ...nothing, ...difference });

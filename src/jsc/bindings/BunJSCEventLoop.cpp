@@ -30,6 +30,16 @@ extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
     vm->heap.acquireAccess();
 }
 
+// What GarbageCollectionController's tick reads to decide whether its eden collection is worth requesting. JS thread only.
+extern "C" uint64_t JSC__VM__totalBytesAllocated(JSC::VM* _Nonnull vm)
+{
+    return vm->heap.totalBytesAllocated();
+}
+extern "C" size_t JSC__VM__allocationBudgetThisCycle(JSC::VM* _Nonnull vm)
+{
+    return vm->heap.allocationBudgetThisCycle();
+}
+
 // Returns in how many milliseconds the caller is to call this again even if nothing else
 // wakes it (0: no need). Only the libuv loop gets anything but 0.
 //

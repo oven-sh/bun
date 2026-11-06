@@ -1381,8 +1381,13 @@ describe("expect()", () => {
     });
 
     test("toThrow(fn) rejects a function that is not a constructor with an argument error", async () => {
+      let calls = 0;
       const thrower = () => {
+        calls++;
         throw new Error("boom");
+      };
+      const noThrow = () => {
+        calls++;
       };
       const message =
         "Expected value must be a string, RegExp, Error or constructor, not a non-constructible function: ";
@@ -1395,8 +1400,8 @@ describe("expect()", () => {
 
       expect(() => expect(thrower).toThrow(arrow)).toThrow(message + "[Function: arrow]");
       expect(() => expect(thrower).not.toThrow(arrow)).toThrow(message + "[Function: arrow]");
-      expect(() => expect(() => {}).toThrow(arrow)).toThrow(message + "[Function: arrow]");
-      expect(() => expect(() => {}).not.toThrow(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(noThrow).toThrow(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(noThrow).not.toThrow(arrow)).toThrow(message + "[Function: arrow]");
       expect(() => expect(thrower).toThrowError(arrow)).toThrow(message + "[Function: arrow]");
       expect(() => expect(thrower).toThrow(bound)).toThrow(message + "[Function]");
       expect(() => expect(thrower).toThrow(method)).toThrow(message + "[Function: method]");
@@ -1410,6 +1415,8 @@ describe("expect()", () => {
       await expect((async () => expect(Promise.resolve(thrower)).resolves.toThrow(arrow))()).rejects.toThrow(
         message + "[Function: arrow]",
       );
+      // The argument error fires before the received function runs.
+      expect(calls).toBe(0);
 
       // A constructor, an Error instance, an asymmetric matcher that wraps a
       // constructor and a plain object still go down their usual paths.

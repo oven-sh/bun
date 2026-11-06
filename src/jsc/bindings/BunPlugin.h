@@ -220,6 +220,7 @@ class GlobalObject;
 namespace JSC {
 class JSModuleNamespaceObject;
 class JSSourceCode;
+class ModuleRegistryEntry;
 }
 
 namespace Bun {
@@ -248,6 +249,8 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
+// The load of the entry itself that has yet to settle, or null.
+JSC::JSPromise* pendingLoadOf(JSC::JSGlobalObject*, JSC::ModuleRegistryEntry*);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);

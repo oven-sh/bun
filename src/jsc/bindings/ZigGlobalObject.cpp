@@ -963,7 +963,7 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
-// No load of this entry is in flight: it evaluated (maybe with an error) or its load failed.
+// The entry evaluated (maybe with an error) or its load failed. What Bun__evictUnfinishedModules() keeps.
 static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 {
     switch (entry->status()) {
@@ -983,6 +983,45 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
         return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated;
     return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
+// The module's own load, link or evaluation is in flight. An importer that loaded it holds its record in [[LoadedModules]], not by key.
+static bool isModuleLoadPinned(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
+{
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::New:
+    case JSC::ModuleRegistryEntry::Status::Fetching:
+        return true;
+    case JSC::ModuleRegistryEntry::Status::FetchFailed:
+    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
+    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
+        return false;
+    case JSC::ModuleRegistryEntry::Status::Fetched:
+        break;
+    }
+    auto* record = entry->record();
+    if (!record)
+        return true;
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    if (!cyclic)
+        return !record->moduleEnvironmentMayBeNull();
+    switch (cyclic->status()) {
+    case JSC::CyclicModuleRecord::Status::Evaluated:
+        return false;
+    case JSC::CyclicModuleRecord::Status::Linking:
+    case JSC::CyclicModuleRecord::Status::Evaluating:
+    case JSC::CyclicModuleRecord::Status::EvaluatingAsync:
+        return true;
+    case JSC::CyclicModuleRecord::Status::New:
+        // registerPrelinkedSubgraph() registers the records of a prelinked graph without a load promise of their own.
+        if (!entry->loadPromise())
+            return true;
+        break;
+    case JSC::CyclicModuleRecord::Status::Unlinked:
+    case JSC::CyclicModuleRecord::Status::Linked:
+        break;
+    }
+    return Bun::pendingLoadOf(globalObject, entry);
 }
 
 // Lets the next importer load them again. Returns "\nnote: " lines naming the modules the others were stuck on.
@@ -1118,9 +1157,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto* moduleLoader = moduleLoaderOfRequirer(globalObject, callFrame->argument(1));
     if (!moduleLoader)
         return JSValue::encode(jsBoolean(false));
-    // A module whose load is in flight is not in require.cache and is not evicted.
-    for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
-        if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
+    // A module whose load is in flight is not in require.cache and is not evicted, under any import type of the key.
+    for (auto type : Bun::moduleTypes) {
+        auto* entry = moduleLoader->getRegisteredMayBeNull(key, type);
+        if (entry && isModuleLoadPinned(globalObject, entry))
             return JSValue::encode(jsBoolean(false));
     }
     return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key))); // takes the loader's cellLock itself

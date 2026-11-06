@@ -4,8 +4,21 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
 
 namespace Bun {
+
+// Every import type a specifier can be registered under. JavaScript first: nearly every entry is one.
+inline constexpr JSC::ScriptFetchParameters::Type moduleTypes[] = {
+    JSC::ScriptFetchParameters::Type::JavaScript,
+    JSC::ScriptFetchParameters::Type::HostDefined,
+    JSC::ScriptFetchParameters::Type::JSON,
+    JSC::ScriptFetchParameters::Type::Text,
+    JSC::ScriptFetchParameters::Type::WebAssembly,
+    JSC::ScriptFetchParameters::Type::CSS,
+    JSC::ScriptFetchParameters::Type::None,
+};
+static_assert(static_cast<unsigned>(JSC::ScriptFetchParameters::Type::CSS) == 6, "every Type is listed above");
 
 // The registry has one entry per (specifier, import attribute type); `registryEntry` picks the one that stands for a specifier.
 template<typename Each>

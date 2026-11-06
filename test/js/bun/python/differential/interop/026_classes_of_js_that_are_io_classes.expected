@@ -1,0 +1,64 @@
+status: 0
+oracle: none
+---
+mro ['Reader', 'Date', 'JSObject', 'RawIOBase', '_RawIOBase', 'IOBase', '_IOBase', 'object']
+read b'x'
+of js 0
+attribute True
+__dict__ ('JSProperties', {'done': True})
+vars {'done': True}
+the descriptor asked directly AttributeError This object has no __dict__
+getattr_static readable
+getattr_static of an attribute AttributeError done
+set, seen from JS ('done,b', 2, 2)
+set in JS (3, ['b', 'c', 'done'])
+deleted, seen from JS ('done,c', ['c', 'done'])
+__dict__ written AttributeError attribute '__dict__' of '_io._IOBase' objects is not writable
+closed inside False
+closed True
+lines []
+Date, IOBase: 6
+Date, IOBase, __slots__: 6
+Date, RawIOBase: 8
+Date, RawIOBase, __slots__: 8
+Date, BufferedIOBase: 8
+Date, BufferedIOBase, __slots__: 8
+Date, TextIOBase: 8
+Date, TextIOBase, __slots__: 8
+Map, IOBase: 7
+Map, IOBase, __slots__: 7
+Map, RawIOBase: 9
+Map, RawIOBase, __slots__: 9
+Map, BufferedIOBase: 9
+Map, BufferedIOBase, __slots__: 9
+Map, TextIOBase: 9
+Map, TextIOBase, __slots__: 9
+Object, IOBase: 6
+Object, IOBase, __slots__: 6
+Object, RawIOBase: 8
+Object, RawIOBase, __slots__: 8
+Object, BufferedIOBase: 8
+Object, BufferedIOBase, __slots__: 8
+Object, TextIOBase: 8
+Object, TextIOBase, __slots__: 8
+Promise, IOBase: 7
+Promise, IOBase, __slots__: 7
+Promise, RawIOBase: 9
+Promise, RawIOBase, __slots__: 9
+Promise, BufferedIOBase: 9
+Promise, BufferedIOBase, __slots__: 9
+Promise, TextIOBase: 9
+Promise, TextIOBase, __slots__: 9
+Uint8Array, IOBase: 8
+Uint8Array, IOBase, __slots__: 8
+Uint8Array, RawIOBase: 10
+Uint8Array, RawIOBase, __slots__: 10
+Uint8Array, BufferedIOBase: 10
+Uint8Array, BufferedIOBase, __slots__: 10
+Uint8Array, TextIOBase: 10
+Uint8Array, TextIOBase, __slots__: 10
+Bus (True, True, False)
+Bus closed True
+Bus __dict__ ('JSProperties', True, True)
+Sink (True, True, False, True)
+Sink __dict__ ('JSProperties', True, True)

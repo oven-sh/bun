@@ -1,0 +1,212 @@
+status: 0
+script: 931eb5e44b7e5959
+source: 4dc85ca029dd4add
+---
+name_of(T) [T=code] => builtins.code
+refused: error [T=code] => C.mro() returned base with unsuitable layout ('code')
+name_of(T) [T=frame] => builtins.frame
+refused: error [T=frame] => C.mro() returned base with unsuitable layout ('frame')
+name_of(T) [T=function] => builtins.function
+refused: error [T=function] => C.mro() returned base with unsuitable layout ('function')
+name_of(T) [T=generator] => builtins.generator
+refused: error [T=generator] => C.mro() returned base with unsuitable layout ('generator')
+name_of(T) [T=coroutine] => builtins.coroutine
+refused: error [T=coroutine] => C.mro() returned base with unsuitable layout ('coroutine')
+name_of(T) [T=async_generator] => builtins.async_generator
+refused: error [T=async_generator] => C.mro() returned base with unsuitable layout ('async_generator')
+name_of(T) [T=method] => builtins.method
+refused: error [T=method] => C.mro() returned base with unsuitable layout ('method')
+name_of(T) [T=builtin_function_or_method] => builtins.builtin_function_or_method
+refused: error [T=builtin_function_or_method] => C.mro() returned base with unsuitable layout ('builtin_function_or_method')
+name_of(T) [T=wrapper_descriptor] => builtins.wrapper_descriptor
+refused: error [T=wrapper_descriptor] => C.mro() returned base with unsuitable layout ('wrapper_descriptor')
+name_of(T) [T=method-wrapper] => builtins.method-wrapper
+refused: error [T=method-wrapper] => C.mro() returned base with unsuitable layout ('method-wrapper')
+name_of(T) [T=method_descriptor] => builtins.method_descriptor
+refused: error [T=method_descriptor] => C.mro() returned base with unsuitable layout ('method_descriptor')
+name_of(T) [T=classmethod_descriptor] => builtins.classmethod_descriptor
+refused: error [T=classmethod_descriptor] => C.mro() returned base with unsuitable layout ('classmethod_descriptor')
+name_of(T) [T=getset_descriptor] => builtins.getset_descriptor
+refused: error [T=getset_descriptor] => C.mro() returned base with unsuitable layout ('getset_descriptor')
+name_of(T) [T=member_descriptor] => builtins.member_descriptor
+refused: error [T=member_descriptor] => C.mro() returned base with unsuitable layout ('member_descriptor')
+name_of(T) [T=mappingproxy] => builtins.mappingproxy
+refused: error [T=mappingproxy] => C.mro() returned base with unsuitable layout ('mappingproxy')
+name_of(T) [T=traceback] => builtins.traceback
+refused: error [T=traceback] => C.mro() returned base with unsuitable layout ('traceback')
+name_of(T) [T=cell] => builtins.cell
+refused: error [T=cell] => C.mro() returned base with unsuitable layout ('cell')
+name_of(T) [T=SimpleNamespace] => types.SimpleNamespace
+refused: error [T=SimpleNamespace] => C.mro() returned base with unsuitable layout ('types.SimpleNamespace')
+name_of(T) [T=module] => builtins.module
+refused: error [T=module] => C.mro() returned base with unsuitable layout ('module')
+name_of(T) [T=GenericAlias] => types.GenericAlias
+refused: error [T=GenericAlias] => C.mro() returned base with unsuitable layout ('types.GenericAlias')
+name_of(T) [T=Union] => typing.Union
+refused: error [T=Union] => C.mro() returned base with unsuitable layout ('typing.Union')
+name_of(T) [T=PyCapsule] => builtins.PyCapsule
+refused: error [T=PyCapsule] => C.mro() returned base with unsuitable layout ('PyCapsule')
+name_of(T) [T=range] => builtins.range
+refused: error [T=range] => C.mro() returned base with unsuitable layout ('range')
+name_of(T) [T=slice] => builtins.slice
+refused: error [T=slice] => C.mro() returned base with unsuitable layout ('slice')
+name_of(T) [T=memoryview] => builtins.memoryview
+refused: error [T=memoryview] => C.mro() returned base with unsuitable layout ('memoryview')
+name_of(T) [T=property] => builtins.property
+refused: error [T=property] => C.mro() returned base with unsuitable layout ('property')
+name_of(T) [T=staticmethod] => builtins.staticmethod
+refused: error [T=staticmethod] => C.mro() returned base with unsuitable layout ('staticmethod')
+name_of(T) [T=classmethod] => builtins.classmethod
+refused: error [T=classmethod] => C.mro() returned base with unsuitable layout ('classmethod')
+name_of(T) [T=super] => builtins.super
+refused: error [T=super] => C.mro() returned base with unsuitable layout ('super')
+name_of(T) [T=enumerate] => builtins.enumerate
+refused: error [T=enumerate] => C.mro() returned base with unsuitable layout ('enumerate')
+name_of(T) [T=zip] => builtins.zip
+refused: error [T=zip] => C.mro() returned base with unsuitable layout ('zip')
+name_of(T) [T=map] => builtins.map
+refused: error [T=map] => C.mro() returned base with unsuitable layout ('map')
+name_of(T) [T=filter] => builtins.filter
+refused: error [T=filter] => C.mro() returned base with unsuitable layout ('filter')
+name_of(T) [T=reversed] => builtins.reversed
+refused: error [T=reversed] => C.mro() returned base with unsuitable layout ('reversed')
+name_of(T) [T=int] => builtins.int
+refused: error [T=int] => C.mro() returned base with unsuitable layout ('int')
+name_of(T) [T=float] => builtins.float
+refused: error [T=float] => C.mro() returned base with unsuitable layout ('float')
+name_of(T) [T=complex] => builtins.complex
+refused: error [T=complex] => C.mro() returned base with unsuitable layout ('complex')
+name_of(T) [T=str] => builtins.str
+refused: error [T=str] => C.mro() returned base with unsuitable layout ('str')
+name_of(T) [T=bytes] => builtins.bytes
+refused: error [T=bytes] => C.mro() returned base with unsuitable layout ('bytes')
+name_of(T) [T=bytearray] => builtins.bytearray
+refused: error [T=bytearray] => C.mro() returned base with unsuitable layout ('bytearray')
+name_of(T) [T=list] => builtins.list
+refused: error [T=list] => C.mro() returned base with unsuitable layout ('list')
+name_of(T) [T=tuple] => builtins.tuple
+refused: error [T=tuple] => C.mro() returned base with unsuitable layout ('tuple')
+name_of(T) [T=dict] => builtins.dict
+refused: error [T=dict] => C.mro() returned base with unsuitable layout ('dict')
+name_of(T) [T=set] => builtins.set
+refused: error [T=set] => C.mro() returned base with unsuitable layout ('set')
+name_of(T) [T=frozenset] => builtins.frozenset
+refused: error [T=frozenset] => C.mro() returned base with unsuitable layout ('frozenset')
+name_of(T) [T=type] => builtins.type
+refused: error [T=type] => C.mro() returned base with unsuitable layout ('type')
+name_of(T) [T=BaseException] => builtins.BaseException
+refused: error [T=BaseException] => C.mro() returned base with unsuitable layout ('BaseException')
+name_of(T) [T=Exception] => builtins.Exception
+accepted, with name_of(base) [T=Exception] => builtins.BaseException
+for a base: [type(o) is C for o in made] [T=Exception] => [True, True]
+calls > 0 [T=Exception] => False
+name_of(T) [T=OSError] => builtins.OSError
+refused: error [T=OSError] => C.mro() returned base with unsuitable layout ('OSError')
+name_of(T) [T=SyntaxError] => builtins.SyntaxError
+refused: error [T=SyntaxError] => C.mro() returned base with unsuitable layout ('SyntaxError')
+name_of(T) [T=StopIteration] => builtins.StopIteration
+refused: error [T=StopIteration] => C.mro() returned base with unsuitable layout ('StopIteration')
+name_of(T) [T=KeyError] => builtins.KeyError
+accepted, with name_of(base) [T=KeyError] => builtins.LookupError
+for a base: [type(o) is C for o in made] [T=KeyError] => [True, True]
+calls > 0 [T=KeyError] => True
+name_of(T) [T=dict_keys] => builtins.dict_keys
+refused: error [T=dict_keys] => C.mro() returned base with unsuitable layout ('dict_keys')
+name_of(T) [T=dict_values] => builtins.dict_values
+refused: error [T=dict_values] => C.mro() returned base with unsuitable layout ('dict_values')
+name_of(T) [T=dict_items] => builtins.dict_items
+refused: error [T=dict_items] => C.mro() returned base with unsuitable layout ('dict_items')
+name_of(T) [T=list_iterator] => builtins.list_iterator
+refused: error [T=list_iterator] => C.mro() returned base with unsuitable layout ('list_iterator')
+name_of(T) [T=tuple_iterator] => builtins.tuple_iterator
+refused: error [T=tuple_iterator] => C.mro() returned base with unsuitable layout ('tuple_iterator')
+name_of(T) [T=dict_keyiterator] => builtins.dict_keyiterator
+refused: error [T=dict_keyiterator] => C.mro() returned base with unsuitable layout ('dict_keyiterator')
+name_of(T) [T=set_iterator] => builtins.set_iterator
+refused: error [T=set_iterator] => C.mro() returned base with unsuitable layout ('set_iterator')
+name_of(T) [T=str_ascii_iterator] => builtins.str_ascii_iterator
+refused: error [T=str_ascii_iterator] => C.mro() returned base with unsuitable layout ('str_ascii_iterator')
+name_of(T) [T=bytes_iterator] => builtins.bytes_iterator
+refused: error [T=bytes_iterator] => C.mro() returned base with unsuitable layout ('bytes_iterator')
+name_of(T) [T=range_iterator] => builtins.range_iterator
+refused: error [T=range_iterator] => C.mro() returned base with unsuitable layout ('range_iterator')
+name_of(T) [T=list_reverseiterator] => builtins.list_reverseiterator
+refused: error [T=list_reverseiterator] => C.mro() returned base with unsuitable layout ('list_reverseiterator')
+name_of(T) [T=callable_iterator] => builtins.callable_iterator
+refused: error [T=callable_iterator] => C.mro() returned base with unsuitable layout ('callable_iterator')
+name_of(T) [T=Context] => _contextvars.Context
+refused: error [T=Context] => C.mro() returned base with unsuitable layout ('_contextvars.Context')
+name_of(T) [T=ContextVar] => _contextvars.ContextVar
+refused: error [T=ContextVar] => C.mro() returned base with unsuitable layout ('_contextvars.ContextVar')
+name_of(T) [T=Token] => _contextvars.Token
+refused: error [T=Token] => C.mro() returned base with unsuitable layout ('_contextvars.Token')
+name_of(T) [T=deque] => collections.deque
+refused: error [T=deque] => C.mro() returned base with unsuitable layout ('collections.deque')
+name_of(T) [T=defaultdict] => collections.defaultdict
+refused: error [T=defaultdict] => C.mro() returned base with unsuitable layout ('collections.defaultdict')
+name_of(T) [T=OrderedDict] => collections.OrderedDict
+refused: error [T=OrderedDict] => C.mro() returned base with unsuitable layout ('collections.OrderedDict')
+name_of(T) [T=partial] => functools.partial
+refused: error [T=partial] => C.mro() returned base with unsuitable layout ('functools.partial')
+name_of(T) [T=_lru_cache_wrapper] => functools._lru_cache_wrapper
+refused: error [T=_lru_cache_wrapper] => C.mro() returned base with unsuitable layout ('functools._lru_cache_wrapper')
+name_of(T) [T=count] => itertools.count
+refused: error [T=count] => C.mro() returned base with unsuitable layout ('itertools.count')
+name_of(T) [T=chain] => itertools.chain
+refused: error [T=chain] => C.mro() returned base with unsuitable layout ('itertools.chain')
+name_of(T) [T=islice] => itertools.islice
+refused: error [T=islice] => C.mro() returned base with unsuitable layout ('itertools.islice')
+name_of(T) [T=itemgetter] => operator.itemgetter
+refused: error [T=itemgetter] => C.mro() returned base with unsuitable layout ('operator.itemgetter')
+name_of(T) [T=attrgetter] => operator.attrgetter
+refused: error [T=attrgetter] => C.mro() returned base with unsuitable layout ('operator.attrgetter')
+name_of(T) [T=methodcaller] => operator.methodcaller
+refused: error [T=methodcaller] => C.mro() returned base with unsuitable layout ('operator.methodcaller')
+name_of(T) [T=BytesIO] => _io.BytesIO
+refused: error [T=BytesIO] => C.mro() returned base with unsuitable layout ('_io.BytesIO')
+name_of(T) [T=StringIO] => _io.StringIO
+refused: error [T=StringIO] => C.mro() returned base with unsuitable layout ('_io.StringIO')
+name_of(T) [T=FileIO] => _io.FileIO
+refused: error [T=FileIO] => C.mro() returned base with unsuitable layout ('_io.FileIO')
+name_of(T) [T=BufferedReader] => _io.BufferedReader
+refused: error [T=BufferedReader] => C.mro() returned base with unsuitable layout ('_io.BufferedReader')
+name_of(T) [T=TextIOWrapper] => _io.TextIOWrapper
+refused: error [T=TextIOWrapper] => C.mro() returned base with unsuitable layout ('_io.TextIOWrapper')
+name_of(T) [T=ABCMeta] => io.IOBase
+accepted, with name_of(base) [T=ABCMeta] => _io._IOBase
+for a base: [type(o) is C for o in made] [T=ABCMeta] => [True, True, True]
+calls > 0 [T=ABCMeta] => False
+name_of(T) [T=Pattern] => re.Pattern
+refused: error [T=Pattern] => C.mro() returned base with unsuitable layout ('re.Pattern')
+name_of(T) [T=Match] => re.Match
+refused: error [T=Match] => C.mro() returned base with unsuitable layout ('re.Match')
+name_of(T) [T=date] => datetime.date
+refused: error [T=date] => C.mro() returned base with unsuitable layout ('datetime.date')
+name_of(T) [T=time] => datetime.time
+refused: error [T=time] => C.mro() returned base with unsuitable layout ('datetime.time')
+name_of(T) [T=datetime] => datetime.datetime
+refused: error [T=datetime] => C.mro() returned base with unsuitable layout ('datetime.datetime')
+name_of(T) [T=timedelta] => datetime.timedelta
+refused: error [T=timedelta] => C.mro() returned base with unsuitable layout ('datetime.timedelta')
+name_of(T) [T=timezone] => datetime.timezone
+refused: error [T=timezone] => C.mro() returned base with unsuitable layout ('datetime.timezone')
+name_of(T) [T=tzinfo] => datetime.tzinfo
+accepted, with name_of(base) [T=tzinfo] => builtins.object
+for a base: [type(o) is C for o in made] [T=tzinfo] => [True, True, True]
+calls > 0 [T=tzinfo] => True
+name_of(T) [T=Decimal] => decimal.Decimal
+refused: error [T=Decimal] => C.mro() returned base with unsuitable layout ('decimal.Decimal')
+name_of(T) [T=Context] => decimal.Context
+refused: error [T=Context] => C.mro() returned base with unsuitable layout ('decimal.Context')
+name_of(T) [T=array] => array.array
+refused: error [T=array] => C.mro() returned base with unsuitable layout ('array.array')
+name_of(T) [T=Struct] => _struct.Struct
+refused: error [T=Struct] => C.mro() returned base with unsuitable layout ('_struct.Struct')
+name_of(T) [T=DirEntry] => posix.DirEntry
+refused: error [T=DirEntry] => C.mro() returned base with unsuitable layout ('posix.DirEntry')
+name_of(T) [T=ReferenceType] => weakref.ReferenceType
+refused: error [T=ReferenceType] => C.mro() returned base with unsuitable layout ('weakref.ReferenceType')
+name_of(T) [T=ProxyType] => weakref.ProxyType
+refused: error [T=ProxyType] => C.mro() returned base with unsuitable layout ('weakref.ProxyType')
+name_of(T) [T=CallableProxyType] => weakref.CallableProxyType
+refused: error [T=CallableProxyType] => C.mro() returned base with unsuitable layout ('weakref.CallableProxyType')

@@ -1,0 +1,23 @@
+status: 0
+script: 6481ebbf717373f3
+---
+--- the __new__ of tuple, for a class that only names a struct sequence
+5 is over
+1.5 is over
+None is over
+a str is over
+an object is over
+C is over
+f is over
+staticmethod is over
+len is over
+tuple.__len__ is over
+dict.__new__ is over
+int.__new__ is over
+list.__new__ is over
+type.__new__ is over
+sched_param.__new__ is over
+deleted is over
+(1, 2) os.terminal_size(columns=1, lines=2)
+--- the types that the runtime finds again
+True ['stat_result', 'statvfs_result', 'uname_result', 'times_result', 'sched_param', 'terminal_size', 'struct_rusage', 'struct_passwd', 'struct_group', 'struct_time', 'struct_time', 'struct_time', 'asyncgen_hooks', '_ExceptHookArgs']

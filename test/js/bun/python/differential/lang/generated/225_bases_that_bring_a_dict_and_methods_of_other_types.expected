@@ -1,0 +1,150 @@
+status: 0
+script: c6c4a6d8bfd61394
+source: ba1f9170724962fc
+---
+--- __bases__
+name [name='_IOBase', base=_IOBase, label='__dict__', function=function] => _IOBase
+label [name='_IOBase', base=_IOBase, label='__dict__', function=function] => __dict__
+type(error).__name__ [name='_IOBase', base=_IOBase, label='__dict__', function=function] => AttributeError
+name [name='_IOBase', base=_IOBase, label='getattr', function=function] => _IOBase
+label [name='_IOBase', base=_IOBase, label='getattr', function=function] => getattr
+type(error).__name__ [name='_IOBase', base=_IOBase, label='getattr', function=function] => AttributeError
+name [name='_IOBase', base=_IOBase, label='in a tuple', function=function] => _IOBase
+label [name='_IOBase', base=_IOBase, label='in a tuple', function=function] => in a tuple
+type(error).__name__ [name='_IOBase', base=_IOBase, label='in a tuple', function=function] => AttributeError
+name [name='_IOBase', base=_IOBase, label='set', function=function] => _IOBase
+label [name='_IOBase', base=_IOBase, label='set', function=function] => set
+type(error).__name__ [name='_IOBase', base=_IOBase, label='set', function=function] => AttributeError
+name [name='_IOBase', base=_IOBase, label='weakref', function=function] => _IOBase
+label [name='_IOBase', base=_IOBase, label='weakref', function=function] => weakref
+type(error).__name__ [name='_IOBase', base=_IOBase, label='weakref', function=function] => TypeError
+name [name='RawIOBase', base=ABCMeta, label='__dict__', function=function] => RawIOBase
+label [name='RawIOBase', base=ABCMeta, label='__dict__', function=function] => __dict__
+type(error).__name__ [name='RawIOBase', base=ABCMeta, label='__dict__', function=function] => AttributeError
+name [name='RawIOBase', base=ABCMeta, label='getattr', function=function] => RawIOBase
+label [name='RawIOBase', base=ABCMeta, label='getattr', function=function] => getattr
+type(error).__name__ [name='RawIOBase', base=ABCMeta, label='getattr', function=function] => AttributeError
+name [name='RawIOBase', base=ABCMeta, label='in a tuple', function=function] => RawIOBase
+label [name='RawIOBase', base=ABCMeta, label='in a tuple', function=function] => in a tuple
+type(error).__name__ [name='RawIOBase', base=ABCMeta, label='in a tuple', function=function] => AttributeError
+name [name='RawIOBase', base=ABCMeta, label='set', function=function] => RawIOBase
+label [name='RawIOBase', base=ABCMeta, label='set', function=function] => set
+type(error).__name__ [name='RawIOBase', base=ABCMeta, label='set', function=function] => AttributeError
+name [name='RawIOBase', base=ABCMeta, label='weakref', function=function] => RawIOBase
+label [name='RawIOBase', base=ABCMeta, label='weakref', function=function] => weakref
+type(error).__name__ [name='RawIOBase', base=ABCMeta, label='weakref', function=function] => TypeError
+name [name='IOBase', base=ABCMeta, label='__dict__', function=function] => IOBase
+label [name='IOBase', base=ABCMeta, label='__dict__', function=function] => __dict__
+type(error).__name__ [name='IOBase', base=ABCMeta, label='__dict__', function=function] => AttributeError
+name [name='IOBase', base=ABCMeta, label='getattr', function=function] => IOBase
+label [name='IOBase', base=ABCMeta, label='getattr', function=function] => getattr
+type(error).__name__ [name='IOBase', base=ABCMeta, label='getattr', function=function] => AttributeError
+name [name='IOBase', base=ABCMeta, label='in a tuple', function=function] => IOBase
+label [name='IOBase', base=ABCMeta, label='in a tuple', function=function] => in a tuple
+type(error).__name__ [name='IOBase', base=ABCMeta, label='in a tuple', function=function] => AttributeError
+name [name='IOBase', base=ABCMeta, label='set', function=function] => IOBase
+label [name='IOBase', base=ABCMeta, label='set', function=function] => set
+type(error).__name__ [name='IOBase', base=ABCMeta, label='set', function=function] => AttributeError
+name [name='IOBase', base=ABCMeta, label='weakref', function=function] => IOBase
+label [name='IOBase', base=ABCMeta, label='weakref', function=function] => weakref
+type(error).__name__ [name='IOBase', base=ABCMeta, label='weakref', function=function] => TypeError
+name [name='BytesIO', base=BytesIO, label='__dict__', function=function] => BytesIO
+label [name='BytesIO', base=BytesIO, label='__dict__', function=function] => __dict__
+type(error).__name__ [name='BytesIO', base=BytesIO, label='__dict__', function=function] => AttributeError
+name [name='BytesIO', base=BytesIO, label='getattr', function=function] => BytesIO
+label [name='BytesIO', base=BytesIO, label='getattr', function=function] => getattr
+type(error).__name__ [name='BytesIO', base=BytesIO, label='getattr', function=function] => AttributeError
+name [name='BytesIO', base=BytesIO, label='in a tuple', function=function] => BytesIO
+label [name='BytesIO', base=BytesIO, label='in a tuple', function=function] => in a tuple
+type(error).__name__ [name='BytesIO', base=BytesIO, label='in a tuple', function=function] => AttributeError
+name [name='BytesIO', base=BytesIO, label='set', function=function] => BytesIO
+label [name='BytesIO', base=BytesIO, label='set', function=function] => set
+type(error).__name__ [name='BytesIO', base=BytesIO, label='set', function=function] => AttributeError
+name [name='BytesIO', base=BytesIO, label='weakref', function=function] => BytesIO
+label [name='BytesIO', base=BytesIO, label='weakref', function=function] => weakref
+type(error).__name__ [name='BytesIO', base=BytesIO, label='weakref', function=function] => TypeError
+a class of classes is over
+an exception of a module None
+an exception of a module, mro ['CE', 'AE', 'error', 'Exception', 'BaseException', 'object']
+an exception of a module, made True
+a class in between None
+in between label [label='type', function=function] => type
+raised
+in between label [label='len', function=function] => len
+raised
+in between label [label='vars', function=function] => vars
+raised
+in between label [label='tuple', function=function] => tuple
+raised
+--- __init__ of another type
+dict ('TypeError', "descriptor '__init__' requires a 'dict' object but received a 'os.terminal_size'")
+dict, two ints ('TypeError', "descriptor '__init__' requires a 'dict' object but received a 'os.terminal_size'")
+list ('TypeError', "descriptor '__init__' requires a 'list' object but received a 'os.terminal_size'")
+list, two ints ('TypeError', "descriptor '__init__' requires a 'list' object but received a 'os.terminal_size'")
+BaseException ('TypeError', "descriptor '__init__' requires a 'BaseException' object but received a 'os.terminal_size'")
+BaseException, two ints ('TypeError', "descriptor '__init__' requires a 'BaseException' object but received a 'os.terminal_size'")
+set ('TypeError', "descriptor '__init__' requires a 'set' object but received a 'os.terminal_size'")
+set, two ints ('TypeError', "descriptor '__init__' requires a 'set' object but received a 'os.terminal_size'")
+as it was os.terminal_size(columns=1, lines=2)
+of tuple os.terminal_size(columns=1, lines=2)
+--- __new__ of another type: whatever is made or raised, it does no harm
+name [name='dict', new=builtin_function_or_method] => dict
+is over
+name [name='list', new=builtin_function_or_method] => list
+is over
+name [name='set', new=builtin_function_or_method] => set
+is over
+name [name='int', new=builtin_function_or_method] => int
+is over
+name [name='BaseException', new=builtin_function_or_method] => BaseException
+is over
+name [name='stat_result', new=builtin_function_or_method] => stat_result
+is over
+name [name='struct_time', new=builtin_function_or_method] => struct_time
+is over
+as it was os.terminal_size(columns=1, lines=2)
+--- and a class derived from the built-in type that was written to
+name [name='int', new=builtin_function_or_method] => int
+is over
+name [name='dict', new=builtin_function_or_method] => dict
+is over
+name [name='tuple', new=builtin_function_or_method] => tuple
+is over
+name [name='list', new=builtin_function_or_method] => list
+is over
+name [name='object', new=builtin_function_or_method] => object
+is over
+name [name='BaseException', new=builtin_function_or_method] => BaseException
+is over
+as it was (1,)
+--- types whose instances have nothing in them, named by an mro()
+NoneType ['C', 'NoneType', 'object']
+NoneType repr None
+NotImplementedType ['C', 'NotImplementedType', 'object']
+NotImplementedType repr NotImplemented
+ellipsis ['C', 'ellipsis', 'object']
+ellipsis repr Ellipsis
+_PlaceholderType ['C', '_PlaceholderType', 'object']
+_PlaceholderType repr Placeholder
+NoDefaultType ['C', 'NoDefaultType', 'object']
+NoDefaultType repr typing.NoDefault
+MISSING ['C', 'MISSING', 'object']
+MISSING repr <Token.MISSING>
+None reduced 0 ('TypeError', "cannot pickle 'NoneType' object")
+None reduced 2 (<function __newobj__>, (<class 'NoneType'>,), None, None, None)
+None reduced 4 (<function __newobj__>, (<class 'NoneType'>,), None, None, None)
+NotImplemented reduced 0 'NotImplemented'
+NotImplemented reduced 2 'NotImplemented'
+NotImplemented reduced 4 'NotImplemented'
+Ellipsis reduced 0 'Ellipsis'
+Ellipsis reduced 2 'Ellipsis'
+Ellipsis reduced 4 'Ellipsis'
+Placeholder reduced 0 'Placeholder'
+Placeholder reduced 2 'Placeholder'
+Placeholder reduced 4 'Placeholder'
+typing.NoDefault reduced 0 'NoDefault'
+typing.NoDefault reduced 2 'NoDefault'
+typing.NoDefault reduced 4 'NoDefault'
+<Token.MISSING> reduced 0 ('TypeError', "cannot pickle 'MISSING' object")
+<Token.MISSING> reduced 2 ('TypeError', "cannot pickle 'Token.MISSING' object")
+<Token.MISSING> reduced 4 ('TypeError', "cannot pickle 'Token.MISSING' object")

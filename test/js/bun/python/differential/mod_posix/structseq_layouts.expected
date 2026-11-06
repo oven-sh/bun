@@ -1,0 +1,356 @@
+status: 0
+script: 4f7faa93c1101f59
+---
+--- struct_time 11 9 0 tuple 8
+derived ('TypeError', "type 'time.struct_time' is not an acceptable base type")
+by mro() ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('time.struct_time')")
+an instance ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('time.struct_time')")
+__new__ for tuple ('TypeError', 'time.struct_time.__new__(tuple): tuple is not a subtype of time.struct_time')
+tuple's __new__ ('TypeError', 'tuple.__new__(time.struct_time) is not safe, use time.struct_time.__new__()')
+object's __new__ ('TypeError', 'object.__new__(time.struct_time) is not safe, use time.struct_time.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'time.struct_time' is not an acceptable base type")
+--- stat_result 19 10 3 tuple 8
+derived ('TypeError', "type 'os.stat_result' is not an acceptable base type")
+by mro() ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('os.stat_result')")
+an instance ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('os.stat_result')")
+__new__ for tuple ('TypeError', 'os.stat_result.__new__(tuple): tuple is not a subtype of os.stat_result')
+tuple's __new__ ('TypeError', 'tuple.__new__(os.stat_result) is not safe, use os.stat_result.__new__()')
+object's __new__ ('TypeError', 'object.__new__(os.stat_result) is not safe, use os.stat_result.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'os.stat_result' is not an acceptable base type")
+--- statvfs_result 11 10 0 tuple 8
+derived ('TypeError', "type 'os.statvfs_result' is not an acceptable base type")
+by mro() ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('os.statvfs_result')")
+an instance ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('os.statvfs_result')")
+__new__ for tuple ('TypeError', 'os.statvfs_result.__new__(tuple): tuple is not a subtype of os.statvfs_result')
+tuple's __new__ ('TypeError', 'tuple.__new__(os.statvfs_result) is not safe, use os.statvfs_result.__new__()')
+object's __new__ ('TypeError', 'object.__new__(os.statvfs_result) is not safe, use os.statvfs_result.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'os.statvfs_result' is not an acceptable base type")
+--- terminal_size 2 2 0 tuple 8
+derived ('TypeError', "type 'os.terminal_size' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1), {}, 2)
+__new__ for tuple ('TypeError', 'os.terminal_size.__new__(tuple): tuple is not a subtype of os.terminal_size')
+tuple's __new__ ('TypeError', 'tuple.__new__(os.terminal_size) is not safe, use os.terminal_size.__new__()')
+object's __new__ ('TypeError', 'object.__new__(os.terminal_size) is not safe, use os.terminal_size.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'os.terminal_size' is not an acceptable base type")
+--- times_result 5 5 0 tuple 8
+derived ('TypeError', "type 'posix.times_result' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'posix.times_result'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4), {}, 5)
+__new__ for tuple ('TypeError', 'posix.times_result.__new__(tuple): tuple is not a subtype of posix.times_result')
+tuple's __new__ ('TypeError', 'tuple.__new__(posix.times_result) is not safe, use posix.times_result.__new__()')
+object's __new__ ('TypeError', 'object.__new__(posix.times_result) is not safe, use posix.times_result.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'posix.times_result' is not an acceptable base type")
+--- uname_result 5 5 0 tuple 8
+derived ('TypeError', "type 'posix.uname_result' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'posix.uname_result'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4), {}, 5)
+__new__ for tuple ('TypeError', 'posix.uname_result.__new__(tuple): tuple is not a subtype of posix.uname_result')
+tuple's __new__ ('TypeError', 'tuple.__new__(posix.uname_result) is not safe, use posix.uname_result.__new__()')
+object's __new__ ('TypeError', 'object.__new__(posix.uname_result) is not safe, use posix.uname_result.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'posix.uname_result' is not an acceptable base type")
+--- version_info 5 5 0 tuple 8
+derived ('TypeError', "type 'sys.version_info' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'sys.version_info'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4), {}, 5)
+__new__ for tuple (0, 1, 2, 3, 4)
+tuple's __new__ ('TypeError', "cannot create 'sys.version_info' instances")
+object's __new__ ('TypeError', "cannot create 'sys.version_info' instances")
+__class__ TypeError
+__bases__ ('TypeError', "type 'sys.version_info' is not an acceptable base type")
+--- float_info 11 11 0 tuple 8
+derived ('TypeError', "type 'sys.float_info' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'sys.float_info'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), {}, 11)
+__new__ for tuple ('TypeError', 'sys.float_info.__new__(tuple): tuple is not a subtype of sys.float_info')
+tuple's __new__ ('TypeError', 'tuple.__new__(sys.float_info) is not safe, use sys.float_info.__new__()')
+object's __new__ ('TypeError', 'object.__new__(sys.float_info) is not safe, use sys.float_info.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'sys.float_info' is not an acceptable base type")
+--- flags 22 18 0 tuple 8
+derived ('TypeError', "type 'sys.flags' is not an acceptable base type")
+by mro() ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('sys.flags')")
+an instance ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('sys.flags')")
+__new__ for tuple (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
+tuple's __new__ ('TypeError', "cannot create 'sys.flags' instances")
+object's __new__ ('TypeError', "cannot create 'sys.flags' instances")
+__class__ TypeError
+__bases__ ('TypeError', "type 'sys.flags' is not an acceptable base type")
+--- hash_info 9 9 0 tuple 8
+derived ('TypeError', "type 'sys.hash_info' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'sys.hash_info'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4, 5, 6, 7, 8), {}, 9)
+__new__ for tuple ('TypeError', 'sys.hash_info.__new__(tuple): tuple is not a subtype of sys.hash_info')
+tuple's __new__ ('TypeError', 'tuple.__new__(sys.hash_info) is not safe, use sys.hash_info.__new__()')
+object's __new__ ('TypeError', 'object.__new__(sys.hash_info) is not safe, use sys.hash_info.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'sys.hash_info' is not an acceptable base type")
+--- int_info 4 4 0 tuple 8
+derived ('TypeError', "type 'sys.int_info' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'sys.int_info'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3), {}, 4)
+__new__ for tuple ('TypeError', 'sys.int_info.__new__(tuple): tuple is not a subtype of sys.int_info')
+tuple's __new__ ('TypeError', 'tuple.__new__(sys.int_info) is not safe, use sys.int_info.__new__()')
+object's __new__ ('TypeError', 'object.__new__(sys.int_info) is not safe, use sys.int_info.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'sys.int_info' is not an acceptable base type")
+--- thread_info 3 3 0 tuple 8
+derived ('TypeError', "type 'sys.thread_info' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'sys.thread_info'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2), {}, 3)
+__new__ for tuple ('TypeError', 'sys.thread_info.__new__(tuple): tuple is not a subtype of sys.thread_info')
+tuple's __new__ ('TypeError', 'tuple.__new__(sys.thread_info) is not safe, use sys.thread_info.__new__()')
+object's __new__ ('TypeError', 'object.__new__(sys.thread_info) is not safe, use sys.thread_info.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'sys.thread_info' is not an acceptable base type")
+--- struct_rusage 16 16 0 tuple 8
+derived ('TypeError', "type 'resource.struct_rusage' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'resource.struct_rusage'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), {}, 16)
+__new__ for tuple ('TypeError', 'resource.struct_rusage.__new__(tuple): tuple is not a subtype of resource.struct_rusage')
+tuple's __new__ ('TypeError', 'tuple.__new__(resource.struct_rusage) is not safe, use resource.struct_rusage.__new__()')
+object's __new__ ('TypeError', 'object.__new__(resource.struct_rusage) is not safe, use resource.struct_rusage.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'resource.struct_rusage' is not an acceptable base type")
+--- struct_passwd 7 7 0 tuple 8
+derived ('TypeError', "type 'pwd.struct_passwd' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'pwd.struct_passwd'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3, 4, 5, 6), {}, 7)
+__new__ for tuple ('TypeError', 'pwd.struct_passwd.__new__(tuple): tuple is not a subtype of pwd.struct_passwd')
+tuple's __new__ ('TypeError', 'tuple.__new__(pwd.struct_passwd) is not safe, use pwd.struct_passwd.__new__()')
+object's __new__ ('TypeError', 'object.__new__(pwd.struct_passwd) is not safe, use pwd.struct_passwd.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'pwd.struct_passwd' is not an acceptable base type")
+--- struct_group 4 4 0 tuple 8
+derived ('TypeError', "type 'grp.struct_group' is not an acceptable base type")
+by mro() (<class '__main__.derive.<locals>.Derived'>, <class 'grp.struct_group'>, <class 'tuple'>, <class 'object'>)
+an instance ('Derived', (0, 1, 2, 3), {}, 4)
+__new__ for tuple ('TypeError', 'grp.struct_group.__new__(tuple): tuple is not a subtype of grp.struct_group')
+tuple's __new__ ('TypeError', 'tuple.__new__(grp.struct_group) is not safe, use grp.struct_group.__new__()')
+object's __new__ ('TypeError', 'object.__new__(grp.struct_group) is not safe, use grp.struct_group.__new__()')
+__class__ TypeError
+__bases__ ('TypeError', "type 'grp.struct_group' is not an acceptable base type")
+--- as ever
+time.struct_time(tm_year=0, tm_mon=1, tm_mday=2, tm_hour=3, tm_min=4, tm_sec=5, tm_wday=6, tm_yday=7, tm_isdst=8) 9 10 9 (0, 1, 2) (<class 'time.struct_time'>, ((0, 1, 2, 3, 4, 5, 6, 7, 8), {'tm_zone': 9, 'tm_gmtoff': 10}))
+vars ('TypeError', 'vars() argument must have __dict__ attribute')
+__dict__ ('AttributeError', "'time.struct_time' object has no attribute '__dict__'")
+10 10 16 14
+True 9 10 Z
+--- a class that only names one
+{} (<class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+0 ((), 'C', {})
+repr C()
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+1 ((0,), 'C', {})
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+2 ((0, 1), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+3 ((0, 1, 2), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+4 ((0, 1, 2, 3), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+__new__ of the one named ('TypeError', 'os.terminal_size.__new__(C) is not safe, use C.__new__()')
+tuple's (1, 2, 3)
+derived from it ('TypeError', 'vars() argument must have __dict__ attribute')
+given it as a base None
+given it as a base ((<class '__main__.E'>, <class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>), (0, 1, 2))
+{'n_fields': 4} (<class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+0 ((), 'C', {})
+repr C()
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+1 ((0,), 'C', {})
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+2 ((0, 1), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+3 ((0, 1, 2), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+4 ((0, 1, 2, 3), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+__new__ of the one named ('TypeError', 'os.terminal_size.__new__(C) is not safe, use C.__new__()')
+tuple's (1, 2, 3)
+derived from it ('TypeError', 'vars() argument must have __dict__ attribute')
+given it as a base None
+given it as a base ((<class '__main__.E'>, <class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>), (0, 1, 2))
+{'n_sequence_fields': 0} (<class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+0 ((), 'C', {})
+repr C()
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+1 ((0,), 'C', {})
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+2 ((0, 1), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+3 ((0, 1, 2), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+4 ((0, 1, 2, 3), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+__new__ of the one named ('TypeError', 'os.terminal_size.__new__(C) is not safe, use C.__new__()')
+tuple's (1, 2, 3)
+derived from it ('TypeError', 'vars() argument must have __dict__ attribute')
+given it as a base None
+given it as a base ((<class '__main__.E'>, <class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>), (0, 1, 2))
+{'n_fields': 100, 'n_sequence_fields': 50} (<class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+0 ((), 'C', {})
+repr C()
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+1 ((0,), 'C', {})
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+2 ((0, 1), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+3 ((0, 1, 2), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+4 ((0, 1, 2, 3), 'C', {})
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+__new__ of the one named ('TypeError', 'os.terminal_size.__new__(C) is not safe, use C.__new__()')
+tuple's (1, 2, 3)
+derived from it ('TypeError', 'vars() argument must have __dict__ attribute')
+given it as a base None
+given it as a base ((<class '__main__.E'>, <class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>), (0, 1, 2))
+{'__slots__': ()} (<class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+0 ((), 'C', 'no dict')
+repr C()
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+1 ((0,), 'C', 'no dict')
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+2 ((0, 1), 'C', 'no dict')
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+3 ((0, 1, 2), 'C', 'no dict')
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+4 ((0, 1, 2, 3), 'C', 'no dict')
+columns, lines (0, 1)
+repr ('SystemError', 'In structseq_repr(), member 0 name is NULL for type C')
+__reduce__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+__replace__ ('TypeError', "Missed attribute 'n_unnamed_fields' of type C")
+an attribute ('AttributeError', "'C' object has no attribute 'nothing'")
+__new__ of the one named ('TypeError', 'os.terminal_size.__new__(C) is not safe, use C.__new__()')
+tuple's (1, 2, 3)
+derived from it ((<class '__main__.D'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>), (0, 1, 2), None)
+given it as a base None
+given it as a base ((<class '__main__.E'>, <class '__main__.C'>, <class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>), (0, 1, 2))
+--- the bases of one are set
+to what they are None
+by mro() ('TypeError', "derive.<locals>.Derived.mro() returned base with unsuitable layout ('time.struct_time')")
+to another ('TypeError', "__bases__ assignment: 'object' object layout differs from 'tuple'")
+to another ('TypeError', "type 'os.terminal_size' is not an acceptable base type")
+(<class 'time.struct_time'>, <class 'tuple'>, <class 'object'>) None
+--- what the types have
+struct_time ['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'tm_gmtoff', 'tm_hour', 'tm_isdst', 'tm_mday', 'tm_min', 'tm_mon', 'tm_sec', 'tm_wday', 'tm_yday', 'tm_year', 'tm_zone']
+stat_result ['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'st_atime', 'st_atime_ns', 'st_blksize', 'st_blocks', 'st_ctime', 'st_ctime_ns', 'st_dev', 'st_gid', 'st_ino', 'st_mode', 'st_mtime', 'st_mtime_ns', 'st_nlink', 'st_rdev', 'st_size', 'st_uid']
+statvfs_result ['f_bavail', 'f_bfree', 'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag', 'f_frsize', 'f_fsid', 'f_namemax', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields']
+terminal_size ['columns', 'lines', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields']
+times_result ['children_system', 'children_user', 'elapsed', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'system', 'user']
+uname_result ['machine', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'nodename', 'release', 'sysname', 'version']
+version_info ['major', 'micro', 'minor', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'releaselevel', 'serial']
+float_info ['dig', 'epsilon', 'mant_dig', 'max', 'max_10_exp', 'max_exp', 'min', 'min_10_exp', 'min_exp', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'radix', 'rounds']
+flags ['bytes_warning', 'context_aware_warnings', 'debug', 'dev_mode', 'dont_write_bytecode', 'gil', 'hash_randomization', 'ignore_environment', 'inspect', 'int_max_str_digits', 'interactive', 'isolated', 'lazy_imports', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'no_site', 'no_user_site', 'optimize', 'quiet', 'safe_path', 'thread_inherit_context', 'utf8_mode', 'verbose', 'warn_default_encoding']
+hash_info ['algorithm', 'cutoff', 'hash_bits', 'imag', 'inf', 'modulus', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'nan', 'seed_bits', 'width']
+int_info ['bits_per_digit', 'default_max_str_digits', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'sizeof_digit', 'str_digits_check_threshold']
+thread_info ['lock', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'name', 'version']
+struct_rusage ['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'ru_idrss', 'ru_inblock', 'ru_isrss', 'ru_ixrss', 'ru_majflt', 'ru_maxrss', 'ru_minflt', 'ru_msgrcv', 'ru_msgsnd', 'ru_nivcsw', 'ru_nsignals', 'ru_nswap', 'ru_nvcsw', 'ru_oublock', 'ru_stime', 'ru_utime']
+struct_passwd ['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'pw_dir', 'pw_gecos', 'pw_gid', 'pw_name', 'pw_passwd', 'pw_shell', 'pw_uid']
+struct_group ['gr_gid', 'gr_mem', 'gr_name', 'gr_passwd', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields']
+--- what is written to one
+n_fields = 100 (os.terminal_size(columns=1, lines=2), 2)
+a name that means nothing (os.terminal_size(columns=1, lines=2), (<class 'os.terminal_size'>, ((1, 2), {})), os.terminal_size(columns=1, lines=3))
+a field (os.terminal_size(columns=1, lines=2), 7, os.terminal_size(columns=3, lines=2))
+--- one that its type has not made, handed to what reads it
+sched_setparam TypeError
+__reduce__ done
+sched_setparam TypeError
+sched_priority done
+__reduce__ (5,)
+excepthook ('TypeError', '_thread.excepthook argument type must be ExceptHookArgs')
+excepthook ('TypeError', '_thread.excepthook argument type must be ExceptHookArgs')
+--- types that are found again
+__asyncgen_hooks_type__ False
+__unraisable_hook_args_type__ False
+get_asyncgen_hooks asyncgen_hooks(firstiter=None, finalizer=None)
+unraisable UnraisableHookArgs 5 ValueError
+unraisablehook ('TypeError', 'sys.unraisablehook argument type must be UnraisableHookArgs')
+flags True

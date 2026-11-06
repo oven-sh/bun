@@ -760,9 +760,24 @@ for (const { body, fn } of bodyTypes) {
           },
         );
         test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
-          // The client must consume "A" before the drop reaches the HTTP
-          // thread: a failure that arrives in the same progress update as
-          // unread body bytes errors the body and discards those bytes.
+          // "A" reaches the reader even when the drop arrives together with it.
+          await using server = await rawChunkedServer(async sock => {
+            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            sock.destroy();
+          });
+          const res = await fetch(`http://127.0.0.1:${server.port}/`);
+          let received = "";
+          let error: any;
+          try {
+            for await (const ch of res.textStream()) received += ch;
+          } catch (e) {
+            error = e;
+          }
+          expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
+        });
+        test("rejects a fetch textStream() when the connection drops after a decode the reader saw", async () => {
+          // The server waits for the reader to take "A", so the incomplete
+          // bytes are a pull of their own that decodes to nothing.
           const consumedFirstChunk = Promise.withResolvers<void>();
           await using server = await rawChunkedServer(async sock => {
             await writeChunk(sock, [0x41]);
@@ -781,7 +796,6 @@ for (const { body, fn } of bodyTypes) {
           } catch (e) {
             error = e;
           } finally {
-            // Let the server finish (and close the socket) if the stream ended early.
             consumedFirstChunk.resolve();
           }
           expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
@@ -1530,6 +1544,131 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 205, body: null, text: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A server that closes the connection before the body ends. The bytes it sent
+// before the close still reach a reader, and only then does the read reject
+// with ECONNRESET, as in node. `shutdown()` sends the FIN at once on every
+// platform (`end()` alone defers it on Windows until the data handler returns),
+// and the `Bun.sleepSync` after it keeps the JS thread busy until the HTTP
+// thread has seen both the bytes and the close, so the two always reach the
+// body in one batch (the case #48008 reports).
+describe("a fetch() body cut short by the server", () => {
+  const head = {
+    chunked: "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n",
+    contentLength: "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\n",
+  };
+  const partialBody = {
+    chunked: "6\r\nhello\n\r\n",
+    contentLength: "hello\n",
+  };
+  type Framing = keyof typeof head;
+
+  // Sends the head and the bytes, then closes. With `whenToCut`, only the head
+  // goes out at once: the bytes and the close wait for it. `beforeClose` runs
+  // between the bytes and the close.
+  function listen(framing: Framing, whenToCut?: Promise<void>, beforeClose?: () => void) {
+    return Bun.listen<{ request: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { request: "" };
+        },
+        async data(socket, data) {
+          socket.data.request += data.toString("latin1");
+          if (!socket.data.request.includes("\r\n\r\n")) return;
+          if (whenToCut) {
+            socket.write(head[framing]);
+            await whenToCut;
+            socket.write(partialBody[framing]);
+          } else {
+            socket.write(head[framing] + partialBody[framing]);
+          }
+          beforeClose?.();
+          socket.shutdown();
+          socket.end();
+          Bun.sleepSync(50);
+        },
+      },
+    });
+  }
+
+  async function readAll(res: Response) {
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    let error: any;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += decoder.decode(value, { stream: true });
+      }
+    } catch (e) {
+      error = e;
+    }
+    return { received, code: error?.code };
+  }
+
+  test.each(["chunked", "contentLength"] as Framing[])(
+    "%s: the head, the bytes and the close in one batch: a reader gets the bytes, then ECONNRESET",
+    async framing => {
+      using server = listen(framing);
+      for (let i = 0; i < 5; i++) {
+        const res = await fetch(`http://127.0.0.1:${server.port}/`);
+        expect(await readAll(res)).toEqual({ received: "hello\n", code: "ECONNRESET" });
+      }
+    },
+  );
+
+  test.each(["chunked", "contentLength"] as Framing[])(
+    "%s: the bytes and the close in one batch while a read is pending: the read gets the bytes, then ECONNRESET",
+    async framing => {
+      const cut = Promise.withResolvers<void>();
+      using server = listen(framing, cut.promise);
+      const res = await fetch(`http://127.0.0.1:${server.port}/`);
+      const reader = res.body!.getReader();
+      const first = reader.read();
+      cut.resolve();
+      expect(new TextDecoder().decode((await first).value)).toBe("hello\n");
+      const error = await reader.read().then(
+        () => null,
+        e => e,
+      );
+      expect(error?.code).toBe("ECONNRESET");
+    },
+  );
+
+  test("the whole body rejects: text() gets ECONNRESET and no partial result", async () => {
+    using server = listen("chunked");
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const error = await res.text().then(
+      () => null,
+      e => e,
+    );
+    expect(error?.code).toBe("ECONNRESET");
+  });
+
+  // An abort in the same batch as the bytes is not a server cut: the read
+  // rejects with the abort reason at once, and the bytes are dropped. The
+  // abort errors the body on the JS thread before the batch arrives, so this
+  // pins what a reader sees, not which layer decides it.
+  test("an abort in the same batch as the bytes and the close: the pending read rejects with AbortError, no bytes first", async () => {
+    for (let i = 0; i < 5; i++) {
+      const cut = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      using server = listen("chunked", cut.promise, () => controller.abort());
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, { signal: controller.signal });
+      const reader = res.body!.getReader();
+      const first = reader.read().then(
+        ({ value }) => ({ value: new TextDecoder().decode(value), name: null }),
+        e => ({ value: null, name: e.name }),
+      );
+      cut.resolve();
+      expect(await first).toEqual({ value: null, name: "AbortError" });
+    }
   });
 });
 

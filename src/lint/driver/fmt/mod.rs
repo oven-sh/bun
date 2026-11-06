@@ -1315,6 +1315,110 @@ fn for_each_with_worker(
     pool.for_each_while(threads, threads.min(count), 1, &work_off, meanwhile);
 }
 
+/// What is done with each of the files that were found. An index is one in the list of expanded arguments.
+#[derive(Default)]
+struct Plan<'t> {
+    /// Extensions of files in unsupported languages, with how many files have each.
+    others: Vec<(&'t [u8], usize)>,
+    /// How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
+    left_for_plugins: (usize, Vec<&'t [u8]>),
+    /// Files that are formatted here.
+    work: Vec<(usize, &'t Target)>,
+    /// Files handed to the project's own Prettier.
+    handed_over: Vec<(usize, &'t Target)>,
+    /// The packages that must be installed before more files can be handed over.
+    not_installed: Vec<&'t [u8]>,
+    /// What is known by now, by index.
+    done: Vec<Option<Done>>,
+}
+
+impl<'t> Plan<'t> {
+    fn of(
+        expanded: &'t [Expanded],
+        configs: &'t Configs,
+        ignored: &Ignored,
+        options: &Options,
+        cwd: &[u8],
+    ) -> Plan<'t> {
+        let mut plan = Plan {
+            done: Vec::with_capacity(expanded.len()),
+            ..Plan::default()
+        };
+        let is_included = |target: &Target| match target.is_named {
+            true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
+            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
+            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
+        };
+        let mut packages: Vec<(&[u8], bool)> = Vec::new();
+        let mut has_package = |name| match packages.iter().find(|it| it.0 == name) {
+            Some(known) => known.1,
+            None => {
+                packages.push((name, prettier::is_installed(cwd, name)));
+                packages.last().is_some_and(|it| it.1)
+            }
+        };
+        for (index, it) in expanded.iter().enumerate() {
+            plan.done.push(None);
+            let Expanded::File(target) = it else {
+                continue;
+            };
+            let missing_plugins = match options.allow_unsupported {
+                true => &[][..],
+                false => configs.missing_plugins(&target.scope, Some(&target.path)),
+            };
+            match target.language {
+                _ if !is_included(target) => {}
+                Language::Supported if !missing_plugins.is_empty() => {
+                    plan.left_for_plugins.0 += 1;
+                    for name in missing_plugins {
+                        if !plan.left_for_plugins.1.contains(&&name[..]) {
+                            plan.left_for_plugins.1.push(name);
+                        }
+                    }
+                }
+                Language::Supported => plan.work.push((index, target)),
+                Language::Other
+                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
+                        && [&b"prettier"[..]]
+                            .into_iter()
+                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
+                            .all(&mut has_package) =>
+                {
+                    plan.handed_over.push((index, target));
+                }
+                Language::Other => {
+                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
+                        for package in [&b"prettier"[..]]
+                            .into_iter()
+                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
+                        {
+                            if !has_package(package) && !plan.not_installed.contains(&package) {
+                                plan.not_installed.push(package);
+                            }
+                        }
+                    }
+                    let kind = extension_or_name(&target.path);
+                    match plan.others.iter_mut().find(|it| it.0 == kind) {
+                        Some(entry) => entry.1 += 1,
+                        None => plan.others.push((kind, 1)),
+                    }
+                }
+                Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
+                Language::Unknown => {
+                    let path = target.path.clone();
+                    plan.done[index] = Some(Done::Failed(has_no_parser(configs, path)));
+                }
+            }
+        }
+        plan
+    }
+
+    /// True if names are collected that the user reads in the order in which their files come.
+    fn names_things_in_order(&self) -> bool {
+        self.left_for_plugins.1.len() > 1 || self.not_installed.len() > 1
+    }
+}
+
 struct Run<'r> {
     options: &'r Options,
     environment: &'r Environment<'r>,
@@ -1830,6 +1934,88 @@ impl Run<'_> {
         self.out
     }
 
+    /// `--bench`: formats `loaded`, which has the path, the options and the text of each file that could be read, as
+    /// often as the flag says. Prints how long each round took, and which way the scripts went in the last one.
+    fn measure(
+        mut self,
+        loaded: &[Option<(&[u8], Resolved, Vec<u8>)>],
+        on_threads: (&Pool, usize),
+        workers: &[Guarded<Option<Box<Worker>>>],
+        (atoms, memory): (&InternerPerThread, &Session),
+    ) -> Outcome {
+        let verifies = self.options.debug_check;
+        let mut best = f64::MAX;
+        for round in 0..self.options.bench {
+            // A round stands for a run.
+            for worker in workers {
+                let mut worker = worker.lock();
+                let worker = worker.get_or_insert_default();
+                worker.scratch.forget_other_files();
+                worker.scratch.count_quick_way();
+            }
+            let began = Instant::now();
+            let format_loaded = |worker: &mut Worker, at: usize| {
+                let Some((path, resolved, text)) = &loaded[at] else {
+                    return;
+                };
+                let names = (atoms as &dyn Intern, memory);
+                let formatted = format(path, text, resolved, names, &mut worker.scratch, verifies);
+                if let Ok((formatted, _)) = std::hint::black_box(formatted) {
+                    worker.scratch.spare = formatted;
+                }
+            };
+            for_each_with_worker(
+                on_threads,
+                workers,
+                loaded.len(),
+                &format_loaded,
+                &mut || {},
+            );
+            let took = began.elapsed().as_secs_f64() * 1e3;
+            best = best.min(took);
+            let _ = writeln!(self.out.stderr, "round {round}: {took:.2} ms");
+        }
+        let _ = writeln!(self.out.stderr, "best round {best:.2} ms");
+        let mut counts = bun_format::quick::Counts::default();
+        for worker in workers {
+            let worker = worker.lock();
+            let scratch = worker.as_deref().map(|it| &it.scratch);
+            for it in scratch.into_iter().flat_map(Scratches::quick_way_counts) {
+                counts.printed.merge(it.printed);
+                for (sum, count) in counts.refused.iter_mut().zip(it.refused) {
+                    sum.merge(count);
+                }
+                for (sum, count) in counts.rare.iter_mut().zip(it.rare) {
+                    sum.merge(count);
+                }
+            }
+        }
+        let _ = writeln!(
+            self.out.stderr,
+            "the quick way: {} scripts, {} bytes",
+            counts.printed.texts, counts.printed.bytes
+        );
+        for (reason, count) in bun_format::quick::Reason::ALL.iter().zip(counts.refused) {
+            if count.texts > 0 {
+                let _ = writeln!(
+                    self.out.stderr,
+                    "  refused, {reason:?}: {} scripts, {} bytes",
+                    count.texts, count.bytes
+                );
+            }
+        }
+        for (which, count) in counts.rare.iter().enumerate() {
+            if count.texts > 0 {
+                let _ = writeln!(
+                    self.out.stderr,
+                    "    rare thing {which}: {} scripts, {} bytes",
+                    count.texts, count.bytes
+                );
+            }
+        }
+        self.out
+    }
+
     /// Prettier's `formatFiles`
     fn format_files(mut self, configs: &Configs, ignored: &mut Ignored) -> Outcome {
         let (options, cwd) = (self.options, &self.environment.cwd);
@@ -1905,99 +2091,23 @@ impl Run<'_> {
         }
         let finding = started.elapsed();
 
-        let (mut others, left_for_plugins, work, handed_over, not_installed, done) = loop {
-            let expanded = &expansion.all;
-            // Extensions of files in unsupported languages, with how many files have each.
-            let mut others: Vec<(&[u8], usize)> = Vec::new();
-            // How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
-            let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
-            let is_included = |target: &Target| match target.is_named {
-                true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
-                // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
-                false => {
-                    !(files::is_generated(&target.path) && configs.is_native_in(&target.scope))
-                }
-            };
-            let mut work: Vec<(usize, &Target)> = Vec::new();
-            // Files handed to the project's own Prettier, and the packages that must be installed before more files can be.
-            let mut handed_over: Vec<(usize, &Target)> = Vec::new();
-            let mut not_installed: Vec<&[u8]> = Vec::new();
-            let mut packages: Vec<(&[u8], bool)> = Vec::new();
-            let mut has_package = |name| match packages.iter().find(|it| it.0 == name) {
-                Some(known) => known.1,
-                None => {
-                    packages.push((name, prettier::is_installed(cwd, name)));
-                    packages.last().is_some_and(|it| it.1)
-                }
-            };
-            let mut done: Vec<Option<Done>> = Vec::with_capacity(expanded.len());
-            for (index, it) in expanded.iter().enumerate() {
-                done.push(None);
-                let Expanded::File(target) = it else {
-                    continue;
-                };
-                let missing_plugins = match options.allow_unsupported {
-                    true => &[][..],
-                    false => configs.missing_plugins(&target.scope, Some(&target.path)),
-                };
-                match target.language {
-                    _ if !is_included(target) => {}
-                    Language::Supported if !missing_plugins.is_empty() => {
-                        left_for_plugins.0 += 1;
-                        for name in missing_plugins {
-                            if !left_for_plugins.1.contains(&&name[..]) {
-                                left_for_plugins.1.push(name);
-                            }
-                        }
-                    }
-                    Language::Supported => work.push((index, target)),
-                    Language::Other
-                        if configs.is_formatted_by_plugin(&target.scope, &target.path)
-                            && [&b"prettier"[..]]
-                                .into_iter()
-                                .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                                .all(&mut has_package) =>
-                    {
-                        handed_over.push((index, target));
-                    }
-                    Language::Other => {
-                        if configs.is_formatted_by_plugin(&target.scope, &target.path) {
-                            for package in [&b"prettier"[..]]
-                                .into_iter()
-                                .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                            {
-                                if !has_package(package) && !not_installed.contains(&package) {
-                                    not_installed.push(package);
-                                }
-                            }
-                        }
-                        let kind = extension_or_name(&target.path);
-                        match others.iter_mut().find(|it| it.0 == kind) {
-                            Some(entry) => entry.1 += 1,
-                            None => others.push((kind, 1)),
-                        }
-                    }
-                    Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
-                    Language::Unknown => {
-                        let path = target.path.clone();
-                        done[index] = Some(Done::Failed(has_no_parser(configs, path)));
-                    }
-                }
-            }
-            // These are named in the order in which their files come.
-            if !expansion.is_sorted() && (left_for_plugins.1.len() > 1 || not_installed.len() > 1) {
+        let first_plan = Plan::of(&expansion.all, configs, ignored, options, cwd);
+        let plan = match !expansion.is_sorted() && first_plan.names_things_in_order() {
+            true => {
+                drop(first_plan);
                 expansion.put_in_order();
-                continue;
+                Plan::of(&expansion.all, configs, ignored, options, cwd)
             }
-            break (
-                others,
-                left_for_plugins,
-                work,
-                handed_over,
-                not_installed,
-                done,
-            );
+            false => first_plan,
         };
+        let Plan {
+            mut others,
+            left_for_plugins,
+            work,
+            handed_over,
+            not_installed,
+            done,
+        } = plan;
         let expanded = &expansion.all;
         if let Some(modules) = self.modules {
             let sorted = doctor::Sorted {
@@ -2156,80 +2266,15 @@ impl Run<'_> {
             (worker.done).push((index, result.unwrap_or_else(Done::Failed)));
         };
         let on_threads = (&pool, threads);
-        if options.bench > 0 {
-            let loaded: Vec<Option<(Resolved, Vec<u8>)>> = (work.iter())
+        if cli::HAS_FLAGS_FOR_TESTS && options.bench > 0 {
+            let loaded: Vec<_> = (work.iter())
                 .map(|(_, target)| {
                     let resolved = configs.options_for(&target.scope, &target.path).ok()?;
-                    Some((resolved, git::read(only.as_ref(), &target.path).ok()?))
+                    let text = git::read(only.as_ref(), &target.path).ok()?;
+                    Some((&target.path[..], resolved, text))
                 })
                 .collect();
-            let mut best = f64::MAX;
-            for round in 0..options.bench {
-                // A round stands for a run.
-                for worker in &workers {
-                    let mut worker = worker.lock();
-                    let worker = worker.get_or_insert_default();
-                    worker.scratch.forget_other_files();
-                    worker.scratch.count_quick_way();
-                }
-                let began = Instant::now();
-                let format_loaded = |worker: &mut Worker, at: usize| {
-                    let Some((resolved, text)) = &loaded[at] else {
-                        return;
-                    };
-                    let names = (&atoms as &dyn Intern, &memory);
-                    let path = &work[at].1.path;
-                    let verifies = options.debug_check;
-                    let formatted =
-                        format(path, text, resolved, names, &mut worker.scratch, verifies);
-                    if let Ok((formatted, _)) = std::hint::black_box(formatted) {
-                        worker.scratch.spare = formatted;
-                    }
-                };
-                for_each_with_worker(on_threads, &workers, work.len(), &format_loaded, &mut || {});
-                let took = began.elapsed().as_secs_f64() * 1e3;
-                best = best.min(took);
-                let _ = writeln!(self.out.stderr, "round {round}: {took:.2} ms");
-            }
-            let _ = writeln!(self.out.stderr, "best round {best:.2} ms");
-            let mut counts = bun_format::quick::Counts::default();
-            for worker in &workers {
-                let worker = worker.lock();
-                let scratch = worker.as_deref().map(|it| &it.scratch);
-                for it in scratch.into_iter().flat_map(Scratches::quick_way_counts) {
-                    counts.printed.merge(it.printed);
-                    for (sum, count) in counts.refused.iter_mut().zip(it.refused) {
-                        sum.merge(count);
-                    }
-                    for (sum, count) in counts.rare.iter_mut().zip(it.rare) {
-                        sum.merge(count);
-                    }
-                }
-            }
-            let _ = writeln!(
-                self.out.stderr,
-                "the quick way: {} scripts, {} bytes",
-                counts.printed.texts, counts.printed.bytes
-            );
-            for (reason, count) in bun_format::quick::Reason::ALL.iter().zip(counts.refused) {
-                if count.texts > 0 {
-                    let _ = writeln!(
-                        self.out.stderr,
-                        "  refused, {reason:?}: {} scripts, {} bytes",
-                        count.texts, count.bytes
-                    );
-                }
-            }
-            for (which, count) in counts.rare.iter().enumerate() {
-                if count.texts > 0 {
-                    let _ = writeln!(
-                        self.out.stderr,
-                        "    rare thing {which}: {} scripts, {} bytes",
-                        count.texts, count.bytes
-                    );
-                }
-            }
-            return self.out;
+            return self.measure(&loaded, on_threads, &workers, (&atoms, &memory));
         }
         // Keyed by the file's index in `expanded`.
         let mut warnings: Vec<(usize, Vec<Problem>)> = Vec::new();

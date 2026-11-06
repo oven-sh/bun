@@ -1001,6 +1001,180 @@ for i in range(2):
       expect(exitCode).toBe(0);
     });
 
+    // It used to be raised in the flush() that wrote the prompt, of which input() does not want to know how it went: input() then read
+    // the line.
+    test("input(): a Ctrl-C that comes when input() has begun is raised, before the prompt", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["first", "\r"],
+          ["second", "\r"],
+          ["third", "\r"],
+          ["the end", "end\r"],
+        ],
+        {
+          files: {
+            "main.py": `
+import _thread, sys, termios
+attributes = termios.tcgetattr(0)
+attributes[3] &= ~termios.ECHO
+termios.tcsetattr(0, termios.TCSANOW, attributes)
+class Errors:
+    # The first thing that input() calls.
+    flush = staticmethod(_thread.interrupt_main)
+    def write(self, text): sys.__stderr__.write(text)
+def ask(name, file, *prompt):
+    print(name, flush=True)
+    # What it holds is written out ahead of the prompt, or of the read, by code that reports what is raised meanwhile.
+    if file: file.write("text")
+    sys.stderr = Errors()
+    try:
+        result = "returned " + repr(input(*prompt))
+    except KeyboardInterrupt:
+        result = "KeyboardInterrupt"
+    sys.stderr = sys.__stderr__
+    print(result)
+ask("first", None, "prompt? ")
+ask("second", open("held", "w"), "prompt? ")
+ask("third", open("held too", "w"))
+# Nothing is typed when this has ended, and the terminal shows again what is typed.
+print("the end", flush=True)
+for line in sys.stdin:
+    if line == "end\\n": break
+`,
+          },
+        },
+      );
+      expect(output).toBe("first\nKeyboardInterrupt\nsecond\nKeyboardInterrupt\nthird\nKeyboardInterrupt\nthe end\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("input(): the prompt goes to the standard error of C, in the encoding of sys.stdout", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["first", "a\r"],
+          ["second", "b\r"],
+          ["third", "c\r"],
+          ["fourth", "d\r"],
+          ["fifth", "e\r"],
+          ["sixth", "f\r"],
+          ["seventh", "g\r"],
+          ["eighth", "\x04"],
+          ["kept from being imported", "h\r"],
+          ["one of the program's", "k\r"],
+          ["edited? ", "i\r"],
+          ["from a thread? ", "j\r"],
+        ],
+        {
+          files: {
+            "main.py": `
+import os, sys
+saved = os.dup(2)
+os.dup2(os.open("prompts", os.O_WRONLY | os.O_CREAT), 2)
+class Output:
+    def __init__(self): self.written = []
+    def fileno(self): return 1
+    def write(self, text): self.written.append(text)
+    def flush(self): pass
+class Encoded(Output):
+    encoding = "ascii"
+    errors = "replace"
+class Input:
+    def fileno(self): return 0
+    def readline(self): return sys.__stdin__.readline()
+class Prompt:
+    def __str__(self):
+        print("is asked for after the flush", end="")
+        return "late? "
+events = []
+sys.addaudithook(lambda name, args: events.append(name) if name.startswith("builtins.input") else None)
+def ask(name, prompt, output=sys.stdout, input_=sys.stdin):
+    print(name, flush=True)
+    sys.stdout, sys.stdin = output, input_
+    try: result = repr(input(prompt))
+    except (ValueError, EOFError) as e: result = repr(e)
+    finally: sys.stdout, sys.stdin = sys.__stdout__, sys.__stdin__
+    print(result, getattr(output, "written", None), events)
+    del events[:]
+ask("first", "plain? ")
+ask("second", 42)
+ask("no answer", "a\\0b")
+ask("third", "\\xe9? ", Encoded())
+ask("fourth", "through sys.stdout? ", Output())
+ask("fifth", "on the terminal? ", input_=Input())
+print("what is buffered, ", end="")
+ask("sixth", Prompt())
+os.fdopen(os.dup(2), "w").write("what a file that was dropped still held, ")
+ask("seventh", "behind it? ")
+ask("eighth", "the end? ")
+# What has the name need not be the editor.
+sys.modules["readline"] = None
+ask("kept from being imported", "None? ")
+sys.modules["readline"] = type(sys)("readline")
+ask("one of the program's", "not it? ")
+del sys.modules["readline"]
+import readline
+ask("no answer either", "a\\0b")
+ask("ninth", "edited? ")
+# There the editor declines.
+import threading
+thread = threading.Thread(target=ask, args=("tenth", "from a thread? "))
+thread.start()
+thread.join()
+os.dup2(saved, 2)
+print(open("prompts", "rb").read())
+`,
+          },
+        },
+      );
+      expect(output).toBe(
+        lines(
+          "first",
+          "a",
+          "'a' None ['builtins.input', 'builtins.input/result']",
+          "second",
+          "b",
+          "'b' None ['builtins.input', 'builtins.input/result']",
+          "no answer",
+          "ValueError('input: prompt string cannot contain null characters') None ['builtins.input']",
+          "third",
+          "c",
+          "'c' [] ['builtins.input', 'builtins.input/result']",
+          "fourth",
+          "d",
+          "'d' ['through sys.stdout? '] ['builtins.input']",
+          "fifth",
+          "on the terminal? e",
+          "'e' None ['builtins.input']",
+          "what is buffered, sixth",
+          "f",
+          "is asked for after the flush'f' None ['builtins.input', 'builtins.input/result']",
+          "seventh",
+          "g",
+          "'g' None ['builtins.input', 'builtins.input/result']",
+          "eighth",
+          "EOFError() None ['builtins.input']",
+          "kept from being imported",
+          "h",
+          "'h' None ['builtins.input', 'builtins.input/result']",
+          "one of the program's",
+          "k",
+          "'k' None ['builtins.input', 'builtins.input/result']",
+          "no answer either",
+          "ValueError('input: prompt string cannot contain null characters') None ['builtins.input']",
+          "ninth",
+          "edited? i",
+          "'i' None ['builtins.input', 'builtins.input/result']",
+          "tenth",
+          "from a thread? j",
+          "'j' None ['builtins.input', 'builtins.input/result']",
+          "b'plain? 42?? late? what a file that was dropped still held, behind it? the end? None? not it? '",
+        ),
+      );
+      expect(exitCode).toBe(0);
+    });
+
     test("getpass() does not show what is typed, and puts the terminal back", async () => {
       const { output, exitCode } = await onTerminal(
         ["main.py"],

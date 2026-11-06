@@ -1,0 +1,28 @@
+status: 0
+script: dfb0b59334495cbd
+---
+
+a prompt | holds output: nothing | KeyboardInterrupt []
+
+no prompt | holds output: nothing | KeyboardInterrupt []
+
+an empty prompt | holds output: nothing | KeyboardInterrupt []
+
+a prompt that is not a str | holds output: nothing | KeyboardInterrupt []
+
+a prompt | holds output: another file | KeyboardInterrupt []
+
+no prompt | holds output: another file | KeyboardInterrupt []
+
+an empty prompt | holds output: another file | KeyboardInterrupt []
+
+a prompt that is not a str | holds output: another file | KeyboardInterrupt []
+text, 
+a prompt | holds output: sys.stdout | KeyboardInterrupt []
+text, 
+no prompt | holds output: sys.stdout | returned 'line' []
+text, 
+an empty prompt | holds output: sys.stdout | KeyboardInterrupt []
+text, 
+a prompt that is not a str | holds output: sys.stdout | KeyboardInterrupt []
+prompt? 'line'

@@ -9812,6 +9812,33 @@ try {
       }
     });
 
+    test.each([2, 7])("%d threads write in different directories at the same time", async threads => {
+      const text = ugly.repeat(50);
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 601; i++) files[`${i < 300 ? "a" : "b"}/f${i}.ts`] = text;
+      using dir = tempDir("bun-format", files);
+      await using proc = spawn({
+        cmd: [...command, `--threads=${threads}`, "--log-level=warn"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      const names = Object.keys(files);
+      expect(names.filter(name => readFileSync(join(String(dir), name), "utf8") !== formatted.repeat(50))).toEqual([]);
+      // Only one thread at a time can add a file to a directory, so no directory is done before the next one is begun.
+      const [a, b] = ["a/", "b/"].map(directory =>
+        names
+          .filter(name => name.startsWith(directory))
+          .map(name => statSync(join(String(dir), name)).mtimeMs)
+          .sort((x, y) => x - y),
+      );
+      expect(a[0]).toBeLessThanOrEqual(b[50]);
+      expect(b[0]).toBeLessThanOrEqual(a[50]);
+    });
+
     test("files of one directory get the options of the overrides and sections that match each of them", async () => {
       const text = `function f() {\n  return "a";\n}\n`;
       const names = ["a.ts", "b.ts", "a.test.ts", "b.test.ts", "a.spec.ts", "b.spec.ts", "a.test.mts", "b.test.mts"];

@@ -2029,7 +2029,24 @@ impl Run<'_> {
         let is_big = |it: &(usize, &Target)| it.1.size >= 16 << 10;
         let (mut work, small): (Vec<_>, Vec<_>) = work.into_iter().partition(is_big);
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
-        work.extend(small);
+        let threads =
+            files::threads_to_format(&pool, work.iter().chain(&small).map(|it| it.1.size));
+        match is_read_only {
+            true => work.extend(small),
+            // The files of a directory follow each other, and the system lets one thread at a time add a file to a
+            // directory or rename one in it. The threads take the files one after the other, so what follows each other
+            // here comes from as many parts of the list as there are threads.
+            false => {
+                let part = small.len().div_ceil(threads.max(1)).max(1);
+                let starts = (0..small.len()).step_by(part);
+                let nth_of_each = |at: usize| starts.clone().map(move |start| start + at);
+                work.extend(
+                    (0..part)
+                        .flat_map(nth_of_each)
+                        .filter_map(|at| small.get(at)),
+                );
+            }
+        }
         let started = Instant::now();
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
@@ -2037,7 +2054,6 @@ impl Run<'_> {
             prettier::Prettier::new(self.environment, options, size, pool.threads())
         });
 
-        let threads = files::threads_to_format(&pool, work.iter().map(|it| it.1.size));
         let workers: Vec<Guarded<Option<Box<Worker>>>> =
             (0..threads.max(1)).map(|_| Default::default()).collect();
         let names: Vec<Session> = (0..threads.max(1)).map(|_| Session::new()).collect();

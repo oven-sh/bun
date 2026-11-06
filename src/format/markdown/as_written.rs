@@ -612,6 +612,24 @@ impl<'t> Reader<'t> {
         self.copied = Some(to);
     }
 
+    /// False if what is rewritten is longer than a string can be with `more` bytes. All of it is printed, so the long way
+    /// says so, or leaves code alone whose formatter says so. A range of it has 30 bits for its length: `Str::source`.
+    fn has_room_for(&self, more: usize) -> bool {
+        !crate::is_too_long(self.memory.rewritten.len().saturating_add(more))
+    }
+
+    /// The range of `Memory::rewritten` from `start` on, once the text before `end` is copied. `None`, with nothing left
+    /// from `start` on, if that is too long.
+    #[inline(never)]
+    fn rewritten_from(&mut self, start: usize, end: usize) -> Option<(u32, u32)> {
+        self.copy_up_to(end);
+        if !self.has_room_for(0) {
+            self.memory.rewritten.truncate(start);
+            return None;
+        }
+        Some((start as u32, self.memory.rewritten.len() as u32))
+    }
+
     // ───────────────────────────── blocks ─────────────────────────────
 
     /// `start` is the start of a line with which a block starts that's in no container. Returns where the last of the
@@ -705,10 +723,16 @@ impl<'t> Reader<'t> {
             (self.refused_at, last) = (paragraph, before);
         }
         let (end, last) = last?;
-        let rewritten = self.copied.is_some().then(|| {
-            self.copy_up_to(end);
-            (rewritten_start as u32, self.memory.rewritten.len() as u32)
-        });
+        let rewritten = match self.copied {
+            None => None,
+            Some(_) => match self.rewritten_from(rewritten_start, end) {
+                None => {
+                    (self.refused_at, self.waiting) = (start, None);
+                    return None;
+                }
+                range => range,
+            },
+        };
         self.memory.found.push(Lines {
             start: start as u32,
             end: end as u32,
@@ -764,11 +788,7 @@ impl<'t> Reader<'t> {
         if self.copied.is_none() {
             return Some(None);
         }
-        self.copy_up_to(end);
-        Some(Some((
-            rewritten_start as u32,
-            self.memory.rewritten.len() as u32,
-        )))
+        self.rewritten_from(rewritten_start, end).map(Some)
     }
 
     /// Where the block starts that follows the one of `kind` that ends at `end`, if it isn't indented.
@@ -1471,6 +1491,11 @@ impl<'t> Reader<'t> {
         }
         let is_broken =
             tag.attributes > 1 || has_element || flat + (end - closing) > layout.print_width;
+        // No more than a line for each item.
+        let indentation = (layout.tab_width.saturating_add(8)).saturating_mul(items.len());
+        if !self.has_room_for(indentation.saturating_add(end - start)) {
+            return None;
+        }
         self.copy_up_to(tag.end);
         let out = &mut self.memory.rewritten;
         let mut column = layout.tab_width;
@@ -2616,7 +2641,14 @@ impl<'t> Reader<'t> {
                     })
                 })
         };
-        if let Some(end) = end.filter(|_| !is_aligned()) {
+        let is_aligned = end.is_some() && is_aligned();
+        // How long the rows are with their padding. A character has no more columns than bytes.
+        let end = end.filter(|_| {
+            let row = (widths.iter()).fold(2, |sum: usize, &width| sum + width as usize + 3);
+            is_aligned
+                || self.has_room_for(row.saturating_mul(cells.len() / widths.len().max(1) + 1))
+        });
+        if let Some(end) = end.filter(|_| !is_aligned) {
             self.copy_up_to(at);
             let out = &mut self.memory.rewritten;
             let pad = |out: &mut Vec<u8>, count: u32, with: u8| {

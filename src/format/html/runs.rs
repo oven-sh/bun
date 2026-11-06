@@ -83,6 +83,18 @@ impl Settings {
             has_parent_parser: options.is_in_markdown,
         })
     }
+
+    /// What a line at `level` starts with: a byte, and how many of it. `None` where nothing is read: something nested `n`
+    /// deep is indented by `n * n` blanks, which the printer knows how to deal with, and it says when something is nested
+    /// too deeply for it.
+    #[inline]
+    fn indentation(&self, level: usize) -> Option<(u8, usize)> {
+        let (byte, count) = match self.uses_tabs {
+            true => (b'\t', level),
+            false => (b' ', level * self.indent_width),
+        };
+        (count <= 1024 && level <= 128).then_some((byte, count))
+    }
 }
 
 /// Who formats the code in a template that is not known to be printed as it is written.
@@ -891,7 +903,8 @@ impl Runs {
             }
         }
         self.has_typescript_script |= scanner.has_typescript_script;
-        if scanner.is_indented_too_far {
+        // A `Span` of what is printed has 32 bits. The printer says what is too long.
+        if scanner.is_indented_too_far || crate::is_too_long(scanner.out.len()) {
             (self.scanned_to, self.unread) = (usize::MAX, 0..0);
             return;
         }
@@ -995,8 +1008,7 @@ struct Scanner<'s, 'a> {
     ends_in_text: bool,
     /// The last text that has been looked at.
     measured: Option<Words>,
-    /// What has been written is of no use. Something nested `n` deep is indented by `n * n` blanks, which the printer
-    /// knows how to deal with. And it says when something is nested too deeply for it.
+    /// What has been written is of no use: see `Settings::indentation`.
     is_indented_too_far: bool,
     /// See `Runs::has_typescript_script`.
     has_typescript_script: bool,
@@ -1214,15 +1226,10 @@ impl<'a> Scanner<'_, 'a> {
     /// A line break and the indentation of `level`.
     #[inline]
     fn put_line(&mut self, level: usize) {
-        let (byte, count) = match self.settings.uses_tabs {
-            true => (b'\t', level),
-            false => (b' ', level * self.settings.indent_width),
-        };
-        if count > 1024 || level > 128 {
-            self.is_indented_too_far = true;
-            return;
+        match self.settings.indentation(level) {
+            Some((byte, count)) => self.out.line(byte, count),
+            None => self.is_indented_too_far = true,
         }
-        self.out.line(byte, count);
     }
 
     /// Writes what is printed for the white space from `from` to `to`, which has `line_breaks` line breaks in it, in
@@ -3385,7 +3392,6 @@ impl<'a> Scanner<'_, 'a> {
         let Settings {
             line_width,
             indent_width,
-            uses_tabs,
             formats_embedded,
             has_parent_parser,
             ..
@@ -3428,27 +3434,22 @@ impl<'a> Scanner<'_, 'a> {
             return Some((end, flat_width));
         }
         // A declaration that has no room on its line may be broken. For the rest, see `attribute_with_code`.
-        if (level + 1) * indent_width + longest + 1 > line_width
-            || indent_width > element.len() + 2
-            || level >= 128
-            || (level + 1) * indent_width > 1024
+        if (level + 1) * indent_width + longest + 1 > line_width || indent_width > element.len() + 2
         {
             return None;
         }
-        let put_line = |formatted: &mut Vec<u8>, level: usize| {
+        let (byte, count) = self.settings.indentation(level + 1)?;
+        let put_line = |formatted: &mut Vec<u8>, count: usize| {
             formatted.push(b'\n');
-            match uses_tabs {
-                true => formatted.extend(std::iter::repeat_n(b'\t', level)),
-                false => formatted.extend(std::iter::repeat_n(b' ', level * indent_width)),
-            }
+            formatted.resize(formatted.len() + count, byte);
         };
         self.formatted.extend_from_slice(b"style=\"");
         for declaration in &declarations {
-            put_line(self.formatted, level + 1);
+            put_line(self.formatted, count);
             self.formatted.extend_from_slice(declaration);
             self.formatted.push(b';');
         }
-        put_line(self.formatted, level);
+        put_line(self.formatted, count / (level + 1) * level);
         self.formatted.push(b'"');
         Some((end, TOO_WIDE))
     }

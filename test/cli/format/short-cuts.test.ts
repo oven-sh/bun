@@ -844,6 +844,18 @@ describe("MDX", () => {
     ["--vue-indent-script-and-style"],
   ]);
 
+  // JavaScript says that its result is too long for a string, and the element stays as it is.
+  describe("a level of indentation that is longer than a string can be", () =>
+    expectSame(
+      "a.mdx",
+      [`<A>\n  ${"word ".repeat(30)}word\n</A>\n`, '<A b="c" d>\n  e   f\n</A>\n\n<A>\n  a   <code>b</code>\n</A>\n'],
+      [
+        ["--tab-width=600000000"],
+        ["--tab-width=4294967295", "--print-width=30"],
+        ["--tab-width=600000000", "--use-tabs"],
+      ],
+    ));
+
   // What is formatted already isn't as it's printed if its classes are sorted.
   test.skipIf(!hasFlag).concurrent("with prettier-plugin-tailwindcss", async () => {
     const plugin = "prettier-plugin-tailwindcss";

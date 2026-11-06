@@ -599,13 +599,17 @@ fn write_lines_and_code<'l>(
         {
             return rest;
         }
-        match options.indent_style.is_tab() {
-            true => out.extend(std::iter::repeat_n(b'\t', usize::from(code.level))),
-            false => out.extend(std::iter::repeat_n(
+        let (byte, count) = match options.indent_style.is_tab() {
+            true => (b'\t', usize::from(code.level)),
+            false => (
                 b' ',
                 usize::from(code.level) * options.indent_width.value() as usize,
-            )),
+            ),
+        };
+        if crate::is_too_long(out.len().saturating_add(count)) {
+            return rest;
         }
+        out.resize(out.len() + count, byte);
         out.extend_from_slice(printed);
         out.push(b'\n');
         lines = after;

@@ -1,0 +1,76 @@
+status: 0
+script: cc27d6a5e5f4991d
+source: f521735add7b8179
+---
+name [name='clause', body='try:\n    return make()\nfinally:\n    p()'] => clause
+| seen [name='clause', body='try:\n    return make()\nfinally:\n    p()'] => [True]
+r [name='clause', body='try:\n    return make()\nfinally:\n    p()'] => C
+name [name='clause, several lines', body='try:\n    return (\n        make())\nfinally:\n    p()'] => clause, several lines
+| seen [name='clause, several lines', body='try:\n    return (\n        make())\nfinally:\n    p()'] => [True]
+r [name='clause, several lines', body='try:\n    return (\n        make())\nfinally:\n    p()'] => C
+name [name='clause that returns', body='try:\n    return make()\nfinally:\n    p()\n    return 1'] => clause that returns
+| seen [name='clause that returns', body='try:\n    return make()\nfinally:\n    p()\n    return 1'] => [True]
+r [name='clause that returns', body='try:\n    return make()\nfinally:\n    p()\n    return 1'] => int
+name [name='clause that may return', body='try:\n    return make()\nfinally:\n    p()\n    if p():\n        p()\n        return 1\n    p()'] => clause that may return
+| seen [name='clause that may return', body='try:\n    return make()\nfinally:\n    p()\n    if p():\n        p()\n        return 1\n    p()'] => [True, True, True]
+r [name='clause that may return', body='try:\n    return make()\nfinally:\n    p()\n    if p():\n        p()\n        return 1\n    p()'] => int
+name [name='clause that breaks', body='for i in (1, 2):\n    try:\n        return make()\n    finally:\n        p()\n        break\np()'] => clause that breaks
+| seen [name='clause that breaks', body='for i in (1, 2):\n    try:\n        return make()\n    finally:\n        p()\n        break\np()'] => [True, False]
+r [name='clause that breaks', body='for i in (1, 2):\n    try:\n        return make()\n    finally:\n        p()\n        break\np()'] => NoneType
+name [name='clause that continues', body='for i in (1, 2):\n    try:\n        return make()\n    finally:\n        p()\n        continue\np()'] => clause that continues
+| seen [name='clause that continues', body='for i in (1, 2):\n    try:\n        return make()\n    finally:\n        p()\n        continue\np()'] => [True, True, False]
+r [name='clause that continues', body='for i in (1, 2):\n    try:\n        return make()\n    finally:\n        p()\n        continue\np()'] => NoneType
+name [name='clause that raises', body='try:\n    try:\n        return make()\n    finally:\n        p()\n        raise KeyError\nexcept KeyError:\n    p()'] => clause that raises
+| seen [name='clause that raises', body='try:\n    try:\n        return make()\n    finally:\n        p()\n        raise KeyError\nexcept KeyError:\n    p()'] => [True, False]
+r [name='clause that raises', body='try:\n    try:\n        return make()\n    finally:\n        p()\n        raise KeyError\nexcept KeyError:\n    p()'] => NoneType
+name [name='two clauses', body='try:\n    try:\n        return make()\n    finally:\n        p()\nfinally:\n    p()\n    return 1'] => two clauses
+| seen [name='two clauses', body='try:\n    try:\n        return make()\n    finally:\n        p()\nfinally:\n    p()\n    return 1'] => [True, True]
+r [name='two clauses', body='try:\n    try:\n        return make()\n    finally:\n        p()\nfinally:\n    p()\n    return 1'] => int
+name [name='clause with a loop', body='try:\n    return make()\nfinally:\n    for i in (1, 2):\n        p()\n    return 1'] => clause with a loop
+| seen [name='clause with a loop', body='try:\n    return make()\nfinally:\n    for i in (1, 2):\n        p()\n    return 1'] => [True, True]
+r [name='clause with a loop', body='try:\n    return make()\nfinally:\n    for i in (1, 2):\n        p()\n    return 1'] => int
+name [name='clause with a try', body='try:\n    return make()\nfinally:\n    try:\n        p()\n        raise KeyError\n    except KeyError:\n        p()\n    return 1'] => clause with a try
+| seen [name='clause with a try', body='try:\n    return make()\nfinally:\n    try:\n        p()\n        raise KeyError\n    except KeyError:\n        p()\n    return 1'] => [True, True]
+r [name='clause with a try', body='try:\n    return make()\nfinally:\n    try:\n        p()\n        raise KeyError\n    except KeyError:\n        p()\n    return 1'] => int
+name [name='with', body='with C():\n    return make()'] => with
+| seen [name='with', body='with C():\n    return make()'] => [('exit', True)]
+r [name='with', body='with C():\n    return make()'] => C
+name [name='with, several lines', body='with C():\n    return (\n        make())'] => with, several lines
+| seen [name='with, several lines', body='with C():\n    return (\n        make())'] => [('exit', True)]
+r [name='with, several lines', body='with C():\n    return (\n        make())'] => C
+name [name='loop and clause', body='for i in make():\n    try:\n        return 1\n    finally:\n        p()'] => loop and clause
+| seen [name='loop and clause', body='for i in make():\n    try:\n        return 1\n    finally:\n        p()'] => [True]
+r [name='loop and clause', body='for i in make():\n    try:\n        return 1\n    finally:\n        p()'] => int
+name [name='loop and clause, a value', body='for i in make():\n    try:\n        return C()\n    finally:\n        p()'] => loop and clause, a value
+| seen [name='loop and clause, a value', body='for i in make():\n    try:\n        return C()\n    finally:\n        p()'] => [True]
+r [name='loop and clause, a value', body='for i in make():\n    try:\n        return C()\n    finally:\n        p()'] => C
+name [name='gen: yield in the clause', body='try:\n    return make()\nfinally:\n    yield p()\n    p()'] => gen: yield in the clause
+| seen [name='gen: yield in the clause', body='try:\n    return make()\nfinally:\n    yield p()\n    p()'] => [True, ('suspended', True), True]
+r [name='gen: yield in the clause', body='try:\n    return make()\nfinally:\n    yield p()\n    p()'] => C
+name [name='gen: yield in the clause that returns', body='try:\n    return make()\nfinally:\n    yield p()\n    p()\n    return 1'] => gen: yield in the clause that returns
+| seen [name='gen: yield in the clause that returns', body='try:\n    return make()\nfinally:\n    yield p()\n    p()\n    return 1'] => [True, ('suspended', True), True]
+r [name='gen: yield in the clause that returns', body='try:\n    return make()\nfinally:\n    yield p()\n    p()\n    return 1'] => int
+name [name='gen: yield behind what decides', body='try:\n    return make()\nfinally:\n    if p():\n        yield p()\n        p()\n        return 1'] => gen: yield behind what decides
+| seen [name='gen: yield behind what decides', body='try:\n    return make()\nfinally:\n    if p():\n        yield p()\n        p()\n        return 1'] => [True, True, ('suspended', True), True]
+r [name='gen: yield behind what decides', body='try:\n    return make()\nfinally:\n    if p():\n        yield p()\n        p()\n        return 1'] => int
+name [name='match: guard of the last case', body='match make():\n    case C() if p():\n        p()'] => match: guard of the last case
+| seen [name='match: guard of the last case', body='match make():\n    case C() if p():\n        p()'] => [False, False]
+r [name='match: guard of the last case', body='match make():\n    case C() if p():\n        p()'] => NoneType
+name [name='match: guard, default follows', body='match make():\n    case C() if p():\n        p()\n    case _:\n        pass'] => match: guard, default follows
+| seen [name='match: guard, default follows', body='match make():\n    case C() if p():\n        p()\n    case _:\n        pass'] => [False, False]
+r [name='match: guard, default follows', body='match make():\n    case C() if p():\n        p()\n    case _:\n        pass'] => NoneType
+name [name='match: guard, a case follows', body='match make():\n    case C() if p():\n        p()\n    case C():\n        pass'] => match: guard, a case follows
+| seen [name='match: guard, a case follows', body='match make():\n    case C() if p():\n        p()\n    case C():\n        pass'] => [True, False]
+r [name='match: guard, a case follows', body='match make():\n    case C() if p():\n        p()\n    case C():\n        pass'] => NoneType
+name [name='match: body of the default', body='match make():\n    case 1:\n        pass\n    case _:\n        p()'] => match: body of the default
+| seen [name='match: body of the default', body='match make():\n    case 1:\n        pass\n    case _:\n        p()'] => [False]
+r [name='match: body of the default', body='match make():\n    case 1:\n        pass\n    case _:\n        p()'] => NoneType
+name [name='match: capture', body='match make():\n    case 1:\n        pass\n    case x:\n        p()\n        del x\n        p()'] => match: capture
+| seen [name='match: capture', body='match make():\n    case 1:\n        pass\n    case x:\n        p()\n        del x\n        p()'] => [True, False]
+r [name='match: capture', body='match make():\n    case 1:\n        pass\n    case x:\n        p()\n        del x\n        p()'] => NoneType
+name [name='match: return in a case, clause', body='try:\n    match make():\n        case C() if p():\n            return 1\n        case _:\n            pass\nfinally:\n    p()'] => match: return in a case, clause
+| seen [name='match: return in a case, clause', body='try:\n    match make():\n        case C() if p():\n            return 1\n        case _:\n            pass\nfinally:\n    p()'] => [False, False]
+r [name='match: return in a case, clause', body='try:\n    match make():\n        case C() if p():\n            return 1\n        case _:\n            pass\nfinally:\n    p()'] => int
+name [name='match in match', body='match make():\n    case C():\n        match 1:\n            case 1 if p():\n                p()\n    case _:\n        pass'] => match in match
+| seen [name='match in match', body='match make():\n    case C():\n        match 1:\n            case 1 if p():\n                p()\n    case _:\n        pass'] => [False, False]
+r [name='match in match', body='match make():\n    case C():\n        match 1:\n            case 1 if p():\n                p()\n    case _:\n        pass'] => NoneType

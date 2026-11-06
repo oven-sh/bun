@@ -12,21 +12,11 @@ test("WebSocket error event snapshot", async () => {
     resolve(error);
   };
   const error = await promise;
-  expect(error).toMatchInlineSnapshot(`ErrorEvent 
-ErrorEvent {
-  "bubbles": false,
-  "cancelable": false,
-  "colno": 0,
-  "composed": false,
-  "defaultPrevented": false,
-  "error": [Error: WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect],
-  "filename": "",
-  "isTrusted": true,
-  "lineno": 0,
-  "message": "WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect",
-  "type": "error",
-}
-`);
+  expect(error).toMatchInlineSnapshot(`ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect", 
+  error: [Error: WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect]
+}`);
   expect(Bun.inspect(error)).toMatchInlineSnapshot(`
     "ErrorEvent {
       type: "error",
@@ -49,21 +39,11 @@ test("ErrorEvent with no message", async () => {
       error: null,
     }"
   `);
-  expect(error).toMatchInlineSnapshot(`ErrorEvent 
-ErrorEvent {
-  "bubbles": false,
-  "cancelable": false,
-  "colno": 0,
-  "composed": false,
-  "defaultPrevented": false,
-  "error": null,
-  "filename": "",
-  "isTrusted": false,
-  "lineno": 0,
-  "message": "",
-  "type": "error",
-}
-`);
+  expect(error).toMatchInlineSnapshot(`ErrorEvent {
+  type: "error",
+  message: "", 
+  error: null
+}`);
 });
 
 // Records the events one connection fires, in order. The URL in the error message is replaced with "<url>".

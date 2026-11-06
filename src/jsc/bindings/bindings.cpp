@@ -6278,7 +6278,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 }
 
 namespace Bun {
-void addEventAttributeNames(JSC::VM&, JSC::PropertyNameArrayBuilder&);
+void addEventAttributeNames(JSC::JSGlobalObject*, JSC::JSObject*, JSC::PropertyNameArrayBuilder&);
 }
 
 static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false, bool withEventAttributes = false)
@@ -6301,8 +6301,10 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         else
             object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
-        if (withEventAttributes) [[unlikely]]
-            Bun::addEventAttributeNames(vm, properties);
+        if (withEventAttributes && object->type() == JSC::JSType(JSEventType)) [[unlikely]] {
+            Bun::addEventAttributeNames(globalObject, object, properties);
+            RETURN_IF_EXCEPTION(scope, );
+        }
     }
 
     auto vector = properties.data()->propertyNameVector();
@@ -6327,8 +6329,9 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();
+        // getPureResult() is null for an accessor that is not cacheable: one of a compiled object, or with --aot one that an event inherits.
         auto pureResult = [&] {
-            return !slot.isCacheableGetter() && object->structure()->isCompiledStructure() ? JSValue(slot.getterSetter()) : slot.getPureResult();
+            return !slot.isCacheableGetter() && (slot.slotBase() != object || object->structure()->isCompiledStructure()) ? JSValue(slot.getterSetter()) : slot.getPureResult();
         };
         if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             if (callGetters) {
@@ -6365,14 +6368,12 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
 }
 
-// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
-// For an event it never does: only this walk visits the names of Bun::addEventAttributeNames.
-extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same own properties.
+extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool withEventAttributes)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
-    bool isEvent = object && object->type() == JSC::JSType(JSEventType);
-    bool hasOnlyEnumerableValues = object && !isEvent && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true, false, isEvent);
+    bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true, false, withEventAttributes);
     return hasOnlyEnumerableValues;
 }
 

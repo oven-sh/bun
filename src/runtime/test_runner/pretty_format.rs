@@ -1890,9 +1890,8 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Event => {
-                    // The walk of the Object arm adds the attributes of an event. The rest of this arm is what older
-                    // versions printed: a text by the `type` for "message" and "error", own properties for any other.
-                    if self.like_older_bun.is_none() {
+                    // In a failure message the walk of the Object arm prints what `deepEquals` reads of an event.
+                    if self.output_length.is_some() {
                         return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                             writer.ctx, value, JSType::Event,
                         );
@@ -2385,7 +2384,8 @@ impl<'a> Formatter<'a> {
                             .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
                             .map(|()| true)
                     } else {
-                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                        let is_failure_message = iter.formatter.output_length.is_some();
+                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each, is_failure_message)
                     };
 
                     let iter_i = iter.i;
@@ -3534,7 +3534,6 @@ impl bun_io::Write for ExpectedText<'_> {
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
-    /// Of an event they printed the own properties, or for a `type` of "message" or "error" the `Tag::Event` text.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);

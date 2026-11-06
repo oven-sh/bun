@@ -367,33 +367,27 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
 
 namespace Bun {
 
-// What Bun's format prints of an event beside its own properties. These are accessors of the prototypes, so a walk of
-// own properties does not reach them. The walk reads each name through the event and skips one the event does not have.
-// Left out: timeStamp, the objects (target, currentTarget, srcElement, source, ports), eventPhase and cancelBubble
-// (reset when dispatch ends), returnValue (the inverse of defaultPrevented) and origin (on a WebSocket message, the
-// URL of the server with its port).
-void addEventAttributeNames(VM& vm, PropertyNameArrayBuilder& names)
+// The names that deepEquals reads of an event (those of for-in), without the methods and the constants that it inherits.
+void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, PropertyNameArrayBuilder& names)
 {
-    static constexpr ASCIILiteral attributes[] = {
-        "type"_s,
-        "bubbles"_s,
-        "cancelable"_s,
-        "composed"_s,
-        "defaultPrevented"_s,
-        "detail"_s,
-        "data"_s,
-        "lastEventId"_s,
-        "message"_s,
-        "filename"_s,
-        "lineno"_s,
-        "colno"_s,
-        "error"_s,
-        "code"_s,
-        "reason"_s,
-        "wasClean"_s,
-    };
-    for (auto attribute : attributes)
-        names.add(Identifier::fromString(vm, attribute));
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder enumerated(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    event->getPropertyNames(globalObject, enumerated, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (const Identifier& name : enumerated) {
+        for (JSObject* holder = event; holder; holder = holder->getPrototypeDirect().getObject()) {
+            PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool hasOwn = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!hasOwn)
+                continue;
+            bool isAccessor = (slot.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)) != 0;
+            if (holder == event || isAccessor)
+                names.add(name);
+            break;
+        }
+    }
 }
 
 }

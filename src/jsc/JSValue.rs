@@ -2487,13 +2487,14 @@ impl JSValue {
         scope.return_if_exception()
     }
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
-    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
+    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same own properties. With `event_attributes`, an event also gets the accessors it inherits.
     #[inline(always)]
     pub fn for_each_property_ordered_calling_getters(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
         callback: ForEachPropertyCallback,
+        event_attributes: bool,
     ) -> JsResult<bool> {
         unsafe extern "C" {
             // safe: same contract as `JSC__JSValue__forEachProperty` above.
@@ -2502,11 +2503,17 @@ impl JSValue {
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
                 callback: ForEachPropertyCallback,
+                event_attributes: bool,
             ) -> bool;
         }
         crate::top_scope!(scope, global);
-        let is_same =
-            JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
+        let is_same = JSC__JSValue__forEachPropertyOrderedCallingGetters(
+            self,
+            global,
+            ctx,
+            callback,
+            event_attributes,
+        );
         scope.return_if_exception().map(|()| is_same)
     }
     /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.

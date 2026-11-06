@@ -1,7 +1,7 @@
 use crate::js::format::write_trailing_comments_of;
 use crate::js::utils::array::{is_line_after_element_empty, write_array_node};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::typecast::has_comments;
+use crate::js::utils::typecast::{has_comments, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::write;
 
@@ -141,7 +141,9 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 }
                 _ => false,
             };
-            is_number && !has_line_comment_after_code(element, f)
+            is_number
+                && !has_line_comment_after_code(element, f)
+                && !is_cast_target_that_hides_its_kind(element, f)
         })
 }
 

@@ -3828,6 +3828,155 @@ describe.skipIf(!hasFlag)("expressions that are too wide for their line", () => 
   });
 });
 
+describe.skipIf(!hasFlag)("casts of JSDoc", () => {
+  // The parentheses of a cast are a node for Prettier. Whatever asks what kind of node something is, or what its parent
+  // is, sees that node and not what is in it or around it.
+  const targets = [
+    "value",
+    "this",
+    "undefined",
+    "null",
+    '"some string"',
+    "12345",
+    "{ alpha: 1, beta: 2 }",
+    "{}",
+    "[alpha, beta, gamma]",
+    "[1, 2, 3]",
+    "[]",
+    "getSomething(alpha, beta)",
+    "getSomethingFromSomewhere(alphaAlphaAlphaAlpha, betaBetaBetaBeta, gammaGamma)",
+    "alpha.beta.gamma",
+    "alpha.beta().gamma().delta()",
+    "(alpha) => alpha + 1",
+    "(alpha) => { return alpha; }",
+    "(alpha) => (beta) => (gamma) => alpha + beta + gamma",
+    "function () { return 1; }",
+    "alpha ? beta : gamma",
+    "alphaAlphaAlphaAlphaAlpha + betaBetaBetaBetaBetaBeta + gammaGammaGammaGammaGamma",
+    "alpha || beta",
+    "alpha = beta",
+    "alpha, beta",
+    "await alpha",
+    "new Alpha(beta)",
+    "`alpha ${beta}`",
+    "tag`alpha`",
+    "<div>alpha</div>",
+    '<div className="alphaAlphaAlpha" id="betaBetaBeta" title="gammaGammaGamma">delta</div>',
+    "class {}",
+    "class extends Alpha {}",
+    "/** @type {U} */ (alpha)",
+  ];
+  const places = [
+    "@;",
+    "result = @;",
+    "const result = @;",
+    "function f() { return @; }",
+    "call(@);",
+    "call(first, @);",
+    "call(@, [alpha, beta]);",
+    "call(@, (a) => { return a; });",
+    "list.reduce((acc, item) => { acc.push(item); return acc; }, @);",
+    "setTimeout(function () { doSomething(); }, @);",
+    "useEffect(() => { doSomething(); }, @);",
+    "new Thing(function () { doSomething(); }, @);",
+    "define(@, function () { run(); });",
+    "@(first, second);",
+    "@(first)(second);",
+    "@(function () { run(); });",
+    "@?.(first);",
+    "new @();",
+    "new @.Thing();",
+    "@.property;",
+    "@.then(first).catch(second).finally(third);",
+    "@.alpha.beta(first).gamma(second);",
+    "const result = @.then(first).catch(second).finally(third);",
+    "wrapper.find(first).prop(@).other(third);",
+    "object[@];",
+    "result = @ ? first : second;",
+    "result = test ? @ : second;",
+    "result = test ? first : @;",
+    "const e = test ? @ : <span>second second second second</span>;",
+    "const e = test ? <span>second second second second</span> : @;",
+    "(test ? @ : second).property;",
+    "result = first && @;",
+    "if (someRatherLongOperandName && anotherRatherLongOperandName && @) {}",
+    "const f = () => @;",
+    "const f = () => @ ? 1 : 2;",
+    "const f = () => @();",
+    "const f = (a) => (b) => @;",
+    "const o = { key: @ };",
+    "const o = [@, @];",
+    "const o = [@, @, @];",
+    "const s = `a ${@} b`;",
+    "function f({ alpha, beta } = @) {}",
+    "function f([alpha, beta] = @) {}",
+    "const f = ({ alpha, beta } = @) => {};",
+    "export default @;",
+    "export default @.prop;",
+    "class A extends @ {}",
+    "const e = <div a={@} />;",
+    "const e = <div>{@}</div>;",
+    "const e = <div>{cond && @}</div>;",
+    "for (@; @; @) {}",
+  ];
+  const cast = (target: string) => `/** @type {T} */ (${target})`;
+  describe("every kind of expression in every place", () =>
+    expectSame(
+      "a.jsx",
+      places.flatMap(place => targets.map(target => `async function g() { ${place.replaceAll("@", cast(target))} }\n`)),
+      [[], ["--print-width=40"]],
+    ));
+
+  // Rules that look further up or further down than one node end at the parentheses too.
+  const between = [
+    "(@).prop",
+    "(@).method()",
+    "(@).alpha(first).beta(second).gamma(third)",
+    "(@)()",
+    "new (@)()",
+    "a ? @ : 2",
+    "(@) ? 1 : 2",
+    "(@), 1",
+    "a = @",
+    "(@) + 1",
+    "await (@)",
+    "call(@)",
+    "() => @",
+  ];
+  const outer = [
+    "@;",
+    "const result = @;",
+    "function f() { return @; }",
+    "call(@);",
+    "@(first);",
+    "@.property;",
+    "new @();",
+    "const f = () => @;",
+    "export default @;",
+    "await @;",
+    "for (@; ; ) {}",
+  ];
+  describe("with something between the parentheses and the expression", () =>
+    expectSame(
+      "a.jsx",
+      outer.flatMap(place =>
+        between.flatMap(middle =>
+          [
+            "value",
+            "{}",
+            "function () {}",
+            "class {}",
+            "alpha = beta",
+            "alphaAlphaAlphaAlphaAlpha ? betaBetaBetaBetaBetaBeta : gammaGammaGammaGammaGamma",
+            "alphaAlphaAlphaAlphaAlpha + betaBetaBetaBetaBetaBeta + gammaGammaGammaGammaGamma",
+            "getSomething(alpha, beta)",
+          ].map(target => `async function g() { ${place.replaceAll("@", cast(middle.replaceAll("@", target)))} }\n`),
+        ),
+      ),
+      [[], ["--print-width=40"]],
+    ));
+});
+
 describe("Handlebars", () => {
   const texts = [
     // The common shapes.

@@ -15,7 +15,7 @@ use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::{
     comments_of_expression, comments_of_outermost_node, has_comments, has_comments_that_count,
-    is_cast_target,
+    is_cast_target, is_cast_target_that_hides_its_kind,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -520,7 +520,11 @@ fn should_group_last_argument_impl<'a>(
     match last.kind() {
         ExprKind::Array(elements) if args_len > 1 => {
             // Not for `useEffect(() => {}, [a, b])`.
-            if args_len == 2 && penultimate.is_some_and(|it| it.arrow_function().is_some()) {
+            if args_len == 2
+                && penultimate.is_some_and(|it| {
+                    it.arrow_function().is_some() && !is_cast_target_that_hides_its_kind(it, f)
+                })
+            {
                 return false;
             }
             !can_concisely_print_array_list(elements, f)
@@ -566,7 +570,12 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
         {
             argument.type_annotation().is_none_or(is_simple_ts_type) && is_simple(expr)
         }
-        ExprKind::Call(call) if call.args().len() > 1 && is_call_expression(argument, f) => false,
+        ExprKind::Call(call)
+            if call.args().len() > 1
+                && (is_call_expression(argument, f) || is_cast_target(argument, f)) =>
+        {
+            false
+        }
         ExprKind::New(call) if call.args().len() > 1 => false,
         ExprKind::ImportCall { args } if args.len() > 1 => false,
         ExprKind::Binary { op, left, right } if op != BinOp::Comma => {

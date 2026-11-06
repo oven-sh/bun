@@ -452,10 +452,18 @@ impl<'a> FormatExpr<'a> {
 
     #[cold]
     fn fmt_with_comments(self, is_chain_expression: bool, f: &mut Formatter<'a>) {
+        // Prettier's `ParenthesizedExpression` prints what is in it without the arguments that it was printed with.
+        let in_parentheses = FormatExpr {
+            options: match f.options().flavor.is_oxfmt() {
+                true => self.options,
+                false => ExprOptions::None,
+            },
+            ..self
+        };
         let write_target =
-            |f: &mut Formatter<'a>| self.fmt_without_type_casts(is_chain_expression, f);
+            |f: &mut Formatter<'a>| in_parentheses.fmt_without_type_casts(is_chain_expression, f);
         if self.is_in_chain_expression || !write_type_casts(self.expr, f, &write_target) {
-            write_target(f);
+            self.fmt_without_type_casts(is_chain_expression, f);
         }
     }
 

@@ -7,6 +7,7 @@ use crate::js::utils::call_expression::{
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -479,7 +480,7 @@ pub(crate) fn should_hug_function_parameters<'a>(
     };
     let is_huggable = match only_parameter.pat().kind() {
         PatKind::Array(_) | PatKind::Object(_) => {
-            only_parameter.default().is_none_or(is_huggable_expression)
+            (only_parameter.default()).is_none_or(|default| is_huggable_expression(default, f))
         }
         PatKind::Ident(_) | PatKind::Missing => {
             only_parameter.default().is_none()
@@ -506,8 +507,9 @@ pub(crate) fn has_only_simple_parameters(func: Func<'_>, allow_type_annotations:
 }
 
 /// `{}`, `[]` or a name.
-fn is_huggable_expression(e: Expr<'_>) -> bool {
+fn is_huggable_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match e.kind() {
+        _ if is_cast_target_that_hides_its_kind(e, f) => false,
         ExprKind::Object(props) => props.is_empty(),
         ExprKind::Array(elements) => elements.is_empty(),
         ExprKind::Ident(_) => true,

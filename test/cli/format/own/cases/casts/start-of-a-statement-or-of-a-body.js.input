@@ -1,0 +1,5 @@
+export default /** @type {T} */ (class {}).prop;
+const a = () => /** @type {T} */ ({}) ? 1 : 2;
+const b = () => /** @type {T} */ ({}.a).b;
+/** @type {T} */ ({}.a).b;
+/** @type {T} */ (function () {}.a).b;

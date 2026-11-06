@@ -1,0 +1,5 @@
+const result = /** @type {T} */ ((alphaAlphaAlphaAlphaAlphaAlpha ? betaBetaBetaBetaBetaBetaBetaBeta : gammaGammaGammaGammaGammaGamma).prop);
+function f() {
+  return /** @type {T} */ ((alphaAlphaAlphaAlphaAlphaAlpha ? betaBetaBetaBetaBetaBetaBetaBeta : gammaGammaGammaGammaGamma).method());
+}
+call(/** @type {T} */ (a ? alphaAlphaAlphaAlphaAlphaAlphaAlpha + betaBetaBetaBetaBetaBetaBetaBeta + gammaGammaGammaGammaGammaGamma + delta : 2));

@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+someRatherLongVariableNameForTheResult.ofTheAssignment = /** @type {T} */ (
+  class extends SomeRatherLongNameOfTheSuperClassThatIsHereSomeRatherLongNameOfTheSuperClassThatIsHereSomeRatherLongName {}
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+someRatherLongVariableNameForTheResult.ofTheAssignment = /** @type {T} */ (
+  class extends SomeRatherLongNameOfTheSuperClassThatIsHereSomeRatherLongNameOfTheSuperClassThatIsHereSomeRatherLongName {}
+);
+
+===================== End =====================

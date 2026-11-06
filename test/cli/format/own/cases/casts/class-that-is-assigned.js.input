@@ -1,0 +1,1 @@
+someRatherLongVariableNameForTheResult.ofTheAssignment = /** @type {T} */ (class extends SomeRatherLongNameOfTheSuperClassThatIsHereSomeRatherLongNameOfTheSuperClassThatIsHereSomeRatherLongName {});

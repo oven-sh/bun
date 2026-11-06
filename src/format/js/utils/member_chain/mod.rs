@@ -143,6 +143,8 @@ impl<'a, 'b> MemberChain<'a, 'b> {
 
         if let [ChainMember::Node(node)] = self.head() {
             match node.tag() {
+                // `/** @type {A} */ (this).b().c()`
+                _ if is_cast_target_that_hides_its_kind(*node, f) => false,
                 ExprTag::Ident => {
                     let name = node.text();
                     has_computed_property
@@ -452,9 +454,10 @@ fn is_followed_by_comment<'a>(
         .any(|comment| is_directly_after(comment, member.expr()))
 }
 
-fn is_computed_array_member_access(member: &ChainMember<'_>) -> bool {
+fn is_computed_array_member_access<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
     matches!(member, ChainMember::ComputedMember(expression)
-        if matches!(expression.kind(), ExprKind::Index { index, .. } if matches!(index.kind(), ExprKind::Number(_))))
+        if matches!(expression.kind(), ExprKind::Index { index, .. }
+            if matches!(index.kind(), ExprKind::Number(_)) && !is_cast_target_that_hides_its_kind(index, f)))
 }
 
 /// The index where the head ends. The head is the first member, the calls and `[0]`s right after it, and, unless it
@@ -469,7 +472,7 @@ fn get_split_index_of_head_and_tail_groups<'a>(
         .skip(1)
         .position(|member| match member {
             ChainMember::CallExpression { .. } | ChainMember::TSNonNullExpression(_) => false,
-            ChainMember::ComputedMember(_) => !is_computed_array_member_access(member),
+            ChainMember::ComputedMember(_) => !is_computed_array_member_access(member, f),
             _ => true,
         })
         .map_or(members.len(), |index| index + 1);
@@ -512,7 +515,7 @@ fn push_ends_of_remaining_groups<'a>(
     for (index, member) in members.iter().enumerate().skip(start) {
         match member {
             // `[0]` belongs with what's before it.
-            ChainMember::ComputedMember(_) if is_computed_array_member_access(member) => {}
+            ChainMember::ComputedMember(_) if is_computed_array_member_access(member, f) => {}
             ChainMember::StaticMember(_) | ChainMember::ComputedMember(_)
                 if has_seen_call_expression =>
             {

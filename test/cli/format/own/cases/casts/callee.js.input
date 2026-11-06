@@ -1,0 +1,6 @@
+/** @type {T} */ ((alphaAlphaAlpha) => (betaBetaBeta) => (gammaGammaGamma) => alphaAlphaAlpha + betaBetaBeta)(first, second);
+/** @type {T} */ ((alphaAlphaAlphaAlphaAlphaAlpha) => (betaBetaBetaBetaBetaBeta) => (gammaGammaGammaGamma) => alphaAlphaAlphaAlphaAlphaAlpha)(first);
+/** @type {T} */ (getSomethingFromSomewhere(alphaAlphaAlphaAlphaAlphaAlpha, betaBetaBetaBetaBetaBeta, gammaGammaGammaGamma))(first, second);
+/** @type {T} */ (getSomethingFromSomewhere(alphaAlphaAlphaAlphaAlphaAlpha, betaBetaBetaBetaBetaBeta, gammaGammaGammaGamma))?.(first);
+new /** @type {T} */ (getSomething(alpha, beta)).Thing();
+call(/** @type {T} */ ((alphaAlphaAlphaAlpha) => (betaBetaBetaBeta) => (gammaGammaGamma) => alphaAlphaAlphaAlpha + betaBetaBeta), [alpha, beta]);

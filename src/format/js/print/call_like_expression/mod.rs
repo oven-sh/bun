@@ -11,7 +11,9 @@ use crate::js::utils::call_expression::{
 };
 use crate::js::utils::member_chain::write_member_chain;
 use crate::js::utils::tailwindcss::{InTailwindContext, TailwindContext, context_of_function};
-use crate::js::utils::typecast::{comments_of_outermost_node, has_comments, is_cast_target};
+use crate::js::utils::typecast::{
+    comments_of_outermost_node, has_comments, is_cast_target, is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -269,8 +271,11 @@ fn is_commonjs_or_amd_module_definition<'a>(
         return false;
     }
     let args = call.args();
-    let is_string = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::String);
-    let is_array = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::Array);
+    let is = |e: Option<Expr<'a>>, tag: ExprTag| {
+        e.is_some_and(|e| e.tag() == tag && !is_cast_target_that_hides_its_kind(e, f))
+    };
+    let is_string = |e: Option<Expr<'a>>| is(e, ExprTag::String);
+    let is_array = |e: Option<Expr<'a>>| is(e, ExprTag::Array);
     match callee.text() {
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {
@@ -285,6 +290,7 @@ fn is_commonjs_or_amd_module_definition<'a>(
         }
         b"define" => {
             matches!(e.as_chain_element().parent(), AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())
+                && !is_cast_target_that_hides_its_kind(e, f)
                 && match args.len() {
                     1 => true,
                     2 => is_array(args.first()),

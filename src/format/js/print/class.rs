@@ -19,7 +19,8 @@ use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::{
-    comments_of_expression, has_comments_that_count, is_chain_expression_without_comments,
+    comments_of_expression, has_comments_that_count, is_cast_target_that_hides_its_kind,
+    is_chain_expression_without_comments,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -630,10 +631,7 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
             write!(f, FormatLeadingComments::Comments(leading_comments));
         }
         // Prettier's `printSuperClass`.
-        if matches!(
-            AstNodes::Class(class).parent(),
-            AstNodes::AssignmentExpression(_)
-        ) {
+        if is_right_side_of_assignment(class, AstNodes::Class(class).parent(), f) {
             let content = content.memoized();
             write!(
                 f,
@@ -684,6 +682,17 @@ fn write_comments_with_empty_lines<'a>(comments: CommentList<'a>, f: &mut Format
     }
 }
 
+/// `a = class extends B {}`, but not `a = /** @type {A} */ (class extends B {})`, whose parent is the
+/// `ParenthesizedExpression` for Prettier.
+fn is_right_side_of_assignment<'a>(
+    class: Class<'a>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    matches!(parent, AstNodes::AssignmentExpression(_))
+        && !matches!(class.owner(), Node::Expr(e) if is_cast_target_that_hides_its_kind(e, f))
+}
+
 /// Prettier's `shouldPrintClassInGroupMode`: true if the class head is a group that can break before `extends` and
 /// `implements`.
 fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
@@ -711,7 +720,7 @@ fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -
     };
     match (super_class, implements.first()) {
         (Some(super_class), _) => {
-            !matches!(parent, AstNodes::AssignmentExpression(_))
+            !is_right_side_of_assignment(class, parent, f)
                 && class.extends_args().is_empty()
                 && is_member(super_class)
         }

@@ -1,0 +1,3 @@
+const a = <div>{/** @type {T} */ (`alphaAlphaAlphaAlphaAlphaAlphaAlphaAlphaAlpha ${betaBetaBetaBetaBetaBetaBetaBetaBetaBetaBetaBeta}`)}</div>;
+const b = <div>{someRatherLongConditionNameForTheElement && /** @type {T} */ (<div className="alphaAlphaAlphaAlphaAlpha">alpha</div>)}</div>;
+const c = <div a={/** @type {T} */ ((alphaAlphaAlphaAlphaAlpha) => alphaAlphaAlphaAlphaAlpha.betaBetaBetaBetaBeta + gammaGammaGammaGammaGamma)} />;

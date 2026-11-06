@@ -311,7 +311,7 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
 
     // `await (await a).b`: the parentheses break together with the group that contains the outer `await`.
     let indented = soft_block_indent(&format_inner);
-    match left_edge_end(e, AstNodes::AwaitExpression(e)).1 {
+    match left_edge_end(e, AstNodes::AwaitExpression(e), f).1 {
         AstNodes::AwaitExpression(_) => write!(f, indented),
         _ => write!(f, group(&indented)),
     }

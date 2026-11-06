@@ -1,7 +1,7 @@
 //! Calls that are printed in a special way because of their callee: `it("..", () => {})`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use super::typecast::comments_of_expression;
+use super::typecast::{comments_of_expression, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::write;
 
@@ -12,7 +12,9 @@ use crate::write;
 /// node type checks give different answers.
 #[inline]
 pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    e.tag() == ExprTag::Call && (f.context().has_babel_tree() || !e.is_chain_root())
+    e.tag() == ExprTag::Call
+        && (f.context().has_babel_tree() || !e.is_chain_root())
+        && !is_cast_target_that_hides_its_kind(e, f)
 }
 
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
@@ -20,6 +22,7 @@ pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
         && (f.context().has_babel_tree() || !e.is_chain_root())
+        && !is_cast_target_that_hides_its_kind(e, f)
 }
 
 /// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` isn't a node here.

@@ -8,7 +8,9 @@ use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::call_expression::{
     FormatCallee, keeps_comments_after_callee, write_comments_after_callee,
 };
-use crate::js::utils::typecast::{comments_of_outermost_node, has_comments};
+use crate::js::utils::typecast::{
+    comments_of_outermost_node, has_comments, is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -192,6 +194,7 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         let optional = member.is_optional().then_some("?.");
         if matches!(index.kind(), ExprKind::Number(_))
             && !breaks_around_a_number_with_comments(index, f)
+            && !is_cast_target_that_hides_its_kind(index, f)
         {
             write!(f, [optional, "[", index, "]"]);
         } else {

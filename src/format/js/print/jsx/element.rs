@@ -112,7 +112,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         }
     }
 
-    fn layout(&self) -> ElementLayout<'a> {
+    fn layout(&self, f: &Formatter<'a>) -> ElementLayout<'a> {
         let mut children = self.jsx.children_with_whitespace();
         match (children.next(), children.next()) {
             (None, _) if !self.jsx.is_fragment() => ElementLayout::NoChildren,
@@ -124,7 +124,8 @@ impl<'a> AnyJsxTagWithChildren<'a> {
                     && matches!(
                         child.kind(),
                         ExprKind::Template(_) | ExprKind::TaggedTemplate(_)
-                    ) =>
+                    )
+                    && !is_cast_target_that_hides_its_kind(child, f) =>
             {
                 ElementLayout::Template(child)
             }
@@ -139,7 +140,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         let format_opening = format_with(|f| self.fmt_opening(f));
         let format_closing = format_with(|f| self.fmt_closing(f));
 
-        match self.layout() {
+        match self.layout(f) {
             ElementLayout::NoChildren => write!(f, [format_opening, format_closing]),
             ElementLayout::Template(expression) => {
                 write!(

@@ -1,0 +1,5 @@
+/** @type {Promise<void>} */ (this).thenThenThenThenThenThen(firstFirstFirstFirst).catchCatchCatchCatch(secondSecondSecond).finallyFinally(third);
+const result = /** @type {Promise<void>} */ (this).thenThenThenThenThen(firstFirstFirst).catchCatchCatchCatch(secondSecondSecond).finallyFinally(third);
+/** @type {T} */ (getSomething(alpha, beta)).alphaAlphaAlphaAlpha.betaBetaBetaBeta(firstFirstFirstFirst).gammaGammaGammaGamma(secondSecondSecond);
+/** @type {T} */ (z).alphaAlphaAlphaAlphaAlphaAlpha(firstFirstFirstFirstFirst).betaBetaBetaBetaBetaBeta(secondSecondSecondSecond).gamma(third);
+object[/** @type {T} */ (0)].alphaAlphaAlphaAlphaAlphaAlpha(firstFirstFirstFirstFirst).betaBetaBetaBetaBetaBeta(secondSecondSecondSecond);

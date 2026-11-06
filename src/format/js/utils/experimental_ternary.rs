@@ -163,7 +163,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         ConditionalLike::TSConditionalType(_) => false,
     };
     let should_extra_indent = match conditional {
-        ConditionalLike::ConditionalExpression(e) => should_extra_indent(e),
+        ConditionalLike::ConditionalExpression(e) => should_extra_indent(e, f),
         ConditionalLike::TSConditionalType(_) => false,
     };
     // So that what follows comes right after the `)`: `(a ? b : c\n).d`

@@ -111,8 +111,9 @@ impl<'a> BinaryLikeExpression<'a> {
                         | AstNodes::ThrowStatement(_)
                         | AstNodes::CallExpression(_)
                         | AstNodes::NewExpression(_)
-                ) || (f.options().in_html.root.is_angular()
-                    && is_argument_of_angular_pipe(conditional))
+                ) || is_cast_target_that_hides_its_kind(conditional, f)
+                    || (f.options().in_html.root.is_angular()
+                        && is_argument_of_angular_pipe(conditional))
             }
             // `Boolean(a && b)`
             AstNodes::CallExpression(call_expression) => {
@@ -756,7 +757,8 @@ impl<'a> BinaryLeftOrRightSide<'a> {
     }
 
     fn is_jsx(&self, f: &Formatter<'a>) -> bool {
-        matches!(self.last_operand(f).kind(), ExprKind::Jsx(_))
+        let last = self.last_operand(f);
+        last.tag() == ExprTag::Jsx && !is_cast_target_that_hides_its_kind(last, f)
     }
 
     fn with_operands(&self, operands: Operands) -> Option<Self> {

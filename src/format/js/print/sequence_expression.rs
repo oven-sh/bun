@@ -1,5 +1,5 @@
 use super::return_or_throw_statement::has_argument_leading_comments;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -25,9 +25,12 @@ pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) 
         return;
     };
 
+    // `/** @type {A} */ (a, b)`: the parent is the `ParenthesizedExpression`.
+    let is_cast = is_cast_target_that_hides_its_kind(e, f);
     // Outside parentheses, everything after the first expression is indented.
-    if matches!(parent, AstNodes::ForStatement(_))
-        || matches!(parent, AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())
+    if !is_cast
+        && (matches!(parent, AstNodes::ForStatement(_))
+            || matches!(parent, AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body()))
     {
         return write!(
             f,
@@ -51,6 +54,7 @@ pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) 
             .entries(all.iter());
     });
     match parent {
+        _ if is_cast => write!(f, group(&format_inner)),
         // The `(` decides whether it breaks.
         AstNodes::ExpressionStatement(_) => write!(f, group(&soft_block_indent(&format_inner))),
         // It gets its own parentheses, unless the statement already wraps a comment and what follows it in parentheses.

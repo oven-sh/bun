@@ -5176,10 +5176,9 @@ pub mod formatter {
                     }
 
                     if let Some(children) = children_prop {
-                        let tag = Tag::get(children, self.global_this)?;
+                        let tag = Tag::get_advanced(children, self.global_this, tag_opts)?;
 
-                        let print_children =
-                            matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
+                        let print_children = !children.is_null() && children != JSValue::FALSE;
 
                         if print_children && !self.single_line {
                             'print_children: {
@@ -5208,18 +5207,21 @@ pub mod formatter {
                                                 .expect("unreachable");
                                         }
                                     }
-                                    Tag::JSX => {
+                                    // A child that is not an array prints as a list of one.
+                                    kind if kind != Tag::Array => {
                                         writer.write_all(b">\n");
                                         {
                                             self.indent += 1;
                                             write_indent_n(self.indent, writer.ctx)
                                                 .expect("unreachable");
                                             let _ind = defer_decrement!(self.indent);
+                                            // As for an item of a list. `_qs` restores it.
+                                            self.quote_strings = false;
                                             if writer.failed {
                                                 self.failed = true;
                                             }
                                             self.format::<C>(
-                                                Tag::get(children, self.global_this)?,
+                                                tag,
                                                 writer_,
                                                 children,
                                                 self.global_this,

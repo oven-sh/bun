@@ -1613,6 +1613,19 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
         });
       });
 
+      it.concurrent.each(["react.element", "react.transitional.element"])(
+        "does not read it on the only child of a %s",
+        async symbol => {
+          const getter = `get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); }`;
+          const element = `{ $$typeof: Symbol.for("${symbol}"), type: "td", key: null, props: { children: { ${getter} } } }`;
+          expect(await reportOf(element)).toEqual({
+            stdout: "",
+            stderr: "error\n<td>\n  {\n    [Symbol(nodejs.util.inspect.custom)]: [Getter],\n  }\n</td>\n",
+            exitCode: 1,
+          });
+        },
+      );
+
       it.concurrent("prints [threw while printing] in place of a property that throws", async () => {
         const handler = `{ getPrototypeOf() { throw new Error("has no prototype"); } }`;
         expect(await reportOf(`{ a: 1, value: Object.create(new Proxy({}, ${handler})) }`)).toEqual({
@@ -1648,6 +1661,100 @@ describe("compact prints one line", () => {
   it("an object past the depth", () => {
     expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
     expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
+  });
+});
+
+it("jsx with a number child", () => {
+  const count = 5;
+  expect(Bun.inspect(<td>{count}</td>)).toBe("<td>\n  5\n</td>");
+  expect(Bun.inspect(<td className="x">{count}</td>)).toBe('<td className="x">\n  5\n</td>');
+});
+
+describe.each(["react.element", "react.transitional.element"])("jsx with one child, a %s", symbol => {
+  const el = (type, props) => ({ $$typeof: Symbol.for(symbol), type, key: null, ref: null, props });
+
+  it.each([
+    ["a number", 1, "1"],
+    ["zero", 0, "0"],
+    ["negative zero", -0, "-0"],
+    ["NaN", NaN, "NaN"],
+    ["a bigint", 1n, "1n"],
+    ["true", true, "true"],
+    ["an object", { a: 1 }, "{\n    a: 1,\n  }"],
+    ["a function", function render() {}, "[Function: render]"],
+    ["a symbol", Symbol("s"), "Symbol(s)"],
+    ["a Date", new Date(0), "1970-01-01T00:00:00.000Z"],
+    ["an object with inspect.custom", { [Bun.inspect.custom]: () => "custom" }, "custom"],
+    ["globalThis", globalThis, "[Global Object]"],
+    ["a string matcher", expect.stringContaining("a"), "StringContaining a"],
+  ])("%s prints as a list of one", (_, child, text) => {
+    expect(Bun.inspect(el("td", { children: child }))).toBe(`<td>\n  ${text}\n</td>`);
+    expect(Bun.inspect(el("td", { children: [child] }))).toBe(`<td>\n  ${text}\n</td>`);
+    expect(Bun.inspect(el("td", { children: child }), { colors: true })).toBe(
+      Bun.inspect(el("td", { children: [child] }), { colors: true }),
+    );
+  });
+
+  it.each([[null], [false], [undefined]])("%p prints as no child", child => {
+    expect(Bun.inspect(el("td", { children: child }))).toBe("<td />");
+  });
+
+  it("next to a prop, in a fragment, one element down and in a list of elements", () => {
+    expect(Bun.inspect(el("td", { className: "x", children: 1 }))).toBe('<td className="x">\n  1\n</td>');
+    expect(Bun.inspect(el(Symbol.for("react.fragment"), { children: 1 }))).toBe("<>\n  1\n</>");
+    expect(Bun.inspect(el("tr", { children: el("td", { children: 1 }) }))).toBe("<tr>\n  <td>\n    1\n  </td>\n</tr>");
+    expect(Bun.inspect(el("tr", { children: [el("td", { children: "a" }), el("td", { children: 1 })] }))).toBe(
+      "<tr>\n  <td>a</td>\n  <td>\n    1\n  </td>\n</tr>",
+    );
+  });
+
+  it("throws what the child throws when it prints, as for an item of a list and a prop", () => {
+    const throws = () =>
+      Object.assign(new Date(0), {
+        toJSON() {
+          throw new RangeError("not now");
+        },
+      });
+    expect(() => Bun.inspect(el("td", { children: throws() }))).toThrow("not now");
+    expect(() => Bun.inspect(el("td", { children: [throws()] }))).toThrow("not now");
+    expect(() => Bun.inspect(el("td", { title: throws() }))).toThrow("not now");
+    expect(Bun.inspect(el("td", { children: 1 }))).toBe("<td>\n  1\n</td>");
+  });
+
+  it.concurrent("console.log", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const cell = children => ({ $$typeof: Symbol.for(${JSON.stringify(symbol)}), type: "td", key: null, props: { children } });
+        console.log(cell(5));
+        for (const log of [console.log, console.error]) {
+          try {
+            log(cell(Object.assign(new Date(0), { toJSON() { throw new RangeError("not now"); } })));
+            process.stdout.write("\\nreturned\\n");
+          } catch (error) {
+            process.stdout.write("\\n" + error.message + "\\n");
+          }
+        }
+        console.log(cell(6));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const printed = child => `<td>\n  ${child}\n</td>\n`;
+    expect({
+      start: stdout.slice(0, printed(5).length),
+      lines: stdout.split("\n").filter(line => /^[a-z]/.test(line)),
+      end: stdout.slice(-printed(6).length),
+      exitCode,
+    }).toEqual({
+      start: printed(5),
+      lines: ["not now", "not now"],
+      end: printed(6),
+      exitCode: 0,
+    });
   });
 });
 

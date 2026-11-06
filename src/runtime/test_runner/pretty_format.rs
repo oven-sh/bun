@@ -2192,10 +2192,16 @@ impl<'a> Formatter<'a> {
                             if let Some(children) = children_prop {
                                 let tag = Tag::get(children, self.global_this)?;
 
-                                let print_children =
+                                // Older versions printed a child only if it was a string, an element or an array.
+                                let older_bun_printed =
                                     matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
+                                let print_children = older_bun_printed
+                                    || (self.like_older_bun.is_none()
+                                        && !children.is_null()
+                                        && children != JSValue::FALSE);
 
                                 if print_children {
+                                    self.same_as_older_bun &= older_bun_printed;
                                     'print_children: {
                                         match tag.tag {
                                             Tag::String => {
@@ -2225,16 +2231,19 @@ impl<'a> Formatter<'a> {
                                                         .expect("unreachable");
                                                 }
                                             }
-                                            Tag::JSX => {
+                                            // A child that is not an array prints as a list of one.
+                                            kind if kind != Tag::Array => {
                                                 writer.write_all(b">\n");
 
                                                 {
                                                     self.indent += 1;
+                                                    // As for an item of a list. It is restored after the props.
+                                                    self.quote_strings = false;
                                                     let r: JsResult<()> = (|| {
                                                         self.write_indent(writer.ctx)
                                                             .expect("unreachable");
                                                         self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(children, self.global_this)?,
+                                                            tag,
                                                             writer.ctx,
                                                             children,
                                                             self.global_this,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { Console } from "node:console";
 
 import { Writable } from "node:stream";
@@ -221,6 +221,128 @@ describe("global console writes through a replaced process.stdout.write", () => 
     const { stdout, stderr, exitCode } = await run(source);
     expect(stderr).toBe("");
     expect(stdout).toBe("W:nested:outer\nW:outer\nrestored\nG:accessor\nprototype\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an error from a forwarding write is dropped, like node: write after end and EPIPE", async () => {
+    const afterEnd = await run(`
+      const ow = process.stdout.write;
+      process.stdout.write = function (c, ...r) { return ow.call(this, c, ...r); };
+      process.stdout.end();
+      console.log("after-end");
+      process.stderr.write("alive\\n");
+    `);
+    expect(afterEnd.stderr).toBe("alive\n");
+    expect(afterEnd.exitCode).toBe(0);
+
+    // `head` closes the pipe after one line. Every later write fails with EPIPE.
+    if (!isWindows) {
+      await using proc = Bun.spawn({
+        cmd: [
+          "bash",
+          "-c",
+          `"$0" -e "$1" | head -1`,
+          bunExe(),
+          `
+            const ow = process.stdout.write;
+            process.stdout.write = function (c, ...r) { return ow.call(this, c, ...r); };
+            for (let i = 0; i < 2000; i++) console.log("line " + i);
+            process.stderr.write("done " + process.exitCode + "\\n");
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("line 0\n");
+      expect(stderr).toBe("done undefined\n");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("a stack overflow in the replaced write is not dropped, like node", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      process.stdout.write = function () { console.log("again"); };
+      console.log("x");
+    `);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
+    expect(exitCode).toBe(1);
+  });
+
+  test("console.clear and a coloured console.count reach the replaced write", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const out = [], err = [];
+          const ew = process.stderr.write;
+          process.stdout.write = function (chunk) { out.push(chunk); return true; };
+          process.stderr.write = function (chunk) { err.push(chunk); return true; };
+          console.clear();
+          console.count("c");
+          process.stderr.write = ew;
+          process.stderr.write(JSON.stringify({ out, err }));
+        `,
+      ],
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(JSON.parse(stderr)).toEqual({
+      out: ["\x1b[2J\x1b[3J\x1b[H", "\x1b[0mc\x1b[2m: \x1b[0m\x1b[33m1\x1b[0m\n"],
+      err: [],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a stream whose structure JSC flattens keeps routing", async () => {
+    // 200 added properties turn the stream into a dictionary. The deletes and the hot loop make JSC flatten it,
+    // which renumbers its property offsets in place.
+    const { stdout, stderr, exitCode } = await run(`
+      const s = process.stdout;
+      const ow = s.write;
+      for (let i = 0; i < 200; i++) s["p" + i] = i;
+      delete s.write;
+      s.write = function (c) { return ow.call(this, "W:" + c); };
+      for (let i = 0; i < 200; i++) delete s["p" + i];
+      for (let i = 0; i < 2000; i++) console.log("x");
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("W:x\n".repeat(2000));
+    expect(exitCode).toBe(0);
+  });
+
+  test("a Web Worker's console follows the worker's own process.stdout.write", async () => {
+    using dir = tempDir("console-worker", {
+      "main.js": `
+        const w = new Worker(new URL("./worker.js", import.meta.url).href);
+        w.onmessage = e => { console.log("seen=" + JSON.stringify(e.data)); w.terminate(); };
+      `,
+      "worker.js": `
+        const seen = [];
+        const ow = process.stdout.write;
+        process.stdout.write = function (c) { seen.push(String(c)); return ow.call(this, c); };
+        console.log("from-worker");
+        console.count("c");
+        process.stdout.write = ow;
+        postMessage(seen);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('from-worker\nc: 1\nseen=["from-worker\\n","c: 1\\n"]\n');
     expect(exitCode).toBe(0);
   });
 

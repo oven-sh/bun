@@ -149,6 +149,14 @@ const writtenByWarnings = b.memberOfValue(
   b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
 );
 
+// The native console (src/jsc/ConsoleObject.rs) hands each message to the function with the stream once the program
+// has replaced the stream's write(). Only the whole stream takes a store of write(): the light ones throw.
+const consoleWritesThrough = (cell: string) =>
+  b.functionUsed(
+    b.functionIn("builtins/ConsoleObject", "writeThroughStream"),
+    b.calledByHost({ times: "Repeatedly", this: b.undefined, args: [b.nativeCell(cell), b.string], result: b.dropped }),
+  );
+
 // Whatever makes a standard stream, the property of `process` holds it from then on, and so does the one of `console`.
 const usesOfStandardStream: readonly (readonly b.HostUseSpec[])[] = [
   [b.keptIn(standardInputCell)],
@@ -238,6 +246,8 @@ const outputStreams = [
   lightOutputStreams,
   { ...wholeOutputStream(1), when: b.whenTestsReplaceBuiltins },
   { ...wholeOutputStream(2), when: b.whenTestsReplaceBuiltins },
+  { ...consoleWritesThrough(standardOutputCell), when: b.whenTestsReplaceBuiltins },
+  { ...consoleWritesThrough(standardErrorCell), when: b.whenTestsReplaceBuiltins },
 ];
 
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
@@ -245,7 +255,15 @@ const needsWholeOutputStream = pathOfNativeFunction("BunProcess.cpp", "Process_f
 // One function makes both outputs, so an executable has it for both or for neither.
 const madeWholeBy = [
   { path: needsWholeInputStream, functions: [wholeInputStream] },
-  { path: needsWholeOutputStream, functions: [wholeOutputStream(1), wholeOutputStream(2)] },
+  {
+    path: needsWholeOutputStream,
+    functions: [
+      wholeOutputStream(1),
+      wholeOutputStream(2),
+      consoleWritesThrough(standardOutputCell),
+      consoleWritesThrough(standardErrorCell),
+    ],
+  },
 ];
 
 // Native code makes the value of the property by a call without operands, or with `process`.

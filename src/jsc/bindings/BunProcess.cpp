@@ -4066,24 +4066,19 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, jsUndefined());
-    if (JSObject* streamObject = stream.getObject()) {
-        // The stream classes put `write` on the instance (writeFast in internal/fs/streams).
-        JSValue write = streamObject->getDirect(vm, WebCore::builtinNames(vm).writePublicName());
-        if (write)
-            uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject, write);
-    }
+    if (JSObject* streamObject = stream.getObject())
+        uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject);
     return stream;
 }
 
 extern "C" void Bun__Console__onStdioWriteStreamCreated();
 
-void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue pristineWrite)
+void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream)
 {
     ASSERT(fd == 1 || fd == 2);
     unsigned slot = static_cast<unsigned>(fd) - 1;
     m_stdioWriteStream[slot].set(vm, this, stream);
-    m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
-    resolveStdioWrite(vm, slot);
+    m_pristineStdioWrite[slot].set(vm, this, resolveStdioWrite(vm, slot));
     Bun__Console__onStdioWriteStreamCreated();
 }
 
@@ -4093,7 +4088,8 @@ JSValue Process::resolveStdioWrite(JSC::VM& vm, unsigned slot)
     const Identifier& name = WebCore::builtinNames(vm).writePublicName();
     JSObject* stream = m_stdioWriteStream[slot].get();
     Structure* structure = stream->structure();
-    if (!structure->isCompiledStructure()) {
+    // A dictionary structure renumbers its offsets in place when JSC flattens it.
+    if (!structure->isCompiledStructure() && !structure->isDictionary()) {
         PropertyOffset offset = stream->getDirectOffset(vm, name);
         if (offset != invalidOffset) {
             m_stdioWriteStructure[slot].set(vm, this, structure);
@@ -4114,28 +4110,44 @@ JSValue Process::resolveStdioWrite(JSC::VM& vm, unsigned slot)
     return {};
 }
 
-JSObject* Process::stdioStreamWithReplacedWrite(JSC::VM& vm, int fd)
+bool Process::isStdioWriteReplaced(JSC::VM& vm, int fd)
 {
     ASSERT(fd == 1 || fd == 2);
     unsigned slot = static_cast<unsigned>(fd) - 1;
     JSObject* stream = m_stdioWriteStream[slot].get();
     if (!stream)
-        return nullptr;
+        return false;
     JSValue current = stream->structure() == m_stdioWriteStructure[slot].get()
         ? stream->getDirect(m_stdioWriteOffset[slot])
         : resolveStdioWrite(vm, slot);
-    if (!current || current == m_pristineStdioWrite[slot].get())
-        return nullptr;
-    return stream;
+    return current && current != m_pristineStdioWrite[slot].get();
 }
 
 // Console write path (src/jsc/ConsoleObject.rs). No throw scope: nothing here runs user code.
-extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
+extern "C" bool Bun__Process__isStdioWriteReplaced(Zig::GlobalObject* globalObject, int32_t fd)
 {
     if (!globalObject->hasProcessObject())
-        return JSValue::encode({});
+        return false;
     auto& vm = JSC::getVM(globalObject);
-    return JSValue::encode(globalObject->processObject()->stdioStreamWithReplacedWrite(vm, fd));
+    return globalObject->processObject()->isStdioWriteReplaced(vm, fd);
+}
+
+// Hands one console message to the replaced `write` of the stream for fd. Zero means it threw.
+extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::GlobalObject* globalObject, int32_t fd, JSC::EncodedJSValue text)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    JSObject* stream = process->stdioWriteStream(fd);
+    if (!stream)
+        return JSValue::encode(jsUndefined());
+    JSFunction* write = process->writeThroughStream();
+    JSC::MarkedArgumentBuffer args;
+    args.append(stream);
+    args.append(JSValue::decode(text));
+    JSC::profiledCall(globalObject, ProfilingReason::API, write, JSC::getCallData(write), jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -4933,6 +4945,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_writeThroughStream.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -6342,6 +6355,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
+    });
+    m_writeThroughStream.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), consoleObjectWriteThroughStreamCodeGenerator(init.vm), init.owner->globalObject()));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

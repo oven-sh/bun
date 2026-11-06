@@ -41,14 +41,19 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Structure> m_stdioWriteStructure[2];
     PropertyOffset m_stdioWriteOffset[2] = { invalidOffset, invalidOffset };
 
+    // ConsoleObject.ts writeThroughStream, built on the first message that goes through a replaced `write`.
+    LazyProperty<Process, JSFunction> m_writeThroughStream;
+
     void installDefaultWarningListener(JSC::VM&);
     JSValue resolveStdioWrite(JSC::VM&, unsigned slot);
 
 public:
     // fd is 1 or 2. Called once per stream when the full JS stream is built.
-    void setStdioWriteStream(JSC::VM&, int fd, JSObject* stream, JSValue pristineWrite);
-    // The stream for fd when its `write` is no longer the one Bun installed, otherwise null. Runs no user code.
-    JSObject* stdioStreamWithReplacedWrite(JSC::VM&, int fd);
+    void setStdioWriteStream(JSC::VM&, int fd, JSObject* stream);
+    // Whether the `write` of the stream for fd is no longer the one it was built with. Runs no user code.
+    bool isStdioWriteReplaced(JSC::VM&, int fd);
+    JSObject* stdioWriteStream(int fd) { return m_stdioWriteStream[static_cast<unsigned>(fd) - 1].get(); }
+    JSFunction* writeThroughStream() { return m_writeThroughStream.getInitializedOnMainThread(this); }
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

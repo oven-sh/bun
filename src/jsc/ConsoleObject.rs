@@ -413,13 +413,16 @@ fn message_with_type_and_level_(
         || message_type == MessageType::Assert;
 
     if message_type == MessageType::Clear {
-        let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+        {
+            let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+            if !is_stdio_write_replaced(global, false) {
+                Output::reset_terminal();
+                return Ok(());
+            }
+        }
         // Node clears through process.stdout.
-        let stream = replaced_stdio_write_stream(global, false);
-        if stream.is_empty() {
-            Output::reset_terminal();
-        } else if Output::enable_ansi_colors_stdout() {
-            deliver_to_replaced_write(global, stream, b"\x1B[2J\x1B[3J\x1B[H".to_vec());
+        if Output::enable_ansi_colors_stdout() {
+            deliver_to_replaced_write(global, false, b"\x1B[2J\x1B[3J\x1B[H".to_vec())?;
         }
         return Ok(());
     }
@@ -437,7 +440,7 @@ fn message_with_type_and_level_(
     // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
-    with_console_sink(global, use_stderr, |writer| {
+    with_console_sink(global, use_stderr, &mut |writer| {
         write_message(
             message_type,
             level,
@@ -461,78 +464,98 @@ pub extern "C" fn Bun__Console__onStdioWriteStreamCreated() {
 }
 
 unsafe extern "C" {
-    /// `BunProcess.cpp`. The stream for `fd` once its `write` was replaced, else empty. Runs no user code.
-    safe fn Bun__Process__stdioStreamWithReplacedWrite(global: &JSGlobalObject, fd: i32)
-    -> JSValue;
+    /// `BunProcess.cpp`. Whether the `write` of the stream for `fd` was replaced. Runs no user code.
+    safe fn Bun__Process__isStdioWriteReplaced(global: &JSGlobalObject, fd: i32) -> bool;
+    /// `BunProcess.cpp`. Calls `writeThroughStream` of `ConsoleObject.ts` with the stream for `fd`.
+    /// `[[ZIG_EXPORT(zero_is_throw)]]`.
+    safe fn Bun__Process__writeThroughStdioStream(
+        global: &JSGlobalObject,
+        fd: i32,
+        text: JSValue,
+    ) -> JSValue;
 }
 
-/// The stream the console has to write through, or the empty value for the native writer.
 #[inline]
-fn replaced_stdio_write_stream(global: &JSGlobalObject, use_stderr: bool) -> JSValue {
-    if !STDIO_WRITE_STREAM_EXISTS.load(core::sync::atomic::Ordering::Relaxed) {
-        return JSValue::ZERO;
-    }
-    Bun__Process__stdioStreamWithReplacedWrite(global, if use_stderr { 2 } else { 1 })
+fn stdio_fd(use_stderr: bool) -> i32 {
+    if use_stderr { 2 } else { 1 }
 }
 
-/// Runs `f` on the native writer, or on a buffer handed to a replaced `process.std{out,err}.write`.
-fn with_console_sink<R>(
-    global: &JSGlobalObject,
-    use_stderr: bool,
-    f: impl FnOnce(&mut dyn bun_io::Write) -> JsResult<R>,
-) -> JsResult<R> {
-    let stream_lock = ConsoleStreamLock::acquire(use_stderr);
+#[inline]
+fn is_stdio_write_replaced(global: &JSGlobalObject, use_stderr: bool) -> bool {
+    STDIO_WRITE_STREAM_EXISTS.load(core::sync::atomic::Ordering::Relaxed)
+        && Bun__Process__isStdioWriteReplaced(global, stdio_fd(use_stderr))
+}
 
+/// The native writer of one stream, held with the stream lock, and whether the
+/// message has to go through a replaced `process.std{out,err}.write` instead.
+struct ConsoleSink<'a> {
+    lock: ConsoleStreamLock,
+    native: &'a mut bun_core::io::Writer,
+    routed: bool,
+}
+
+fn console_sink<'a>(global: &JSGlobalObject, use_stderr: bool) -> ConsoleSink<'a> {
+    let lock = ConsoleStreamLock::acquire(use_stderr);
     // The bun test reporter's `onBeforePrint`, through `RuntimeHooks` (a forward dep).
     if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
         (hooks.console_on_before_print)();
     }
-
-    let stream = replaced_stdio_write_stream(global, use_stderr);
+    let routed = is_stdio_write_replaced(global, use_stderr);
     let console: *mut ConsoleObject = vm_console(global);
-    // SAFETY: see [`vm_console`]. A raw deref: `f` can re-enter JS.
-    let native: &mut bun_core::io::Writer = unsafe {
+    // SAFETY: see [`vm_console`]. A raw deref: the caller's formatting can re-enter JS.
+    let native: &'a mut bun_core::io::Writer = unsafe {
         if use_stderr {
             (*console).error_writer()
         } else {
             (*console).writer()
         }
     };
+    ConsoleSink {
+        lock,
+        native,
+        routed,
+    }
+}
 
-    if stream.is_empty() {
+/// Runs `f` on the native writer, or on a buffer handed to a replaced `process.std{out,err}.write`.
+fn with_console_sink(
+    global: &JSGlobalObject,
+    use_stderr: bool,
+    f: &mut dyn FnMut(&mut dyn bun_io::Write) -> JsResult<()>,
+) -> JsResult<()> {
+    let ConsoleSink {
+        lock,
+        native,
+        routed,
+    } = console_sink(global, use_stderr);
+    if !routed {
         let result = f(native);
         let _ = native.flush();
         return result;
     }
-
     // Flushed first, or the two sinks interleave out of order.
     let _ = native.flush();
     let mut captured: Vec<u8> = Vec::new();
-    let result = f(&mut captured)?;
-    drop(stream_lock);
-    deliver_to_replaced_write(global, stream, captured);
-    Ok(result)
+    f(&mut captured)?;
+    drop(lock);
+    deliver_to_replaced_write(global, use_stderr, captured)
 }
 
-/// An exception from the replaced `write` is dropped, as node's `ignoreErrors` does.
-fn deliver_to_replaced_write(global: &JSGlobalObject, stream: JSValue, bytes: Vec<u8>) {
+/// One call of the replaced `write` with the whole message, as node's `kWriteToConsole` does.
+/// `writeThroughStream` (`ConsoleObject.ts`) drops an error from it, except a stack overflow.
+fn deliver_to_replaced_write(
+    global: &JSGlobalObject,
+    use_stderr: bool,
+    bytes: Vec<u8>,
+) -> JsResult<()> {
     if bytes.is_empty() {
-        return;
+        return Ok(());
     }
-    let delivered = (|| -> JsResult<()> {
-        let Some(write) = stream.get(global, b"write")? else {
-            return Ok(());
-        };
-        if !write.is_callable() {
-            return Ok(());
-        }
-        let text = crate::bun_string_jsc::owned_utf8_into_js(global, bytes)?;
-        write.call(global, stream, &[text])?;
-        Ok(())
-    })();
-    if delivered == Err(jsc::JsError::Thrown) {
-        global.clear_exception_except_termination();
-    }
+    let text = crate::bun_string_jsc::owned_utf8_into_js(global, bytes)?;
+    crate::from_js_host_call(global, || {
+        Bun__Process__writeThroughStdioStream(global, stdio_fd(use_stderr), text)
+    })?;
+    Ok(())
 }
 
 /// Formats one console message into `writer`. The caller picked the sink.
@@ -5832,7 +5855,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
-    let _ = with_console_sink(global_this, false, |writer| {
+    let _ = with_console_sink(global_this, false, &mut |writer| {
         if Output::enable_ansi_colors_stdout() {
             let _ = writeln!(
                 writer,
@@ -5915,7 +5938,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
         return;
     };
     let Some(value) = prev else { return };
-    let _ = with_console_sink(global, true, |writer| {
+    let _ = with_console_sink(global, true, &mut |writer| {
         write_elapsed(writer, &value, slice);
         let _ = writer.write_all(b"\n");
         Ok(())
@@ -5924,23 +5947,15 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
 
 /// `[1.23ms] label`, the prefix of `console.timeEnd` and `console.timeLog` output.
 fn write_elapsed(writer: &mut dyn bun_io::Write, timer: &bun_core::time::Timer, label: &[u8]) {
-    let elapsed =
-        (timer.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
-    let colors = Output::enable_ansi_colors_stderr();
-    let _ = match elapsed.round() as i64 {
-        0..=1500 => {
-            bun_core::write_pretty!(writer, colors, "<r><d>[<b>{:>.2}ms<r><d>]<r>", elapsed)
-        }
-        _ => bun_core::write_pretty!(
-            writer,
-            colors,
-            "<r><d>[<b>{:>.2}s<r><d>]<r>",
-            elapsed / 1000.0
-        ),
+    let elapsed = Output::Elapsed {
+        colors: Output::enable_ansi_colors_stderr(),
+        ms: (timer.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     };
-    if !label.is_empty() {
-        let _ = write!(writer, " {}", bstr::BStr::new(label));
-    }
+    let _ = if label.is_empty() {
+        write!(writer, "{elapsed}")
+    } else {
+        write!(writer, "{elapsed} {}", bstr::BStr::new(label))
+    };
 }
 
 #[unsafe(no_mangle)]
@@ -5964,7 +5979,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     };
     // SAFETY: caller passes a valid (args, args_len) pair.
     let args = unsafe { bun_core::ffi::slice(args, args_len) };
-    let _ = with_console_sink(global, true, |writer| {
+    let _ = with_console_sink(global, true, &mut |writer| {
         write_elapsed(writer, &value, slice);
 
         let mut fmt = Formatter::new(global);

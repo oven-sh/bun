@@ -299,10 +299,13 @@ test.skipIf(isDebug || isASAN)(
 //
 // It says what Bun does, not what Bun should do. Two rules have a position in the tree: an invalid RegExp literal in
 // removed code has to run (test/aot/parallel/language/invalid-regexp-in-dropped-code.js), and the parser's error for
-// `new.target` outside a function "is intentionally not emitted" (src/js_parser/visit/visit_expr.rs). A change that
-// reports one of these errors moves its lines to "is reported".
+// `new.target` outside a function "is intentionally not emitted" (src/js_parser/visit/visit_expr.rs).
+//
+// The table is a floor. The test fails when Bun reports an error less than its line says, or refuses a valid program.
+// A change that reports more of these errors passes. Move its lines up to keep the gain.
 describe("an early error in code that nothing runs", () => {
-  // By outcome, then by rule and extension: `.js` or `.ts` for a module, `.cjs` for CommonJS.
+  // By outcome, from the most reported to the least, then by rule and extension: `.js` or `.ts` for a module, `.cjs`
+  // for CommonJS.
   const table: Record<string, Record<string, string[]>> = {
     // Both files have a SyntaxError.
     "is reported": {
@@ -427,12 +430,12 @@ describe("an early error in code that nothing runs", () => {
     return false;
   };
 
-  test("is reported or erased as the table says", async () => {
-    const rows = Object.values(table).flatMap(lists =>
+  test("is reported no less than the table says", async () => {
+    const rows = Object.entries(table).flatMap(([outcome, lists]) =>
       Object.entries(lists).flatMap(([list, programs]) => {
         const extension = list.slice(list.lastIndexOf(".") + 1);
         if (!(extension in readers)) throw new Error(`${list}: this test can't load a .${extension} file`);
-        return programs.map(program => ({ list, program, extension }));
+        return programs.map(program => ({ outcome, list, program, extension }));
       }),
     );
     const files: Record<string, string> = {};
@@ -477,17 +480,21 @@ describe("an early error in code that nothing runs", () => {
       throw new Error(`A ${errors[file]} for ${JSON.stringify(files[file])}`);
     };
 
-    const found: typeof table = {};
-    rows.forEach(({ list, program, extension }, index) => {
+    // From the least reported to the most.
+    const ranks = ["is erased where it stays", "is erased under `if (0)`", "is reported"];
+    const worse: Record<string, { now: string; inTheTable: string }> = {};
+    rows.forEach(({ outcome, list, program, extension }, index) => {
       const kept = `kept/${index}.${extension}`;
-      let outcome: string;
+      let now: string;
       if (isRefused(`removed/${index}.${extension}`)) {
-        outcome = isRefused(kept) ? "is reported" : "is refused only under `if (0)`";
-      } else if (isRefused(kept)) outcome = "is erased under `if (0)`";
-      else outcome = isRefusedAsWritten(extension, files[kept]) ? "is erased where it stays" : "has no early error";
-      ((found[outcome] ??= {})[list] ??= []).push(program);
+        now = isRefused(kept) ? "is reported" : "is refused only under `if (0)`";
+      } else if (isRefused(kept)) now = "is erased under `if (0)`";
+      else now = isRefusedAsWritten(extension, files[kept]) ? "is erased where it stays" : "has no early error";
+      const isWorse =
+        ranks.includes(outcome) && ranks.includes(now) ? ranks.indexOf(now) < ranks.indexOf(outcome) : now !== outcome;
+      if (isWorse) worse[`${list} ${JSON.stringify(program)}`] = { now, inTheTable: outcome };
     });
-    expect(found).toEqual(table);
+    expect(worse).toEqual({});
     expect(exitCode).toBe(0);
   });
 });

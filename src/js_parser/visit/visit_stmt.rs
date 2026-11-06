@@ -2654,20 +2654,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// of one alias can be what reads another.
     fn for_each_read_ts_import_equals(
         &mut self,
-        aliases: &[js_ast::StoreRef<S::Local>],
+        deferred: &[DeferredTsImportEquals],
         visit: &mut dyn FnMut(&mut Self, usize) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let mut index_of: HashMap<Ref, u32> = HashMap::default();
-        if aliases.len() > 1 {
-            for (index, local) in aliases.iter().enumerate() {
+        if deferred.len() > 1 {
+            for (index, (_, local, _)) in deferred.iter().enumerate() {
                 index_of.insert(ts_import_equals_decl(local).0, index as u32);
             }
         }
-        let mut visited = bun_alloc::vec_from_iter_in(aliases.iter().map(|_| false), self.arena);
-        for first in 0..aliases.len() {
+        let mut visited = bun_alloc::vec_from_iter_in(deferred.iter().map(|_| false), self.arena);
+        for first in 0..deferred.len() {
             let mut index = first;
             loop {
-                let alias = ts_import_equals_decl(&aliases[index]).0;
+                let local = &deferred[index].1;
+                let alias = ts_import_equals_decl(local).0;
                 if visited[index]
                     || self.symbols[alias.inner_index() as usize].use_count_estimate == 0
                 {
@@ -2675,7 +2676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 visited[index] = true;
                 visit(self, index)?;
-                let root = entity_name_root(ts_import_equals_decl(&aliases[index]).1);
+                let root = entity_name_root(ts_import_equals_decl(local).1);
                 let js_ast::ExprData::EIdentifier(id) = root.data else {
                     break;
                 };
@@ -2691,23 +2692,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The end of a statement list: visits the aliases of `stmts` that a value reads.
     fn visit_read_ts_import_equals(&mut self, stmts: &mut StmtList<'a>) -> Result<(), Error> {
         let arena = self.arena;
-        let mut positions = BumpVec::new_in(arena);
-        let mut aliases = BumpVec::new_in(arena);
+        let mut deferred = BumpVec::new_in(arena);
         for (position, stmt) in stmts.iter().enumerate() {
             if let StmtData::STsImportEquals(alias) = stmt.data
                 && let Some(local) = alias.local
             {
-                positions.push(position);
-                aliases.push(local);
+                deferred.push((position, local, stmt.loc));
             }
         }
         let mut read: BumpVec<'a, Option<StmtList<'a>>> =
-            bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
-        self.for_each_read_ts_import_equals(&aliases, &mut |p, index| {
-            let mut local = aliases[index];
+            bun_alloc::vec_from_iter_in(deferred.iter().map(|_| None), arena);
+        self.for_each_read_ts_import_equals(&deferred, &mut |p, index| {
+            let (_, mut local, loc) = deferred[index];
             let mut stmt = Stmt {
                 data: StmtData::SLocal(local),
-                loc: stmts[positions[index]].loc,
+                loc,
             };
             let mut visited = StmtList::new_in(arena);
             Self::s_local(p, &mut visited, &mut stmt, &mut *local, true)?;
@@ -2718,13 +2717,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let all = core::mem::replace(stmts, StmtList::with_capacity_in(stmts.len(), arena));
         let mut next = 0;
         for (position, stmt) in all.iter().enumerate() {
-            if positions.get(next) != Some(&position) {
+            if deferred.get(next).is_none_or(|it| it.0 != position) {
                 stmts.push(*stmt);
                 continue;
             }
             match read[next].take() {
                 Some(visited) => stmts.extend_from_slice(&visited),
-                None => self.drop_ts_import_equals(&aliases[next]),
+                None => self.drop_ts_import_equals(&deferred[next].1),
             }
             next += 1;
         }
@@ -2732,21 +2731,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// One Part for each top-level statement: makes the Part of each alias that
-    /// a value reads. `deferred` has the index in `parts` where each alias belongs.
+    /// a value reads, where the alias is written.
     #[cold]
     pub(crate) fn append_read_ts_import_equals(
         &mut self,
         parts: &mut BumpVec<'a, js_ast::Part>,
-        deferred: &[(usize, js_ast::StoreRef<S::Local>, bun_ast::Loc)],
+        deferred: &[DeferredTsImportEquals],
     ) -> Result<(), Error> {
         let arena = self.arena;
-        let aliases = bun_alloc::vec_from_iter_in(deferred.iter().map(|it| it.1), arena);
         let mut read: BumpVec<'a, Option<js_ast::Part>> =
-            bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
-        self.for_each_read_ts_import_equals(&aliases, &mut |p, index| {
+            bun_alloc::vec_from_iter_in(deferred.iter().map(|_| None), arena);
+        self.for_each_read_ts_import_equals(deferred, &mut |p, index| {
+            let (_, local, loc) = deferred[index];
             let stmt = Stmt {
-                data: StmtData::SLocal(aliases[index]),
-                loc: deferred[index].2,
+                data: StmtData::SLocal(local),
+                loc,
             };
             let mut part = BumpVec::new_in(arena);
             p.append_part(&mut part, arena.alloc_slice_copy(&[stmt]))?;
@@ -2756,15 +2755,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let all = core::mem::replace(
             parts,
-            BumpVec::with_capacity_in(parts.len() + aliases.len(), arena),
+            BumpVec::with_capacity_in(parts.len() + deferred.len(), arena),
         );
         let mut all = all.into_iter();
         let mut next = 0;
         for position in 0.. {
-            while next < aliases.len() && deferred[next].0 == position {
+            while deferred.get(next).is_some_and(|it| it.0 == position) {
                 match read[next].take() {
                     Some(part) => parts.push(part),
-                    None => self.drop_ts_import_equals(&aliases[next]),
+                    None => self.drop_ts_import_equals(&deferred[next].1),
                 }
                 next += 1;
             }
@@ -2799,6 +2798,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
+
+/// An `S::TsImportEquals` that waits for the end of its list: where it is in
+/// the list, its `const a = b.c`, and where it is in the source.
+pub(crate) type DeferredTsImportEquals = (usize, js_ast::StoreRef<S::Local>, bun_ast::Loc);
 
 /// `a` and `b.c` of the `const a = b.c` that the parser makes of `import a = b.c`.
 fn ts_import_equals_decl(local: &S::Local) -> (Ref, Expr) {

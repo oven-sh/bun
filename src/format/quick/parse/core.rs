@@ -74,8 +74,13 @@ pub(crate) struct Parse {
     /// F_DECIDED, if that goes for something in the blocks
     pub(crate) wrap_decided: i32,
     /// Blocks that have been read, for a parser that comes by a second time: see parse_statement_with_blocks().
+    /// Those of the statement that is parsed again start at `known_blocks_base`, in the order of the text. What is parsed again is outside of all of them, and what is
+    /// in it is between two braces that none of them is between: the blocks of the statements around it are not met.
     pub(crate) known_blocks: Vec<i32>,
     pub(crate) known_blocks_count: i32,
+    pub(crate) known_blocks_base: i32,
+    /// The first one that does not start before the place that was asked about last.
+    pub(crate) known_blocks_next: i32,
     /// Where the last block of the statement that parse_statement_with_blocks() has at hand ends.
     pub(crate) block_end: i32,
     /// Decorators that stood before `abstract class` or `declare class`.
@@ -214,6 +219,8 @@ impl Parse {
             wrap_decided: 0,
             known_blocks: zeros(16),
             known_blocks_count: 0,
+            known_blocks_base: 0,
+            known_blocks_next: 0,
             block_end: 0,
             pending_decorators: 0,
             no_record_expression: 0,
@@ -504,6 +511,8 @@ impl Quick {
         self.forget_place();
         self.reset_typed();
         self.parse.known_blocks_count = 0;
+        self.parse.known_blocks_base = 0;
+        self.parse.known_blocks_next = 0;
         self.parse.refused_at = 0;
         self.parse.list_depth = self.options.indentation;
         // (a syntax error can have left these as they were)
@@ -1380,15 +1389,25 @@ impl Quick {
         return Ok(behind);
     }
 
-    pub(crate) fn known_block_at(&self, start: i32) -> i32 {
-        let mut i = self.parse.known_blocks_count - 1;
-        while i >= 0 {
-            if self.n.at(self.parse.known_blocks.at(i)) != 0
-                && self.n.at(self.parse.known_blocks.at(i) + 1) == start
-            {
-                return self.parse.known_blocks.at(i);
-            }
+    /// The parser comes by the blocks in their order, and goes back over as many as it has tried.
+    pub(crate) fn known_block_at(&mut self, start: i32) -> i32 {
+        let mut i = self.parse.known_blocks_next;
+        while i > self.parse.known_blocks_base
+            && self.n.at(self.parse.known_blocks.at(i - 1) + 1) >= start
+        {
             i -= 1;
+        }
+        while i < self.parse.known_blocks_count
+            && self.n.at(self.parse.known_blocks.at(i) + 1) < start
+        {
+            i += 1;
+        }
+        self.parse.known_blocks_next = i;
+        if i < self.parse.known_blocks_count {
+            let known = self.parse.known_blocks.at(i);
+            if self.n.at(known) != 0 && self.n.at(known + 1) == start {
+                return known;
+            }
         }
         return 0;
     }
@@ -1615,11 +1634,14 @@ impl Quick {
                 i += 1;
             }
             self.parse.known_blocks_count = base + count;
+            let outer = (self.parse.known_blocks_base, self.parse.known_blocks_next);
+            self.parse.known_blocks_base = base;
+            self.parse.known_blocks_next = base;
             self.list_truncate(list_mark);
             // the comments in the blocks stay; those behind the last block will be read again
             self.drop_comments_from(self.n.at(self.parse.known_blocks.at(base + count - 1) + 2));
-            self.next_at(start, behind)?;
             let v0 = (|| -> R<i32> {
+                self.next_at(start, behind)?;
                 let v1 = if !is_class_member {
                     self.parse_statement()?
                 } else {
@@ -1635,6 +1657,7 @@ impl Quick {
                 return Ok(0);
             })();
             self.parse.known_blocks_count = base;
+            (self.parse.known_blocks_base, self.parse.known_blocks_next) = outer;
             return v0;
         }
         if is_field {

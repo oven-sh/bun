@@ -334,6 +334,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let StmtData::SImport(mut import) = stmt.data else {
             return Ok(());
         };
+        // With `hot_module_reloading`, the parse pass records the namespace and record of each import item. This split does not update them.
+        debug_assert!(!self.options.features.hot_module_reloading);
         let vitest_record = import.import_record_index;
         let range = self.import_records.items()[vitest_record as usize].range;
         let other_names = ChaiImports::take_other_names(self.arena, &mut import.items);

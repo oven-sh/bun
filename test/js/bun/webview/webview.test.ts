@@ -1,6 +1,7 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { clickSelectorPages } from "./click-selector-pages";
 
 // FFI shm access for encoding:"shmem" tests. In real use Kitty (or
 // whoever opens the segment) does this — shm_open + mmap + read + unlink.
@@ -594,6 +595,17 @@ itRendering("click(selector) waits for element to stop animating", async () => {
   const left = await view.evaluate("String(__hit)");
   expect(Number(left)).toBe(100);
 });
+
+itRendering.each(clickSelectorPages)(
+  "click(selector) $name",
+  async ({ page, selector, settle, timeout, report, want }) => {
+    await using view = new Bun.WebView({ width: 300, height: 300 });
+    await view.navigate(html(page));
+    if (settle) await view.evaluate(settle);
+    await view.click(selector, { timeout });
+    expect(await view.evaluate(report)).toBe(want);
+  },
+);
 
 itRendering("click(selector) rejects on timeout when obscured", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });

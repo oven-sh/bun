@@ -1570,7 +1570,7 @@ JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t b
 }
 
 // Selector ops: Runtime.evaluate runs the rAF-polled actionability check
-// (same predicate as WKWebView's kActionabilityJS). The IIFE takes
+// (the script that the WKWebView backend runs too). The IIFE takes
 // (sel, timeout) — we appendQuotedJSONString the selector so any chars
 // pass through. Response chains into dispatchMouseEvent.
 JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)

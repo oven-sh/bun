@@ -10,6 +10,7 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { beginsAtLooks, clickSelectorPages, slideLeft } from "./click-selector-pages";
 
 // shm_unlink for encoding:"shmem" test cleanup. macOS has no /dev/shm
 // filesystem mount, so we go through libc. Linux exposes POSIX shm at
@@ -934,6 +935,46 @@ it("chrome: click(selector) waits for animation to stop", async () => {
   await view.click("#mover");
   const left = Number(await view.evaluate("String(__hit)"));
   expect(left).toBe(100);
+});
+
+it.each(clickSelectorPages)(
+  "chrome: click(selector) $name",
+  async ({ page, selector, settle, timeout, report, want }) => {
+    await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+    await view.navigate(html(page));
+    if (settle) await view.evaluate(settle);
+    await view.click(selector, { timeout });
+    expect(await view.evaluate(report)).toBe(want);
+  },
+);
+
+// Chrome starts an animation of left in the frame that made it. So the animations that click() found at the third
+// look have started at the fourth, where a new one has yet to start. click() waits for one more frame.
+it("chrome: click(selector) waits for an animation that begins again after those that it found", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(beginsAtLooks("mover", slideLeft, 4)));
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+it("chrome: click(selector) clicks while the clock of the animations is paused", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(`<button id=b onclick="window.__hit=1">b</button>`));
+  // At playback rate 0 every frame carries the time of the frame before it.
+  await view.cdp("Animation.enable");
+  await view.cdp("Animation.setPlaybackRate", { playbackRate: 0 });
+  try {
+    await view.click("#b", { timeout: 2000 });
+    expect(await view.evaluate("String(window.__hit)")).toBe("1");
+  } finally {
+    await view.cdp("Animation.setPlaybackRate", { playbackRate: 1 });
+  }
+});
+
+it("chrome: click(selector) rejects a selector that is not valid without a frame", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(`<script>window.requestAnimationFrame = () => 0;</script>`));
+  await expect(view.click(`"); //`)).rejects.toThrow("not a valid selector");
 });
 
 // --- scrollTo variants -----------------------------------------------------

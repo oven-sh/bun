@@ -22,6 +22,7 @@
 // sessionId routes replies to the right JSWebView.
 
 #include "root.h"
+#include "ActionabilityScript.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <wtf/Vector.h>
@@ -264,35 +265,10 @@ enum class Method : uint8_t {
     UserRaw,
 };
 
-// Shared actionability/scrollTo JS — same predicate as WKWebView's
-// kActionabilityJS (WebViewHost.cpp:321). IIFE with `sel` and `timeout`
-// passed as JSON-escaped arguments at the end — avoids Chrome's
-// callFunctionOn dance for one string + one number.
+// The selector scripts (this one and kActionabilityIIFE) are function
+// expressions. The call site appends the arguments JSON-escaped, which avoids
+// Chrome's callFunctionOn dance for one string + one number.
 //
-// The predicate: attached + has size + in viewport + stable for 2 frames
-// + elementFromPoint at center returns the element (not obscured). Returns
-// the center coords as [cx, cy]; throws on timeout.
-constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
-const deadline = performance.now() + timeout;
-let last;
-for (;;) {
-  const el = document.querySelector(sel);
-  if (el) {
-    const r = el.getBoundingClientRect();
-    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
-        const hit = document.elementFromPoint(cx, cy);
-        if (hit === el || el.contains(hit)) return [cx, cy];
-      }
-      last = { l: r.left, t: r.top, w: r.width, h: r.height };
-    } else last = undefined;
-  } else last = undefined;
-  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
-}
-}))js"_s;
-
 // scrollIntoView is page-side atomic — just wait for the element, scroll,
 // return. No coords to parse.
 constexpr ASCIILiteral kScrollToIIFE = R"js((async (sel, timeout, block) => {

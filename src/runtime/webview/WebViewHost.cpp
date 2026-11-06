@@ -3,6 +3,7 @@
 #if OS(DARWIN)
 
 #include "WebViewHost.h"
+#include "ActionabilityScript.h"
 #include "ipc_protocol.h"
 
 #include <sys/mman.h>
@@ -353,37 +354,6 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
 }
 
-// Actionability check: Playwright-style rAF-polled predicate. Runs entirely
-// page-side via callAsyncJavaScript: — WebKit awaits the returned Promise.
-// One IPC roundtrip regardless of how many frames the poll takes.
-//
-// The predicate: attached + has size + in viewport + stable for 2 frames +
-// elementFromPoint at center returns the element or a descendant (not
-// obscured). Returns "cx,cy" on success; throws on timeout.
-//
-// Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
-// not string-interpolated — the selector can contain any characters.
-static constexpr const char* kActionabilityJS = R"js(
-const deadline = performance.now() + timeout;
-let last;
-for (;;) {
-  const el = document.querySelector(sel);
-  if (el) {
-    const r = el.getBoundingClientRect();
-    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
-        const hit = document.elementFromPoint(cx, cy);
-        if (hit === el || el.contains(hit)) return cx + "," + cy;
-      }
-      last = { l: r.left, t: r.top, w: r.width, h: r.height };
-    } else last = undefined;
-  } else last = undefined;
-  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
-}
-)js";
-
 // Simpler than click's actionability: just wait for the element to exist,
 // then scrollIntoView. scrollIntoView itself handles "in viewport" and
 // "scrollable ancestor" logic — it's atomic page-side, no layout race.
@@ -412,7 +382,12 @@ bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout
     m_selClickCount = clickCount;
     m_selIsScrollTo = false;
 
-    auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kActionabilityJS));
+    // The actionability check runs entirely page-side via callAsyncJavaScript:
+    // — WebKit awaits the returned Promise. One IPC roundtrip regardless of
+    // how many frames the poll takes. `sel` and `timeout` are passed via the
+    // arguments: NSDictionary, not string-interpolated — the selector can
+    // contain any characters. onSelectorComplete parses "cx,cy".
+    auto body = objc::NSString::fromWTF(makeString("return (await "_s, kActionabilityIIFE, "(sel, timeout)).join(',')"_s));
     auto args = objc::NSDictionary::with2(
         objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
         objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id);

@@ -2657,10 +2657,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         aliases: &[js_ast::StoreRef<S::Local>],
         visit: &mut dyn FnMut(&mut Self, usize) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let mut index_of: HashMap<Ref, usize> = HashMap::default();
+        let mut index_of: HashMap<Ref, u32> = HashMap::default();
         if aliases.len() > 1 {
             for (index, local) in aliases.iter().enumerate() {
-                index_of.insert(ts_import_equals_decl(local).0, index);
+                index_of.insert(ts_import_equals_decl(local).0, index as u32);
             }
         }
         let mut visited = bun_alloc::vec_from_iter_in(aliases.iter().map(|_| false), self.arena);
@@ -2682,7 +2682,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let Some(&next) = index_of.get(&id.ref_) else {
                     break;
                 };
-                index = next;
+                index = next as usize;
             }
         }
         Ok(())

@@ -261,13 +261,13 @@ pub enum Tag {
     SSwitch,
     SThrow,
     STry,
-    STsImportEquals,
     SWhile,
     SWith,
     STypeScript,
     SEmpty,
     SDebugger,
     SLazyExport,
+    STsImportEquals,
 }
 
 impl Tag {
@@ -314,7 +314,6 @@ pub enum Data {
     SSwitch(StoreRef<S::Switch>),
     SThrow(StoreRef<S::Throw>),
     STry(StoreRef<S::Try>),
-    STsImportEquals(StoreRef<S::TsImportEquals>),
     SWhile(StoreRef<S::While>),
     SWith(StoreRef<S::With>),
 
@@ -323,6 +322,9 @@ pub enum Data {
     SDebugger(S::Debugger),
 
     SLazyExport(StoreRef<expr::Data>),
+
+    // Last, so that the tags above keep their values.
+    STsImportEquals(StoreRef<S::TsImportEquals>),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────

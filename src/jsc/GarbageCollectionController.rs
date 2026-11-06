@@ -11,10 +11,8 @@ use crate::JsCell;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
-/// The tick's eden collection is requested once the program has allocated this fraction of what JSC would let it allocate
-/// before collecting on its own (`Heap::allocationBudgetThisCycle()`, a fifth to twice the live heap). Its cost grows with the
-/// live heap and it frees at most what was allocated, so on a large heap with a trickle of garbage one per tick was not
-/// worth it (#48013).
+/// The tick requests its eden collection once the program has allocated 1/16 of what JSC would let it allocate before
+/// collecting on its own (`Heap::allocationBudgetThisCycle()`): one that frees less is not worth its cost (#48013).
 const TICK_EDEN_BUDGET_DIVISOR: u64 = 16;
 
 pub struct GarbageCollectionController {
@@ -198,8 +196,7 @@ impl GarbageCollectionController {
         self.gc_last_total_allocated.set(vm.total_bytes_allocated());
     }
 
-    /// Whether the tick's eden collection is worth requesting: the program has allocated at least
-    /// 1/`TICK_EDEN_BUDGET_DIVISOR` of JSC's own allocation budget since the last request from here.
+    /// Whether enough was allocated since the last request from here for the tick's eden collection.
     fn tick_eden_due(&self, vm: &VirtualMachine) -> bool {
         let jsc = vm.jsc_vm();
         let allocated = jsc

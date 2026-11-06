@@ -175,14 +175,12 @@ impl VM {
         JSC__VM__blockBytesAllocated(self)
     }
 
-    /// Everything the mutator has allocated so far (cells and reported extra memory), the cycle in progress included.
-    /// Monotonic. JS thread only.
+    /// Bytes the mutator has allocated so far, the cycle in progress included. Monotonic. JS thread only.
     pub(crate) fn total_bytes_allocated(&self) -> u64 {
         JSC__VM__totalBytesAllocated(self)
     }
 
-    /// How much the mutator may allocate before the heap collects on its own: what JSC decided after the last collection
-    /// (a fifth to twice the live heap, less the tighter memory is). JS thread only.
+    /// Bytes the mutator may allocate before the heap collects on its own. JS thread only.
     pub(crate) fn allocation_budget_this_cycle(&self) -> usize {
         JSC__VM__allocationBudgetThisCycle(self)
     }

@@ -1059,10 +1059,10 @@ impl BunTest {
 
     fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
-        if Execution::Execution::judge(self, &Timespec::now_force_real_time()) {
-            Execution::Execution::kill_dangling_processes(global_this);
+        // The last verdict steps the group. Without one, `Start` does, which arms the timer again.
+        if !Execution::Execution::judge(self, global_this, &Timespec::now_force_real_time()) {
+            self.add_result(RefDataValue::Start);
         }
-        self.add_result(RefDataValue::Start);
     }
 
     pub(crate) fn bun_test_timeout_callback(

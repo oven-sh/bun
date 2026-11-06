@@ -651,6 +651,7 @@ impl ScopeFunctions {
                     bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
+                let has_body = callback.is_some();
                 let mut callback = if matches_filter { callback } else { None };
                 let mut parameter_of_callback = None;
                 if let (Some(parameter), Some(_)) = (parameter, callback) {
@@ -692,6 +693,7 @@ impl ScopeFunctions {
                     base,
                     bun_test::AddedInPhase::Collection,
                 )?;
+                entry.has_body = has_body;
                 if parameter_of_callback.is_some() {
                     entry.parameter = parameter_of_callback;
                 }

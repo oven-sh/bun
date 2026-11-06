@@ -126,10 +126,6 @@ const textWithNoEntry: [string, string][] = [
     "a note of three lines",
     "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n// line one\n// line two\n// line three\n",
   ],
-  [
-    "a statement that is no entry",
-    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`z 1`] = `x ${1} y`;\n",
-  ],
 ];
 
 describe.concurrent("--update-snapshots", () => {
@@ -375,6 +371,21 @@ describe.concurrent("--update-snapshots", () => {
     expect(result).toMatchObject({ snapshot: snap(entries), exitCode: 1 });
   });
 
+  test("keeps the entry of an afterAll hook that throws when every test passes", async () => {
+    const result = await updateOne(
+      `test("top", () => { expect("t").toMatchSnapshot(); });
+       describe("throws", () => {
+         afterAll(() => { throw new Error("boom"); expect("a").toMatchSnapshot(); });
+         test("passes", () => {});
+       });`,
+      snap({ "top 1": `"t"`, "throws (unnamed) 1": `"a"`, "gone 1": `"g"` }),
+    );
+    expect(result).toMatchObject({
+      snapshot: snap({ "top 1": `"t"`, "throws (unnamed) 1": `"a"` }),
+      exitCode: 1,
+    });
+  });
+
   test("keeps the entries of a skipped test when the test file runs twice", async () => {
     const entries = { "skipped 1": `"s"`, "ran 1": `"r"` };
     const result = await updateOne(
@@ -429,13 +440,19 @@ describe.concurrent("--update-snapshots", () => {
     ["-t leaves a test out", `test("b", () => { expect("new").toMatchSnapshot(); });`, ["-t", "a"]],
     ["a test fails", `test("b", () => { throw new Error("boom"); });`, []],
     ["a test is skipped", `test.skip("b", () => { expect("new").toMatchSnapshot(); });`, []],
+    ["an afterAll hook throws", `afterAll(() => { throw new Error("boom"); });\ntest("b", () => {});`, []],
+    [
+      "a test is skipped and the test file is named twice",
+      `test.skip("b", () => { expect("new").toMatchSnapshot(); });`,
+      ["./a.test.ts", "./a.test.ts"],
+    ],
   ])("leaves a file that does not parse when %s", async (_, b, args) => {
     const result = await updateOne(`test("a", () => { expect("a").toMatchSnapshot(); });\n${b}`, unreadable, ...args);
     expect(result).toMatchObject({
       snapshot: unreadable,
       stderr: expect.stringContaining(
-        "error: Failed to parse snapshot file for: a.test.ts\n" +
-          "note: --update-snapshots replaces a snapshot file that doesn't parse only when every test of the file runs to the end. " +
+        `error: --update-snapshots left ${JSON.stringify(join("__snapshots__", "a.test.ts.snap"))} as it is: the file doesn't parse\n` +
+          "note: --update-snapshots replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. " +
           "Fix the snapshot file, or delete it and run --update-snapshots again.\n",
       ),
       exitCode: 1,
@@ -444,18 +461,43 @@ describe.concurrent("--update-snapshots", () => {
     expect(result.stderr).toContain("\n 1 snapshots, 1 expect() calls\n");
   });
 
+  // No test asks the file for an entry, so the run has nothing to put in its place. The second file is not Bun's.
   const inline = `test("a", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
-
-  test("leaves a file that does not parse, with no error, when no test of a run that leaves a test out asks for it", async () => {
-    const skipped = `test.skip("b", () => { expect("b").toMatchSnapshot(); });`;
-    const result = await updateOne(`${inline}\n${skipped}`, unreadable);
-    expect(result).toMatchObject({ snapshot: unreadable, exitCode: 0 });
-    expect(result.stderr).not.toContain("Failed to parse snapshot file");
+  test.each([
+    ["a test is skipped", `${inline}\ntest.skip("b", () => { expect("b").toMatchSnapshot(); });`, unreadable],
+    ["every test ran to the end", inline, unreadable],
+    [
+      "every test ran to the end, and the file is of another tool",
+      inline,
+      "AVA Snapshot v3\n\u0001\u0002{{{ not JavaScript",
+    ],
+  ])("leaves a file that does not parse, with no error, when no test asks for it and %s", async (_, tests, before) => {
+    const result = await updateOne(tests, before);
+    expect(result).toMatchObject({ snapshot: before, exitCode: 0 });
+    expect(result.stderr).not.toContain("error");
   });
 
-  test("removes a file that does not parse when every test ran to the end and none asks for it", async () => {
-    const result = await updateOne(inline, unreadable);
-    expect(result).toMatchObject({ snapshot: undefined, exitCode: 0 });
+  test("--rerun-each keeps what a run of every test wrote over a file that does not parse when a later run fails", async () => {
+    const result = await updateOne(
+      `globalThis.runs = (globalThis.runs ?? 0) + 1;
+       test("a", () => { expect("a").toMatchSnapshot(); });
+       test("b", () => { if (globalThis.runs === 2) throw new Error("boom"); expect("b").toMatchSnapshot(); });`,
+      unreadable,
+      "--rerun-each=2",
+    );
+    expect(result).toMatchObject({ snapshot: snap({ "a 1": `"a"`, "b 1": `"b"` }), exitCode: 1 });
+    expect(result.stderr).not.toContain("the file doesn't parse");
+  });
+
+  // The parser reads the first statement and finds no entry in it. What -u does with such a statement is not decided here.
+  test("keeps the entry of a skipped test in a file that has a statement that is no entry", async () => {
+    const result = await updateOne(
+      `test("ran", () => { expect("r").toMatchSnapshot(); });
+       test.skip("skipped", () => { expect("s").toMatchSnapshot(); });`,
+      header + '\nexports[`z 1`] = `x ${1} y`;\n\nexports[`skipped 1`] = `"s"`;\n',
+    );
+    expect(result.snapshot).toContain('\nexports[`skipped 1`] = `"s"`;\n');
+    expect(result.exitCode).toBe(0);
   });
 
   // The comment shows that the run put the entry behind the text of the file and did not print the file again.
@@ -591,9 +633,9 @@ describe.concurrent("a run without --update-snapshots", () => {
   const one = `test("one", () => { expect("1").toMatchSnapshot(); });`;
   const file = (dir: unknown) => join(String(dir), "__snapshots__", "a.test.ts.snap");
 
-  async function run(dir: unknown, CI: string, env: Record<string, string> = {}) {
+  async function run(dir: unknown, CI: string, env: Record<string, string> = {}, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test"],
+      cmd: [bunExe(), "test", ...args],
       cwd: String(dir),
       env: { ...bunEnv, CI, ...env },
       stdout: "ignore",
@@ -636,6 +678,8 @@ describe.concurrent("a run without --update-snapshots", () => {
   });
 
   // The first matcher loads the file, and the run writes it after the tests. Another process can change it in between.
+  // The run then has the last word, as before: it prints the file from the entries that it loaded and the new ones.
+  const oneAndTwo = header + '\nexports[`one 1`] = `"1"`;\n\nexports[`two 1`] = `"2"`;\n';
   const withZero = header + '\nexports[`zero 1`] = `"0"`;\n\nexports[`one 1`] = `"1"`;\n';
   test.each([
     ["makes it shorter", "write", header + '\nexports[`one 1`] = `"1"`;\n'],
@@ -643,7 +687,7 @@ describe.concurrent("a run without --update-snapshots", () => {
     ["replaces it with a rename", "rename", withZero],
     ["empties it", "write", ""],
     ["removes it", "remove", ""],
-  ])("puts a new entry behind what the file holds when another writer %s", async (_, how, contents) => {
+  ])("prints the file from its entries when another writer %s", async (_, how, contents) => {
     using dir = tempDir("snapshot-other-writer", {
       "a.test.ts": `
         import fs from "fs";
@@ -664,13 +708,33 @@ describe.concurrent("a run without --update-snapshots", () => {
     });
     const { stderr, exitCode } = await run(dir, "false", { HOW: how, CONTENTS: contents });
     expect(stderr).toContain("snapshots: 1 passed, 1 added");
-    expect(fs.readFileSync(file(dir), "utf8")).toBe((contents || header) + '\nexports[`two 1`] = `"2"`;\n');
+    expect(fs.readFileSync(file(dir), "utf8")).toBe(oneAndTwo);
     expect(exitCode).toBe(0);
 
-    // The file that the run left parses: the next run finds the entry of "two" in it.
-    const next = await run(dir, "false");
-    expect(next.stderr).toContain(contents ? " 2 snapshots, " : "snapshots: 1 passed, 1 added");
+    // The next run finds both entries, and CI lets it write none.
+    const next = await run(dir, "true");
+    expect(next.stderr).toContain(" 2 snapshots, ");
     expect(next.exitCode).toBe(0);
+  });
+
+  // Both runs have taken the snapshot of "two" before one of them writes the file.
+  test("two runs of one test file at the same time leave each entry once", async () => {
+    using dir = tempDir("snapshot-two-runs", {
+      "a.test.ts": `
+        import fs from "fs";
+        ${one}
+        test("two", () => { expect("2").toMatchSnapshot(); });
+        test("waits for the other run", async () => {
+          fs.writeFileSync(import.meta.dir + "/took-" + process.pid, "");
+          const others = () => fs.readdirSync(import.meta.dir).filter(name => name.startsWith("took-"));
+          while (others().length < 2) await Bun.sleep(5);
+        });
+      `,
+      "__snapshots__/a.test.ts.snap": header + '\nexports[`one 1`] = `"1"`;\n',
+    });
+    const runs = await Promise.all([run(dir, "false"), run(dir, "false")]);
+    expect(fs.readFileSync(file(dir), "utf8")).toBe(oneAndTwo);
+    expect(runs.map(run => run.exitCode)).toEqual([0, 0]);
   });
 
   test("makes no file and no directory when CI refuses the new snapshot", async () => {

@@ -1907,6 +1907,42 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       });
     });
 
+    // The run writes the file after the tests, by its path. What became of the file that it opened at the first change does not matter.
+    describe.each(formats)("%s: a new entry reaches the path of the file after another writer", format => {
+      test.each([
+        ["replaced the file with a rename", "rename"],
+        ["removed the file", "remove"],
+        ["removed __snapshots__", "rmdir"],
+      ])("%s", async (_, how) => {
+        using dir = tempDir("snapshot-path-at-the-end", {
+          "a.test.js": `
+            import fs from "fs";
+            const file = import.meta.dir + "/__snapshots__/a.test.js.snap";
+            test("one", () => { expect("1").toMatchSnapshot(); });
+            test("two", () => { expect("2").toMatchSnapshot(); });
+            test("another writer", () => {
+              if (process.env.HOW === "rename") {
+                fs.writeFileSync(file + ".tmp", fs.readFileSync(file));
+                fs.renameSync(file + ".tmp", file);
+              }
+              if (process.env.HOW === "remove") fs.rmSync(file);
+              if (process.env.HOW === "rmdir") fs.rmSync(import.meta.dir + "/__snapshots__", { recursive: true });
+            });
+          `,
+          "__snapshots__/a.test.js.snap": file(format, { "one 1": "1" }),
+        });
+        const update = ["--update-snapshots", "./a.test.js"];
+        const { stderr, exitCode } = await runTests(String(dir), { CI: "false", HOW: how }, ...update);
+        expect(stderr).toContain("snapshots: 1 passed, 1 added\n");
+        expect(snap(dir)).toBe(file(format, { "one 1": "1", "two 1": "2" }));
+        expect(exitCode).toBe(0);
+
+        const next = await runTests(String(dir), { CI: "true", HOW: "nothing" }, "./a.test.js");
+        expect(next.stderr).toContain(" 2 snapshots, ");
+        expect(next.exitCode).toBe(0);
+      });
+    });
+
     describe.each(formats)("%s: a test that did not run to the end keeps its entries", format => {
       // The key of a snapshot that a hook takes is the name of its scope, then "(unnamed)".
       const hooked = (scope: string) => (format === "vitest" ? `${scope} > (unnamed) 1` : `${scope} (unnamed) 1`);
@@ -1916,7 +1952,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         return { snap: snap(dir), exitCode };
       };
       // Vitest 5 counts a todo, and a test.fails that throws, as tests that ran, and removes their entries.
-      // Bun does the same in a file in Vitest's format, so that "vitest run" finds no obsolete entry in it.
+      // In a file in Vitest's format Bun removes those entries too. It keeps them in the other two formats.
       const keepsMoreThanVitest = format !== "vitest";
 
       test("a todo with a body, but not one that reached its snapshot or one with no body", async () => {
@@ -1965,6 +2001,38 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
           "__snapshots__/a.test.js.snap": file(format, before),
         });
         expect(result).toEqual({ snap: file(format, before), exitCode: 1 });
+      });
+
+      // The filter takes the callback away from a test that it leaves out. The test still has a body.
+      test("a test with a body in a describe.todo that -t leaves out", async () => {
+        const before = { "dt > in 1": "x", "ran 1": "r" };
+        const result = await update(
+          {
+            "a.test.js": `
+              describe.todo("dt", () => {
+                test("in", () => { expect("x").toMatchSnapshot(); });
+              });
+              test("ran", () => { expect("r").toMatchSnapshot(); });
+            `,
+            "__snapshots__/a.test.js.snap": file(format, before),
+          },
+          "-t",
+          "ran",
+        );
+        expect(result).toEqual({ snap: file(format, keepsMoreThanVitest ? before : { "ran 1": "r" }), exitCode: 0 });
+      });
+
+      // Such a todo takes no snapshot in any run, so its entry has no test. Jest and Vitest remove it too.
+      test("but not a todo with no body that test.only leaves out", async () => {
+        const result = await update({
+          "a.test.js": `
+            test.only("only", () => { expect("o").toMatchSnapshot(); });
+            test.todo("bare");
+            test("other", () => { expect("x").toMatchSnapshot(); });
+          `,
+          "__snapshots__/a.test.js.snap": file(format, { "bare 1": "b", "only 1": "o", "other 1": "x" }),
+        });
+        expect(result).toEqual({ snap: file(format, { "only 1": "o", "other 1": "x" }), exitCode: 0 });
       });
 
       // A run without the flag writes the entries of the hooks, so their keys are the ones Bun gives them.

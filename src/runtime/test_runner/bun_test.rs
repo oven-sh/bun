@@ -2370,7 +2370,7 @@ pub(crate) struct ExecutionEntry {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
-    /// It was registered with a callback. `callback` is dropped for a skipped test and for a todo that won't run.
+    /// It was registered with a callback. `callback` is dropped for a skipped test, for a todo that won't run, and for a test that the filter leaves out.
     pub(crate) has_body: bool,
 
     pub(crate) next: Option<*mut ExecutionEntry>,

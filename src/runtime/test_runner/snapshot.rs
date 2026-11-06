@@ -108,15 +108,15 @@ enum Ran {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Pending {
     Nothing,
-    /// The entries that this run wrote, behind the text of the file. Only Bun's format, whose order is the order of the file.
+    /// The entries that this run wrote, behind the text that was loaded. Only Bun's format, whose order is the order of the file.
     NewEntries,
     WholeFile,
 }
 
 /// Why `--update-snapshots` left a snapshot file as it is.
 pub(crate) enum LeftAsItIs {
-    /// Only a run of every test to its end has all the entries that replace a file nobody can read.
-    DoesNotParse,
+    /// Only a run of every test and hook to the end has all the entries that replace a file nobody can read. This has its path.
+    DoesNotParse(Box<[u8]>),
     NotWritable(bun_sys::Error),
 }
 
@@ -256,12 +256,12 @@ impl Drop for InitializedParser<'_, '_> {
 pub(crate) struct File {
     pub(crate) id: FileId,
     format: Format,
-    /// Opened by the first change, and never with O_TRUNC: a run that exits before the flush must leave the old contents.
-    file: Option<bun_sys::File>,
     pending: Pending,
-    /// With `--update-snapshots`, a file in Bun's format that doesn't parse, until a run of every test to its end replaces it.
+    /// The length of the text that was loaded. New entries go behind that text only while the file has this length.
+    loaded_len: usize,
+    /// With `--update-snapshots`, a file in Bun's format that doesn't parse, until a run of every test and hook to the end replaces it.
     unparsed: bool,
-    /// A run could not tell which entries have no test. A later run of the file can't either: it may register fewer tests (module cache).
+    /// The file can't be opened for writing, or a run could not tell which entries have no test. A later run of the file can't either: it may register fewer tests (module cache).
     keeps_all: bool,
     /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
     /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
@@ -419,8 +419,8 @@ impl Snapshots {
         self._current_file = Some(File {
             id: file_id,
             format,
-            file: None,
             pending: Pending::Nothing,
+            loaded_len: contents.len(),
             unparsed,
             keeps_all: false,
             may_hold_entries_of_bun,
@@ -484,13 +484,15 @@ impl Snapshots {
         }
 
         if let Some(file) = self._current_file.as_mut() {
-            // The flush writes the file after the tests. If it can't be written, the test that changes it fails.
-            Self::open(&mut self.snapshot_dir_path, files, file).map_err(Self::error_of_open)?;
-            // `remove_obsolete` decides if a file that doesn't parse is replaced.
-            if !file.unparsed {
-                let is_appended = format == Format::Bun && !is_of_the_file;
-                file.pending = file.pending.max(if is_appended { Pending::NewEntries } else { Pending::WholeFile });
+            // The flush opens the file again, after the tests. If it can't be opened now, the test that changes it fails.
+            if file.pending == Pending::Nothing
+                && let Err(err) = Self::open(&mut self.snapshot_dir_path, files, file.id)
+            {
+                file.keeps_all = true;
+                return Err(Self::error_of_open(err));
             }
+            let is_appended = format == Format::Bun && !is_of_the_file;
+            file.pending = file.pending.max(if is_appended { Pending::NewEntries } else { Pending::WholeFile });
         }
         if let Some(old_key) = renamed_from {
             self.values.swap_remove(&old_key);
@@ -597,8 +599,10 @@ impl Snapshots {
         }
         let ran = Self::keep_entries_of_tests(&mut self.values, file, buntest);
         file.keeps_all |= ran == Ran::NotAllRegistered || (file.unparsed && ran != Ran::ToTheEnd);
-        if file.keeps_all {
-            if !file.unparsed {
+        if file.unparsed {
+            if !file.keeps_all && !self.values.is_empty() {
+                file.unparsed = false;
+                file.pending = Pending::WholeFile;
                 return Ok(());
             }
             // All that the map has of a file that doesn't parse is what this run wrote, and each entry counted once.
@@ -606,22 +610,30 @@ impl Snapshots {
             self.added -= taken;
             self.values.clear();
             file.pending = Pending::Nothing;
-            return if taken > 0 { Err(LeftAsItIs::DoesNotParse) } else { Ok(()) };
+            if taken == 0 {
+                return Ok(());
+            }
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let len = snapshot_file_path(files, file.id, path_buf.0.as_mut_slice()).map_or(0, |(_, _, len)| len);
+            return Err(LeftAsItIs::DoesNotParse(Box::from(&path_buf.0[..len])));
+        }
+        if file.keeps_all {
+            return Ok(());
         }
         let before = self.values.len();
         self.values.retain(|_, entry| entry.checked || entry.stays);
-        if self.values.len() == before && !file.unparsed {
+        if self.values.len() == before {
             return Ok(());
         }
 
         // No test owns this change, so a file that can't be changed is an error of the test file.
         if self.values.is_empty() {
-            Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable)?;
-        } else {
-            Self::open(&mut self.snapshot_dir_path, files, file).map_err(LeftAsItIs::NotWritable)?;
-            file.pending = Pending::WholeFile;
+            return Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable);
         }
-        file.unparsed = false;
+        if file.pending == Pending::Nothing {
+            Self::open(&mut self.snapshot_dir_path, files, file.id).map_err(LeftAsItIs::NotWritable)?;
+        }
+        file.pending = Pending::WholeFile;
         Ok(())
     }
 
@@ -652,7 +664,7 @@ impl Snapshots {
         // An older Bun wrote its own keys into the files of the other two.
         let formats = [file.format, Format::Bun];
         let formats = &formats[..if file.may_hold_entries_of_bun && file.format != Format::Bun { 2 } else { 1 }];
-        // Vitest removes the entries of a test that it counts as passed or as todo. Jest keeps those of a `test.failing`.
+        // Vitest counts a todo, and a `test.fails` that throws, as tests that ran, and removes their entries.
         let is_vitest = file.format == Format::Vitest;
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
         let mut scopes = vec![&buntest.collection.root_scope];
@@ -677,10 +689,13 @@ impl Snapshots {
                     ScopeMode::Failing | ScopeMode::Fails => result == Some(TestResult::Pass) && is_vitest,
                     ScopeMode::Skip | ScopeMode::FilteredOut => false,
                 };
-                if ran_to_the_end {
+                all_ran_to_the_end &= ran_to_the_end;
+                // A todo that `test.only` leaves out has no result. One with no body takes no snapshot.
+                let is_todo_with_no_entry =
+                    test.base.mode == ScopeMode::Todo && result.is_none() && (is_vitest || !test.has_body);
+                if ran_to_the_end || is_todo_with_no_entry {
                     continue;
                 }
-                all_ran_to_the_end = false;
                 for format in formats {
                     let name = full_test_name(test, format.name_separator(), *format == Format::Jest);
                     names.insert(&Self::escape_line_breaks(*format, name), ());
@@ -784,8 +799,8 @@ impl Snapshots {
 
     #[optimize(size)]
     pub(crate) fn write_snapshot_file(&mut self, files: &FileList) -> Result<(), Error> {
-        let Some(mut file) = self._current_file.take() else { return Ok(()) };
-        let result = self.write_pending(files, &mut file);
+        let Some(file) = self._current_file.take() else { return Ok(()) };
+        let result = self.write_pending(files, &file);
         self.values.clear();
         self.counts.clear();
         result.map_err(|_| Error::FailedToWriteSnapshotFile)
@@ -793,39 +808,47 @@ impl Snapshots {
 
     /// jest-snapshot's `saveSnapshotFile`. The text comes from `values` alone.
     #[optimize(size)]
-    fn write_pending(&mut self, files: &FileList, file: &mut File) -> bun_sys::Result<()> {
-        let (format, pending, may_hold_entries_of_bun) = (file.format, file.pending, file.may_hold_entries_of_bun);
-        if pending == Pending::Nothing {
+    fn write_pending(&mut self, files: &FileList, file: &File) -> bun_sys::Result<()> {
+        // `remove_obsolete` decides if a file that doesn't parse is replaced.
+        if file.pending == Pending::Nothing || file.unparsed {
             return Ok(());
         }
-        let opened = Self::open(&mut self.snapshot_dir_path, files, file)?;
-        // Another writer can have changed the file after it was loaded, so new entries go behind what it holds now.
-        let offset = if pending == Pending::NewEntries { opened.get_end_pos()? } else { 0 };
+        // By path: the file that was loaded can be gone, or another file can have its name now.
+        let opened = match Self::open(&mut self.snapshot_dir_path, files, file.id) {
+            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => {
+                self.snapshot_dir_path = None;
+                Self::open(&mut self.snapshot_dir_path, files, file.id)?
+            }
+            opened => opened?,
+        };
+        // A file with another length was changed after it was loaded. The whole file is printed then, as for a changed entry.
+        let is_appended = file.pending == Pending::NewEntries && opened.get_end_pos()? == file.loaded_len;
+        let offset = if is_appended { file.loaded_len } else { 0 };
 
         let (keys, values) = (self.values.keys(), self.values.values());
         // Unchecked entries may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
-        let stays_as_it_is = may_hold_entries_of_bun && values.iter().any(|entry| !entry.checked);
+        let stays_as_it_is = file.may_hold_entries_of_bun && values.iter().any(|entry| !entry.checked);
         // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
         for (i, key) in keys.iter().enumerate() {
-            if pending == Pending::NewEntries && !values[i].written {
+            if is_appended && !values[i].written {
                 continue;
             }
             // Bun's format has the order of the file.
-            let at = if stays_as_it_is || format == Format::Bun {
+            let at = if stays_as_it_is || file.format == Format::Bun {
                 order.len()
             } else {
                 order.partition_point(|other| natural_compare(&keys[*other], key).is_le())
             };
             order.insert(at, i);
         }
-        let mut text = if offset == 0 { format.header().to_vec() } else { Vec::new() };
+        let mut text = if offset == 0 { file.format.header().to_vec() } else { Vec::new() };
         for i in order {
-            format.write_entry(&mut text, &keys[i], &values[i].value);
+            file.format.write_entry(&mut text, &keys[i], &values[i].value);
         }
 
         opened.pwrite_all(&text, offset as i64)?;
-        if pending == Pending::WholeFile {
+        if !is_appended {
             bun_sys::ftruncate(opened.handle, text.len() as i64)?;
         }
         Ok(())
@@ -1284,20 +1307,8 @@ impl Snapshots {
         }
     }
 
-    /// The handle that the flush writes through. The first call for a file opens it.
-    fn open<'a>(
-        snapshot_dir_path: &mut Option<&'static [u8]>,
-        files: &FileList,
-        current: &'a mut File,
-    ) -> bun_sys::Result<&'a bun_sys::File> {
-        let opened = match current.file.take() {
-            Some(opened) => opened,
-            None => Self::make_dir_and_open(snapshot_dir_path, files, current.id)?,
-        };
-        Ok(current.file.insert(opened))
-    }
-
-    fn make_dir_and_open(
+    /// Opens the snapshot file for writing. Makes it, and `__snapshots__`, if they aren't there.
+    fn open(
         snapshot_dir_path: &mut Option<&'static [u8]>,
         files: &FileList,
         file_id: FileId,

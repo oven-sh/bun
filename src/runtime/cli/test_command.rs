@@ -5566,9 +5566,9 @@ impl TestCommand {
                     reporter.jest.current_file.print_if_needed();
                     let top_level_dir = FileSystem::instance().top_level_dir();
                     match left {
-                        LeftAsItIs::DoesNotParse => pretty_error!(
-                            "<r><red>error<r>: Failed to parse snapshot file for: {}\n<blue>note<r><d>:<r> --update-snapshots replaces a snapshot file that doesn't parse only when every test of the file runs to the end. Fix the snapshot file, or delete it and run --update-snapshots again.\n",
-                            bstr::BStr::new(resolve_path::relative(top_level_dir, file_path))
+                        LeftAsItIs::DoesNotParse(path) => pretty_error!(
+                            "<r><red>error<r>: --update-snapshots left {} as it is: the file doesn't parse\n<blue>note<r><d>:<r> --update-snapshots replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+                            bun_fmt::quote(resolve_path::relative(top_level_dir, &path))
                         ),
                         LeftAsItIs::NotWritable(err) => Output::err(
                             &err,

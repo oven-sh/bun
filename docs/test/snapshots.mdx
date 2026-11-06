@@ -50,7 +50,7 @@ bun test --update-snapshots
 
 Do this when you've intentionally changed the output. In CI environments, Bun does not write new snapshots unless you pass this flag.
 
-`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore from the snapshot file of each test file that ran a snapshot matcher.
+`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore from the snapshot file of each test file that ran a snapshot matcher. If no entry is left, it removes the file.
 
 It keeps the entries of a test that did not run to the end:
 
@@ -61,9 +61,9 @@ It keeps the entries of a test that did not run to the end:
 
 To remove one of these entries, delete it from the snapshot file. To write a snapshot file from scratch, delete the file and run `bun test --update-snapshots`.
 
-A snapshot file in Bun's format keeps the order of its entries. New entries go at the end. When Bun changes or removes an entry, it writes the whole file again, so comments and manual formatting in the file are lost.
+A snapshot file in Bun's format keeps the order of its entries. New entries go at the end. When Bun changes or removes an entry, it writes the whole file again from the entries that it read, so comments and manual formatting in the file are lost. Bun does the same when something else changed the file while the tests ran, and then the changes of the other writer are lost too.
 
-If a snapshot file in Bun's format does not parse, for example because it has merge conflict markers, `--update-snapshots` replaces it only when every test of the test file runs to the end. In any other run, Bun reports an error and leaves the file as it is. Fix the file, or delete it and run `bun test --update-snapshots` again.
+If a snapshot file in Bun's format does not parse, for example because it has merge conflict markers, `--update-snapshots` replaces it with the snapshots of the run only when every test and hook of the test file runs to the end. If a test is left out or fails, Bun leaves the file as it is and reports an error for the snapshots that it did not write. Fix the file, or delete it and run `bun test --update-snapshots` again.
 
 Earlier versions of Bun kept only the entries of the tests that ran in a snapshot file in Bun's format. With one of those versions, use `--update-snapshots` only in a run of every test of the file.
 
@@ -311,7 +311,7 @@ A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, 
 
 Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.
 
-`--update-snapshots` follows the [same rules](#updating-snapshots) in all three formats, with one difference. In a file in Vitest's format, it removes the unused entries of a `test.todo` and of a `test.fails` test that passes, as Vitest does. Bun keeps a file in Jest's or Vitest's format sorted by key, as those runners do. If such a file does not parse, Bun reports an error in every run.
+`--update-snapshots` follows the [same rules](#updating-snapshots) in all three formats, with one difference. In a file in Vitest's format, it also removes the unused entries of a `test.todo`, and of a `test.fails` or `test.failing` test that passes. Vitest removes the entries of its `test.todo` and `test.fails` too. Bun keeps a file in Jest's or Vitest's format sorted by key, as those runners do. If such a file does not parse, Bun reports an error in every run.
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 

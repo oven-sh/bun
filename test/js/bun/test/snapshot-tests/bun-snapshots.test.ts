@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
-import { chmodSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("it will create a snapshot file if it doesn't exist", () => {
@@ -89,23 +89,27 @@ describe("toMatchSnapshot errors", () => {
 describe("a snapshot file that bun test can't write", () => {
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
   const stored = header + '\nexports[`matches 1`] = `"a"`;\n';
+  const unused = header + '\nexports[`no test has this name 1`] = `"b"`;\n';
   const withUnused = stored + '\nexports[`no test has this name 1`] = `"b"`;\n';
   const matches = `test("matches", () => { expect("a").toMatchSnapshot(); });`;
+  const inline = `test("inline", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
+  const quoted = (name: string) => JSON.stringify(join("__snapshots__", name + ".snap"));
 
   // The modes are restored before `dir` is disposed, so that `rmSync` can remove the tree.
-  function readOnly(files: Record<string, string>) {
+  function readOnly(files: Record<string, string>, directory: "read-only" | "writable" = "read-only") {
     const dir = tempDir("snapshot-read-only", files);
     const snapshots = join(String(dir), "__snapshots__");
     const names = Object.keys(files).filter(name => name.endsWith(".snap"));
     for (const name of names) chmodSync(join(String(dir), name), 0o444);
     // Windows has no write bit for a directory. There the read-only attribute of the file is what blocks the open.
-    if (!isWindows) chmodSync(snapshots, 0o555);
+    if (directory === "read-only" && !isWindows) chmodSync(snapshots, 0o555);
     return {
       dir: String(dir),
+      has: (name = "a.test.js") => existsSync(join(snapshots, name + ".snap")),
       read: (name = "a.test.js") => readFileSync(join(snapshots, name + ".snap"), "utf8"),
       [Symbol.dispose]() {
         if (!isWindows) chmodSync(snapshots, 0o755);
-        for (const name of names) chmodSync(join(String(dir), name), 0o644);
+        for (const name of names) if (existsSync(join(String(dir), name))) chmodSync(join(String(dir), name), 0o644);
         dir[Symbol.dispose]();
       },
     };
@@ -172,13 +176,9 @@ describe("a snapshot file that bun test can't write", () => {
         "__snapshots__/b.test.js.snap": withUnused,
       });
       const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots", ...args);
-      for (const name of ["a", "b"]) {
-        expect(stderr).toMatch(
-          new RegExp(
-            `^E(ACCES|PERM): .*: Failed to remove the entries that no test uses from "__snapshots__[/\\\\]${name}\\.test\\.js\\.snap" \\(open\\)$`,
-            "m",
-          ),
-        );
+      expect(stderr).toMatch(/^E(ACCES|PERM): /m);
+      for (const name of ["a.test.js", "b.test.js"]) {
+        expect(stderr).toContain(`: Failed to remove the entries that no test uses from ${quoted(name)} (open)\n`);
       }
       expect(stderr).toContain(" 2 pass\n 0 fail\n 2 errors\n");
       expect([fixture.read("a.test.js"), fixture.read("b.test.js")]).toEqual([withUnused, withUnused]);
@@ -190,18 +190,38 @@ describe("a snapshot file that bun test can't write", () => {
   test.serial.skipIf(isWindows)(
     "--update-snapshots reports a file with no entry left that it can't remove",
     async () => {
-      const unused = header + '\nexports[`no test has this name 1`] = `"b"`;\n';
-      using fixture = readOnly({
-        "a.test.js": `test("inline", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`,
-        "__snapshots__/a.test.js.snap": unused,
-      });
+      using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unused });
       const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
-      expect(stderr).toMatch(
-        /^EACCES: .*: Failed to remove the entries that no test uses from "__snapshots__\/a\.test\.js\.snap" \(unlink\)$/m,
+      expect(stderr).toContain(
+        `EACCES: Permission denied: Failed to remove the entries that no test uses from ${quoted("a.test.js")} (unlink)\n`,
       );
       expect(stderr).toContain(" 1 pass\n 0 fail\n 1 error\n");
       expect(fixture.read()).toBe(unused);
       expect(exitCode).toBe(1);
     },
   );
+
+  // Jest and Vitest remove such a file too. To remove a file takes write access to its directory, not to the file.
+  test.serial("--update-snapshots removes a read-only file with no entry left from a writable directory", async () => {
+    using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unused }, "writable");
+    const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(fixture.has()).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test.serial("--update-snapshots keeps a read-only file after a test could not open it", async () => {
+    using fixture = readOnly(
+      {
+        "a.test.js": `test("adds", () => { expect("b").toMatchSnapshot(); });`,
+        "__snapshots__/a.test.js.snap": unused,
+      },
+      "writable",
+    );
+    const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
+    expect(stderr).toContain("error: Failed to open snapshot file for test file: ");
+    expect(stderr).toContain(" 0 pass\n 1 fail\n");
+    expect(fixture.read()).toBe(unused);
+    expect(exitCode).toBe(1);
+  });
 });

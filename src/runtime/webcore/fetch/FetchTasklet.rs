@@ -175,9 +175,8 @@ pub struct FetchTasklet {
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
-    /// A terminal failure that arrived while `result` still holds body bytes the JS thread
-    /// has not seen. `callback` parks it here instead of overwriting that result, and
-    /// `on_progress_update` delivers it on a task of its own, behind the bytes.
+    /// A terminal failure that arrived behind body bytes the JS thread has not taken yet.
+    /// `on_progress_update` delivers it on a task of its own, after the bytes.
     pub(crate) pending_terminal: Option<Box<HTTPClientResult<'static>>>,
 
     // must be stored because AbortSignal stores reason weakly
@@ -887,8 +886,7 @@ impl FetchTasklet {
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
-        // Read under the lock, as `is_done`: once it is released the HTTP thread can post a
-        // task of its own and park a failure that belongs to that task.
+        // Under the lock, as `is_done`: a later HTTP-thread post can park a failure of its own.
         let parked = self.pending_terminal.is_some();
 
         let vm = self.global_this.bun_vm();
@@ -918,10 +916,8 @@ impl FetchTasklet {
         let cleanup = |this: &mut FetchTasklet| {
             if !is_done {
                 if let Some(failure) = this.pending_terminal.take() {
-                    // This run handled the bytes as a body chunk. The failure that followed them
-                    // takes the next task, as it does when it arrives in a batch of its own. A
-                    // task this run enqueued before, such as the fetch() promise settle, runs
-                    // first, with a microtask checkpoint between the two.
+                    // The failure takes the next task, behind what this run enqueued (the
+                    // fetch() promise settle), with a microtask checkpoint between the two.
                     this.store_result(*failure);
                     debug_assert!(!this.result.has_more);
                     // SAFETY: `vm.event_loop()` is the live JS-thread loop; `this` is the heap
@@ -2499,9 +2495,8 @@ impl FetchTasklet {
         Ok(node)
     }
 
-    /// Under `mutex`. Makes `result` the one the JS thread sees next. What an earlier
-    /// result of the same batch reported once (`can_stream`, the certificate, the head)
-    /// survives the replacement. Returns the body bytes `result` carried.
+    /// Under `mutex`. Makes `result` the one the JS thread sees next, keeping what an earlier
+    /// result of the batch reported once. Returns the body bytes `result` carried.
     fn store_result<'a>(&mut self, mut result: HTTPClientResult<'a>) -> (&'a [u8], Vec<u8>) {
         let prev_metadata = self.result.metadata.take();
         let prev_cert_info = self.result.certificate_info.take();
@@ -2537,11 +2532,10 @@ impl FetchTasklet {
         (body, body_owned)
     }
 
-    /// HTTP thread, under `mutex`. A terminal failure that follows body bytes the JS thread
-    /// has not taken yet must not replace the result that carries them: the bytes would
-    /// never reach the consumer. Parks the failure in `pending_terminal` and returns true.
-    /// Returns false, with `result` untouched, when it has to be stored as is: nothing
-    /// undelivered precedes it, or an abort (a timeout too) ends the body at once.
+    /// HTTP thread, under `mutex`. A terminal failure behind body bytes the JS thread has not
+    /// taken yet must not replace the result that carries them. Parks it and returns true.
+    /// False, with `result` untouched, when nothing undelivered precedes it or an abort ends
+    /// the body at once.
     fn park_terminal_failure(&mut self, result: &mut HTTPClientResult<'_>) -> bool {
         if self.scheduled_response_buffer.list.is_empty()
             || !self.result.has_more

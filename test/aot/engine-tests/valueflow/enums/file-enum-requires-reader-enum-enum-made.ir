@@ -42,124 +42,124 @@ variable g0 name="read" module=m1 declared={type=f2 flags=[IsFromCompiler]} init
 variable g1 name="Color" module=m2 declared={type=anything} initialization=Undefined flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="console" [isFreeName]
-    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
-    v3 = PropGet v2 key="log"
-    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v5 = GetModuleVariable variable=g0
-    v6 = CheckInitialized v5 name="read"
-    v7 = Call v6 calleeName="read"
-    v8 = Convert v7 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}
-    v9 = Call v4, v2, v8 calleeKey="log" calleeName="console.log"
-    v10 = Undefined
-    Return v10
+    v0 = Builtin builtin=GlobalThis @129
+    v1 = PropGet v0 key="console" [isFreeName] @129
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]} @129
+    v3 = PropGet v2 key="log" @129
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @129
+    v5 = GetModuleVariable variable=g0 @141
+    v6 = CheckInitialized v5 name="read" @141
+    v7 = Call v6 calleeName="read" @141
+    v8 = Convert v7 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]} @141
+    v9 = Call v4, v2, v8 calleeKey="log" calleeName="console.log" @137
+    v10 = Undefined @129
+    Return v10 @129
 }
 function f1 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = Undefined
-    Return v0
+    v0 = Undefined @33
+    Return v0 @33
 }
 function f2 name="read" module=m1 position=33 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @33
   b1():
-    v0 = GetModuleVariable variable=g1
-    v1 = CheckInitialized v0 name="Color"
-    v2 = Convert v1 declared={type=undefined|null|object} illTypedCause=Assertion
-    v3 = PropGet v2 key="Red"
-    v4 = Convert v3 declared={type=0 site=w2} illTypedCause=Assertion
-    v5 = GetModuleVariable variable=g1
-    v6 = CheckInitialized v5 name="Color"
-    v7 = Convert v6 declared={type=undefined|null|object} illTypedCause=Assertion
-    v8 = PropGet v7 key="Green"
-    v9 = Convert v8 declared={type=5 site=w3} illTypedCause=Assertion
-    v10 = GetModuleVariable variable=g1
-    v11 = CheckInitialized v10 name="Color"
-    v12 = Convert v11 declared={type=undefined|null|object} illTypedCause=Assertion
-    v13 = PropGet v12 key="Blue"
-    v14 = GetModuleVariable variable=g1
-    v15 = CheckInitialized v14 name="Color"
-    v16 = Convert v15 declared={type=undefined|null|object} illTypedCause=Assertion
-    v17 = PropGet v16 key="Green"
-    v18 = Convert v17 declared={type=5 site=w4} illTypedCause=Assertion
-    v19 = NewArray v4, v9, v13, v18 contents=undefined|null|i32|"blue"
-    v20 = PropGet v19 key="join"
-    v21 = Call v20, v19 calleeKey="join" calleeName="join"
-    ReturnCall v21 casts=[{declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}}]
+    v0 = GetModuleVariable variable=g1 @68
+    v1 = CheckInitialized v0 name="Color" @68
+    v2 = Convert v1 declared={type=undefined|null|object} illTypedCause=Assertion @68
+    v3 = PropGet v2 key="Red" @68
+    v4 = Convert v3 declared={type=0 site=w2} illTypedCause=Assertion @68
+    v5 = GetModuleVariable variable=g1 @79
+    v6 = CheckInitialized v5 name="Color" @79
+    v7 = Convert v6 declared={type=undefined|null|object} illTypedCause=Assertion @79
+    v8 = PropGet v7 key="Green" @79
+    v9 = Convert v8 declared={type=5 site=w3} illTypedCause=Assertion @79
+    v10 = GetModuleVariable variable=g1 @92
+    v11 = CheckInitialized v10 name="Color" @92
+    v12 = Convert v11 declared={type=undefined|null|object} illTypedCause=Assertion @92
+    v13 = PropGet v12 key="Blue" @92
+    v14 = GetModuleVariable variable=g1 @104
+    v15 = CheckInitialized v14 name="Color" @104
+    v16 = Convert v15 declared={type=undefined|null|object} illTypedCause=Assertion @104
+    v17 = PropGet v16 key="Green" @104
+    v18 = Convert v17 declared={type=5 site=w4} illTypedCause=Assertion @104
+    v19 = NewArray v4, v9, v13, v18 contents=undefined|null|i32|"blue" @67
+    v20 = PropGet v19 key="join" @118
+    v21 = Call v20, v19 calleeKey="join" calleeName="join" @120
+    ReturnCall v21 casts=[{declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}}] @120
 }
 function f3 module=m2 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = Undefined
-    v1 = RequireModule module=m1 referrer=m2 specifier="./reader"
-    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
-    v3 = TypeTest v2 testedType=undefined|null
-    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+    v0 = Undefined @0
+    v1 = RequireModule module=m1 referrer=m2 specifier="./reader" @17
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]} @17
+    v3 = TypeTest v2 testedType=undefined|null @17
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @17
   b2(v4):
-    Jump -> next b3()
+    Jump -> next b3() @17
   b3() frequency=Unlikely:
-    v5 = NewRuntimeError runtimeError=NotDestructurable name="read"
-    Throw v5
+    v5 = NewRuntimeError runtimeError=NotDestructurable name="read" @17
+    Throw v5 @17
   b4(v6):
-    v7 = PropGet v6 key="read"
-    Jump -> next b5()
+    v7 = PropGet v6 key="read" @17 @8
+    Jump -> next b5() @38
   b5() handler=b8(v7):
-    v8 = Builtin builtin=GlobalThis
-    v9 = PropGet v8 key="console" [isFreeName]
-    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]}
-    v11 = PropGet v10 key="log"
-    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v13 = String string="early"
-    v14 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
-    Jump -> next b6()
+    v8 = Builtin builtin=GlobalThis @46
+    v9 = PropGet v8 key="console" [isFreeName] @46
+    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]} @46
+    v11 = PropGet v10 key="log" @46
+    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @46
+    v13 = String string="early" @58
+    v14 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]} @67
+    Jump -> next b6() @67
   b6() handler=b8(v14):
-    v15 = Call v14 calleeName="read"
-    v16 = Call v12, v10, v13, v15 calleeKey="log" calleeName="console.log"
-    Jump -> next b7()
+    v15 = Call v14 calleeName="read" @67
+    v16 = Call v12, v10, v13, v15 calleeKey="log" calleeName="console.log" @54
+    Jump -> next b7() @46
   b7():
-    Jump -> next b9(v14)
+    Jump -> next b9(v14) @46
   b8(v17) role=CatchHandler:
-    v18 = CatchValue
-    v19 = Builtin builtin=GlobalThis
-    v20 = PropGet v19 key="console" [isFreeName]
-    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]}
-    v22 = PropGet v21 key="log"
-    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v24 = PropGet v18 key="constructor"
-    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v26 = PropGet v25 key="name"
-    v27 = Call v23, v21, v26 calleeKey="log" calleeName="console.log"
-    Jump -> next b9(v17)
+    v18 = CatchValue @97
+    v19 = Builtin builtin=GlobalThis @101
+    v20 = PropGet v19 key="console" [isFreeName] @101
+    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]} @101
+    v22 = PropGet v21 key="log" @101
+    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @101
+    v24 = PropGet v18 key="constructor" @113
+    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @113
+    v26 = PropGet v25 key="name" @119
+    v27 = Call v23, v21, v26 calleeKey="log" calleeName="console.log" @109
+    Jump -> next b9(v17) @101
   b9(v28):
-    v29 = Integer
-    v30 = String string="Red"
-    v31 = Integer integer=5
-    v32 = String string="Green"
-    v33 = String string="blue"
-    v34 = NewObject -, v29, v31, v33 layout=L0 fields=[0, 1, 2]
-    ElemDefine v34, v29, v30
-    ElemDefine v34, v31, v32
-    v37 = FinishObject v34
-    PutModuleVariable v37 variable=g1
-    v39 = Builtin builtin=GlobalThis
-    v40 = PropGet v39 key="console" [isFreeName]
-    v41 = Convert v40 declared={type=builtin(Console) flags=[IsExpected]}
-    v42 = PropGet v41 key="log"
-    v43 = Convert v42 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v44 = String string="late"
-    v45 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
-    v46 = Call v45 calleeName="read"
-    v47 = Call v43, v41, v44, v46 calleeKey="log" calleeName="console.log"
-    v48 = Undefined
-    Return v48
+    v29 = Integer @162
+    v30 = String string="Red" @162
+    v31 = Integer integer=5 @169
+    v32 = String string="Green" @169
+    v33 = String string="blue" @182
+    v34 = NewObject -, v29, v31, v33 layout=L0 fields=[0, 1, 2] @182
+    ElemDefine v34, v29, v30 @182
+    ElemDefine v34, v31, v32 @182
+    v37 = FinishObject v34 @152
+    PutModuleVariable v37 variable=g1 @152
+    v39 = Builtin builtin=GlobalThis @199
+    v40 = PropGet v39 key="console" [isFreeName] @199
+    v41 = Convert v40 declared={type=builtin(Console) flags=[IsExpected]} @199
+    v42 = PropGet v41 key="log" @199
+    v43 = Convert v42 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @199
+    v44 = String string="late" @211
+    v45 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]} @219
+    v46 = Call v45 calleeName="read" @219
+    v47 = Call v43, v41, v44, v46 calleeKey="log" calleeName="console.log" @207
+    v48 = Undefined @199
+    Return v48 @199
 }
-# -- generated: f0 read f2 f3
+# -- generated: f0 read f3
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
 # CHECK-NEXT: b0():
@@ -191,7 +191,7 @@ function f3 module=m2 kind=Module flags=[IsChecked] thisType={type=anything} res
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b3(v5: undefined|L0):
 # CHECK-NEXT: v6: L0 = RequireObjectCoercible v5 name="Red"
-# CHECK-NEXT: v7: "0,5,blue,5" = String string="0,5,blue,5" @0 tail
+# CHECK-NEXT: v7: "0,5,blue,5" = String string="0,5,blue,5" @120 tail
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=

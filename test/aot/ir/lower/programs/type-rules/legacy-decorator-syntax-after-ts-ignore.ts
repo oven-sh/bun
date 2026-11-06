@@ -76,6 +76,12 @@ console.log(seen.join(), Chained.name, WithStaticPrivate.read());
 // CHECK-NEXT: v10 = Convert v9 declared={type=number} illTypedCause=Assertion
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v11 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v11
+// CHECK-NEXT: v11 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v11 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v12):
+// CHECK-NEXT: v13 = PropGet v12 key="#count"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v14):
+// CHECK-NEXT: v15 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v15
 // CHECK-NEXT: }

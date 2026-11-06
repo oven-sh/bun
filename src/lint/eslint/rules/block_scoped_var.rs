@@ -5,7 +5,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Enforce the use of variables within the scope they are defined.
 pub struct BlockScopedVar;
 
-const OUT_OF_SCOPE: Message = Message::new(
+const OUT_OF_SCOPE: &Message = &Message::new(
     "outOfScope",
     "'{{name}}' declared on line {{definitionLine}} column {{definitionColumn}} is used outside of binding context.",
 );

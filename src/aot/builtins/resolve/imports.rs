@@ -11,7 +11,7 @@ use bun_sema::bind::Decl;
 use bun_sema::hir::{ExprId, ExprKind, Flags, ImportId};
 use bun_sema::import_sites::ImportSiteKind;
 
-fn has_source(module: RuntimeModule) -> bool {
+pub(super) fn has_source(module: RuntimeModule) -> bool {
     table::module_data(module)
         .flags
         .contains(ModuleFlags::HAS_SOURCE)
@@ -87,7 +87,7 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::ExportStar(_) | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
                 | ImportSiteKind::ImportMetaRequire(_) | ImportSiteKind::ImportMetaResolve(_)
-                | ImportSiteKind::GetBuiltinModule(_) => {}
+                | ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_) => {}
             }
         }
         if !table::exists_on(BuiltinId::BunBundle, input.platform) {
@@ -116,9 +116,14 @@ impl Resolver<'_, '_> {
             ExportLookup::Unlisted | ExportLookup::HeldByNamespace => return None,
         };
         if found == object {
+            // The `default` of a module of native code is the object itself, until a mock exports another: collect_replaced_members().
+            let is_replaced = self.input.replaced.binary_search(&(object as u32)).is_ok();
             return Some(BuiltinPath {
                 id: object,
-                mutability: Mutability::AlwaysLocked,
+                mutability: match is_replaced {
+                    true => Mutability::ConstantUnlessWritten,
+                    false => Mutability::AlwaysLocked,
+                },
             });
         }
         self.path_of_member(object, Mutability::AlwaysLocked, found)
@@ -191,6 +196,17 @@ impl Resolver<'_, '_> {
         ExprState::Unresolved
     }
 
+    /// `await import("bun:test")`: what `import * as` of the module stands for.
+    pub(super) fn compute_awaited_import_state(&self, promise: ExprId) -> ExprState {
+        let input = self.input;
+        let promise = input.hir.skip_type_assertions(promise);
+        let module = (input.targets).module_at(ImportSiteKind::ImportCall(promise));
+        match module.filter(|&module| !has_source(module)) {
+            Some(module) => ExprState::Builtin(imported_namespace_value(module)),
+            None => ExprState::Unresolved,
+        }
+    }
+
     fn find_prototype_asked_for(&self, expr: ExprId) -> Option<BuiltinId> {
         let hir = self.input.hir;
         let ExprKind::Call(call) = hir[expr].kind else {
@@ -247,7 +263,8 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::JsxPackage | ImportSiteKind::Import(_)
                 | ImportSiteKind::ImportEquals(_) | ImportSiteKind::Require(_)
                 | ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaRequire(_)
-                | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_) => {}
+                | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_)
+                | ImportSiteKind::MockModule(_) => {}
             }
         }
     }

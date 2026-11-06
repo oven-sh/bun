@@ -484,5 +484,5 @@ function f21 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # -- generated: f2
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 338, patchpoints: 47, rare instructions: 329, polls: 5
+# CHECK-NEXT: instructions: 180, patchpoints: 29, rare instructions: 170, polls: 1
 # CHECK-NEXT: end of function f2

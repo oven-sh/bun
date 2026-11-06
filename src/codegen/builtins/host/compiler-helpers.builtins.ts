@@ -44,6 +44,30 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
+// What Array.prototype.sort does with a list and a comparator.
+const sortInPlace = (name: string) =>
+  ({
+    args: { array: b.instance("Array"), comparator: b.callable },
+    returns: b.operand("array"),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: {
+      array: [b.returned, b.readsContents(), b.movesElements],
+      comparator: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [b.slot("array", "element"), b.slot("array", "element")],
+          result: "Escapes",
+        }),
+      ],
+    },
+    implementation: b.compiled("prelude/array-sort", name),
+  }) satisfies b.FunctionField;
+
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
 const kept = [b.retained];
@@ -202,6 +226,17 @@ export default b.declarations(
       },
     },
     definePropertiesFrom: definitionFrom,
+    importRejectedByLoader: {
+      args: { reason: b.any },
+      returns: b.instance("Promise").holding({ value: b.never }).fresh,
+      capability: "js",
+      throws: false,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      // As the reason of Promise.reject: the host hands it to the listeners for unhandled rejections.
+      uses: { reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
+      implementation: b.compiled("prelude/rejected-imports", "importRejectedByLoader"),
+    },
     ...helpersIn("prelude/decorators", {
       decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
@@ -298,6 +333,9 @@ export default b.declarations(
       // Where the length is no small number the list is filled and mapped as the program wrote it, and the mapper gets that list too.
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
+    sortByDifference: sortInPlace("sortByDifference"),
+    sortByReversedDifference: sortInPlace("sortByReversedDifference"),
+    sortWhereNobodySeesTheComparator: sortInPlace("sortWhereNobodySeesTheComparator"),
     ...helpersIn("prelude/array-traversal", {
       traverseArray: {
         array: keptWithContents,

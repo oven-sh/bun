@@ -161,7 +161,7 @@ for (const [label, close] of closers) {
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Config"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 captures=[{type=[[f_14]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=[[w_15]]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 captures=[{type=[[f_14]] flags=[IsFromCompiler] variableName="handOver"}] thisType={type=anything} parameters=[{type=number site=[[w_15]]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: [[f_14]], v1: anything, v2: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

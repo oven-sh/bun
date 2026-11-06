@@ -65,11 +65,28 @@ test.concurrent(
 );
 
 test.concurrent(
-  "a preload that needs its own tsconfig.json to leave strictNullChecks off stops the build",
+  "a preload whose own tsconfig.json leaves strictNullChecks off is checked without them",
   async () => {
     const files = {
       ...rightUnderItsOwnAlone,
       "preload.ts": rightUnderItsOwnAlone["preload.ts"] + `\nconst nothing: string = null;\nloose(nothing);`,
+    };
+    expect(await run(files, ["run", "--debug-aot", "--preload", "../preload.ts", "./main.ts"])).toEqual({
+      stdout: "preloaded: preloaded\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);
+
+test.concurrent(
+  "a preload whose own tsconfig.json turns strictNullChecks on is checked with them, under an entry point without",
+  async () => {
+    const files = {
+      "sub/tsconfig.json": `{ "compilerOptions": { ${options}, "strict": false } }`,
+      "tsconfig.json": `{ "compilerOptions": { ${options}, "strict": true } }`,
+      "preload.ts": `const nothing: string = null;\n(globalThis as any).preloaded = nothing;`,
     };
     const { stdout, stderr, exitCode } = await run(files, [
       "run",
@@ -79,7 +96,6 @@ test.concurrent(
       "./main.ts",
     ]);
     expect(stderr).toContain("error: TS2322: Type 'null' is not assignable to type 'string'.");
-    expect(stderr).not.toContain("TS100010");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   },
   120_000,

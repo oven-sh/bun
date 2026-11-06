@@ -1,15 +1,19 @@
 use super::answers::{
-    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassRef, ClassShape, EnumConstant,
-    FunctionRef, GaveUp, IndexSignature, ListedMember, MemberLookup, ObjectMember, PositionTypes,
-    QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
+    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
+    ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
+    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, ObjectMember, ObjectMemberKind,
+    PositionTypes, QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
-use super::inferred_from_use::{ReferenceIndex, Subject, TypeState, TypesInProgress, UsageState};
+use super::inferred_from_use::{
+    ReferenceIndex, Subject, TypeState, TypesInProgress, Usage, UsageState,
+};
 use super::kept_answers::{
     GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, TypeAnswers, TypeQuestion,
 };
 use super::prototype_links::NamedValues;
+use super::trust::Trust;
 use super::type_identity::{ObjectOrigin, TypeIdentity};
 use super::type_shape::{BuiltinShape, PrimitiveKinds, TypeShape};
 use crate::atom::{Atom, known};
@@ -22,7 +26,7 @@ use crate::hir::{self, EnumMemberId, ExprId, ExprKind, FnId, ParamId, PatId, Typ
 use crate::program::{FileId, FileRole, Files, Sym};
 use crate::session::Arena;
 use crate::types::{EnumValue, SigId, TypeId, tf};
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, FxHashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -44,7 +48,7 @@ pub struct Queries<'c, 'p, 's> {
     pub(super) inputs: QueryInputs<'c>,
     pub(super) memo: Memo<'c>,
     pub(super) kept: KeptMemo<'c>,
-    statistics: QueryStatistics,
+    pub(super) statistics: QueryStatistics,
     closed_cycles_before: u32,
     union_members_compared_before: u64,
     depth: u32,
@@ -56,7 +60,14 @@ pub struct Queries<'c, 'p, 's> {
     answers_nothing: bool,
     /// A question since `note_idle` ran out of stack. What it computed on the way isn't kept, so the questions about the
     /// code nested in what it was about would each compute most of it again, with less stack.
-    lacks_stack: bool,
+    pub(super) lacks_stack: bool,
+}
+
+fn is_accessor(kind: ObjectMemberKind) -> bool {
+    matches!(
+        kind,
+        ObjectMemberKind::Getter | ObjectMemberKind::Setter | ObjectMemberKind::GetterAndSetter
+    )
 }
 
 #[derive(Default)]
@@ -64,12 +75,22 @@ pub(super) struct Memo<'c> {
     gave_up: GaveUpAnswers,
     members: FxHashMap<TypeId, Result<&'c [ObjectMember], GaveUp>>,
     checked_members: FxHashMap<TypeId, Result<&'c [CheckedMember], GaveUp>>,
+    /// Of the two types that `members_typed_otherwise` was asked about last.
+    most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
+    pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
     signature_results: FxHashMap<SigId, CheckedType>,
     signatures: FxHashMap<SigId, SignatureShape<'c>>,
     function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
     classes: FxHashMap<ClassDeclaration, Option<&'c ClassShape<'c>>>,
+    classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
+    /// Of the classes that `classes_with_accessor_at_or_above` lists.
+    names_of_accessors: FxHashSet<MemberName>,
+    /// Whether whoever looks for the name from below the class finds an accessor in it or above it.
+    inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
     variables: FxHashMap<Sym, WrittenType>,
+    /// By the address of a permanent list of declarations.
+    pub(super) member_trusts: FxHashMap<usize, Trust>,
     member_accesses: FxHashMap<ExprId, Result<MemberLookup, GaveUp>>,
     resolved_calls: FxHashMap<ExprId, Result<Option<CallTarget>, GaveUp>>,
     contextual_types: FxHashMap<ExprId, Result<Option<TypeId>, GaveUp>>,
@@ -79,9 +100,17 @@ pub(super) struct Memo<'c> {
     pub(super) reference_index: Option<ReferenceIndex<'c>>,
     /// For a call: which of its arguments is the first spread. `u32::MAX`: none.
     pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
+    pub(super) exported_symbols: Option<FxHashSet<Sym>>,
+    pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
+    /// The subjects that were left as `UsageState::NotKept` since a question ran out of stack.
+    pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
+    /// By the address of a part of a tree, which the entry holds.
+    pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
     pub(super) types_in_progress: TypesInProgress,
+    /// For a sum that a question went through: whether what it yields is used as an int32.
+    pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
     pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
 }
 
@@ -129,6 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.check_source_file_silently(file);
         }
+        self.class_members_by_name.is_on = true;
         let (memo_of_checker, arena) = self.aot_answers.take();
         let closed_cycles_before = self.closed_cycle_count();
         let union_members_compared_before = self.union_members_compared();
@@ -176,6 +206,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 impl Drop for Queries<'_, '_, '_> {
     fn drop(&mut self) {
+        self.c.class_members_by_name.is_on = false;
         self.c.flow_analysis_disabled = std::mem::take(&mut self.flow_analysis_was_disabled);
         self.c.ran_out_of_stack.set(self.had_run_out_of_stack);
         self.c.rechecked_exprs.clear();
@@ -193,6 +224,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
         self.lacks_stack = false;
+        self.forget_usages_that_lacked_stack();
+        self.c.idle_between_statements();
+    }
+
+    pub fn note_idle_between_statements(&mut self) {
+        debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
     }
 
@@ -203,37 +240,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.infers_nothing_from_use = true;
     }
 
-    pub fn find_chain_longer_than(&mut self, maximum: u64) -> Option<u32> {
-        let hir = self.hir();
-        if hir.exprs.len() as u64 <= maximum {
-            return None;
-        }
-        let mut links = vec![0u32; hir.exprs.len()];
-        for (index, expression) in hir.exprs.iter().enumerate() {
-            let (base, link) = match expression.kind {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, 1),
-                ExprKind::Call(call) => (hir[call].callee, 1),
-                ExprKind::NonNull(base) => (base, 0),
-                _ => continue,
-            };
-            let Some(&links_of_base) = links[..index].get(base.idx()) else {
-                continue;
-            };
-            links[index] = links_of_base + link;
-            if u64::from(links[index]) > maximum {
-                self.answer_nothing_from_now_on();
-                return Some(expression.pos);
-            }
-        }
-        None
-    }
-
     #[inline]
     fn forget_what_a_question_leaves(&mut self) {
         self.c.rejected_expressions.clear();
         self.c.work_trap = WORK_TRAP_DISARMED;
     }
 
+    #[inline(never)]
     fn take_cut_state(&mut self) -> CutState {
         self.forget_what_a_question_leaves();
         CutState {
@@ -243,6 +256,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     /// Why the question that ends here has no answer. `enclosing`: the state of the question around it, which goes on.
+    #[inline(never)]
     fn end_question(&mut self, enclosing: CutState) -> Option<GaveUp> {
         self.forget_what_a_question_leaves();
         let ran_out_of_stack = (self.c.ran_out_of_stack).replace(enclosing.ran_out_of_stack);
@@ -268,9 +282,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Err(GaveUp::Unresolved);
         }
         let enclosing = self.take_cut_state();
+        let limit_hits = self.c.instantiation_limit_hits;
         self.depth += 1;
         let computed = compute(self);
         self.depth -= 1;
+        if self.c.leaves_depth_limit_unreported && self.c.instantiation_limit_hits != limit_hits {
+            self.unstable_answers += 1;
+        }
         let answer = match self.end_question(enclosing) {
             Some(reason) => Err(reason),
             None => computed,
@@ -284,6 +302,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
+    #[cold]
+    #[inline(never)]
     fn note_gave_up(&mut self, reason: GaveUp, is_outermost: bool) {
         if !reason.is_function_of_key() {
             self.unstable_answers += 1;
@@ -882,6 +902,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn function_signature(&mut self, function: FunctionRef) -> SignatureShape<'c> {
         self.memoized_signature(
             function,
+            Some(function.file),
             |memo| &mut memo.function_signatures,
             |kept| &mut kept.function_signatures,
             |queries| queries.compute_function_signature(function),
@@ -891,6 +912,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn signature(&mut self, signature: SigId) -> SignatureShape<'c> {
         self.memoized_signature(
             signature,
+            self.find_file_of_signature(signature),
             |memo| &mut memo.signatures,
             |kept| &mut kept.signatures,
             |queries| queries.compute_signature(signature),
@@ -934,19 +956,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn memoized_signature<K: Copy + Eq + Hash>(
         &mut self,
         key: K,
+        file_of_parameters: Option<FileId>,
         table: for<'m> fn(&'m mut Memo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
         kept: for<'m> fn(&'m mut KeptMemo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
         compute: impl FnOnce(&mut Self) -> SignatureShape<'c>,
     ) -> SignatureShape<'c> {
-        let file = self.file;
-        let holds_everywhere_else = |shape: &SignatureShape<'c>| {
-            shape
-                .declaration
-                .is_none_or(|function| function.file != file)
-        };
-        if let Some(&known) = kept(&mut self.kept).get(&key)
-            && holds_everywhere_else(&known)
-        {
+        // The file of a function infers the parameters that the function leaves untyped. A class without a constructor takes the
+        // parameters of a class above it, and its shape names no declaration.
+        let holds_everywhere_else = file_of_parameters != Some(self.file);
+        if holds_everywhere_else && let Some(&known) = kept(&mut self.kept).get(&key) {
             if self.depth == 0 {
                 self.statistics.asked += 1;
             }
@@ -954,13 +972,135 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let was_known = table(&mut self.memo).contains_key(&key);
         let shape = self.memoized_record(key, table, compute);
-        if !was_known
-            && holds_everywhere_else(&shape)
-            && table(&mut self.memo).remove(&key).is_some()
-        {
+        if !was_known && holds_everywhere_else && table(&mut self.memo).remove(&key).is_some() {
             kept(&mut self.kept).insert(key, shape);
         }
         shape
+    }
+
+    /// Whether the class or one above it declares a getter or a setter. Asked of each class of a row, so each step is asked once.
+    pub fn has_accessor_at_or_above(&mut self, declaration: ClassDeclaration) -> bool {
+        let mut chain = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        let mut current = Some(declaration);
+        let mut has_accessor = false;
+        while let Some(class) = current {
+            if let Some(&known) = self.memo.classes_with_accessor_at_or_above.get(&class) {
+                has_accessor = known;
+                break;
+            }
+            if !seen.insert(class) {
+                has_accessor = true;
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            for entry in members
+                .iter()
+                .filter(|entry| !entry.is_static && is_accessor(entry.kind))
+            {
+                has_accessor = true;
+                self.memo.names_of_accessors.insert(entry.name);
+            }
+            self.memo
+                .classes_with_accessor_at_or_above
+                .insert(class, has_accessor);
+        }
+        has_accessor
+    }
+
+    fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
+        match class {
+            ClassDeclaration::Class(class) => Some(self.class_shape(class)),
+            ClassDeclaration::Function(function) => self.constructor_function_shape(function),
+        }
+    }
+
+    fn declared_parent(&mut self, class: ClassDeclaration) -> Option<ClassDeclaration> {
+        let parent = match class {
+            ClassDeclaration::Class(class) => self.class_parent(class),
+            ClassDeclaration::Function(function) => self.constructor_function_parent(function),
+        };
+        match parent {
+            Some(ClassParent::Declared(above)) => Some(above),
+            Some(ClassParent::Library(_)) | None => None,
+        }
+    }
+
+    /// `None`: the class says nothing of the name. Else whether whoever looks for the name from below finds an accessor here.
+    fn find_accessor_in(
+        &self,
+        shape: &ClassShape<'_>,
+        name: MemberName,
+        is_above: bool,
+    ) -> Option<bool> {
+        if shape.has_computed_instance_name {
+            return Some(false);
+        }
+        let file = self.c.hir(shape.declaration.file());
+        let named = |entry: &&ClassMember| !entry.is_static && entry.name == name;
+        for entry in shape.members.iter().filter(named) {
+            match (entry.kind, entry.source) {
+                (kind, _) if is_accessor(kind) => {
+                    if is_above {
+                        return Some(true);
+                    }
+                }
+                (ObjectMemberKind::Field, ClassMemberSource::Member(node))
+                    if file[node]
+                        .flags
+                        .intersects(hir::Flags::AMBIENT | hir::Flags::ABSTRACT) => {}
+                (ObjectMemberKind::Field, ClassMemberSource::ThisStore(_)) => {}
+                _ => return Some(false),
+            }
+        }
+        shape
+            .names_stored_in_prototype
+            .contains(&name)
+            .then_some(false)
+    }
+
+    /// `this.size = size` below `set size(..)` of a base class runs the setter and creates no property. Each class of a row asks, so each step up
+    /// the row is taken once for a name, and none for a name that no class there declares as an accessor.
+    pub fn inherits_accessor(&mut self, shape: &ClassShape<'_>, name: MemberName) -> bool {
+        if !matches!(name, MemberName::String(_))
+            || !self.has_accessor_at_or_above(shape.declaration)
+            || !self.memo.names_of_accessors.contains(&name)
+        {
+            return false;
+        }
+        if let Some(found) = self.find_accessor_in(shape, name, false) {
+            return found;
+        }
+        let mut silent = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        seen.insert(shape.declaration);
+        let mut current = self.declared_parent(shape.declaration);
+        let found = loop {
+            let Some(class) = current else { break false };
+            // What a walk round a cycle finds depends on where it began.
+            if !seen.insert(class) {
+                return false;
+            }
+            if let Some(&known) = self.memo.inherited_accessors.get(&(class, name)) {
+                break known;
+            }
+            silent.push(class);
+            let Some(above) = self.shape_of(class) else {
+                break false;
+            };
+            if let Some(found) = self.find_accessor_in(above, name, true) {
+                break found;
+            }
+            current = self.declared_parent(class);
+        };
+        for class in silent {
+            self.memo.inherited_accessors.insert((class, name), found);
+        }
+        found
     }
 
     pub fn class_shape(&mut self, class: ClassRef) -> &'c ClassShape<'c> {
@@ -1087,6 +1227,64 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
+    /// The members that `object_type` and `base` both have under one string name, with different types, in the order of `base`.
+    /// It keeps no list of the members of either: a class has those of all the classes above it, so the lists of a row of classes
+    /// that extend one another take room that grows with the square of its length.
+    pub fn members_typed_otherwise(
+        &mut self,
+        object_type: TypeId,
+        base: TypeId,
+    ) -> Result<Vec<MemberTypedOtherwise>, GaveUp> {
+        let by_names =
+            self.ask(|queries| queries.compute_members_typed_otherwise(object_type, base));
+        if let Some(found) = by_names? {
+            return Ok(found);
+        }
+        // In such a row the base is the class that was asked about just before, and classes that extend one class follow one another.
+        let (in_base, base_is_kept) = self.checked_members_for_now(base)?;
+        let (members, is_kept) = self.checked_members_for_now(object_type)?;
+        let mut types: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        types.reserve(members.len());
+        for member in &members {
+            if let (MemberName::String(name), Ok(checked)) = (member.name, member.checked) {
+                types.insert(name, checked);
+            }
+        }
+        let mut found = Vec::new();
+        for member in &in_base {
+            if let (MemberName::String(name), Ok(in_base)) = (member.name, member.checked)
+                && let Some(&checked) = types.get(&name)
+                && checked != in_base
+            {
+                found.push(MemberTypedOtherwise {
+                    kind_in_base: member.kind,
+                    checked,
+                    in_base,
+                });
+            }
+        }
+        self.memo.most_recent_checked_members = [
+            is_kept.then_some((object_type, members)),
+            base_is_kept.then_some((base, in_base)),
+        ];
+        Ok(found)
+    }
+
+    /// The list, and whether the same question gets the same answer later.
+    fn checked_members_for_now(
+        &mut self,
+        object_type: TypeId,
+    ) -> Result<(Vec<CheckedMember>, bool), GaveUp> {
+        for recent in &mut self.memo.most_recent_checked_members {
+            if let Some((_, members)) = recent.take_if(|it| it.0 == object_type) {
+                return Ok((members, true));
+            }
+        }
+        let unstable_answers = self.unstable_answers;
+        let members = self.ask(|queries| queries.compute_checked_members_for_now(object_type))?;
+        Ok((members, self.unstable_answers == unstable_answers))
+    }
+
     pub fn find_checked_member(
         &mut self,
         receiver: TypeId,
@@ -1186,6 +1384,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             |answers| &mut answers.identity,
             |queries| queries.compute_type_identity(ty),
         )
+    }
+
+    pub fn has_other_optional_members_than_mapped_type(&mut self, object_type: TypeId) -> bool {
+        self.c
+            .has_other_optional_members_than_mapped_type(object_type)
     }
 
     pub fn object_origin(&mut self, object_type: TypeId) -> ObjectOrigin {

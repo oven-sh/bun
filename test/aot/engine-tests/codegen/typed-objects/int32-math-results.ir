@@ -116,7 +116,7 @@ function f1 name="steps" module=m0 position=1409 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Predecessors: #5, #4, #2
 # CHECK-NEXT: Int32 b@25 = Phi(ReadsLocalState, v16:Parameter)
 # CHECK-NEXT: Int32 b@15 = Add(b@66, $1(b@39), v18:Add)
-# CHECK-NEXT: Void b@1 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v5:LoopHint)
+# CHECK-NEXT: Void b@1 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v5:LoopHint)
 # CHECK-NEXT: Int32 b@33 = GreaterThan(b@21, b@25, v6:Less)
 # CHECK-NEXT: Void b@26 = Branch(b@33, Terminal, v6:Less)
 # CHECK-NEXT: Successors: Then:#10, Else:#8

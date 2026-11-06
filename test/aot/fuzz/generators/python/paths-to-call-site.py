@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""paths-to-call-site.py <shift>: each row has a HOLDER of its own (a literal, a class, an instance, an array, a Map, a variable of a closure or of the module) that holds a function A in plain sight, and ONE CALL SITE that calls what the holder holds. The site is run, then ONE DEED puts something else B there by a way the analysis must model or give up on, and the site is run again; then things are put back and it is run a third time. B rotates through twelve kinds of callee (see paths-to-read-site.py). Untyped JavaScript: every line as plain Bun's."""
+"""paths-to-call-site.py <shift>: Each row has its own holder (a literal, a class, an instance, an array, a Map, a
+closure or module variable) that visibly holds a function A, and one call site that calls what the holder holds. A
+second function B reaches the holder by one hidden path.
+"""
 import sys
 shift = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 import os

@@ -193,32 +193,50 @@ pub(crate) struct Checkpoint {
 ///
 /// `COMMENTS`: the parser finds the nodes around each comment when the options enable it. See [`comments`]. When it's
 /// false that code is compiled out, so `bun check` and `bun lint`, which don't need those nodes, don't pay for it.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
-    pub(crate) lx: Lexer<'a>,
-    pub(crate) f: FileBuilder,
-    pub(crate) s: Stacks,
     /// `ctx`
     pub(crate) context: u32,
-    /// Number of enclosing classes.
-    pub(crate) class_depth: u32,
-    pub(crate) options: Options,
     /// See `recovers()`.
     recovers: bool,
-    /// See `reads_jsdoc()`.
-    reads_jsdoc: bool,
-    pub(crate) jsdoc: jsdoc::State,
-    comments: comments::CommentTracker,
-    /// `parsingContexts`: one bit for each `ListKind` that has an open list.
-    pub(crate) lists: u32,
-    pub(crate) declaration_scan: stmt::DeclarationScan,
-    /// The start of the token where the last error was reported, and how many errors were reported there.
-    pub(crate) errors_at: (u32, u32),
     /// `Dialect::ecmascript`, in a JavaScript file.
     pub(crate) is_ecmascript: bool,
-    /// `Dialect::flow`, in a JavaScript file.
-    flow: bool,
-    /// True if a `<` after an expression can start type arguments. False in JavaScript, except for Flow.
-    pub(crate) has_type_arguments_in_expressions: bool,
+    pub(crate) options: Options,
+    pub(crate) lx: Lexer<'a>,
+    comments: comments::CommentTracker,
+    pub(crate) f: FileBuilder,
+    pub(crate) s: Stacks,
+    pub(crate) jsdoc: jsdoc::State,
+    /// The private names the enclosing classes have declared so far.
+    pub(crate) declared_private_names: Vec<Atom>,
+    pub(crate) declared: Declared,
+    /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
+    pub(crate) not_arrows: Vec<u32>,
+    /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
+    /// position.
+    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
+    /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
+    pub(crate) not_type_arguments: Vec<(u32, u32)>,
+    pub(crate) declaration_scan: stmt::DeclarationScan,
+    /// The token where `fail` was last called, and its position.
+    failed_at: (T, u32),
+    /// `failed_at`, if that call is why the last `try_parse` rolled back.
+    pub(crate) was_abandoned_at: Option<(T, u32)>,
+    /// The start of the token where the last error was reported, and how many errors were reported there.
+    pub(crate) errors_at: (u32, u32),
+    /// For `rare::NESTED_MODULE_SYNTAX`, in a JavaScript file for oxc: how many `import` and `export` statements were
+    /// parsed at any depth, and how many of the file's top-level statements are one.
+    pub(crate) module_statements: (u32, u32),
+    /// See [`Parsed::end`].
+    pub(crate) end: (u32, u32),
+    /// The last `T?` node and its end.
+    pub(crate) last_nullable_type: (TypeNodeId, u32),
+    /// Number of enclosing classes.
+    pub(crate) class_depth: u32,
+    /// `parsingContexts`: one bit for each `ListKind` that has an open list.
+    pub(crate) lists: u32,
     /// In Flow: the start of the last expression statement.
     pub(crate) flow_statement_start: u32,
     /// `TypeExcludesFlags`: the context bits cleared inside a type, an enum's members and a top-level namespace. oxc
@@ -226,6 +244,25 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) cleared_in_types: u32,
     /// Number of `await` and `yield` expressions created so far.
     pub(crate) suspensions: u32,
+    /// Number of parameters so far with a modifier, a `?` or `...`. It only grows.
+    pub(crate) odd_parameters: u32,
+    /// While `reparses_rest_of_file` is set, the start of the previous statement.
+    pub(crate) reparsed_at: u32,
+    /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
+    /// `rescan_jsx_child`.
+    pub(crate) jsx_child_with_stale_token: u32,
+    /// The position of the `?` of the last optional parameter.
+    pub(crate) parameter_question_pos: u32,
+    /// See `private_name_before_in`. The position of the last one.
+    pub(crate) private_name_before_in: u32,
+    /// Number of speculative parses in progress.
+    speculations: u32,
+    /// See `reads_jsdoc()`.
+    reads_jsdoc: bool,
+    /// `Dialect::flow`, in a JavaScript file.
+    flow: bool,
+    /// True if a `<` after an expression can start type arguments. False in JavaScript, except for Flow.
+    pub(crate) has_type_arguments_in_expressions: bool,
     /// `Dialect::oxc`, in a TypeScript file. See `oxc.rs`.
     is_typescript_for_oxc: bool,
     /// True while parsing a class's `implements` clause for oxc, which accepts any word as a name there.
@@ -234,16 +271,6 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) is_in_interface_extends_for_oxc: bool,
     /// With `reports_like_oxc`: the class being parsed has an abstract member or a method without a body.
     pub(crate) has_odd_members: bool,
-    /// For `rare::NESTED_MODULE_SYNTAX`, in a JavaScript file for oxc: how many `import` and `export` statements were
-    /// parsed at any depth, and how many of the file's top-level statements are one.
-    pub(crate) module_statements: (u32, u32),
-    /// Number of parameters so far with a modifier, a `?` or `...`. It only grows.
-    pub(crate) odd_parameters: u32,
-    /// The private names the enclosing classes have declared so far.
-    pub(crate) declared_private_names: Vec<Atom>,
-    pub(crate) declared: Declared,
-    /// See [`Parsed::end`].
-    pub(crate) end: (u32, u32),
     pub(crate) has_top_level_await: bool,
     /// True if some top-level `await` is unambiguous: `await a`, `for await`, `await using`. `await (a)` doesn't count,
     /// because in a script it calls a function named `await`.
@@ -263,32 +290,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) recovery_hit_await: bool,
     /// True once the `reparseTopLevelAwait` reparse has run past the end of its statement. See `skip_to_element`.
     pub(crate) reparses_rest_of_file: bool,
-    /// While `reparses_rest_of_file` is set, the start of the previous statement.
-    pub(crate) reparsed_at: u32,
-    /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
-    /// `rescan_jsx_child`.
-    pub(crate) jsx_child_with_stale_token: u32,
-    /// The position of the `?` of the last optional parameter.
-    pub(crate) parameter_question_pos: u32,
-    /// See `private_name_before_in`. The position of the last one.
-    pub(crate) private_name_before_in: u32,
-    /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
-    pub(crate) not_arrows: Vec<u32>,
-    /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
-    /// position.
-    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
-    /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
-    pub(crate) not_type_arguments: Vec<(u32, u32)>,
-    /// The last `T?` node and its end.
-    pub(crate) last_nullable_type: (TypeNodeId, u32),
-    /// Number of speculative parses in progress.
-    speculations: u32,
     /// True if `report` was called during one of them.
     has_reported: bool,
-    /// The token where `fail` was last called, and its position.
-    failed_at: (T, u32),
-    /// `failed_at`, if that call is why the last `try_parse` rolled back.
-    pub(crate) was_abandoned_at: Option<(T, u32)>,
 }
 
 /// `isAnExternalModuleIndicatorNode`
@@ -390,7 +393,7 @@ pub(crate) fn run<'a>(
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_compiled_javascript = options.compiles && is_ecmascript;
-    lx.decodes_ill_formed_text = options.compiles;
+    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {

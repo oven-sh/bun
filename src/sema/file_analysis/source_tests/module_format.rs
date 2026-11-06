@@ -115,6 +115,43 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"const o = {}; if (!o) require("a");"#, CommonJs),
     ("a.js", r#"if (null?.a) require("a");"#, CommonJs),
     ("a.js", r#"if (1 == "2") require("a");"#, CommonJs),
+    ("a.js", r#"if (1 == "1") {} else require("a");"#, CommonJs),
+    ("a.js", r#"if ("1" == 1) {} else require("a");"#, Esm),
+    ("a.js", r#"if ("0" != 0) require("a");"#, Esm),
+    ("a.js", r#"if ("" == 0) {} else require("a");"#, Esm),
+    ("a.js", r#"if ("2" == 2) {} else require("a");"#, CommonJs),
+    ("a.js", r#"if ("1" === 1) require("a");"#, Esm),
+    ("a.js", r#"if (1 === "1") require("a");"#, CommonJs),
+    ("a.js", r#"if (true === "a") require("a");"#, CommonJs),
+    ("a.js", r#"if ("a" === true) require("a");"#, CommonJs),
+    ("a.js", r#"if (1n === 1) require("a");"#, CommonJs),
+    ("a.js", r#"if (false == 1) require("a");"#, Esm),
+    ("a.js", r#"if (0 == false) {} else require("a");"#, Esm),
+    ("a.js", r#"if (true === 1) require("a");"#, Esm),
+    ("a.js", r#"if ("a" == null) require("a");"#, Esm),
+    ("a.js", r#"if (null == 0) require("a");"#, Esm),
+    ("a.js", r#"if (null != false) {} else require("a");"#, Esm),
+    ("a.js", r#"if (1n == null) require("a");"#, Esm),
+    ("a.js", r#"if (false | 0) require("a");"#, CommonJs),
+    ("a.js", r#"if (null & 1) require("a");"#, CommonJs),
+    ("a.js", r#"if ("1" - 1) require("a");"#, CommonJs),
+    ("a.js", r#"if (true + 0 === 2) require("a");"#, CommonJs),
+    ("a.js", r#"if (1 + 1 === 3) require("a");"#, Esm),
+    ("a.js", r#"if ("a" + 1 === "b") require("a");"#, Esm),
+    ("a.js", r#"if (2 < 1) require("a");"#, Esm),
+    ("a.js", r#"if ("b" < "a") require("a");"#, Esm),
+    ("a.js", r#"if (1 < null) require("a");"#, CommonJs),
+    ("a.js", r#"if ("2" < 1) require("a");"#, CommonJs),
+    ("a.js", r#"if (0 / 0 < 1) require("a");"#, CommonJs),
+    ("a.js", r#"if (1 / 0 < 1) require("a");"#, Esm),
+    ("a.js", r#"if (9007199254740992 < 1) require("a");"#, Esm),
+    ("a.js", r#"if (true < 1) require("a");"#, Esm),
+    (
+        "a.js",
+        r#"const a = 9007199254740992 < 1; if (a) require("a");"#,
+        CommonJs,
+    ),
+    ("a.js", r#"const a = 2 < 1; if (a) require("a");"#, Esm),
     ("a.js", r#"while (false) require("a");"#, CommonJs),
     ("a.js", r#"for (; false; ) require("a");"#, CommonJs),
     ("a.js", r#"switch (1) { case 2: require("a"); }"#, CommonJs),
@@ -239,6 +276,85 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"!typeof module && a();"#, Esm),
     ("a.js", r#"typeof module || a();"#, Esm),
     ("a.js", r#"void typeof module ? a() : 0;"#, Esm),
+    ("a.js", r#"typeof a ?? module.id;"#, Esm),
+    ("a.js", r#"const b = typeof a ?? exports;"#, Esm),
+    ("a.js", r#"const b = typeof a ?? require;"#, Esm),
+    ("a.js", r#"const b = typeof a ?? __filename;"#, Esm),
+    ("a.js", r#"const b = typeof a ?? this;"#, Esm),
+    ("a.js", r#"const b = typeof a || module.id;"#, Esm),
+    ("a.js", r#"const b = void a && module.id;"#, Esm),
+    ("a.js", r#"const b = !a ?? module.id;"#, Esm),
+    ("a.js", r#"const b = -a ?? module.id;"#, Esm),
+    ("a.js", r#"const b = ~a ?? module.id;"#, Esm),
+    ("a.js", r#"const b = a++ ?? module.id;"#, Esm),
+    ("a.js", r#"const b = delete a.b ?? module.id;"#, Esm),
+    ("a.js", r#"const b = a + 1 ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (a === 1) ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (a in c) ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (a instanceof c) ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (a >>>= 1) ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (a, typeof a) ?? module.id;"#, Esm),
+    ("a.js", r#"if (typeof a) { a(); } else { module.id; }"#, Esm),
+    ("a.js", r#"const b = typeof a ?? (() => module.id);"#, Esm),
+    ("a.js", r#"a(typeof a ?? module.id);"#, Esm),
+    ("a.js", r#"const b = (typeof a ?? c) ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (null ?? typeof a) ?? module.id;"#, Esm),
+    ("a.js", r#"const b = (1 && typeof a) ?? module.id;"#, Esm),
+    (
+        "a.js",
+        r#"const b = (a ?? typeof c) ?? module.id;"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"var a; if (!typeof a === true) { module.id; }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"var a; const b = (void a || typeof a) ?? module.id;"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"const b = (void a() || typeof c) ?? module.id;"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (!{ a: b() } === true) { module.id; }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (void a() === undefined) {} else { module.id; }"#,
+        CommonJs,
+    ),
+    ("a.js", r#"const b = typeof a && module.id;"#, CommonJs),
+    ("a.js", r#"const b = void a || module.id;"#, CommonJs),
+    ("a.js", r#"const b = void a ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = typeof a ? module.id : 1;"#, CommonJs),
+    ("a.js", r#"const b = (a || 1) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = (a && 1) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = (a ?? 1) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = (a = 1) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = (a ??= 1) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = (a ||= 1) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = `${a}` ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = (a ? 1 : 2) ?? module.id;"#, CommonJs),
+    ("a.js", r#"const b = -a || module.id;"#, CommonJs),
+    ("a.js", r#"if (({}) == null) { module.id; }"#, CommonJs),
+    (
+        "a.js",
+        r#"if ([] != null) {} else { module.id; }"#,
+        CommonJs,
+    ),
+    ("a.js", r#"if (typeof a == null) { module.id; }"#, CommonJs),
+    (
+        "a.js",
+        r#"if (typeof a === undefined) { module.id; }"#,
+        CommonJs,
+    ),
     ("a.js", r#"module;"#, Esm),
     ("a.js", r#"exports;"#, Esm),
     ("a.js", r#"void exports;"#, Esm),
@@ -316,7 +432,208 @@ const BUILD_FACTS: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
+const USER_DEFINES: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["Bun"]),
+            Defined::RuntimeValue(RuntimeValueKind::Object),
+        ),
+        (
+            Path::Global(&["process", "platform"]),
+            Defined::Value(Data::String("linux")),
+        ),
+        (
+            Path::Global(&["process", "env", "BUN_ENV"]),
+            Defined::Value(Data::String("development")),
+        ),
+        (
+            Path::Global(&["process", "env", "NODE_ENV"]),
+            Defined::Value(Data::String("production")),
+        ),
+        (Path::Global(&["OFF"]), Defined::Value(Data::Boolean(false))),
+        (Path::Global(&["LEVEL"]), Defined::Value(Data::Number(3.0))),
+        (Path::Global(&["NOTHING"]), Defined::Value(Data::Null)),
+        (
+            Path::Global(&["CONFIG"]),
+            Defined::Value(Data::Object(&[("a", Data::Number(1.0))])),
+        ),
+        (
+            Path::Global(&["LIST"]),
+            Defined::Value(Data::Array(&[Data::Number(1.0)])),
+        ),
+        (Path::Global(&["RUNTIME"]), Defined::GlobalPath(&["Bun"])),
+    ],
+    user_defined: &[
+        Path::Global(&["process", "env", "NODE_ENV"]),
+        Path::Global(&["OFF"]),
+        Path::Global(&["LEVEL"]),
+        Path::Global(&["NOTHING"]),
+        Path::Global(&["CONFIG"]),
+        Path::Global(&["LIST"]),
+        Path::Global(&["RUNTIME"]),
+    ],
+    ..Fold::NONE
+};
+
+const FORMATS_WITH_USER_DEFINES: &[(&str, &str, ModuleFormat)] = &[
+    (
+        "a.js",
+        r#"if (process.env.NODE_ENV !== "production") { require("a"); }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"if (process.env.NODE_ENV === "production") { require("a"); }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"process.env.NODE_ENV === "production" || require("a");"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"const a = process.env.NODE_ENV === "production" ? null : require("a");"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"const mode = process.env.NODE_ENV; if (mode !== "production") require("a");"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"let mode = process.env.NODE_ENV; if (mode !== "production") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"f(); const mode = process.env.NODE_ENV; if (mode !== "production") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (process.env?.NODE_ENV !== "production") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"function f(process) { if (process.env.NODE_ENV !== "production") require("a"); }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof process.env.NODE_ENV !== "string") require("a");"#,
+        Esm,
+    ),
+    ("a.js", r#"process.env.NODE_ENV ?? require("a");"#, Esm),
+    (
+        "a.js",
+        r#"if (process.env.NODE_ENV == null) require("a");"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"if (!process.env.NODE_ENV) module.exports = 1;"#,
+        Esm,
+    ),
+    ("a.js", r#"if (OFF) require("a");"#, Esm),
+    ("a.js", r#"if (!OFF) require("a");"#, CommonJs),
+    ("a.js", r#"OFF && module.exports;"#, Esm),
+    ("a.js", r#"OFF ? exports.a = 1 : 0;"#, Esm),
+    ("a.js", r#"if (OFF) this.a = 1;"#, Esm),
+    ("a.js", r#"if (OFF == 1) require("a");"#, Esm),
+    ("a.js", r#"if (OFF | 0) require("a");"#, CommonJs),
+    ("a.js", r#"var OFF; if (OFF) require("a");"#, CommonJs),
+    ("a.js", r#"if (globalThis.OFF) require("a");"#, CommonJs),
+    ("a.js", r#"if (LEVEL - 3) require("a");"#, Esm),
+    ("a.js", r#"if (LEVEL > 4) require("a");"#, Esm),
+    ("a.js", r#"if (NOTHING != null) require("a");"#, Esm),
+    ("a.js", r#"NOTHING ?? require("a");"#, CommonJs),
+    ("a.js", r#"if (!CONFIG) require("a");"#, Esm),
+    ("a.js", r#"if (CONFIG) {} else require("a");"#, Esm),
+    ("a.js", r#"CONFIG || require("a");"#, Esm),
+    ("a.js", r#"CONFIG ?? require("a");"#, Esm),
+    ("a.js", r#"if (CONFIG == null) require("a");"#, CommonJs),
+    ("a.js", r#"if (!LIST) require("a");"#, Esm),
+    ("a.js", r#"if (!RUNTIME) require("a");"#, CommonJs),
+    (
+        "a.js",
+        r#"if (typeof RUNTIME === "undefined") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (process.env.BUN_ENV === "production") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (process.platform === "win32") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (OFF || process.platform === "win32") require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (OFF && process.platform === "linux") require("a");"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"if (process.platform === "linux" && OFF) require("a");"#,
+        Esm,
+    ),
+];
+
 const FORMATS_WITH_BUILD_FACTS: &[(&str, &str, ModuleFormat)] = &[
+    ("a.js", r#"typeof Bun ?? module.id;"#, Esm),
+    ("a.js", r#"void Bun && module.id;"#, Esm),
+    ("a.js", r#"(typeof Bun ?? module).id;"#, Esm),
+    ("a.js", r#"const b = typeof Bun ?? module.id;"#, Esm),
+    ("a.js", r#"const b = typeof Bun ? 1 : module.id;"#, Esm),
+    ("a.js", r#"const b = void Bun ? module.id : 1;"#, Esm),
+    ("a.js", r#"const b = (a, typeof Bun) || module.id;"#, Esm),
+    ("a.js", r#"const b = (a || typeof Bun) || module.id;"#, Esm),
+    ("a.js", r#"const b = (a && void Bun) && module.id;"#, Esm),
+    ("a.js", r#"const b = (typeof Bun || a) || module.id;"#, Esm),
+    ("a.js", r#"const b = !typeof Bun && module.id;"#, Esm),
+    ("a.js", r#"const b = !!typeof Bun || module.id;"#, Esm),
+    (
+        "a.js",
+        r#"if (typeof Bun) { a(); } else { module.id; }"#,
+        Esm,
+    ),
+    ("a.js", r#"if (void Bun) { module.id; } else { a(); }"#, Esm),
+    (
+        "a.js",
+        r#"if (!typeof Bun) { module.id; } else { a(); }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"function f() { return typeof Bun ?? module.id; }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"if (null == typeof Bun) { module.id; }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"var a = 1; const b = (a || 1) ?? module.id;"#,
+        CommonJs,
+    ),
+    ("a.js", r#"const b = (typeof Bun || a) ?? module.id;"#, Esm),
+    (
+        "a.js",
+        r#"const b = (void Bun && a) ?? module.id;"#,
+        CommonJs,
+    ),
     (
         "a.js",
         r#"if (typeof Bun === "undefined") require("a");"#,
@@ -497,6 +814,32 @@ const UNUSED_IMPORTS: &[(&str, &str, &[&str], usize)] = &[
         0,
     ),
     ("a.ts", r#"import { A } from "m"; if (false) A;"#, &["A"], 1),
+    ("a.ts", r#"import { A } from "m"; const A = 1; A;"#, &[], 0),
+    (
+        "a.ts",
+        r#"import { A } from "m"; function A() {} A();"#,
+        &[],
+        0,
+    ),
+    (
+        "a.ts",
+        r#"import { B as A } from "m"; const A = 1; A;"#,
+        &[],
+        0,
+    ),
+    ("a.ts", r#"import A from "m"; const A = 1; A;"#, &[], 0),
+    (
+        "a.ts",
+        r#"import { A, b } from "m"; const A = b; A;"#,
+        &[],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import { A } from "m"; declare const A: number; A;"#,
+        &[],
+        1,
+    ),
     ("a.ts", r#"import { A } from "m"; export { A };"#, &[], 1),
     ("a.mjs", r#"import { a } from "m";"#, &[], 1),
     (
@@ -758,6 +1101,7 @@ fn site_kind_name(kind: ImportSiteKind) -> &'static str {
         ImportSiteKind::ImportMetaRequire(_) => "ImportMetaRequire",
         ImportSiteKind::ImportMetaResolve(_) => "ImportMetaResolve",
         ImportSiteKind::GetBuiltinModule(_) => "GetBuiltinModule",
+        ImportSiteKind::MockModule(_) => "MockModule",
     }
 }
 
@@ -768,7 +1112,8 @@ fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
         | ImportSiteKind::RequireResolve(call)
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
-        | ImportSiteKind::GetBuiltinModule(call) => Some(call),
+        | ImportSiteKind::GetBuiltinModule(call)
+        | ImportSiteKind::MockModule(call) => Some(call),
         _ => None,
     }
 }
@@ -910,6 +1255,18 @@ fn format_does_not_follow_what_only_a_build_folds() {
     for &(path, text, format) in FORMATS_WITH_BUILD_FACTS {
         with_workspace(|workspace| {
             let fold = workspace.fold_inputs(&BUILD_FACTS);
+            let analyzed = workspace.analyze(&Source::new(path, text), &fold);
+            assert_eq!(analyzed.analysis.module_format, format, "{path}: {text}");
+            assert_eq!(analyzed.analysis.errors, [], "{path}: {text}");
+        });
+    }
+}
+
+#[test]
+fn format_follows_what_the_user_defines() {
+    for &(path, text, format) in FORMATS_WITH_USER_DEFINES {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&USER_DEFINES);
             let analyzed = workspace.analyze(&Source::new(path, text), &fold);
             assert_eq!(analyzed.analysis.module_format, format, "{path}: {text}");
             assert_eq!(analyzed.analysis.errors, [], "{path}: {text}");

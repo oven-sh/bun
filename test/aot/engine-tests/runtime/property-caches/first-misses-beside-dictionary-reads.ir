@@ -1,7 +1,7 @@
 # const box: any[] = JSON.parse("[null]");
 # function hide(x: any): any { box[0] = x; return box[0]; }
 # const emptyText: string = hide("{}");
-# function readName(o: any): any { return o.neverStored; }
+# function readName(o: any): any { return o["9neverStored"]; }
 # function readKey(o: any, k: any): any { return o[k]; }
 # let text = "{";
 # for (let i = 0; i < 300; i++) text += (i ? "," : "") + JSON.stringify("k" + i) + ":" + i;
@@ -20,7 +20,7 @@
 # report(found === 0);
 # FORM: AsRead
 # RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "2500"]; const counters = () => { const all = {}; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const parts = lines[i].split("\t"); if (parts.length > 1) all[parts[1]] = Number(parts[0]); } return all; }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const misses = aotOperationCount("operationAOTGetByIdAndCache"), notFiled = counters()["counter:FirstMissesNotFiled"]; print(misses >= 2500 ? "every round misses once" : misses); print(notFiled >= misses - 200 ? "and files nothing" : notFiled); };
-# Each round reads a name off an object of a new shape, right after sixteen reads of a name that a dictionary lacks.
+# Each round reads a name off an object of a new shape, right after sixteen reads of a name that a dictionary lacks. The object has an element and the name begins with a digit, so the run time is asked.
 # It is the first miss of that shape and name, whatever was read before it, so nothing is filed for it.
 # CHECK: true
 # CHECK-NEXT: every round misses once
@@ -237,7 +237,7 @@ function f2 name="readName" module=m0 flags=[IsChecked, HasExplicitName] length=
     Jump -> next b1()
   b1():
     v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v2 = PropGet v1 key="neverStored"
+    v2 = PropGet v1 key="9neverStored"
     Return v2
 }
 function f3 name="readKey" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

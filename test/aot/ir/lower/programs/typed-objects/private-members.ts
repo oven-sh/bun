@@ -102,8 +102,14 @@ console.log(sum, vaults.map(x => x.history.length).join())
 // CHECK-NEXT: v9 = Convert v8 declared={type=number} illTypedCause=Assertion
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v10 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v10
+// CHECK-NEXT: v10 = TypeTest v1 testedType=undefined|null
+// CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v11):
+// CHECK-NEXT: v12 = PropGet v11 key="#made"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v13):
+// CHECK-NEXT: v14 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isVault"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_6]]}] {

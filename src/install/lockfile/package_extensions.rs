@@ -264,6 +264,12 @@ impl PackageExtensions {
         self.rules.is_empty() && self.applied.is_empty()
     }
 
+    /// Returns true if a rule adds a dependency that is written as `specifier`.
+    pub(crate) fn has_specifier(&self, specifier: &[u8]) -> bool {
+        (self.rules.iter().flat_map(|rule| &rule.edges))
+            .any(|edge| dependency::trim_literal(&edge.literal) == specifier)
+    }
+
     pub(crate) fn parse(
         &mut self,
         log: &mut bun_ast::Log,

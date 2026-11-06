@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built } from "./harness/commands";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -45,6 +46,7 @@ test.skipIf(isASAN || isDebug)(
     const baseline = await measure("nothing");
     const wide = await measure("stringify");
     expect(wide.length).toBeGreaterThan(18_000_000);
+    reads("JSON.stringify of wide text", (wide.peak - baseline.peak) / 2 ** 20, (5.8 * wide.length) / 2 ** 20, "MB");
     expect(wide.peak - baseline.peak).toBeLessThan(5.8 * wide.length);
   },
   240_000,

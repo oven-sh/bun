@@ -111,8 +111,8 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cases"
-# CHECK: module=m0 position=586 flags=[IsSloppy, HasExplicitName] length=3 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=string}, {type=builtin(ArrayPrototype)}, {type="push"}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: env L0, v1: string, v2: builtin(ArrayPrototype), v3: "push"):
+# CHECK: module=m0 position=586 flags=[IsSloppy, HasExplicitName] length=3 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type="Array.prototype"}, {type=builtin(ArrayPrototype)}, {type="push"}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L0, v1: "Array.prototype", v2: builtin(ArrayPrototype), v3: "push"):
 # CHECK-NEXT: v4: f1 = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: v5: ", a computed key" = String string=", a computed key"
 # CHECK-NEXT: v6: string = Add v1, v5

@@ -58,6 +58,7 @@ pub const CAUSE_FAMILIES: ExplainSet = ExplainSet::ONLY_UNKNOWN_CODE
     .union(ExplainSet::ONLY_MUTATION)
     .union(ExplainSet::ONLY_LIMIT);
 
+#[optimize(size)]
 pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry> {
     let families = kinds & CAUSE_FAMILIES;
     let mut entries = Vec::new();

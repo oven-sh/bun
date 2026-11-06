@@ -132,7 +132,7 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=1054 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|Array<never, proven, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=f4|f5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string|Array<never, proven, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="mapInTry"
 # CHECK: module=m0 position=1054 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|Array<never, proven, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=f4|f5}] results=[{type=string|Array<never, proven, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2} {
-# CHECK-NEXT: b0(v0: null|Array<never, proven, pristine[Storage, Names, Dense]>, v1: f4|f5):
+# CHECK-NEXT: b0(v0: null|Array<never, proven, pristine[Storage, Names, Dense]>, v1: f4|f5) handler=b7():
 # CHECK-NEXT: v2: Array = NewArray contents=anything allocationSite=5
 # CHECK-NEXT: v3: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: 0 = Integer

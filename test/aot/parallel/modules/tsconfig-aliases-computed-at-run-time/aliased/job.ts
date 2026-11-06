@@ -1,0 +1,1 @@
+postMessage("aliased/job.ts");

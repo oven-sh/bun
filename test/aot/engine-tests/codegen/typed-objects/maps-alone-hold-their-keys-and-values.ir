@@ -387,10 +387,9 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: v3: Array<L1, Contiguous> = NewArray contents=L1 allocationSite=24 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v4: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v5: 70 = Integer integer=70
-# CHECK-NEXT: v6: 0 = CallDirect v4, v5 function=f76 accessSite=2
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v5: 0 = CallDirect v4 function=f76 accessSite=2
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="churn"
 # CHECK: module=m0 position=1099 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f51 callPosition=878 parent=3 module=m0}, {callee=f50 callPosition=809 parent=1 module=m0}, {callee=f1 callPosition=4294967295 parent=4 module=m0}, {callee=f50 callPosition=809 parent=6 module=m0}] {
@@ -413,7 +412,7 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: Array<L1, Contiguous> = NewArray v12 contents=L1 allocationSite=27 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v14: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v15: f23 = NewClosure v6 function=f23 allocationSite=28
-# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v1, v8, v11, v14, v15 overload=ArrayPrototypePush/0 accessSite=12
+# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v1, v8, v11, v14, v15 overload=ArrayPrototypePush/0 accessSite=13
 # CHECK-NEXT: v17: int[2, 6] = Increment v6
 # CHECK-NEXT: Jump -> next b1(v17)
 # CHECK-NEXT: b3():
@@ -427,8 +426,9 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="byObject"
 # CHECK: module=m0 position=3764 role=GenericEntrypoint flags=[HasThis, IsChecked] length=3 captures=[{type=f19}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f19} creator=Entrypoint{target=f19 arguments=Registers}
 # CHECK-LABEL: function {{*}}name="byObject"
-# CHECK: module=m0 position=3764 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=70}] results=[{type=0}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f19 parameterMap=[{original=1}, {original=2}]} inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f51 callPosition=878 parent=2 module=m0}, {callee=f1 callPosition=4294967295 parent=3 module=m0}, {callee=f50 callPosition=809 parent=4 module=m0}] {
-# CHECK-NEXT: b0(v1: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>, v2: 70):
+# CHECK: module=m0 position=3764 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=0}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f19 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f51 callPosition=878 parent=2 module=m0}, {callee=f1 callPosition=4294967295 parent=3 module=m0}, {callee=f50 callPosition=809 parent=4 module=m0}] {
+# CHECK-NEXT: b0(v1: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v2: 70 = Integer integer=70
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v3)
 # CHECK-NEXT: b1(v4: int[0, 70]):
@@ -440,16 +440,16 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v9: boolean = HasSpareArrayCapacity v1
 # CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=27
+# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=28
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: v11: 70 = Integer integer=70
 # CHECK-NEXT: v12: int[0, 70] = Sub v11, v4
 # CHECK-NEXT: ReserveArrayCapacity v1, v12
-# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=27
+# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=28
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: undefined = CallDirect function=f5 accessSite=14
+# CHECK-NEXT: v15: undefined = CallDirect function=f5 accessSite=15
 # CHECK-NEXT: v16: int[1, 70] = Increment v7
 # CHECK-NEXT: Jump -> next b1(v16)
 # CHECK-NEXT: b6():

@@ -45,24 +45,6 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
-// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
-// ────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
-    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
-    // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
-}
-#[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
-    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
-}
-
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 
@@ -891,8 +873,7 @@ impl Value {
             return ReadableStream::empty(cx.global());
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper in
+        // Ownership of the heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -973,18 +954,17 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+        if let Some(form_data) = DOMFormData::from_js(value) {
+            return Ok(Value::Blob(Blob::from_dom_form_data(
+                global_this,
+                form_data,
+            )));
         }
 
-        if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
+        if let Some(search_params) = URLSearchParams::from_js(value) {
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                search_params,
             )));
         }
 
@@ -1155,9 +1135,7 @@ impl Value {
                         result?;
                     }
                     Action::None | Action::GetBlob => {
-                        let blob_ptr = Blob::new(new.use_());
-                        // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
-                        let blob = unsafe { &mut *blob_ptr };
+                        let blob = new.use_();
                         if let Some(fetch_headers) = headers {
                             // `headers` is a live C++ FetchHeaders handle;
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
@@ -1168,13 +1146,13 @@ impl Value {
                             {
                                 let content_slice = content_type.to_utf8();
                                 let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
+                                set_blob_content_type(&blob, mime_type);
                             }
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                            set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
                         }
-                        promise.resolve(cx.global(), blob.to_js(cx.global()))?;
+                        promise.resolve(cx.global(), blob.into_js(cx.global()))?;
                     }
                 }
                 promise_.unprotect();
@@ -1491,8 +1469,7 @@ impl Value {
             return Ok(Value::Null);
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper in
+        // Ownership of the heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -2198,9 +2175,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         let value = self.get_body_value();
-        let blob_ptr = Blob::new(value.use_());
-        // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
-        let blob = unsafe { &mut *blob_ptr };
+        let blob = value.use_();
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
                 // `fetch_headers` is a live C++ FetchHeaders handle;
@@ -2209,16 +2184,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_utf8();
                     let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
+                    set_blob_content_type(&blob, mime_type);
                 }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
             }
         }
         Ok(JSPromise::resolved_promise_value(
             global_object,
-            blob.to_js(global_object),
+            blob.into_js(global_object),
         ))
     }
 
@@ -2260,9 +2235,7 @@ fn handle_body_stream_unusable(
 /// A promise for what `body.json()` parses, where compiled code parses it by a type (`bodyBytesForm` of the table of built-ins).
 #[unsafe(no_mangle)]
 #[bun_jsc::host_call]
-fn Body__jsonSource(global_this: *mut JSGlobalObject, body: JSValue) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
+fn Body__jsonSource(global_this: &JSGlobalObject, body: JSValue) -> JSValue {
     bun_jsc::to_js_host_call(global_this, || {
         let cx = global_this.js_thread_of_caller();
         if let Some(request) = body.as_class_ref::<webcore::Request>() {

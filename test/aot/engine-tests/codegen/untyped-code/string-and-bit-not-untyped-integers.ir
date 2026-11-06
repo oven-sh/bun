@@ -149,7 +149,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:Rare:#8, Else:Unlikely:#3
 # CHECK-NEXT: BB#3: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #10, #11
-# CHECK-NEXT: Int64 b@58 = Patchpoint(b@18:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v7:BitNot)
+# CHECK-NEXT: Int64 b@58 = Patchpoint(b@18:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v7:BitNot)
 # CHECK-NEXT: Int64 b@59 = Patchpoint(b@58:Register(%rax), resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v8:ToBoolean)
 # CHECK-NEXT: Int32 b@60 = Trunc(b@59, v8:ToBoolean)
 # CHECK-NEXT: Int32 b@55 = Const32(1, v6:LogicalNot)

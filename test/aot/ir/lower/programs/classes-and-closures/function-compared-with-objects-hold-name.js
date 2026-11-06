@@ -16,31 +16,32 @@ console.log(new K().m === K.prototype.m, new K().m === new K().m, K.s === K.s, (
 
 // GENERATED: same make isI1 K m single
 // CHECK-LABEL: function {{*}}name="same"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="emit"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = StrictEq v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v4
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_1]]|[[f_2]] flags=[IsExpected]}
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v4 = StrictEq v2, v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=boolean flags=[IsExpected]}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[f_4]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
+// CHECK-NEXT: v0 = NewClosure function=[[f_5]]
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isI1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_3]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_4]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[f_4]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="i1"
 // CHECK-NEXT: v3 = StrictEq v0, v2
 // CHECK-NEXT: v4 = Convert v3 declared={type=boolean flags=[IsExpected]}
@@ -51,13 +52,13 @@ console.log(new K().m === K.prototype.m, new K().m === new K().m, K.s === K.s, (
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_7]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_7]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -65,7 +66,7 @@ console.log(new K().m === K.prototype.m, new K().m === new K().m, K.s === K.s, (
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="single"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

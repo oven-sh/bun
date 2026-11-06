@@ -1,0 +1,910 @@
+# What a turn of each loop of the program takes: calls into the run time, and instructions by the counter of the hardware, where that can be read.
+# The shell hands in the name of the loop. It reads the counts where the program reads `turns`, in front of the loop, and where it reports, behind it.
+# -- source: settings-merged-with-what-a-text-holds.cjs
+# // Settings put together from defaults that the build can list and from an object that it cannot: what a text holds. The names of the defaults are there whatever the text brings, so
+# // they are read from the object itself; what they hold is tested. A name that the text alone brings has a field too, because the program reads it. Beside them a literal with the same fields.
+# const defaults = { host: "localhost", port: 80, secure: false, depth: 1 };
+# const text = isLoud ? '{"port":"eighty"}' : '{"port":8080,"depth":3,"more":1}';
+# const written = { host: "localhost", port: isLoud ? 1 : 8080, secure: false, depth: isLoud ? 1 : 3 };
+# const spreadOut = { ...defaults, ...JSON.parse(text) };
+# const assigned = Object.assign({}, defaults, JSON.parse(text));
+#
+# function readsOfWritten(rounds) {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + written.port + written.depth + written.host.length + (written.secure ? 1 : 0)) | 0;
+#   return sum;
+# }
+# function readsOfSpread(rounds) {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + spreadOut.port + spreadOut.depth + spreadOut.host.length + (spreadOut.secure ? 1 : 0)) | 0;
+#   return sum;
+# }
+# function readsOfAssigned(rounds) {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + assigned.port + assigned.depth + assigned.host.length + (assigned.secure ? 1 : 0)) | 0;
+#   return sum;
+# }
+#
+# function readsOfWhatTheTextBroughtIntoSpread(rounds) {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + spreadOut.more) | 0;
+#   return sum;
+# }
+# function readsOfWhatTheTextBroughtIntoAssigned(rounds) {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + assigned.more) | 0;
+#   return sum;
+# }
+#
+# report(readsOfWritten(5000), readsOfSpread(5000), readsOfAssigned(5000), readsOfWhatTheTextBroughtIntoSpread(5000), readsOfWhatTheTextBroughtIntoAssigned(5000), Object.keys(spreadOut).join(), spreadOut.more, Object.keys(assigned).join(), assigned.more);
+# const rounds = Number(turns);
+# if (loop === "reads of a literal") report(readsOfWritten(rounds));
+# if (loop === "reads of a spread") report(readsOfSpread(rounds));
+# if (loop === "reads of an assigned object") report(readsOfAssigned(rounds));
+# if (loop === "reads of what the text brought into a spread") report(readsOfWhatTheTextBroughtIntoSpread(rounds));
+# if (loop === "reads of what the text brought into an assigned object") report(readsOfWhatTheTextBroughtIntoAssigned(rounds));
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0 L1 L2 L3 L4; loop = reads_of_a_literal reads_of_a_spread reads_of_an_assigned_object reads_of_what_the_text_brought_into_a_spread reads_of_what_the_text_brought_into_an_assigned_object; most = 6.9 12.9 12.9 7.9 7.9
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows faulting-loop-polls
+# END REPEAT
+# reads of a literal
+# L0: 40460000 40460000 40460000 5000 5000 host,port,secure,depth,more 1 host,port,secure,depth,more 1
+# L0-NEXT: 809200000
+# L0-NEXT: a turn: 0 calls into the run time, at most 6.9 instructions
+# L0-NEXT: exited with 0
+# reads of a spread
+# L1: 40460000 40460000 40460000 5000 5000 host,port,secure,depth,more 1 host,port,secure,depth,more 1
+# L1-NEXT: 809200000
+# L1-NEXT: a turn: 0 calls into the run time, at most 12.9 instructions
+# L1-NEXT: exited with 0
+# reads of an assigned object
+# L2: 40460000 40460000 40460000 5000 5000 host,port,secure,depth,more 1 host,port,secure,depth,more 1
+# L2-NEXT: 809200000
+# L2-NEXT: a turn: 0 calls into the run time, at most 12.9 instructions
+# L2-NEXT: exited with 0
+# reads of what the text brought into a spread
+# L3: 40460000 40460000 40460000 5000 5000 host,port,secure,depth,more 1 host,port,secure,depth,more 1
+# L3-NEXT: 100000
+# L3-NEXT: a turn: 0 calls into the run time, at most 7.9 instructions
+# L3-NEXT: exited with 0
+# reads of what the text brought into an assigned object
+# L4: 40460000 40460000 40460000 5000 5000 host,port,secure,depth,more 1 host,port,secure,depth,more 1
+# L4-NEXT: 100000
+# L4-NEXT: a turn: 0 calls into the run time, at most 7.9 instructions
+# L4-NEXT: exited with 0
+
+module m0 path="settings-merged-with-what-a-text-holds.cjs" displayPath="settings-merged-with-what-a-text-holds.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
+module m5 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
+module m6 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
+entry module=m0
+typesite w0 module=m3 position=571 kind=Variable
+typesite w1 module=m3 position=1447 kind=Variable
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L2 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|absent|L2 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=undefined|null|absent|L2 flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=3
+layout L2 module=m0 position=545 fields=[{key="depth" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="host" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="port" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="secure" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 2, 3, 0] ownFieldCount=4
+layout L3
+layout L4 module=m0 position=718
+layout L5 module=m6 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Object{layout=L2 members=[{key="host" value=String{value="localhost"}}, {key="port" value=Number{value=80}}, {key="secure" value=Boolean{}}, {key="depth" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L4} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewObject layout=L1 @0
+    v4 = NewClosure v3 function=f1 @0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure v3 function=f2 @0
+    v7 = Convert v6 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure v3 function=f3 @0
+    v9 = Convert v8 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure v3 function=f4 @0
+    v11 = Convert v10 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure v3 function=f5 @0
+    v13 = Convert v12 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = Data data=d0 @391
+    v15 = Convert v14 declared={type=undefined|null|L2 flags=[IsExpected]} @391
+    v16 = Builtin builtin=GlobalThis @462
+    v17 = PropGet v16 key="isLoud" [isFreeName] @462
+    v18 = ToBoolean v17 @462
+    Branch v18 -> taken b2(| 0), notTaken b4(| 0) @462
+  b2(v19):
+    Jump -> next b3() @462
+  b3():
+    v20 = String string="{\"port\":\"eighty\"}" @471
+    Jump -> next b6(v20) @471
+  b4(v21):
+    Jump -> next b5() @462
+  b5():
+    v22 = String string="{\"port\":8080,\"depth\":3,\"more\":1}" @493
+    Jump -> next b6(v22) @493
+  b6(v23):
+    v24 = Convert v23 declared={type=undefined|null|"{\"port\":\"eighty\"}"|"{\"port\":8080,\"depth\":3,\"more\":1}" flags=[IsExpected]} @462
+    v25 = String string="localhost" @553
+    v26 = Convert v25 declared={type=undefined|null|string flags=[IsExpected]} @553
+    v27 = NewObject layout=L2 @547
+    PropDefine v27, v26 key="host" @547
+    v29 = Builtin builtin=GlobalThis @572
+    v30 = PropGet v29 key="isLoud" [isFreeName] @572
+    v31 = ToBoolean v30 @572
+    Branch v31 -> taken b7(| 0), notTaken b9(| 0) @572
+  b7(v32):
+    Jump -> next b8() @572
+  b8():
+    v33 = Integer integer=1 @581
+    Jump -> next b11(v33) @581
+  b9(v34):
+    Jump -> next b10() @572
+  b10():
+    v35 = Integer integer=8080 @585
+    Jump -> next b11(v35) @585
+  b11(v36):
+    v37 = Convert v36 declared={type=number flags=[IsExpected]} @572
+    PropDefine v27, v37 key="port" @566
+    v39 = Boolean @599
+    v40 = Convert v39 declared={type=boolean flags=[IsExpected]} @599
+    PropDefine v27, v40 key="secure" @591
+    v42 = Builtin builtin=GlobalThis @613
+    v43 = PropGet v42 key="isLoud" [isFreeName] @613
+    v44 = ToBoolean v43 @613
+    Branch v44 -> taken b12(| 0), notTaken b14(| 0) @613
+  b12(v45):
+    Jump -> next b13() @613
+  b13():
+    v46 = Integer integer=1 @622
+    Jump -> next b16(v46) @622
+  b14(v47):
+    Jump -> next b15() @613
+  b15():
+    v48 = Integer integer=3 @626
+    Jump -> next b16(v48) @626
+  b16(v49):
+    v50 = Convert v49 declared={type=number flags=[IsExpected]} @613
+    PropDefine v27, v50 key="depth" @606
+    v52 = FinishObject v27 @545
+    v53 = Convert v52 declared={type=undefined|null|L2 flags=[IsExpected]} @545
+    PutEnvironmentField v3, v53 layout=L1 @535
+    v55 = NewObject layout=L3 @649
+    CopyDataProperties v55, v15 @649
+    v57 = Builtin builtin=JSON @667
+    v58 = PropGet v57 key="parse" @667
+    v59 = Convert v58 declared={type=builtin(JSONParse) flags=[IsExpected]} @667
+    v60 = Call v59, v57, v24 calleeKey="parse" calleeName="JSON.parse" @672
+    v61 = Convert v60 declared={type=undefined|null|object flags=[IsExpected]} @667
+    CopyDataProperties v55, v61 @667
+    v63 = FinishObject v55 @649
+    v64 = Convert v63 declared={type=undefined|null|L2 flags=[IsExpected]} @649
+    PutEnvironmentField v3, v64 layout=L1 field=1 @637
+    v66 = Builtin builtin=Object @704
+    v67 = Builtin builtin=ObjectAssign @704
+    v68 = Data data=d1 @718
+    v69 = Builtin builtin=JSON @732
+    v70 = PropGet v69 key="parse" @732
+    v71 = Convert v70 declared={type=builtin(JSONParse) flags=[IsExpected]} @732
+    v72 = Call v71, v69, v24 calleeKey="parse" calleeName="JSON.parse" @737
+    v73 = Call v67, v66, v68, v15, v72 calleeName="Object.assign" @711
+    v74 = Convert v73 declared={type=undefined|null|L2 flags=[IsExpected]} @704
+    PutEnvironmentField v3, v74 layout=L1 field=2 @693
+    v76 = Builtin builtin=GlobalThis @1728
+    v77 = PropGet v76 key="report" [isFreeName] @1728
+    v78 = Integer integer=5000 @1750
+    v79 = Call v5, -, v78 calleeName="readsOfWritten" @1735
+    v80 = Convert v79 declared={type=number flags=[IsExpected]} @1735
+    v81 = Integer integer=5000 @1771
+    v82 = Call v7, -, v81 calleeName="readsOfSpread" @1757
+    v83 = Convert v82 declared={type=number flags=[IsExpected]} @1757
+    v84 = Integer integer=5000 @1794
+    v85 = Call v9, -, v84 calleeName="readsOfAssigned" @1778
+    v86 = Convert v85 declared={type=number flags=[IsExpected]} @1778
+    v87 = Integer integer=5000 @1837
+    v88 = Call v11, -, v87 calleeName="readsOfWhatTheTextBroughtIntoSpread" @1801
+    v89 = Convert v88 declared={type=number flags=[IsExpected]} @1801
+    v90 = Integer integer=5000 @1882
+    v91 = Call v13, -, v90 calleeName="readsOfWhatTheTextBroughtIntoAssigned" @1844
+    v92 = Convert v91 declared={type=number flags=[IsExpected]} @1844
+    v93 = Builtin builtin=Object @1889
+    v94 = Builtin builtin=ObjectKeys @1889
+    v95 = Call v94, v93, v64 calleeName="Object.keys" @1896
+    v96 = Convert v95 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1889
+    v97 = PropGet v96 key="join" @1910
+    v98 = Convert v97 declared={type=undefined|null|function flags=[IsExpected]} @1889
+    v99 = Call v98, v96 calleeKey="join" calleeName="join" @1912
+    v100 = Convert v99 declared={type=undefined|null|string flags=[IsExpected]} @1889
+    v101 = PropGet v64 key="more" @1920
+    v102 = Convert v101 declared={type=number flags=[IsExpected]} @1920
+    v103 = Builtin builtin=Object @1936
+    v104 = Builtin builtin=ObjectKeys @1936
+    v105 = Call v104, v103, v74 calleeName="Object.keys" @1943
+    v106 = Convert v105 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1936
+    v107 = PropGet v106 key="join" @1956
+    v108 = Convert v107 declared={type=undefined|null|function flags=[IsExpected]} @1936
+    v109 = Call v108, v106 calleeKey="join" calleeName="join" @1958
+    v110 = Convert v109 declared={type=undefined|null|string flags=[IsExpected]} @1936
+    v111 = PropGet v74 key="more" @1966
+    v112 = Convert v111 declared={type=number flags=[IsExpected]} @1966
+    v113 = Call v77, -, v80, v83, v86, v89, v92, v100, v102, v110, v112 calleeName="report" @1728
+    v114 = Builtin builtin=Number @1997
+    v115 = Builtin builtin=GlobalThis @2009
+    v116 = PropGet v115 key="turns" [isFreeName] @2009
+    v117 = Call v114, -, v116 calleeName="Number" @1997
+    v118 = Convert v117 declared={type=number flags=[IsExpected]} @1997
+    v119 = Builtin builtin=GlobalThis @2016
+    v120 = PropGet v119 key="loop" [isFreeName] @2016
+    v121 = String string="reads of a literal" @2025
+    v122 = StrictEq v120, v121 @2016
+    Branch v122 -> taken b17(), notTaken b18() @2016
+  b17():
+    v123 = Builtin builtin=GlobalThis @2047
+    v124 = PropGet v123 key="report" [isFreeName] @2047
+    v125 = Call v5, -, v118 calleeName="readsOfWritten" @2054
+    v126 = Convert v125 declared={type=number flags=[IsExpected]} @2054
+    v127 = Call v124, -, v126 calleeName="report" @2047
+    Jump -> next b18() @2047
+  b18():
+    v128 = Builtin builtin=GlobalThis @2083
+    v129 = PropGet v128 key="loop" [isFreeName] @2083
+    v130 = String string="reads of a spread" @2092
+    v131 = StrictEq v129, v130 @2083
+    Branch v131 -> taken b19(), notTaken b20() @2083
+  b19():
+    v132 = Builtin builtin=GlobalThis @2113
+    v133 = PropGet v132 key="report" [isFreeName] @2113
+    v134 = Call v7, -, v118 calleeName="readsOfSpread" @2120
+    v135 = Convert v134 declared={type=number flags=[IsExpected]} @2120
+    v136 = Call v133, -, v135 calleeName="report" @2113
+    Jump -> next b20() @2113
+  b20():
+    v137 = Builtin builtin=GlobalThis @2148
+    v138 = PropGet v137 key="loop" [isFreeName] @2148
+    v139 = String string="reads of an assigned object" @2157
+    v140 = StrictEq v138, v139 @2148
+    Branch v140 -> taken b21(), notTaken b22() @2148
+  b21():
+    v141 = Builtin builtin=GlobalThis @2188
+    v142 = PropGet v141 key="report" [isFreeName] @2188
+    v143 = Call v9, -, v118 calleeName="readsOfAssigned" @2195
+    v144 = Convert v143 declared={type=number flags=[IsExpected]} @2195
+    v145 = Call v142, -, v144 calleeName="report" @2188
+    Jump -> next b22() @2188
+  b22():
+    v146 = Builtin builtin=GlobalThis @2225
+    v147 = PropGet v146 key="loop" [isFreeName] @2225
+    v148 = String string="reads of what the text brought into a spread" @2234
+    v149 = StrictEq v147, v148 @2225
+    Branch v149 -> taken b23(), notTaken b24() @2225
+  b23():
+    v150 = Builtin builtin=GlobalThis @2282
+    v151 = PropGet v150 key="report" [isFreeName] @2282
+    v152 = Call v11, -, v118 calleeName="readsOfWhatTheTextBroughtIntoSpread" @2289
+    v153 = Convert v152 declared={type=number flags=[IsExpected]} @2289
+    v154 = Call v151, -, v153 calleeName="report" @2282
+    Jump -> next b24() @2282
+  b24():
+    v155 = Builtin builtin=GlobalThis @2339
+    v156 = PropGet v155 key="loop" [isFreeName] @2339
+    v157 = String string="reads of what the text brought into an assigned object" @2348
+    v158 = StrictEq v156, v157 @2339
+    Branch v158 -> taken b25(), notTaken b26() @2339
+  b25():
+    v159 = Builtin builtin=GlobalThis @2406
+    v160 = PropGet v159 key="report" [isFreeName] @2406
+    v161 = Call v13, -, v118 calleeName="readsOfWhatTheTextBroughtIntoAssigned" @2413
+    v162 = Convert v161 declared={type=number flags=[IsExpected]} @2413
+    v163 = Call v160, -, v162 calleeName="report" @2406
+    Jump -> next b26() @2406
+  b26():
+    v164 = Undefined @2406
+    Return v164 @2406
+}
+function f1 name="readsOfWritten" module=m0 position=752 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1() @752
+  b1():
+    v2 = Integer @798
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @798
+    v4 = Integer @820
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @820
+    Jump -> next b2(v3, v5) @812
+  b2(v6, v7):
+    LoopHint @812
+    v9 = Convert v1 declared={type=number flags=[IsExpected]} @831
+    v10 = Less v7, v9 @823
+    Branch v10 -> taken b3(| 0, 1), notTaken b11(| 0, 1) @823
+  b3(v11, v12):
+    Jump -> next b4() @823
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 @861
+    v14 = CheckInitialized v13 name="written" @861
+    v15 = PropGet v14 key="port" @861
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @861
+    v17 = Add v6, v16 @855
+    v18 = GetEnvironmentField v0 layout=L1 @876
+    v19 = CheckInitialized v18 name="written" @876
+    v20 = PropGet v19 key="depth" @876
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @876
+    v22 = Add v17, v21 @855
+    v23 = GetEnvironmentField v0 layout=L1 @892
+    v24 = CheckInitialized v23 name="written" @892
+    v25 = PropGet v24 key="host" @892
+    v26 = Convert v25 declared={type=undefined|null|string flags=[IsExpected]} @892
+    v27 = PropGet v26 key="length" @900
+    v28 = Convert v27 declared={type=number flags=[IsExpected]} @892
+    v29 = Add v22, v28 @855
+    v30 = GetEnvironmentField v0 layout=L1 @915
+    v31 = CheckInitialized v30 name="written" @915
+    v32 = PropGet v31 key="secure" @915
+    v33 = Convert v32 declared={type=boolean flags=[IsExpected]} @915
+    v34 = ToBoolean v33 @915
+    Branch v34 -> taken b5(| 0), notTaken b7(| 0) @915
+  b5(v35):
+    Jump -> next b6() @915
+  b6():
+    v36 = Integer integer=1 @932
+    Jump -> next b9(v36) @932
+  b7(v37):
+    Jump -> next b8() @915
+  b8():
+    v38 = Integer @936
+    Jump -> next b9(v38) @936
+  b9(v39):
+    v40 = Add v29, v39 @855
+    v41 = Integer @942
+    v42 = BitOr v40, v41 @855
+    v43 = Convert v42 declared={type=i32 flags=[IsExpected]} @848
+    Jump -> next b10() @848
+  b10():
+    v44 = Increment v11 @855
+    v45 = Convert v44 declared={type=number flags=[IsExpected]} @839
+    Jump -> next b2(v43, v45) @839
+  b11(v46, v47):
+    Jump -> next b12() @823
+  b12():
+    v48 = Convert v6 declared={type=number flags=[IsExpected]} @954
+    Return v48 @954
+}
+function f2 name="readsOfSpread" module=m0 position=961 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1() @961
+  b1():
+    v2 = Integer @1006
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @1006
+    v4 = Integer @1028
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1028
+    Jump -> next b2(v3, v5) @1020
+  b2(v6, v7):
+    LoopHint @1020
+    v9 = Convert v1 declared={type=number flags=[IsExpected]} @1039
+    v10 = Less v7, v9 @1031
+    Branch v10 -> taken b3(| 0, 1), notTaken b11(| 0, 1) @1031
+  b3(v11, v12):
+    Jump -> next b4() @1031
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=1 @1069
+    v14 = CheckInitialized v13 name="spreadOut" @1069
+    v15 = PropGet v14 key="port" @1069
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @1069
+    v17 = Add v6, v16 @1063
+    v18 = GetEnvironmentField v0 layout=L1 field=1 @1086
+    v19 = CheckInitialized v18 name="spreadOut" @1086
+    v20 = PropGet v19 key="depth" @1086
+    v21 = Add v17, v20 @1063
+    v22 = GetEnvironmentField v0 layout=L1 field=1 @1104
+    v23 = CheckInitialized v22 name="spreadOut" @1104
+    v24 = PropGet v23 key="host" @1104
+    v25 = PropGet v24 key="length" @1114
+    v26 = Add v21, v25 @1063
+    v27 = GetEnvironmentField v0 layout=L1 field=1 @1129
+    v28 = CheckInitialized v27 name="spreadOut" @1129
+    v29 = PropGet v28 key="secure" @1129
+    v30 = ToBoolean v29 @1129
+    Branch v30 -> taken b5(| 0), notTaken b7(| 0) @1129
+  b5(v31):
+    Jump -> next b6() @1129
+  b6():
+    v32 = Integer integer=1 @1148
+    Jump -> next b9(v32) @1148
+  b7(v33):
+    Jump -> next b8() @1129
+  b8():
+    v34 = Integer @1152
+    Jump -> next b9(v34) @1152
+  b9(v35):
+    v36 = Add v26, v35 @1063
+    v37 = Integer @1158
+    v38 = BitOr v36, v37 @1063
+    v39 = Convert v38 declared={type=i32 flags=[IsExpected]} @1056
+    Jump -> next b10() @1056
+  b10():
+    v40 = Increment v11 @1063
+    v41 = Convert v40 declared={type=number flags=[IsExpected]} @1047
+    Jump -> next b2(v39, v41) @1047
+  b11(v42, v43):
+    Jump -> next b12() @1031
+  b12():
+    v44 = Convert v6 declared={type=number flags=[IsExpected]} @1170
+    Return v44 @1170
+}
+function f3 name="readsOfAssigned" module=m0 position=1177 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1() @1177
+  b1():
+    v2 = Integer @1224
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @1224
+    v4 = Integer @1246
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1246
+    Jump -> next b2(v3, v5) @1238
+  b2(v6, v7):
+    LoopHint @1238
+    v9 = Convert v1 declared={type=number flags=[IsExpected]} @1257
+    v10 = Less v7, v9 @1249
+    Branch v10 -> taken b3(| 0, 1), notTaken b11(| 0, 1) @1249
+  b3(v11, v12):
+    Jump -> next b4() @1249
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=2 @1287
+    v14 = CheckInitialized v13 name="assigned" @1287
+    v15 = PropGet v14 key="port" @1287
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @1287
+    v17 = Add v6, v16 @1281
+    v18 = GetEnvironmentField v0 layout=L1 field=2 @1303
+    v19 = CheckInitialized v18 name="assigned" @1303
+    v20 = PropGet v19 key="depth" @1303
+    v21 = Add v17, v20 @1281
+    v22 = GetEnvironmentField v0 layout=L1 field=2 @1320
+    v23 = CheckInitialized v22 name="assigned" @1320
+    v24 = PropGet v23 key="host" @1320
+    v25 = PropGet v24 key="length" @1329
+    v26 = Add v21, v25 @1281
+    v27 = GetEnvironmentField v0 layout=L1 field=2 @1344
+    v28 = CheckInitialized v27 name="assigned" @1344
+    v29 = PropGet v28 key="secure" @1344
+    v30 = ToBoolean v29 @1344
+    Branch v30 -> taken b5(| 0), notTaken b7(| 0) @1344
+  b5(v31):
+    Jump -> next b6() @1344
+  b6():
+    v32 = Integer integer=1 @1362
+    Jump -> next b9(v32) @1362
+  b7(v33):
+    Jump -> next b8() @1344
+  b8():
+    v34 = Integer @1366
+    Jump -> next b9(v34) @1366
+  b9(v35):
+    v36 = Add v26, v35 @1281
+    v37 = Integer @1372
+    v38 = BitOr v36, v37 @1281
+    v39 = Convert v38 declared={type=i32 flags=[IsExpected]} @1274
+    Jump -> next b10() @1274
+  b10():
+    v40 = Increment v11 @1281
+    v41 = Convert v40 declared={type=number flags=[IsExpected]} @1265
+    Jump -> next b2(v39, v41) @1265
+  b11(v42, v43):
+    Jump -> next b12() @1249
+  b12():
+    v44 = Convert v6 declared={type=number flags=[IsExpected]} @1384
+    Return v44 @1384
+}
+function f4 name="readsOfWhatTheTextBroughtIntoSpread" module=m0 position=1392 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1() @1392
+  b1():
+    v2 = Integer @1459
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @1459
+    v4 = Integer @1481
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1481
+    Jump -> next b2(v3, v5) @1473
+  b2(v6, v7):
+    LoopHint @1473
+    v9 = Convert v1 declared={type=number flags=[IsExpected]} @1492
+    v10 = Less v7, v9 @1484
+    Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @1484
+  b3(v11, v12):
+    Jump -> next b4() @1484
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=1 @1522
+    v14 = CheckInitialized v13 name="spreadOut" @1522
+    v15 = PropGet v14 key="more" @1522
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @1522
+    v17 = Add v6, v16 @1516
+    v18 = Integer @1540
+    v19 = BitOr v17, v18 @1516
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]} @1509
+    Jump -> next b5() @1509
+  b5():
+    v21 = Increment v11 @1516
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @1500
+    Jump -> next b2(v20, v22) @1500
+  b6(v23, v24):
+    Jump -> next b7() @1484
+  b7():
+    v25 = Convert v6 declared={type=number flags=[IsExpected]} @1552
+    Return v25 @1552
+}
+function f5 name="readsOfWhatTheTextBroughtIntoAssigned" module=m0 position=1559 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1() @1559
+  b1():
+    v2 = Integer @1628
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @1628
+    v4 = Integer @1650
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1650
+    Jump -> next b2(v3, v5) @1642
+  b2(v6, v7):
+    LoopHint @1642
+    v9 = Convert v1 declared={type=number flags=[IsExpected]} @1661
+    v10 = Less v7, v9 @1653
+    Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @1653
+  b3(v11, v12):
+    Jump -> next b4() @1653
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=2 @1691
+    v14 = CheckInitialized v13 name="assigned" @1691
+    v15 = PropGet v14 key="more" @1691
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @1691
+    v17 = Add v6, v16 @1685
+    v18 = Integer @1708
+    v19 = BitOr v17, v18 @1685
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]} @1678
+    Jump -> next b5() @1678
+  b5():
+    v21 = Increment v11 @1685
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @1669
+    Jump -> next b2(v20, v22) @1669
+  b6(v23, v24):
+    Jump -> next b7() @1653
+  b7():
+    v25 = Convert v6 declared={type=number flags=[IsExpected]} @1720
+    Return v25 @1720
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f8 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @25
+  b1():
+    v2 = StepGenerator v0, v1 check=IsGenerator @91
+    v3 = ResultAt v2 @188
+    v4 = ResultAt v2 index=1 @251
+    v5 = Integer integer=2 @315
+    v6 = StrictEq v4, v5 @304
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
+  b2(v7):
+    Jump -> next b3() @304
+  b3():
+    v8 = ResumeGenerator v0, v1 @362
+    Return v8 @362
+  b4(v9):
+    Jump -> next b5() @304
+  b5():
+    v10 = Integer integer=1 @460
+    v11 = StrictEq v9, v10 @449
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
+    v13 = CreateIteratorResult v3, v12 @421
+    Return v13 @421
+}
+function f9 name="return" module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @548
+  b1():
+    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @617
+    v3 = ResultAt v2 @716
+    v4 = ResultAt v2 index=1 @779
+    v5 = Integer integer=2 @843
+    v6 = StrictEq v4, v5 @832
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @832
+  b2(v7):
+    Jump -> next b3() @832
+  b3():
+    v8 = ResumeGenerator v0, v1 resumeMode=Return @890
+    Return v8 @890
+  b4(v9):
+    Jump -> next b5() @832
+  b5():
+    v10 = Integer integer=1 @990
+    v11 = StrictEq v9, v10 @979
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @951
+    v13 = CreateIteratorResult v3, v12 @951
+    Return v13 @951
+}
+function f10 name="throw" module=m2 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1077
+  b1():
+    v2 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator @1149
+    v3 = ResultAt v2 @1251
+    v4 = ResultAt v2 index=1 @1314
+    v5 = Integer integer=2 @1378
+    v6 = StrictEq v4, v5 @1367
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @1367
+  b2(v7):
+    Jump -> next b3() @1367
+  b3():
+    v8 = ResumeGenerator v0, v1 resumeMode=Throw @1425
+    Return v8 @1425
+  b4(v9):
+    Jump -> next b5() @1367
+  b5():
+    v10 = Integer integer=1 @1528
+    v11 = StrictEq v9, v10 @1517
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1489
+    v13 = CreateIteratorResult v3, v12 @1489
+    Return v13 @1489
+}
+function f11 name="next" module=m3 position=99 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @99
+  b1():
+    v1 = HasJSType v0 first=6 last=6 @152
+    v2 = ToBoolean v1 @152
+    Branch v2 -> taken b2(| 0), notTaken b8(| 0) @152
+  b2(v3):
+    Jump -> next b3() @152
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @264
+    v5 = GetInternalField v4 @264
+    v6 = Undefined @394
+    v7 = StepGenerator v5, v6 check=IsGenerator @351
+    v8 = ResultAt v7 @455
+    v9 = ResultAt v7 index=1 @518
+    v10 = Integer integer=1 @589
+    v11 = StrictEq v9, v10 @578
+    v12 = Convert v11 declared={type=boolean site=w0} @578
+    v13 = Integer integer=2 @639
+    v14 = StrictEq v9, v13 @628
+    Branch v14 -> taken b4(| 0), notTaken b6(| 0) @628
+  b4(v15):
+    Jump -> next b5() @628
+  b5():
+    v16 = Undefined @741
+    v17 = ResumeGenerator v5, v16 @696
+    v18 = PropGet v17 key="value" @770
+    v19 = PropGet v17 key="done" @799
+    v20 = Boolean boolean=true @815
+    v21 = StrictEq v19, v20 @799
+    v22 = Convert v21 declared={type=boolean site=w0} @792
+    Jump -> next b7(v18, v22) @792
+  b6(v23):
+    Jump -> next b7(v8, v12) @628
+  b7(v24, v25: boolean):
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @838
+    v27 = CreateIteratorResult v24, v26 @838
+    Return v27 @838
+  b8(v28):
+    Jump -> next b9() @152
+  b9():
+    v29 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @185
+    Unreachable @185
+}
+function f12 name="return" module=m3 position=904 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @904
+  b1():
+    v1 = Undefined @904
+    v2 = HasJSType v0 first=6 last=6 @960
+    v3 = ToBoolean v2 @960
+    Branch v3 -> taken b2(| 0), notTaken b19(| 0) @960
+  b2(v4):
+    Jump -> next b3() @960
+  b3():
+    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1070
+    v6 = GetInternalField v5 @1070
+    v7 = IsGeneratorSuspendedAtStart v6 @1149
+    v8 = ToBoolean v7 @1149
+    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @1149
+  b4(v9):
+    Jump -> next b5() @1149
+  b5():
+    v10 = Undefined @1833
+    v11 = ResumeGenerator v6, v10 resumeMode=Return @1786
+    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1874
+    v13 = GetInternalField v12 index=1 @1874
+    v14 = TypeTest v13 testedType=null @1961
+    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @1961
+  b6(v15):
+    Jump -> next b12() @1961
+  b7(v16):
+    Jump -> next b8() @1961
+  b8():
+    v17 = PropGet v16 key="return" @1998
+    v18 = TypeTest v17 testedType=undefined|null @1998
+    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @1998
+  b9(v19):
+    Jump -> next b11() @1998
+  b10(v20):
+    v21 = Call v20, v16 @1998
+    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @1998
+    Jump -> next b11() @1998
+  b11():
+    v23 = Undefined @1998
+    Jump -> next b12() @1998
+  b12():
+    v24 = Undefined @2072
+    v25 = Boolean boolean=true @2083
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @2052
+    v27 = CreateIteratorResult v24, v26 @2052
+    Return v27 @2052
+  b13(v28):
+    Jump -> next b14() @1149
+  b14():
+    v29 = Undefined @1258
+    v30 = StepGenerator v6, v29 resumeMode=Return check=IsGenerator @1213
+    v31 = ResultAt v30 @1323
+    v32 = ResultAt v30 index=1 @1390
+    v33 = Integer integer=1 @1465
+    v34 = StrictEq v32, v33 @1454
+    v35 = Convert v34 declared={type=boolean site=w1} @1454
+    v36 = Integer integer=2 @1519
+    v37 = StrictEq v32, v36 @1508
+    Branch v37 -> taken b15(| 0), notTaken b17(| 0) @1508
+  b15(v38):
+    Jump -> next b16() @1508
+  b16():
+    v39 = Undefined @1627
+    v40 = ResumeGenerator v6, v39 resumeMode=Return @1580
+    v41 = PropGet v40 key="value" @1660
+    v42 = PropGet v40 key="done" @1693
+    v43 = Boolean boolean=true @1709
+    v44 = StrictEq v42, v43 @1693
+    v45 = Convert v44 declared={type=boolean site=w1} @1686
+    Jump -> next b18(v41, v45) @1686
+  b17(v46):
+    Jump -> next b18(v31, v35) @1508
+  b18(v47, v48: boolean):
+    v49 = Convert v48 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1740
+    v50 = CreateIteratorResult v47, v49 @1740
+    Return v50 @1740
+  b19(v51):
+    Jump -> next b20() @960
+  b20():
+    v52 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @993
+    Unreachable @993
+}
+function f13 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=7 last=7 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepMapIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance" @108
+    Unreachable @108
+}
+function f14 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepSetIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
+    Unreachable @108
+}
+function f15 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @1421
+  b1():
+    v1 = HasJSType v0 first=12 last=12 @1611
+    v2 = ToBoolean v1 @1611
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @1611
+  b2(v3):
+    Jump -> next b3() @1611
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1867
+    v5 = GetInternalField v4 index=1 @1867
+    v6 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1963
+    v7 = GetInternalField v6 @1963
+    v8 = Call v5, v7 @1867
+    ReturnCall v8 @1867
+  b4(v9):
+    Jump -> next b5() @1611
+  b5():
+    v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @1650
+    Unreachable @1650
+}
+function f16 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @2171
+  b1():
+    v1 = Undefined @2171
+    v2 = HasJSType v0 first=12 last=12 @2364
+    v3 = ToBoolean v2 @2364
+    Branch v3 -> taken b2(| 0), notTaken b8(| 0) @2364
+  b2(v4):
+    Jump -> next b3() @2364
+  b3():
+    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @2598
+    v6 = GetInternalField v5 @2598
+    v7 = Undefined @2732
+    v8 = PropGet v6 key="return" @2848
+    v9 = TypeTest v8 testedType=undefined|null @2978
+    Branch v9 -> taken b4(| 0), notTaken b6(| 0) @2978
+  b4(v10):
+    Jump -> next b5() @2978
+  b5():
+    v11 = Undefined @3036
+    v12 = Boolean boolean=true @3054
+    v13 = Convert v12 declared={type=boolean} @3054
+    v14 = NewObject -, v11, v13 layout=L5 fields=[1, 0] @3027
+    v15 = FinishObject v14 @3027
+    Return v15 @3027
+  b6(v16):
+    Jump -> next b7() @2978
+  b7():
+    v17 = Call v16, v6 @3122
+    ReturnCall v17 @3122
+  b8(v18):
+    Jump -> next b9() @2364
+  b9():
+    v19 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @2403
+    Unreachable @2403
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f7 visibility=Private
+runtimefunction id=GeneratorPrototypeNext function=f8 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeNext function=f11 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f15
+runtimefunction id=GeneratorPrototypeReturn function=f9 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f12
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f16
+runtimefunction id=GeneratorPrototypeThrow function=f10 visibility=Private
+runtimefunction id=MapIteratorPrototypeNext function=f13 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f14 visibility=Private

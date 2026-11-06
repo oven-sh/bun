@@ -181,7 +181,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number site=[[w_7]]}] thisType={type=anything} results=[{type=number site=[[w_8]]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number site=[[w_7]] variableName="i"}] thisType={type=anything} results=[{type=number site=[[w_8]]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

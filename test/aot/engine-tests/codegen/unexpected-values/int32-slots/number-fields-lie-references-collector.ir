@@ -373,16 +373,12 @@ function f8 module=m0 position=1102 kind=Initializer flags=[HasThis, IsChecked, 
     Return v11
 }
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-# -- generated: f0 check fill
+# -- generated: f0 check
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 123, patchpoints: 27, rare instructions: 58, polls: 3
+# CHECK-NEXT: instructions: 128, patchpoints: 22, rare instructions: 88, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="check"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 170, patchpoints: 12, rare instructions: 246
+# CHECK-NEXT: instructions: 155, patchpoints: 20, rare instructions: 76
 # CHECK-NEXT: end of function f2
-# CHECK-LABEL: function {{*}}name="fill"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 43, patchpoints: 2, rare instructions: 66
-# CHECK-NEXT: end of function f17

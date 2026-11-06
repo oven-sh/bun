@@ -41,4 +41,71 @@ export const cfunction = b.fn({
   args: { options: b.any, name: b.string.allowStringObject.otherAsNull },
 });
 
+// `bun:ffi` calls these. Each wraps the `Bun.FFI` function with the same `name` and throws the error that function returns.
+// A signature is read through `args` (own, an array of type numbers or strings), `threadsafe`, `returns` and `ptr`.
+// Nothing is retained, and no error message formats a value.
+const signatureFields = table.named("args", "threadsafe", "returns", "ptr");
+const signature = [table.runsTransitively("OwnValues", "ToPrimitive", signatureFields)];
+const signaturesByName = [table.runsTransitively("OwnKeys", "OwnValues", "ToPrimitive", signatureFields)];
+const newLibrary = b.any.returning(table.instance("FFI").fresh.spec);
+const readsSignatures = {
+  ...method,
+  runsOnlyOperandCode: true,
+  reads: ["ExternalState"],
+  writes: ["ExternalState"],
+} as const;
+
+export const openLibrary = b.fn({
+  ...readsSignatures,
+  name: "dlopen",
+  length: 1,
+  args: { name: b.string.loose.utf8.nullable, symbols: b.any },
+  returns: newLibrary,
+  uses: { symbols: signaturesByName },
+});
+export const linkLibrary = b.fn({
+  ...readsSignatures,
+  name: "linkSymbols",
+  length: 1,
+  args: { symbols: b.any },
+  returns: newLibrary,
+  uses: { symbols: signaturesByName },
+});
+export const makeFunction = b.fn({
+  ...readsSignatures,
+  name: "cfunction",
+  length: 1,
+  args: { options: b.any, name: b.string.allowStringObject.otherAsNull },
+  uses: { options: signature },
+});
+/** Native code calls the function with primitives only and converts its result to the declared return type. */
+export const makeCallback = b.fn({
+  ...readsSignatures,
+  name: "callback",
+  length: 1,
+  args: { options: b.any, callback: b.any },
+  uses: {
+    options: signature,
+    callback: [
+      table.retained,
+      table.called({
+        afterwards: "TouchesOnlyWhatRowNames",
+        times: "PerEvent",
+        this: table.undefined,
+        args: [],
+        spreadArgs: table.union(table.f64, table.bigint, table.bool, table.string, table.strictNull, table.undefined),
+        result: "Escapes",
+      }),
+    ],
+  },
+});
+export const printSource = b.fn({
+  ...readsSignatures,
+  name: "viewSource",
+  length: 1,
+  args: { symbols: b.any, isCallback: b.bool.loose },
+  returns: b.any.returning("string", table.instance("Array").holding({ element: table.string }).fresh.spec),
+  uses: { symbols: signaturesByName },
+});
+
 export const cc = b.fn({ ...method, args: { options: b.any }, returns: FFI });

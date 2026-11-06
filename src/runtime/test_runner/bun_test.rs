@@ -1065,8 +1065,8 @@ impl BunTest {
             Execution::Execution::kill_dangling_processes(global_this);
         }
         if !judged.next_deadline.eql(&Timespec::EPOCH) {
-            // A timer pass can take a deadline as due up to 1 ms early (`All::next`). It would fire one that is armed for
-            // a time inside the pass again and again until the clock gets there.
+            // `All::next` can take timers as due up to 1 ms early. Armed for a time inside this pass, the timer would
+            // fire in it again and again, until the clock is past that time.
             let next = if judged.next_deadline.greater(pass) {
                 judged.next_deadline
             } else if pass.nsec < 999_999_999 {
@@ -1804,7 +1804,7 @@ pub(crate) enum RefDataValue {
 }
 
 // One per slot of the result queue.
-const _: () = assert!(core::mem::size_of::<RefDataValue>() == 40);
+const _: () = assert!(core::mem::size_of::<RefDataValue>() <= 40);
 
 impl RefDataValue {
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {

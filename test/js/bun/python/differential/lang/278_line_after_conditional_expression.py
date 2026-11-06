@@ -111,6 +111,18 @@ for body in (
     'x = ((a or b) if b else (c or d)) if c else d',
     'x = a if not c else ((a or b) if c else d)',
     'x = a if not c else (a or b)',
+    'x = (a and (3 if b else 1)) if c else d',
+    'x = (a or (3 if b else 1)) if c else d',
+    'x = (not a or (3 if b else 1)) if c else d',
+    'x = (a and (3 if b\n     else 1)) if c else d',
+    'x = (a and b and (3 if b else 1)) if c else d',
+    'x = (a and (b or (3 if b else 1))) if c else d',
+    'x = (a and (3 if b else (a or b))) if c else d',
+    'x = (a and ((a or b) if b else 1)) if c else d',
+    'x = (a and (3 if b else 1)) if c else (a or b)',
+    'x = (1 if not b else (a and (3 if b else 1))) if c else d',
+    'x = [(a and (3 if b else 1)) if c else d]',
+    'y += (not a or (2 if b else 1)) if c else 5',
     'x = (0 or b) if c else d',
     'x = (1 or b) if c else d',
     'x = (a or 1) if c else d',
@@ -227,3 +239,22 @@ for source in (
     print(repr(source))
     for c in (1, 0):
         print('   ', lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()))
+
+
+# The values, wherever they go: jumps that go further than to the end of their own expression take the value along.
+import itertools
+EXPRESSIONS = (
+    '(a and (3 if b else 1)) if c else d', '(a or (3 if b else 1)) if c else d', '(a and b and (3 if b else 1)) if c else d', '(a and (b or (3 if d else 1))) if c else d',
+    '(a and (3 if b else (a or d))) if c else d', '(a and ((a or d) if b else 1)) if c else 7', '(a and (3 if b else 1)) if c else (a or b)', '(1 if not b else (a and (3 if d else 4))) if c else 5',
+    '((a and (3 if b else 1)) if c else d) if d else (a or (5 if b else 6))', '(a and (3 if b else (4 if d else (a and (6 if c else 7))))) if c else 8', '(x and (3 if b else 1)) if c else x',
+    '(a and (x if b else 1)) if c else d', '(a or (x + 1 if b else x + 2)) if c else x + 3',
+)
+FORMS = {
+    'return': 'return V', 'variable': 'x = V\nreturn x', 'augmented': 'x += V\nreturn x', 'item': 'l = [0]\nl[0] = V\nreturn l', 'argument': 'return n2(V, x)', 'in a list': 'return [x, V, x]',
+    'cell': 'x = V\nreturn (lambda: x)()', 'global': 'global G\nG = V\nreturn G', 'two targets': 'x = y = V\nreturn x, y', 'test': 'if V:\n    return 1\nreturn 2', 'in and': 'return (V) and x', 'walrus': 'return (x := V), x',
+}
+for expression in EXPRESSIONS:
+    for name, form in FORMS.items():
+        namespace = {'n2': lambda *v: v}
+        exec('def f(a, b, c, d):\n    x = 9\n' + textwrap.indent(form.replace('V', expression), '    '), namespace)
+        print('%s | %s | %s' % (expression, name, [namespace['f'](*v) for v in itertools.product((0, 1), repeat=4)]))

@@ -134,6 +134,18 @@ try:
         'x = ((a or b) if b else (c or d)) if c else d',
         'x = a if not c else ((a or b) if c else d)',
         'x = a if not c else (a or b)',
+        'x = (a and (3 if b else 1)) if c else d',
+        'x = (a or (3 if b else 1)) if c else d',
+        'x = (not a or (3 if b else 1)) if c else d',
+        'x = (a and (3 if b\n     else 1)) if c else d',
+        'x = (a and b and (3 if b else 1)) if c else d',
+        'x = (a and (b or (3 if b else 1))) if c else d',
+        'x = (a and (3 if b else (a or b))) if c else d',
+        'x = (a and ((a or b) if b else 1)) if c else d',
+        'x = (a and (3 if b else 1)) if c else (a or b)',
+        'x = (1 if not b else (a and (3 if b else 1))) if c else d',
+        'x = [(a and (3 if b else 1)) if c else d]',
+        'y += (not a or (2 if b else 1)) if c else 5',
         'x = (0 or b) if c else d',
         'x = (1 or b) if c else d',
         'x = (a or 1) if c else d',
@@ -265,3 +277,30 @@ try:
             try: print('   ', "lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [" + 'source=' + (repr(source) if type(source) in (str, int, float, bytes, bool, type(None)) or (type(source) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in source)) else source.__name__ if type(source) is type else type(source).__name__) + ", " + 'c=' + (repr(c) if type(c) in (str, int, float, bytes, bool, type(None)) or (type(c) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in c)) else c.__name__ if type(c) is type else type(c).__name__) + '] =>', lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()))
             except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ())")
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for source in (')
+
+
+# The values, wherever they go: jumps that go further than to the end of their own expression take the value along.
+try: import itertools
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: import itertools')
+try: EXPRESSIONS = (
+    '(a and (3 if b else 1)) if c else d', '(a or (3 if b else 1)) if c else d', '(a and b and (3 if b else 1)) if c else d', '(a and (b or (3 if d else 1))) if c else d',
+    '(a and (3 if b else (a or d))) if c else d', '(a and ((a or d) if b else 1)) if c else 7', '(a and (3 if b else 1)) if c else (a or b)', '(1 if not b else (a and (3 if d else 4))) if c else 5',
+    '((a and (3 if b else 1)) if c else d) if d else (a or (5 if b else 6))', '(a and (3 if b else (4 if d else (a and (6 if c else 7))))) if c else 8', '(x and (3 if b else 1)) if c else x',
+    '(a and (x if b else 1)) if c else d', '(a or (x + 1 if b else x + 2)) if c else x + 3',
+)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: EXPRESSIONS = ( '(a and (3 if b else 1)) if c else d', '(a or (3 if b...")
+try: FORMS = {
+    'return': 'return V', 'variable': 'x = V\nreturn x', 'augmented': 'x += V\nreturn x', 'item': 'l = [0]\nl[0] = V\nreturn l', 'argument': 'return n2(V, x)', 'in a list': 'return [x, V, x]',
+    'cell': 'x = V\nreturn (lambda: x)()', 'global': 'global G\nG = V\nreturn G', 'two targets': 'x = y = V\nreturn x, y', 'test': 'if V:\n    return 1\nreturn 2', 'in and': 'return (V) and x', 'walrus': 'return (x := V), x',
+}
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: FORMS = { 'return': 'return V', 'variable': 'x = V\\nreturn x', 'augme...")
+try:
+    for expression in EXPRESSIONS:
+        for name, form in FORMS.items():
+            try: namespace = {'n2': lambda *v: v}
+            except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: namespace = {'n2': lambda *v: v}")
+            try: exec('def f(a, b, c, d):\n    x = 9\n' + textwrap.indent(form.replace('V', expression), '    '), namespace)
+            except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: exec('def f(a, b, c, d):\\n x = 9\\n' + textwrap.indent(form.replace('V...")
+            try: print("'%s | %s | %s' % (expression, name, [namespace['f'](*v) for v in iter... [" + 'expression=' + (repr(expression) if type(expression) in (str, int, float, bytes, bool, type(None)) or (type(expression) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in expression)) else expression.__name__ if type(expression) is type else type(expression).__name__) + ", " + 'name=' + (repr(name) if type(name) in (str, int, float, bytes, bool, type(None)) or (type(name) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in name)) else name.__name__ if type(name) is type else type(name).__name__) + ", " + 'form=' + (repr(form) if type(form) in (str, int, float, bytes, bool, type(None)) or (type(form) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in form)) else form.__name__ if type(form) is type else type(form).__name__) + '] =>', '%s | %s | %s' % (expression, name, [namespace['f'](*v) for v in itertools.product((0, 1), repeat=4)]))
+            except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: '%s | %s | %s' % (expression, name, [namespace['f'](*v) for v in iter...")
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for expression in EXPRESSIONS:')

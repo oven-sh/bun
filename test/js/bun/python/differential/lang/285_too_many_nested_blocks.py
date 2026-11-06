@@ -88,3 +88,29 @@ for where, kind, name in rows():
 for count in (20, 21, 22, 23, 1000, 30000):
     print('with, %d items | %r' % (count, refusal('function', 'with ' + ', '.join(['a'] * count) + ':\n    pass')))
     print('async with, %d items | %r' % (count, refusal('async function', 'async with ' + ', '.join(['a'] * count) + ':\n    pass')))
+
+# What turns a StopIteration that leaves a generator or a coroutine into a RuntimeError takes a block in the body of a `def`, and nowhere else.
+import ast
+def comprehensions(depth):
+    text = 'z'
+    for i in range(depth):
+        text = '[%s for v%d in a]' % (text, i)
+    return text
+def least(make, flags=0):
+    for depth in range(30):
+        try:
+            compile(make(depth), 'n', 'exec', flags)
+        except SyntaxError as e:
+            return depth, e.msg, e.lineno, e.offset, e.end_lineno, e.end_offset
+for name, frame, flags in (
+        ('function', 'def f():\n x = %s\n', 0), ('generator', 'def f():\n yield\n x = %s\n', 0), ('coroutine', 'async def f():\n x = %s\n', 0), ('module', 'x = %s\n', 0), ('class', 'class C:\n x = %s\n', 0),
+        ('lambda', 'x = lambda: %s\n', 0), ('lambda with yield', 'x = lambda: ((yield), %s)\n', 0), ('generator expression', 'x = (%s for q in a)\n', 0),
+        ('generator expression in a function', 'def f():\n x = (%s for q in a)\n', 0), ('generator expression in a coroutine', 'async def f():\n x = (%s for q in a)\n', 0),
+        ('asynchronous generator expression', 'async def f():\n x = (%s async for q in a)\n', 0), ('generator expression that awaits', 'async def f():\n x = ((await q, %s) for q in a)\n', 0),
+        ('class in a generator', 'def f():\n yield\n class C:\n  x = %s\n', 0), ('module that awaits', 'await q\nx = %s\n', ast.PyCF_ALLOW_TOP_LEVEL_AWAIT),
+        ('module that may await', 'x = %s\n', ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), ('module with an asynchronous comprehension', 'y = [i async for i in q]\nx = %s\n', ast.PyCF_ALLOW_TOP_LEVEL_AWAIT),
+        ('module with async with', 'async with q:\n x = %s\n', ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)):
+    print('comprehensions in comprehensions | %s | %r' % (name, least(lambda depth: frame % comprehensions(depth), flags)))
+print('while in a module that awaits | %r' % (least(lambda depth: '\n'.join(' ' * i + 'while a:' for i in range(depth)) + '\n' + ' ' * depth + 'await x\n', ast.PyCF_ALLOW_TOP_LEVEL_AWAIT),))
+for opening, closing in ('()', '[]'):
+    print('async for clauses in %s%s | %r' % (opening, closing, least(lambda depth: 'async def f():\n x = ' + opening + 'i ' + ' '.join('async for i%d in a' % k for k in range(depth + 1)) + closing + '\n'),))

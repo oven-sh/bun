@@ -1,6 +1,6 @@
 status: 0
-script: 195474539d749829
-source: ca2febf069c75a35
+script: f48c5b494c7e65bb
+source: 94b9a9408d75ce5d
 ---
 '%s | %s | %s | %d: %r' % (where, kind, name, refused, refusal(where,... [where='function', kind='for', name='pass'] => function | for | pass | 22: ('too many statically nested blocks', 23, 89, 24, 97)
 '%s | %s | %s | %d: %r' % (where, kind, name, refused, refusal(where,... [where='function', kind='while', name='pass'] => function | while | pass | 22: ('too many statically nested blocks', 23, 89, 24, 97)
@@ -95,3 +95,23 @@ source: ca2febf069c75a35
 'async with, %d items | %r' % (count, refusal('async function', 'asyn... [count=1000] => async with, 1000 items | ('too many statically nested blocks', 2, 76, 2, 77)
 'with, %d items | %r' % (count, refusal('function', 'with ' + ', '.jo... [count=30000] => with, 30000 items | ('too many statically nested blocks', 2, 73, 2, 74)
 'async with, %d items | %r' % (count, refusal('async function', 'asyn... [count=30000] => async with, 30000 items | ('too many statically nested blocks', 2, 76, 2, 77)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='function', frame='def f():\n x = %s\n', flags=0] => comprehensions in comprehensions | function | (22, 'too many statically nested blocks', 2, 27, 2, 42)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='generator', frame='def f():\n yield\n x = %s\n', flags=0] => comprehensions in comprehensions | generator | (21, 'too many statically nested blocks', 3, 26, 3, 41)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='coroutine', frame='async def f():\n x = %s\n', flags=0] => comprehensions in comprehensions | coroutine | (21, 'too many statically nested blocks', 2, 26, 2, 41)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='module', frame='x = %s\n', flags=0] => comprehensions in comprehensions | module | (22, 'too many statically nested blocks', 1, 26, 1, 41)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='class', frame='class C:\n x = %s\n', flags=0] => comprehensions in comprehensions | class | (22, 'too many statically nested blocks', 2, 27, 2, 42)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='lambda', frame='x = lambda: %s\n', flags=0] => comprehensions in comprehensions | lambda | (22, 'too many statically nested blocks', 1, 34, 1, 49)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='lambda with yield', frame='x = lambda: ((yield), %s)\n', flags=0] => comprehensions in comprehensions | lambda with yield | (22, 'too many statically nested blocks', 1, 44, 1, 59)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='generator expression', frame='x = (%s for q in a)\n', flags=0] => comprehensions in comprehensions | generator expression | (22, 'too many statically nested blocks', 1, 27, 1, 42)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='generator expression in a function', frame='def f():\n x = (%s for q in a)\n', flags=0] => comprehensions in comprehensions | generator expression in a function | (22, 'too many statically nested blocks', 2, 28, 2, 43)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='generator expression in a coroutine', frame='async def f():\n x = (%s for q in a)\n', flags=0] => comprehensions in comprehensions | generator expression in a coroutine | (22, 'too many statically nested blocks', 2, 28, 2, 43)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='asynchronous generator expression', frame='async def f():\n x = (%s async for q in a)\n', flags=0] => comprehensions in comprehensions | asynchronous generator expression | (21, 'too many statically nested blocks', 2, 27, 2, 42)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='generator expression that awaits', frame='async def f():\n x = ((await q, %s) for q in a)\n', flags=0] => comprehensions in comprehensions | generator expression that awaits | (22, 'too many statically nested blocks', 2, 38, 2, 53)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='class in a generator', frame='def f():\n yield\n class C:\n  x = %s\n', flags=0] => comprehensions in comprehensions | class in a generator | (22, 'too many statically nested blocks', 4, 28, 4, 43)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='module that awaits', frame='await q\nx = %s\n', flags=8192] => comprehensions in comprehensions | module that awaits | (22, 'too many statically nested blocks', 2, 26, 2, 41)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='module that may await', frame='x = %s\n', flags=8192] => comprehensions in comprehensions | module that may await | (22, 'too many statically nested blocks', 1, 26, 1, 41)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='module with an asynchronous comprehension', frame='y = [i async for i in q]\nx = %s\n', flags=8192] => comprehensions in comprehensions | module with an asynchronous comprehension | (22, 'too many statically nested blocks', 2, 26, 2, 41)
+'comprehensions in comprehensions | %s | %r' % (name, least(lambda de... [name='module with async with', frame='async with q:\n x = %s\n', flags=8192] => comprehensions in comprehensions | module with async with | (21, 'too many statically nested blocks', 2, 26, 2, 41)
+while in a module that awaits | (22, 'too many statically nested blocks', 22, 22, 23, 30)
+'async for clauses in %s%s | %r' % (opening, closing, least(lambda de... [opening='(', closing=')'] => async for clauses in () | (21, 'too many statically nested blocks', 2, 6, 2, 417)
+'async for clauses in %s%s | %r' % (opening, closing, least(lambda de... [opening='[', closing=']'] => async for clauses in [] | (19, 'too many statically nested blocks', 2, 6, 2, 379)

@@ -45,6 +45,9 @@ enum {
  * gets a turn after this much. */
 #define LIBUS_PIPE_MAX_WRITE (16 * LIBUS_PIPE_CHUNK)
 
+/* The most a helper thread reads at once. Each read is handed over between two threads, whatever its size. */
+#define LIBUS_PIPE_THREAD_CHUNK (4 * LIBUS_PIPE_CHUNK)
+
 /* The longest pause between two attempts to get a helper thread out of a call. */
 #define LIBUS_PIPE_RETRY_MAX_MS 128
 
@@ -237,7 +240,7 @@ struct us_internal_pipe_thread_t {
     ULONG write_capacity;
     /* LIBUS_PIPE_TYPE_UNKNOWN before the first write. */
     LONG type;
-    char buffer[LIBUS_PIPE_CHUNK];
+    char buffer[LIBUS_PIPE_THREAD_CHUNK];
 };
 
 /* `crt_descriptor` is -1, or the descriptor of the C runtime that the handle belongs to. */
@@ -805,7 +808,7 @@ int us_internal_pipe_read(struct us_loop_t *loop, struct us_poll_t *p, void *buf
         if (pipe->read_status != STATUS_SUCCESS) {
             return us_internal_pipe_read_ended(pipe);
         }
-        pipe->read_length = (ULONG) length < LIBUS_PIPE_CHUNK ? (ULONG) length : LIBUS_PIPE_CHUNK;
+        pipe->read_length = (ULONG) length < LIBUS_PIPE_THREAD_CHUNK ? (ULONG) length : LIBUS_PIPE_THREAD_CHUNK;
         pipe->has_data = 0;
         /* The thread takes what arrives, so it starts once nothing is left to run: whoever was given the last of the
          * data may be the next to read the handle, in a call of their own, or start a child that is. */
@@ -1112,7 +1115,8 @@ static void us_internal_pipe_continue_shutdown(struct us_internal_pipe_req_t *pi
     }
     if (pipe->phase == LIBUS_PIPE_FLUSHING) {
         if (!pipe->cannot_read && !pipe->read_is_shut_down && pipe->read_status == STATUS_SUCCESS && pipe->write.packet &&
-            (pipe->eof_timer = CreateWaitableTimerW(NULL, TRUE, NULL))) {
+            (pipe->eof_timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                      TIMER_ALL_ACCESS))) {
             pipe->phase = LIBUS_PIPE_LINGERING;
             if (pipe->read.is_armed) {
                 us_internal_pipe_start_eof_timer(pipe);

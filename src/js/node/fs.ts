@@ -1306,8 +1306,7 @@ function materializeStream<T>(name: string, value: T): T {
   return value;
 }
 
-// internal/fs/streams puts ReadStream below Readable at the first read of its `prototype`, so that a WriteStream alone
-// (process.stdout) loads no Readable. What node:fs hands out is the whole class.
+// The read of `prototype` puts the class below Readable (internal/fs/streams defers that for process.stdout).
 function readStream() {
   const { ReadStream } = require("internal/fs/streams");
   void ReadStream.prototype;

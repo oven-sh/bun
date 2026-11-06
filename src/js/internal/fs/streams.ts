@@ -1,5 +1,4 @@
-// process.stdout and process.stderr are WriteStreams. What they need is loaded here: the Writable class and finished(), not
-// node:stream as a whole, and not Readable or node:fs, which fs.ReadStream loads when it is first used.
+// process.stdout is a WriteStream: the Writable class and finished() load here, not node:stream, Readable or node:fs.
 const Writable = require("internal/streams/writable");
 const finished = require("internal/streams/end-of-stream");
 const fileHandles = require("internal/fs/file_handles");
@@ -132,7 +131,7 @@ const { internals } = fileHandles;
 if (internals) takeFileHandleInternals(internals);
 else fileHandles.whenLoaded = takeFileHandleInternals;
 
-// A stream over a FileHandle takes read, write, writev and fsync from node:fs, and loads it at the first such stream.
+// node:fs loads with the first stream over a FileHandle.
 function fileHandleStreamFs(fh: FileHandle) {
   const { read, write, fsync, writev } = require("node:fs");
   return {
@@ -350,8 +349,7 @@ function ReadStream(
 $toClass(ReadStream, "ReadStream");
 const readStreamPrototype = ReadStream.prototype;
 
-// The class goes below Readable when it is first used: at `new`, at `instanceof`, or at a read of `prototype`. Until then
-// internal/streams/readable is not loaded, and a WriteStream (process.stdout, process.stderr) never needs it.
+// The class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Readable = require("internal/streams/readable");

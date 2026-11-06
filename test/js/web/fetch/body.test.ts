@@ -1524,9 +1524,11 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
 
 // A server that closes the connection before the body ends. The bytes it sent
 // before the close still reach a reader, and only then does the read reject
-// with ECONNRESET, as in node. The `Bun.sleepSync` after the close keeps the
-// JS thread busy until the HTTP thread has seen both the bytes and the close,
-// so the two always reach the body in one batch (the case #48008 reports).
+// with ECONNRESET, as in node. `shutdown()` sends the FIN at once on every
+// platform (`end()` alone defers it on Windows until the data handler returns),
+// and the `Bun.sleepSync` after it keeps the JS thread busy until the HTTP
+// thread has seen both the bytes and the close, so the two always reach the
+// body in one batch (the case #48008 reports).
 describe("a fetch() body cut short by the server", () => {
   const head = {
     chunked: "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n",
@@ -1539,8 +1541,9 @@ describe("a fetch() body cut short by the server", () => {
   type Framing = keyof typeof head;
 
   // Sends the head and the bytes, then closes. With `whenToCut`, only the head
-  // goes out at once: the bytes and the close wait for it.
-  function listen(framing: Framing, whenToCut?: Promise<void>) {
+  // goes out at once: the bytes and the close wait for it. `beforeClose` runs
+  // between the bytes and the close.
+  function listen(framing: Framing, whenToCut?: Promise<void>, beforeClose?: () => void) {
     return Bun.listen<{ request: string }>({
       hostname: "127.0.0.1",
       port: 0,
@@ -1558,6 +1561,8 @@ describe("a fetch() body cut short by the server", () => {
           } else {
             socket.write(head[framing] + partialBody[framing]);
           }
+          beforeClose?.();
+          socket.shutdown();
           socket.end();
           Bun.sleepSync(20);
         },
@@ -1619,6 +1624,24 @@ describe("a fetch() body cut short by the server", () => {
       e => e,
     );
     expect(error?.code).toBe("ECONNRESET");
+  });
+
+  // An abort in the same batch as the bytes is not a server cut: the read
+  // rejects with the abort reason at once, and the bytes are dropped.
+  test("an abort in the same batch as the bytes and the close: the pending read rejects with AbortError, no bytes first", async () => {
+    for (let i = 0; i < 5; i++) {
+      const cut = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      using server = listen("chunked", cut.promise, () => controller.abort());
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, { signal: controller.signal });
+      const reader = res.body!.getReader();
+      const first = reader.read().then(
+        ({ value }) => ({ value: new TextDecoder().decode(value), name: null }),
+        e => ({ value: null, name: e.name }),
+      );
+      cut.resolve();
+      expect(await first).toEqual({ value: null, name: "AbortError" });
+    }
   });
 });
 

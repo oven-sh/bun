@@ -178,7 +178,7 @@ pub struct FetchTasklet {
     /// A terminal failure that arrived while `result` still holds body bytes the JS thread
     /// has not seen. `callback` parks it here instead of overwriting that result, and
     /// `on_progress_update` delivers it on a task of its own, behind the bytes.
-    pub(crate) pending_terminal: Option<http::Error>,
+    pub(crate) pending_terminal: Option<Box<HTTPClientResult<'static>>>,
 
     // must be stored because AbortSignal stores reason weakly
     pub(crate) abort_reason: StrongOptional,
@@ -887,6 +887,9 @@ impl FetchTasklet {
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
+        // Read under the lock, as `is_done`: once it is released the HTTP thread can post a
+        // task of its own and park a failure that belongs to that task.
+        let parked = self.pending_terminal.is_some();
 
         let vm = self.global_this.bun_vm();
         // The response, the upload's pump and what they settle continue the script that fetched.
@@ -903,7 +906,7 @@ impl FetchTasklet {
             }
             self.mutex.unlock();
             // A parked failure was the last callback: no task follows this one.
-            if is_done || self.pending_terminal.is_some() {
+            if is_done || parked {
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(self));
             }
@@ -914,11 +917,13 @@ impl FetchTasklet {
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
             if !is_done {
-                if let Some(fail) = this.pending_terminal.take() {
-                    // The bytes this run carried are out. The failure that followed them takes a
-                    // task of its own, as it does when it reaches the HTTP thread on its own.
-                    this.result.fail = Some(fail);
-                    this.result.has_more = false;
+                if let Some(failure) = this.pending_terminal.take() {
+                    // This run handled the bytes as a body chunk. The failure that followed them
+                    // takes the next task, as it does when it arrives in a batch of its own. A
+                    // task this run enqueued before, such as the fetch() promise settle, runs
+                    // first, with a microtask checkpoint between the two.
+                    this.store_result(*failure);
+                    debug_assert!(!this.result.has_more);
                     // SAFETY: `vm.event_loop()` is the live JS-thread loop; `this` is the heap
                     // tasklet and this run's ref passes to the task.
                     unsafe {
@@ -946,7 +951,7 @@ impl FetchTasklet {
             if let Err(err) = self.start_request_stream() {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
                 self.mutex.unlock();
-                if is_done || self.pending_terminal.is_some() {
+                if is_done || parked {
                     // SAFETY: `self` is the live heap tasklet; we hold a ref.
                     FetchTasklet::deref(std::ptr::from_mut(self));
                 }
@@ -2494,9 +2499,9 @@ impl FetchTasklet {
         Ok(node)
     }
 
-    /// HTTP thread, under `mutex`. Makes `result` the one the JS thread sees next. What an
-    /// earlier result of the same batch reported once (`can_stream`, the certificate, the
-    /// head) survives the replacement. Returns this callback's body bytes.
+    /// Under `mutex`. Makes `result` the one the JS thread sees next. What an earlier
+    /// result of the same batch reported once (`can_stream`, the certificate, the head)
+    /// survives the replacement. Returns the body bytes `result` carried.
     fn store_result<'a>(&mut self, mut result: HTTPClientResult<'a>) -> (&'a [u8], Vec<u8>) {
         let prev_metadata = self.result.metadata.take();
         let prev_cert_info = self.result.certificate_info.take();
@@ -2535,9 +2540,9 @@ impl FetchTasklet {
     /// HTTP thread, under `mutex`. A terminal failure that follows body bytes the JS thread
     /// has not taken yet must not replace the result that carries them: the bytes would
     /// never reach the consumer. Parks the failure in `pending_terminal` and returns true.
-    /// Returns false when `result` has to be stored as is: nothing undelivered precedes it,
-    /// or an abort ends the body at once.
-    fn park_terminal_failure(&mut self, result: &HTTPClientResult<'_>) -> bool {
+    /// Returns false, with `result` untouched, when it has to be stored as is: nothing
+    /// undelivered precedes it, or an abort (a timeout too) ends the body at once.
+    fn park_terminal_failure(&mut self, result: &mut HTTPClientResult<'_>) -> bool {
         if self.scheduled_response_buffer.list.is_empty()
             || !self.result.has_more
             || !self.has_schedule_callback.load(Ordering::Relaxed)
@@ -2549,8 +2554,7 @@ impl FetchTasklet {
             return false;
         }
         bun_output::scoped_log!(FetchTasklet, "callback parked failure behind body bytes");
-        self.pending_terminal = result.fail;
-        self.body_size = result.body_size;
+        self.pending_terminal = Some(Box::new(core::mem::take(result).without_borrowed_body()));
         true
     }
 
@@ -2565,7 +2569,7 @@ impl FetchTasklet {
     fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
+        mut result: HTTPClientResult,
     ) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
@@ -2641,7 +2645,7 @@ impl FetchTasklet {
             {
                 task_ref.signal_store.pause_receive();
             }
-        } else if !task_ref.park_terminal_failure(&result) {
+        } else if !task_ref.park_terminal_failure(&mut result) {
             task_ref.store_result(result);
         }
 

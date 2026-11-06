@@ -298,6 +298,8 @@ With `--update-snapshots`, Bun removes entries that no test uses anymore from a 
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, printed DOM nodes as plain objects, and printed `expect.arrayContaining(...)` as `ExpectArrayContaining {}` without the array. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them. This is about the text of a snapshot, not the name of its test. If a `test.each` title prints differently, the test has a new name, and its snapshots must be written again.
 
+An `ExpectArrayContaining {}` entry does not record the array or `.not`, so it still passes when they change. Run `bun test --update-snapshots` to record them.
+
 ## Best Practices
 
 ### Keep Snapshots Small

@@ -245,8 +245,6 @@ const outputStreams = [
   lightOutputStreams,
   { ...wholeOutputStream(1), when: b.whenTestsReplaceBuiltins },
   { ...wholeOutputStream(2), when: b.whenTestsReplaceBuiltins },
-  { ...consoleWritesThrough(standardOutputCell), when: b.whenTestsReplaceBuiltins },
-  { ...consoleWritesThrough(standardErrorCell), when: b.whenTestsReplaceBuiltins },
 ];
 
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
@@ -254,15 +252,7 @@ const needsWholeOutputStream = pathOfNativeFunction("BunProcess.cpp", "Process_f
 // One function makes both outputs, so an executable has it for both or for neither.
 const madeWholeBy = [
   { path: needsWholeInputStream, functions: [wholeInputStream] },
-  {
-    path: needsWholeOutputStream,
-    functions: [
-      wholeOutputStream(1),
-      wholeOutputStream(2),
-      consoleWritesThrough(standardOutputCell),
-      consoleWritesThrough(standardErrorCell),
-    ],
-  },
+  { path: needsWholeOutputStream, functions: [wholeOutputStream(1), wholeOutputStream(2)] },
 ];
 
 // Native code makes the value of the property by a call without operands, or with `process`.
@@ -335,6 +325,29 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "WebAssembly.instantiateStreaming": streamedModuleFunctions,
   "bun:test": fakeTimerFunctions,
   "bun:test/vitest": fakeTimerFunctions,
+  ...Object.fromEntries(
+    [
+      "log",
+      "info",
+      "warn",
+      "error",
+      "debug",
+      "trace",
+      "dir",
+      "dirxml",
+      "table",
+      "assert",
+      "group",
+      "groupCollapsed",
+      "count",
+      "timeLog",
+      "timeEnd",
+      "clear",
+    ].map(name => [
+      `console.${name}`,
+      [consoleWritesThrough(standardOutputCell), consoleWritesThrough(standardErrorCell)],
+    ]),
+  ),
   // The getter calls it on `console`, with `console`, and what it answers takes the getter's place.
   "console.Console": [
     b.functionUsed(

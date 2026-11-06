@@ -4141,11 +4141,20 @@ extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::Global
     JSObject* stream = process->stdioWriteStream(fd);
     if (!stream)
         return JSValue::encode(jsUndefined());
-    JSFunction* write = process->writeThroughStream();
+    JSFunction* writeThrough = process->writeThroughStream();
     JSC::MarkedArgumentBuffer args;
+    if (JSC::AOT::isNeededByNothingThatRuns(writeThrough)) {
+        // An executable without the function: the plain call, without the error listener of node's console.
+        JSValue write = stream->get(globalObject, builtinNames(vm).writePublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        args.append(JSValue::decode(text));
+        JSC::call(globalObject, write, stream, args, "write is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
     args.append(stream);
     args.append(JSValue::decode(text));
-    JSC::profiledCall(globalObject, ProfilingReason::API, write, JSC::getCallData(write), jsUndefined(), args);
+    JSC::profiledCall(globalObject, ProfilingReason::API, writeThrough, JSC::getCallData(writeThrough), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

@@ -208,6 +208,11 @@ test.concurrent(
         chai,
         3,
       ],
+      // A `declare` block drops its statements. Its import is reported like one of any other module there.
+      "declare-block.ts": [
+        `declare module "ambient" { import { assert } from "vitest"; }\nmodule.exports = ${checked};`,
+        vitest,
+      ],
       // An import of "vitest" without a chai name is reported as before.
       "no-names.ts": [`import "vitest";\nmodule.exports = ${checked};`, vitest],
       "empty-clause.ts": [`import {} from "vitest";\nmodule.exports = ${checked};`, vitest],

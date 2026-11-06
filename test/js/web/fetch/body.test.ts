@@ -1564,7 +1564,7 @@ describe("a fetch() body cut short by the server", () => {
           beforeClose?.();
           socket.shutdown();
           socket.end();
-          Bun.sleepSync(20);
+          Bun.sleepSync(50);
         },
       },
     });
@@ -1627,7 +1627,9 @@ describe("a fetch() body cut short by the server", () => {
   });
 
   // An abort in the same batch as the bytes is not a server cut: the read
-  // rejects with the abort reason at once, and the bytes are dropped.
+  // rejects with the abort reason at once, and the bytes are dropped. The
+  // abort errors the body on the JS thread before the batch arrives, so this
+  // pins what a reader sees, not which layer decides it.
   test("an abort in the same batch as the bytes and the close: the pending read rejects with AbortError, no bytes first", async () => {
     for (let i = 0; i < 5; i++) {
       const cut = Promise.withResolvers<void>();

@@ -2015,6 +2015,11 @@ impl<'c> Configs<'c> {
         self.is_native() && self.config_of(scope).is_ok_and(|it| it.is_none())
     }
 
+    /// True for `--staged` and `--changed`: not all files that are found are formatted.
+    pub(crate) fn leaves_out_found_files(&self) -> bool {
+        self.options.only.is_some()
+    }
+
     /// The `parser` option for the file at `path` in `scope`, if it's set.
     pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";

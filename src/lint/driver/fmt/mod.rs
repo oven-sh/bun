@@ -1890,8 +1890,14 @@ impl Run<'_> {
             expansion.put_in_order();
         }
         if let Some(only) = &only {
-            expansion.all.retain(|it| match it {
-                Expanded::File(target) => only.has(&target.path),
+            expansion.all.retain_mut(|it| match it {
+                Expanded::File(target) => {
+                    let is_listed = only.has(&target.path);
+                    if is_listed {
+                        target.language = files::language_of(configs, &target.scope, &target.path);
+                    }
+                    is_listed
+                }
                 Expanded::Error(_) => true,
             });
             if expansion.all.is_empty() {

@@ -30,6 +30,7 @@ pub(crate) struct Target {
     pub(crate) is_named: bool,
     /// `Some` if the file has hard links. The other links can be targets too.
     pub(crate) linked: Option<fs::Identity>,
+    /// [`language_when_found`]
     pub(crate) language: Language,
 }
 
@@ -471,6 +472,16 @@ pub(crate) fn language_of(configs: &Configs, scope: &Scope, path: &[u8]) -> Lang
     }
 }
 
+/// [`language_of`] for a file that a search has found or an argument names. With `--staged` and `--changed` it's
+/// `Language::Unknown`: the options of a file can decide, and there is something to say about some options, which is of
+/// no interest if the file isn't one of those that are formatted. The caller asks again about those that are.
+fn language_when_found(configs: &Configs, scope: &Scope, path: &[u8]) -> Language {
+    match configs.leaves_out_found_files() {
+        true => Language::Unknown,
+        false => language_of(configs, scope, path),
+    }
+}
+
 fn language_by_name(path: &[u8]) -> Language {
     if Kind::of(path, None).is_some() {
         return Language::Supported;
@@ -844,7 +855,7 @@ fn search(
                     && let Some((size, linked)) = listing.size_and_identity_of(&entry.name)
                 {
                     files.push(Target {
-                        language: language_of(configs, &scope, &path),
+                        language: language_when_found(configs, &scope, &path),
                         path,
                         size,
                         scope: Arc::clone(&scope),
@@ -1073,7 +1084,7 @@ pub(crate) fn expand(
                     };
                     if !finds_twice || seen.insert(path.clone()) {
                         expanded.push(Expanded::File(Target {
-                            language: language_of(configs, &scope, &path),
+                            language: language_when_found(configs, &scope, &path),
                             scope,
                             path,
                             size,
@@ -1268,7 +1279,7 @@ pub(crate) fn expand_as_oxfmt(
         let scope = configs.for_directory(paths::dirname(path))?;
         if !is_ignored(configs.config_ignores(&scope), path, *kind) {
             found.push(Target {
-                language: language_of(configs, &scope, path),
+                language: language_when_found(configs, &scope, path),
                 path: path.clone(),
                 size: *size,
                 linked: *linked,

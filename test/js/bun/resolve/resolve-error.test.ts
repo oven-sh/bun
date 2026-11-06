@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
+import Module, { createRequire } from "node:module";
 import path from "node:path";
+import { inspect } from "node:util";
 
 describe("ResolveMessage", () => {
   it("carries what the resolver logged while failing as notes", async () => {
@@ -197,6 +199,572 @@ describe("ResolveMessage", () => {
       Bun.gc(true);
     }
     expect().pass();
+  });
+});
+
+// The error of a failed require() or import() is a ResolveMessage. `stack`, `message` and `code` are own properties of
+// it, as they are of the Error that Node.js throws, and so is `requireStack` of a CommonJS "Cannot find module".
+describe("own properties of a thrown ResolveMessage", () => {
+  const require = createRequire(import.meta.url);
+  const data = (value: unknown) => ({ value, writable: true, enumerable: true, configurable: true });
+  const hidden = (value: unknown) => ({ value, writable: true, enumerable: false, configurable: true });
+  const message = `Cannot find module './does-not-exist'\nRequire stack:\n- ${import.meta.path}`;
+  const commonjs = { code: data("MODULE_NOT_FOUND"), requireStack: data([import.meta.path]) };
+  const esm = { code: data("ERR_MODULE_NOT_FOUND") };
+  const builtin = { code: data("ERR_UNKNOWN_BUILTIN_MODULE") };
+  const missing = { file: "./does-not-exist", package: "package-that-does-not-exist", builtin: "node:does-not-exist" };
+  // Longer than the resolver looks for: it fails with ENAMETOOLONG.
+  const tooLong = "./" + Buffer.alloc(MAX_PATH_BYTES * 2, "a").toString();
+  const resolveFilename: (request: string, ...rest: unknown[]) => string = (Module as any)._resolveFilename;
+
+  async function thrownBy(load: () => unknown): Promise<any> {
+    try {
+      await load();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("nothing was thrown");
+  }
+
+  // The stack has the message in it. What else it has is not a subject of these tests.
+  const stackWith = (message: string) => expect.stringContaining(message);
+
+  function expectOwnProperties(error: any, message: string, enumerable: object) {
+    expect(error).toBeInstanceOf(ResolveMessage);
+    expect(Object.getOwnPropertyDescriptors(error)).toEqual({
+      stack: hidden(stackWith(message)),
+      message: hidden(message),
+      ...enumerable,
+    });
+    expect(Reflect.ownKeys(error)).toEqual(["stack", "message", ...Object.keys(enumerable)]);
+  }
+
+  const notFound = (specifier: string) => `Cannot find module '${specifier}'\nRequire stack:\n- ${import.meta.path}`;
+  const noBuiltin = "No such built-in module: node:does-not-exist";
+  const nameTooLong = `ENAMETOOLONG while resolving '${tooLong}' from '${import.meta.path}'`;
+  const noPackage = `Cannot find package 'package-that-does-not-exist' imported from ${import.meta.path}`;
+  const notImported = (from: string) => `Cannot find module './does-not-exist' imported from ${from}`;
+
+  it.each<[string, () => unknown, string, object]>([
+    ["require()", () => require(missing.file), message, commonjs],
+    ["require() of a package", () => require(missing.package), notFound(missing.package), commonjs],
+    ["require() of a node: builtin", () => require(missing.builtin), noBuiltin, builtin],
+    // Not as in Node.js, which has "Cannot find module" and a requireStack here.
+    ["require() of a specifier that is too long", () => require(tooLong), nameTooLong, { code: commonjs.code }],
+    ["require.resolve()", () => require.resolve("./does-not-exist"), message, commonjs],
+    [
+      "require.resolve() with paths",
+      () => require.resolve("./does-not-exist", { paths: [import.meta.dir] }),
+      message,
+      commonjs,
+    ],
+    [
+      "Module._resolveFilename()",
+      () => resolveFilename("./does-not-exist", { filename: import.meta.path }),
+      message,
+      commonjs,
+    ],
+    ["import.meta.require()", () => import.meta.require("./does-not-exist"), message, commonjs],
+    ["import()", () => import(missing.file), notImported(import.meta.path), esm],
+    ["import() of a package", () => import(missing.package), noPackage, esm],
+    ["import() of a node: builtin", () => import(missing.builtin), noBuiltin, builtin],
+    ["import() of a specifier that is too long", () => import(tooLong), nameTooLong, esm],
+    ["import.meta.resolve()", () => import.meta.resolve("package-that-does-not-exist"), noPackage, esm],
+    [
+      "import.meta.resolveSync()",
+      () => import.meta.resolveSync("./does-not-exist"),
+      notImported(import.meta.path),
+      esm,
+    ],
+    [
+      "Bun.resolveSync()",
+      () => Bun.resolveSync("./does-not-exist", import.meta.dir),
+      notImported(import.meta.dir),
+      esm,
+    ],
+    ["Bun.resolve()", () => Bun.resolve("./does-not-exist", import.meta.dir), notImported(import.meta.dir), esm],
+  ])("%s", async (_, load, message, enumerable) => {
+    expectOwnProperties(await thrownBy(load), message, enumerable);
+  });
+
+  // There is no file to list, and the message has no "Require stack:" line.
+  it.each<[string, unknown[]]>([
+    ["no parent", []],
+    ["a null parent", [null]],
+    ["a null parent and paths", [null, false, { paths: [import.meta.dir] }]],
+  ])("Module._resolveFilename() with %s has an empty requireStack", async (_, rest) => {
+    const error = await thrownBy(() => resolveFilename("./does-not-exist", ...rest));
+    expectOwnProperties(error, "Cannot find module './does-not-exist'", {
+      code: commonjs.code,
+      requireStack: data([]),
+    });
+  });
+
+  // Node.js has ERR_PACKAGE_PATH_NOT_EXPORTED here, and no requireStack.
+  it("require() of a subpath that a package does not export", async () => {
+    using dir = tempDir("resolve-error-exports", {
+      "node_modules/has-exports/package.json": `{ "name": "has-exports", "exports": { ".": "./index.js" } }`,
+      "node_modules/has-exports/index.js": "",
+      "node_modules/has-exports/not-exported.js": "",
+      "index.js": "",
+    });
+    const importer = path.join(String(dir), "index.js");
+    const error = await thrownBy(() => createRequire(importer)("has-exports/not-exported.js"));
+    expectOwnProperties(error, `Cannot find module 'has-exports/not-exported.js'\nRequire stack:\n- ${importer}`, {
+      code: commonjs.code,
+      requireStack: data([importer]),
+    });
+  });
+
+  it("a static import", async () => {
+    using dir = tempDir("resolve-error-static-import", { "entry.mjs": `import "./does-not-exist.mjs";` });
+    const entry = path.join(String(dir), "entry.mjs");
+    const error = await thrownBy(() => import(entry));
+    expectOwnProperties(error, `Cannot find module './does-not-exist.mjs' imported from ${entry}`, esm);
+  });
+
+  // Not as in Node.js, which makes a new error for each import(). The module loader keeps the error of a module whose
+  // static import failed, so the next import() of that module reads what the first catcher assigned.
+  it("a static import that failed gives the same error to the next import()", async () => {
+    using dir = tempDir("resolve-error-again", { "entry.mjs": `import "./does-not-exist.mjs";` });
+    const entry = path.join(String(dir), "entry.mjs");
+    const first = await thrownBy(() => import(entry));
+    first.code = "PLUGIN_ERROR";
+    const second = await thrownBy(() => import(entry));
+    expect(second).toBe(first);
+    expect(second.code).toBe("PLUGIN_ERROR");
+  });
+
+  // This one is found when the required module is transpiled, before anything resolves its imports.
+  it("a static import of a missing node: builtin in a module that is required", async () => {
+    using dir = tempDir("resolve-error-transpile", { "entry.mjs": `import "node:does-not-exist";` });
+    const error = await thrownBy(() => require(path.join(String(dir), "entry.mjs")));
+    expectOwnProperties(error, `Could not resolve: "node:does-not-exist". Maybe you need to "bun install"?`, builtin);
+  });
+
+  // A property gets its value when it is first read. JavaScript cannot tell: it is a data property before and after.
+  describe.each(["before it is read", "after it is read"])("%s", when => {
+    async function thrown() {
+      const error = await thrownBy(() => require("./does-not-exist"));
+      if (when === "after it is read") void [error.stack, error.message, error.code, error.requireStack];
+      return error;
+    }
+
+    it("is assigned", async () => {
+      const error = await thrown();
+      error.stack = "a stack";
+      error.message = "a message";
+      error.code = "E_WRAPPED";
+      error.requireStack = [];
+      expect(Object.getOwnPropertyDescriptors(error)).toEqual({
+        stack: hidden("a stack"),
+        message: hidden("a message"),
+        code: data("E_WRAPPED"),
+        requireStack: data([]),
+      });
+    });
+
+    // Not as in Node.js: ResolveMessage.prototype has an accessor for each of the four, which then answers.
+    it("is deleted", async () => {
+      const error = await thrown();
+      for (const key of ["stack", "message", "code", "requireStack"]) expect(delete error[key]).toBe(true);
+      const read = () => ({
+        stack: error.stack,
+        message: error.message,
+        code: error.code,
+        requireStack: error.requireStack,
+        keys: Reflect.ownKeys(error),
+      });
+      expect(read()).toEqual({
+        stack: stackWith(message),
+        message,
+        code: undefined,
+        requireStack: undefined,
+        keys: [],
+      });
+      error.stack = "a stack";
+      error.message = "a message";
+      for (const key of ["code", "requireStack"]) {
+        expect(() => {
+          error[key] = "assigned";
+        }).toThrow(TypeError);
+      }
+      expect(read()).toEqual({
+        stack: "a stack",
+        message: "a message",
+        code: undefined,
+        requireStack: undefined,
+        keys: [],
+      });
+    });
+
+    it("is frozen", async () => {
+      const error = Object.freeze(await thrown());
+      expect(() => {
+        error.code = "E_WRAPPED";
+      }).toThrow(TypeError);
+      const frozen = (value: unknown, enumerable: boolean) => ({
+        value,
+        writable: false,
+        enumerable,
+        configurable: false,
+      });
+      expect(Object.getOwnPropertyDescriptors(error)).toEqual({
+        stack: frozen(stackWith(message), false),
+        message: frozen(message, false),
+        code: frozen("MODULE_NOT_FOUND", true),
+        requireStack: frozen([import.meta.path], true),
+      });
+      expect(error.requireStack).toBe(error.requireStack);
+    });
+
+    // Vite does this to the error of a module that fails to load (ssrFixStacktrace).
+    it("has a stack that is defined again", async () => {
+      const error = await thrown();
+      expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual(hidden(stackWith(message)));
+      Object.defineProperty(error, "stack", { value: "a stack", enumerable: true, configurable: true, writable: true });
+      expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual(data("a stack"));
+    });
+
+    it("has a stack that is defined again before anything reads it", async () => {
+      const error = await thrown();
+      Object.defineProperty(error, "stack", { value: "a stack", enumerable: true, configurable: true, writable: true });
+      expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual(data("a stack"));
+    });
+
+    it("is assigned on an object that is not extensible", async () => {
+      const error = Object.preventExtensions(await thrown());
+      error.code = "E_WRAPPED";
+      expect(Object.getOwnPropertyDescriptor(error, "code")).toEqual(data("E_WRAPPED"));
+    });
+
+    it("is not assigned through another receiver", async () => {
+      const error = await thrown();
+      const receiver: any = {};
+      expect(Reflect.set(error, "code", "E_WRAPPED", receiver)).toBe(true);
+      const child = Object.create(error);
+      child.code = "E_CHILD";
+      expect({ receiver, child: { ...child }, code: error.code }).toEqual({
+        receiver: { code: "E_WRAPPED" },
+        child: { code: "E_CHILD" },
+        code: "MODULE_NOT_FOUND",
+      });
+    });
+
+    // toJSON() is native code that reads `code` and `requireStack`. Here nothing has read them before.
+    it("is serialized first", async () => {
+      const error = await thrown();
+      expect(JSON.parse(JSON.stringify(error))).toEqual({
+        name: "ResolveMessage",
+        position: null,
+        message,
+        level: "error",
+        specifier: "./does-not-exist",
+        importKind: "require-call",
+        referrer: import.meta.path,
+        code: "MODULE_NOT_FOUND",
+        requireStack: [import.meta.path],
+      });
+      expectOwnProperties(error, message, commonjs);
+    });
+
+    it("is read through another receiver", async () => {
+      const error = await thrown();
+      const read = (object: any) => [object.stack, object.message, object.code, object.requireStack];
+      const values = [stackWith(message), message, "MODULE_NOT_FOUND", [import.meta.path]];
+      const child = Object.create(error);
+      expect({
+        child: read(child),
+        proxy: read(new Proxy(error, {})),
+        reflected: Reflect.get(error, "requireStack", {}),
+        keys: Reflect.ownKeys(child),
+      }).toEqual({ child: values, proxy: values, reflected: [import.meta.path], keys: [] });
+    });
+
+    it("has one array as requireStack", async () => {
+      const error = await thrown();
+      const requireStack = error.requireStack;
+      requireStack.push("another");
+      expect(error.requireStack).toBe(requireStack);
+      expect(error.requireStack).toEqual([import.meta.path, "another"]);
+    });
+
+    it("is copied and serialized", async () => {
+      const error = await thrown();
+      const own = { code: "MODULE_NOT_FOUND", requireStack: [import.meta.path] };
+      expect({ ...error }).toEqual(own);
+      expect(Object.assign({}, error)).toEqual(own);
+      expect(Object.entries(error)).toEqual(Object.entries(own));
+      // pino copies an error in this way, and serializes the copy.
+      const copy: Record<string, unknown> = {};
+      for (const key in error) copy[key] = error[key];
+      expect(JSON.parse(JSON.stringify(copy))).toEqual(own);
+      expect(JSON.stringify(error)).toBe(
+        JSON.stringify({
+          name: "ResolveMessage",
+          position: null,
+          message,
+          level: "error",
+          specifier: "./does-not-exist",
+          importKind: "require-call",
+          referrer: import.meta.path,
+          ...own,
+        }),
+      );
+      // toJSON() gives the `code` and the `requireStack` that are there now. Rollup assigns the code of an error that a
+      // plugin throws. Another property that is assigned is not serialized, and `message` is the one of the resolver.
+      error.code = "PLUGIN_ERROR";
+      error.plugin = "a plugin";
+      error.message = "a message";
+      delete error.requireStack;
+      expect(JSON.parse(JSON.stringify(error))).toEqual({
+        name: "ResolveMessage",
+        position: null,
+        message,
+        level: "error",
+        specifier: "./does-not-exist",
+        importKind: "require-call",
+        referrer: import.meta.path,
+        code: "PLUGIN_ERROR",
+      });
+    });
+  });
+
+  it.each<[string, () => unknown, string[]]>([
+    ["require()", () => require(missing.file), ["code", "requireStack"]],
+    ["import()", () => import(missing.package), ["code"]],
+  ])("for...in over what %s throws gives the keys that Node.js gives", async (_, load, keys) => {
+    const enumerated: string[] = [];
+    for (const key in await thrownBy(load)) enumerated.push(key);
+    expect(enumerated).toEqual(keys);
+  });
+
+  it("util.inspect() prints the code", async () => {
+    expect(inspect(await thrownBy(() => require(missing.builtin)))).toBe(
+      "[ResolveMessage: No such built-in module: node:does-not-exist] {\n  code: 'ERR_UNKNOWN_BUILTIN_MODULE'\n}",
+    );
+  });
+
+  it("is not equal to an error with another code", async () => {
+    const error = await thrownBy(() => import(missing.package));
+    expect(error).toEqual(await thrownBy(() => import(missing.package)));
+    expect(error).not.toEqual(await thrownBy(() => import(missing.builtin)));
+  });
+
+  // The message has the place of the specifier in it as two 16-bit numbers, so it has the first 65535 bytes of a longer one.
+  describe.each([65536, 65537, 200000])("a node: specifier of %d bytes", length => {
+    const specifier = "node:" + Buffer.alloc(length - 5, "a").toString();
+    it.each<[string, () => unknown]>([
+      ["require()", () => require(specifier)],
+      ["import()", () => import(specifier)],
+      ["Bun.resolveSync()", () => Bun.resolveSync(specifier, import.meta.dir)],
+    ])("%s", async (_, load) => {
+      const error = await thrownBy(load);
+      expect({ code: error.code, specifier: error.specifier.length }).toEqual({
+        code: "ERR_UNKNOWN_BUILTIN_MODULE",
+        specifier: 65535,
+      });
+    });
+  });
+
+  it("the specifier of a long one ends where a character ends", async () => {
+    // The two bytes of "é" are the bytes 65535 and 65536.
+    const start = "node:" + Buffer.alloc(65534 - 5, "a").toString();
+    const error = await thrownBy(() => require(start + "é"));
+    expect({ code: error.code, isStart: error.specifier === start }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      isStart: true,
+    });
+  });
+
+  // Vite does this to the error of a PostCSS config that fails to load (resolvePostcssConfig).
+  describe.each(["ResolveMessage", "BuildMessage"])("a thrown %s", kind => {
+    async function thrown() {
+      using dir = tempDir("resolve-error-name", { "syntax-error.cjs": "module.exports = ;" });
+      const specifier = kind === "ResolveMessage" ? missing.file : path.join(String(dir), "syntax-error.cjs");
+      const error = await thrownBy(() => require(specifier));
+      expect(error.constructor.name).toBe(kind);
+      return error;
+    }
+
+    it("takes a name, a message and a stack", async () => {
+      const error = await thrown();
+      const { name, message, stack } = error;
+      error.name = "Failed to load PostCSS config";
+      error.message = `Failed to load PostCSS config: [${name}] ${message}\n${stack}`;
+      error.stack = "";
+      expect({ name: error.name, message: error.message, stack: error.stack }).toEqual({
+        name: "Failed to load PostCSS config",
+        message: `Failed to load PostCSS config: [${kind}] ${message}\n${stack}`,
+        stack: "",
+      });
+    });
+
+    it("has the name of its class as Error.prototype has its name", async () => {
+      const prototype = Object.getPrototypeOf(await thrown());
+      expect(Object.getOwnPropertyDescriptor(prototype, "name")).toEqual({
+        ...Object.getOwnPropertyDescriptor(Error.prototype, "name"),
+        value: kind,
+      });
+      expect(Object.keys(prototype)).toEqual([]);
+    });
+  });
+
+  // What fails while a module is transpiled is thrown as one AggregateError when it is more than one message.
+  it.each<[string, string, (file: string) => unknown, string[]]>([
+    [
+      "needs-macro.ts",
+      `import { nope } from "./does-not-exist" with { type: "macro" };\nexport const value = nope();`,
+      file => import(file),
+      ["ResolveMessage", "BuildMessage"],
+    ],
+    [
+      "preserve.jsx",
+      `// @jsxRuntime preserve\nimport "node:does-not-exist";\nexport default <div />;`,
+      file => require(file),
+      ["BuildMessage", "ResolveMessage"],
+    ],
+  ])("each ResolveMessage of the AggregateError for %s", async (name, source, load, kinds) => {
+    using dir = tempDir("resolve-error-aggregate", { [name]: source });
+    const error = await thrownBy(() => load(path.join(String(dir), name)));
+    expect(error).toBeInstanceOf(AggregateError);
+    const shapes = {
+      ResolveMessage: [
+        ["stack", "message", "code"],
+        ["name", "position", "message", "level", "specifier", "importKind", "referrer", "code"],
+      ],
+      BuildMessage: [[], ["name", "position", "message", "level"]],
+    };
+    expect(
+      error.errors.map((error: any) => [error.constructor.name, Reflect.ownKeys(error), Object.keys(error.toJSON())]),
+    ).toEqual(kinds.map(kind => [kind, ...shapes[kind as keyof typeof shapes]]));
+  });
+
+  // Plugins are for the whole process.
+  it("a plugin's answer that does not exist, and what is not thrown", async () => {
+    using dir = tempDir("resolve-error-plugin", {
+      "package.json": `{ "name": "resolve-error-plugin" }`,
+      "node_modules/.keep": "",
+      "plugin-fixture.mjs": `
+        import { heapStats } from "bun:jsc";
+        import { mock } from "bun:test";
+        import Module, { createRequire } from "node:module";
+        import path from "node:path";
+        import { pathToFileURL } from "node:url";
+
+        const require = createRequire(import.meta.url);
+        const nowhere = path.join(import.meta.dir, "nowhere.js");
+        const directories = ["a", "b", "c"].map(name => path.join(import.meta.dir, name));
+
+        // The first heapStats() of a process collects, so it is before what is counted.
+        const count = () => heapStats().objectTypeCounts.ResolveMessage ?? 0;
+        async function made(run) {
+          const before = count();
+          await run();
+          return count() - before;
+        }
+
+        // Nothing is thrown for what these do not find, so no ResolveMessage is made.
+        const byFindPath = await made(() => Module._findPath("package-that-does-not-exist", directories));
+        const byMock = await made(() => mock.module("package-that-does-not-exist", () => ({})));
+
+        Bun.plugin({
+          name: "fixture",
+          setup(build) {
+            build.onResolve({ filter: /redirected/ }, () => ({ path: nowhere }));
+            build.onResolve({ filter: /^\\.\\/invalid$/ }, () => ({ path: 1 }));
+            build.onResolve({ filter: /^virtual\\.js$/ }, ({ path }) => ({ path }));
+            build.onLoad({ filter: /^virtual\\.js$/ }, () => ({ exports: { default: 1 }, loader: "object" }));
+          },
+        });
+        const byOnLoad = await made(() => import("virtual.js"));
+
+        async function thrownBy(load) {
+          try {
+            await load();
+          } catch (error) {
+            if (!(error instanceof ResolveMessage)) return [error.constructor.name, error.message];
+            return [Reflect.ownKeys(error), Object.getOwnPropertyDescriptor(error, "code")];
+          }
+        }
+        console.log(
+          JSON.stringify({
+            byFindPath,
+            byMock,
+            byOnLoad,
+            "import.meta.resolve()": await thrownBy(() => import.meta.resolve("./redirected")),
+            "import.meta.resolve() of a URL": await thrownBy(() =>
+              import.meta.resolve(pathToFileURL(path.join(import.meta.dir, "redirected.js")).href),
+            ),
+            "import()": await thrownBy(() => import("./redirected")),
+            "require()": await thrownBy(() => require("./redirected")),
+            "an answer that is not valid": await thrownBy(() => import("./invalid")),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "plugin-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const esmError = [["stack", "message", "code"], esm.code];
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        byFindPath: 0,
+        byMock: 0,
+        byOnLoad: 0,
+        "import.meta.resolve()": esmError,
+        "import.meta.resolve() of a URL": esmError,
+        "import()": esmError,
+        "require()": [["stack", "message", "code", "requireStack"], data("MODULE_NOT_FOUND")],
+        "an answer that is not valid": ["Error", 'Expected "path" to be a string in onResolve plugin'],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a ResolveMessage that Bun.Transpiler throws has none", () => {
+    const source = `import { nope } from "./does-not-exist" with { type: "macro" };\nexport const value = nope();`;
+    let failure: any;
+    try {
+      new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(AggregateError);
+    const log = failure.errors.find((error: unknown) => error instanceof ResolveMessage);
+    expect({ code: log.code, keys: Reflect.ownKeys(log) }).toEqual({ code: "ERR_MODULE_NOT_FOUND", keys: [] });
+    expect(() => {
+      log.code = "E_WRAPPED";
+    }).toThrow(TypeError);
+  });
+
+  it.each(["a log", "an error of the rejection"])("%s of Bun.build() has none", async which => {
+    using dir = tempDir("resolve-error-build-log", { "entry.js": `import "./does-not-exist";` });
+    const entrypoints = [path.join(String(dir), "entry.js")];
+    const logs =
+      which === "a log"
+        ? (await Bun.build({ entrypoints, throw: false })).logs
+        : (await thrownBy(() => Bun.build({ entrypoints, throw: true }))).errors;
+    expect(logs).toHaveLength(1);
+    const log: any = logs[0];
+    expect(log).toBeInstanceOf(ResolveMessage);
+    const enumerated: string[] = [];
+    for (const key in log) enumerated.push(key);
+    expect({ code: log.code, keys: Reflect.ownKeys(log), enumerated, json: Object.keys(log.toJSON()) }).toEqual({
+      code: "ERR_MODULE_NOT_FOUND",
+      keys: [],
+      enumerated: [],
+      json: ["name", "position", "message", "level", "specifier", "importKind", "referrer"],
+    });
+    expect(() => {
+      log.code = "E_WRAPPED";
+    }).toThrow(TypeError);
   });
 });
 

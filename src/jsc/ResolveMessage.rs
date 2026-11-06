@@ -5,10 +5,11 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::bindgen::{JsLocal, JsScope};
+use crate::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use crate::build_message::LogKindJsc as _;
 use crate::bun_string_jsc;
-use crate::{JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::generated_bindgen::resolve_message::js_ResolveMessage;
+use crate::{JSArray, JSGlobalObject, JSString, JSValue, JsClass, JsResult, StringJsc as _};
 
 pub struct ResolveMessage {
     pub msg: bun_ast::Msg,
@@ -17,8 +18,52 @@ pub struct ResolveMessage {
     // Note: only the referrer path's `.text` is ever read;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
-    pub(crate) referrer: Box<[u8]>,
+    referrer: Box<[u8]>,
     pub(crate) logged: Cell<bool>,
+    /// Its JS object has the own properties that `NotFound::into_thrown_js` defines.
+    thrown: bool,
+}
+
+/// A failed resolution, as data: only a caller that throws it makes the JS object.
+pub enum ResolveFailure {
+    NotFound(NotFound),
+    /// The error that a bad answer of an `onResolve` plugin made.
+    Thrown(JSValue),
+}
+
+/// Boxed: the `Result` of a resolution stays as large as it is with a `JSValue`.
+pub struct NotFound(Box<ResolveMessage>);
+
+const _: () = assert!(
+    size_of::<Result<bun_core::String, ResolveFailure>>()
+        <= size_of::<Result<bun_core::String, JSValue>>()
+);
+
+impl NotFound {
+    pub fn new(msg: bun_ast::Msg, referrer: &[u8]) -> Self {
+        Self(Box::new(ResolveMessage {
+            msg,
+            referrer: Box::<[u8]>::from(referrer),
+            logged: Cell::new(false),
+            thrown: true,
+        }))
+    }
+
+    pub fn into_thrown_js(self, global: &JSGlobalObject) -> JSValue {
+        let has_require_stack = self.0.require_stack().is_some();
+        let value = (*self.0).to_js(global);
+        js_ResolveMessage::define_node_error_properties(value, has_require_stack);
+        value
+    }
+}
+
+impl ResolveFailure {
+    pub fn into_thrown_js(self, global: &JSGlobalObject) -> JSValue {
+        match self {
+            Self::NotFound(not_found) => not_found.into_thrown_js(global),
+            Self::Thrown(error) => error,
+        }
+    }
 }
 
 /// `ImportKind.label()` — the canonical table lives in
@@ -74,6 +119,14 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
 
 impl ResolveMessage {
     pub fn get_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        // The getter of the prototype answers for a thrown error only after `delete error.code`: undefined, as in Node.js.
+        if self.thrown {
+            return Ok(JSValue::UNDEFINED);
+        }
+        self.lazy_code(cx)
+    }
+
+    pub fn lazy_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         match &self.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
                 let code: &'static [u8] = 'brk: {
@@ -114,6 +167,27 @@ impl ResolveMessage {
             }
             _ => Ok(JSValue::UNDEFINED),
         }
+    }
+
+    pub fn lazy_message<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
+        heap.create_utf8_string(&self.get_message())
+    }
+
+    pub fn lazy_require_stack<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, JSArray>> {
+        heap.create_array(
+            self.require_stack().into_iter().flatten(),
+            bindgen::to_js::utf8,
+        )
+    }
+
+    pub fn lazy_stack<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
+        heap.create_utf8_string(&self.get_stack())
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
@@ -250,10 +324,27 @@ impl ResolveMessage {
         Ok(JSValue::NULL)
     }
 
-    pub fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn to_json<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
         let utf8 = |bytes: &[u8]| bun_string_jsc::create_utf8_for_js(global, bytes);
-        let object = JSValue::create_empty_object(global, 7);
+        // The own properties of a thrown error, as they are now: a caller can have assigned or deleted them.
+        let own = |key| {
+            if !self.thrown {
+                return Ok(None);
+            }
+            this_value
+                .to_js()
+                .get_own(global, &bun_core::String::static_(key))
+        };
+        let (code, require_stack) = (own("code")?, own("requireStack")?);
+        let object = JSValue::create_empty_object(
+            global,
+            7 + usize::from(code.is_some()) + usize::from(require_stack.is_some()),
+        );
         object.put(
             global,
             b"name",
@@ -269,18 +360,18 @@ impl ResolveMessage {
         object.put(global, b"specifier", utf8(self.get_specifier())?);
         object.put(global, b"importKind", self.import_kind_to_js(global)?);
         object.put(global, b"referrer", utf8(&self.referrer)?);
+        object.put_optional(global, b"code", code);
+        object.put_optional(global, b"requireStack", require_stack);
         Ok(object)
     }
 
-    pub fn create(
-        global: &JSGlobalObject,
-        msg: &bun_ast::Msg,
-        referrer: &[u8],
-    ) -> JsResult<JSValue> {
+    /// A message of a log, as `Bun.build` gives: without the own properties of one that is thrown.
+    pub fn create_for_log(global: &JSGlobalObject, msg: &bun_ast::Msg) -> JsResult<JSValue> {
         let resolve_error = ResolveMessage {
             msg: msg.clone(),
-            referrer: Box::<[u8]>::from(referrer),
+            referrer: Box::default(),
             logged: Cell::new(false),
+            thrown: false,
         };
         Ok(resolve_error.to_js(global))
     }
@@ -291,14 +382,19 @@ impl ResolveMessage {
         specifier: &[u8],
         referrer: &[u8],
         import_kind: ImportKind,
-    ) -> JsResult<JSValue> {
+    ) -> JSValue {
         let text = Self::fmt(
             specifier,
             referrer,
             crate::CrateError::ModuleNotFound,
             import_kind,
         );
-        let msg = bun_ast::Msg {
+        NotFound::new(Self::msg(text, specifier, import_kind), referrer).into_thrown_js(global)
+    }
+
+    /// The message of a failure that the resolver logged nothing for. `text` is what `fmt` made for `specifier`.
+    pub(crate) fn msg(text: Vec<u8>, specifier: &[u8], import_kind: ImportKind) -> bun_ast::Msg {
+        bun_ast::Msg {
             metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                 specifier: bun_ast::BabyString::r#in(&text, specifier),
                 import_kind,
@@ -306,8 +402,7 @@ impl ResolveMessage {
             }),
             data: bun_ast::range_data(None, bun_ast::Range::NONE, text),
             ..Default::default()
-        };
-        Self::create(global, &msg, referrer)
+        }
     }
 
     pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -390,9 +485,17 @@ impl ResolveMessage {
         }
     }
 
+    /// As `get_code`: a thrown error has its own `requireStack`, or none.
+    pub fn get_require_stack(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        if self.thrown {
+            return None;
+        }
+        self.require_stack()
+    }
+
     // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
     // requiring files; Bun tracks only the direct referrer). CJS kinds only.
-    pub fn get_require_stack(&self) -> Option<impl Iterator<Item = &[u8]>> {
+    fn require_stack(&self) -> Option<impl Iterator<Item = &[u8]>> {
         let (kind, _, referrer) = self.node_error_shape()?;
         matches!(kind, ImportKind::Require | ImportKind::RequireResolve)
             .then(|| referrer.into_iter())
@@ -456,5 +559,4 @@ pub(crate) extern "C" fn ResolveMessage__createModuleNotFound(
         referrer.slice(),
         import_kind,
     )
-    .unwrap_or_else(|error| global.take_exception(error))
 }

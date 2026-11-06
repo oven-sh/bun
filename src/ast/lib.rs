@@ -966,7 +966,11 @@ impl BabyString {
         let Some(off) = bun_core::strings::index_of(container, substring) else {
             return BabyString::new(0, 0);
         };
-        BabyString::new(off as u16, substring.len() as u16) // @truncate
+        let Ok(off) = u16::try_from(off) else {
+            return BabyString::new(0, 0);
+        };
+        let start = bun_core::strings::truncate_to_char_boundary(substring, u16::MAX as usize);
+        BabyString::new(off, start.len() as u16)
     }
 
     pub fn slice<'a>(self, container: &'a [u8]) -> &'a [u8] {

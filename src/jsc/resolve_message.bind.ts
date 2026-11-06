@@ -7,8 +7,8 @@ const level = { ...cached, getter: b.any.returning("string") } as const;
 const position = { ...cached, getter: b.any.returning("object", "null") } as const;
 const coordinate = { getter: b.i32, pure: true } as const;
 
-/** Error.prototype in the chain: userland checks `err instanceof Error`. */
-const errorClass = { construct: "illegal", prototypeBase: "Error" } as const;
+/** Error.prototype in the chain: userland checks `err instanceof Error`. As there, no member is enumerable. */
+const errorClass = { construct: "illegal", prototypeBase: "Error", enumerable: false } as const;
 const methods = {
   toJSON: { returns: b.any.returning("object"), ...js },
   toString: { returns: b.any.returning("string"), ...js },
@@ -31,6 +31,18 @@ export const ResolveMessage = b.class({
     specifier: text,
     stack: { ...text, writable: true },
     ...methods,
+    toJSON: { ...methods.toJSON, passThis: true },
+  },
+  calledFromCpp: {
+    /** What the own properties of a thrown error hold, each for its first read. */
+    lazyCode: { returns: b.any, ...js },
+    lazyMessage: { returns: b.any, capability: "heap", throws: true },
+    lazyRequireStack: { returns: b.any, capability: "heap", throws: true },
+    lazyStack: { returns: b.any, capability: "heap", throws: true },
+  },
+  calledFromRust: {
+    /** Gives an error that is about to be thrown the own properties that Node.js gives its error. `ResolveMessage.cpp` has it. */
+    defineNodeErrorProperties: { args: { hasRequireStack: b.bool } },
   },
 });
 

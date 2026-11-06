@@ -16,6 +16,7 @@ use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
+use crate::resolve_message::{NotFound, ResolveFailure};
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
@@ -3956,25 +3957,25 @@ pub fn process_fetch_log(
     log: &mut bun_ast::Log,
     err: crate::CrateError,
 ) -> JSValue {
-    use crate::{BuildMessage, ResolveMessage};
+    use crate::BuildMessage;
 
     // Helper: on error, swap in the pending exception value.
     let take =
         |r: JsResult<JSValue>| -> JSValue { r.unwrap_or_else(|e| global_this.take_exception(e)) };
 
-    // `ResolveMessage::create` takes raw `&[u8]` and stores them verbatim, so
+    // `NotFound::new` takes raw `&[u8]` and stores them verbatim, so
     // we must convert to UTF-8 here.
     let referrer_utf8 = referrer.to_utf8();
 
     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
-        take(match msg.metadata {
+        match msg.metadata {
             bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
-                BuildMessage::create(global_this, msg)
+                take(BuildMessage::create(global_this, msg))
             }
             bun_ast::Metadata::Resolve(_) => {
-                ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+                NotFound::new(msg, referrer_utf8.slice()).into_thrown_js(global_this)
             }
-        })
+        }
     };
 
     match log.msgs.len() {
@@ -5725,15 +5726,15 @@ impl VirtualMachine {
     }
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with
-    /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
-    /// resolution failure to be thrown/rejected with `value`.
+    /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(failure))` is a
+    /// resolution failure, to be thrown/rejected with `failure.into_thrown_js()`.
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
         mut query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
-    ) -> JsResult<Result<bun_core::String, JSValue>> {
+    ) -> JsResult<Result<bun_core::String, ResolveFailure>> {
         if let Some(resolved) = Self::resolve_with_on_resolve::<IS_A_FILE_PATH>(
             global,
             specifier,
@@ -5762,10 +5763,10 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         same_is_no_answer: bool,
-    ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+    ) -> JsResult<Option<Result<bun_core::String, ResolveFailure>>> {
         let answer = match run_on_resolve(global, specifier, source)? {
             None => return Ok(None),
-            Some(Err(error)) => return Ok(Some(Err(error))),
+            Some(Err(error)) => return Ok(Some(Err(ResolveFailure::Thrown(error)))),
             Some(Ok(answer)) => answer,
         };
         if same_is_no_answer && answer.eql(specifier) {
@@ -5786,7 +5787,7 @@ impl VirtualMachine {
                 || match run_on_resolve(global, &answer, source)? {
                     None => false,
                     Some(Ok(_)) => true,
-                    Some(Err(error)) => return Ok(Some(Err(error))),
+                    Some(Err(error)) => return Ok(Some(Err(ResolveFailure::Thrown(error)))),
                 });
         let global_cache = if is_own {
             bun_resolver::GlobalCache::disable
@@ -5815,7 +5816,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         global_cache: bun_resolver::GlobalCache,
-    ) -> JsResult<Result<bun_core::String, JSValue>> {
+    ) -> JsResult<Result<bun_core::String, ResolveFailure>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
@@ -5830,15 +5831,11 @@ impl VirtualMachine {
                 crate::CrateError::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
                 import_kind,
             );
-            let msg = bun_ast::Msg {
-                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
-                ..Default::default()
-            };
-            return Ok(Err(crate::ResolveMessage::create(
-                global,
-                &msg,
+            let msg = crate::ResolveMessage::msg(printed, specifier_utf8.slice(), import_kind);
+            return Ok(Err(ResolveFailure::NotFound(NotFound::new(
+                msg,
                 source_utf8.slice(),
-            )?));
+            ))));
         }
 
         let mut result = ResolveFunctionResult::default();
@@ -5911,8 +5908,7 @@ impl VirtualMachine {
             // (sole impl — see `VirtualMachine::package_manager`).
             unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = &raw mut log };
         }
-        // Note: the restore must fire on every exit
-        // (including `?` from `ResolveMessage::create` below), so the VM's
+        // Note: the restore must fire on every exit, so the VM's
         // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
         // a drop guard (no captured borrows) so the unique `&mut *jsc_vm_ptr`
         // below isn't kept alive across the closure. `BackRef` + `as_mut`
@@ -5977,15 +5973,7 @@ impl VirtualMachine {
                         err,
                         import_kind,
                     );
-                    bun_ast::Msg {
-                        data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
-                        metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
-                            specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                            import_kind,
-                            err: bun_ast::Error::ModuleNotFound,
-                        }),
-                        ..Default::default()
-                    }
+                    crate::ResolveMessage::msg(printed, specifier_utf8.slice(), import_kind)
                 }
             };
             // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
@@ -6000,11 +5988,10 @@ impl VirtualMachine {
                 notes.push(logged.data.clone());
             }
             msg.notes = notes.into_boxed_slice();
-            return Ok(Err(crate::ResolveMessage::create(
-                global,
-                &msg,
+            return Ok(Err(ResolveFailure::NotFound(NotFound::new(
+                msg,
                 source_utf8.slice(),
-            )?));
+            ))));
         }
 
         if let Some(query) = query_string {

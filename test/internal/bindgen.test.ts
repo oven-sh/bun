@@ -2617,7 +2617,7 @@ describe("classes", () => {
       expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "nonConfigurableCode")).toEqual({ enumerable: false, configurable: false });
       expect(attributes(prototype, "enumerableCode")).toEqual({ enumerable: true, configurable: true });
-      expect(Object.keys(prototype)).toEqual(["enumerableCode", "name"]);
+      expect(Object.keys(prototype)).toEqual(["enumerableCode"]);
       expect(attributes(TestCounter.prototype, "count")).toEqual({ enumerable: true, configurable: false });
       expect(attributes(TestCounter.prototype, "increment")).toEqual({ enumerable: true, configurable: false });
     });
@@ -2689,10 +2689,16 @@ describe("classes", () => {
       expect(String(error)).toBe("TestError: error 4");
     });
 
-    it("with prototypeBase, the prototype's name is the class's", () => {
+    it("with prototypeBase, the prototype's name is the class's, with the attributes of Error.prototype.name", () => {
       expect(Object.getOwnPropertyDescriptor(TestError.prototype, "name")).toEqual({
+        ...Object.getOwnPropertyDescriptor(Error.prototype, "name"),
         value: "TestError",
-        writable: false,
+      });
+      const error = new TestError(4);
+      error.name = "Renamed";
+      expect(Object.getOwnPropertyDescriptor(error, "name")).toEqual({
+        value: "Renamed",
+        writable: true,
         enumerable: true,
         configurable: true,
       });

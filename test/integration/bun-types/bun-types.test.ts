@@ -685,7 +685,6 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().code is string | undefined, not string",
       "resolve_message.bind.ts: new ResolveMessage().column is not published",
       "resolve_message.bind.ts: new ResolveMessage().line is not published",
-      "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
       "resolve_message.bind.ts: new ResolveMessage().stack is not published",
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
       // Only compiled code calls it.

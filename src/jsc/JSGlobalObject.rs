@@ -1351,7 +1351,7 @@ extern "C" fn Zig__GlobalObject__resolve(
         crate::virtual_machine::ResolveMode::Esm,
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
-        Ok(Err(value)) => *res = ErrorableString::err(value),
+        Ok(Err(failure)) => *res = ErrorableString::err(failure.into_thrown_js(global)),
         Err(_) => debug_assert!(global.has_exception()),
     }
 }
@@ -1406,7 +1406,7 @@ extern "C" fn Bun__resolveWithOnResolve(
     ) {
         Ok(None) => return false,
         Ok(Some(Ok(path))) => *res = ErrorableString::ok(path),
-        Ok(Some(Err(value))) => *res = ErrorableString::err(value),
+        Ok(Some(Err(failure))) => *res = ErrorableString::err(failure.into_thrown_js(global)),
         Err(_) => debug_assert!(global.has_exception()),
     }
     true

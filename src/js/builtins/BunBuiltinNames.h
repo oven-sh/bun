@@ -185,6 +185,7 @@ using namespace JSC;
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
+    macro(requireStack) \
     macro(resolveSync) \
     macro(resumeUnlessFlowing) \
     macro(runTail) \

@@ -70,6 +70,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{EncodedSlice, String as BunString, StringView, strings};
+use bun_jsc::resolve_message::{NotFound, ResolveFailure};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
@@ -772,7 +773,7 @@ pub(crate) fn shrink(cx: &mut JsScope<'_>) {
 enum Resolved {
     Found(BunString),
     /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.
-    NotFound(JSValue),
+    NotFound(NotFound),
 }
 
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
@@ -786,7 +787,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
             Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
         }
         Resolved::Found(value) => Ok(value),
-        Resolved::NotFound(err) => Err(ctx.throw_value(err)),
+        Resolved::NotFound(not_found) => Err(ctx.throw_value(not_found.into_thrown_js(ctx))),
     }
 }
 
@@ -834,11 +835,9 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         mode,
     )? {
         Ok(path) => path,
-        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
-            return Ok(Resolved::NotFound(err));
-        }
+        Err(ResolveFailure::NotFound(not_found)) => return Ok(Resolved::NotFound(not_found)),
         // e.g. an onResolve plugin returned an invalid result
-        Err(err) => return Err(ctx.throw_value(err)),
+        Err(ResolveFailure::Thrown(err)) => return Err(ctx.throw_value(err)),
     };
 
     if !query_string.is_empty() {

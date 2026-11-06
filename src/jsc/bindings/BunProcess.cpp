@@ -2488,7 +2488,14 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
             return jsUndefined();
     }
 
-    if (!type.isNull() && type.isObject() && !isJSArray(type)) {
+    // `typeof type === 'object' && !ArrayIsArray(type)`: a function is the `ctor`, and a Proxy of an array is an array.
+    bool typeIsOptions = type.isObject() && !type.isCallable();
+    if (typeIsOptions) {
+        typeIsOptions = !JSC::isArray(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (typeIsOptions) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -2511,8 +2518,6 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     if (!type.isUndefined()) {
         Bun::V::validateString(scope, globalObject, type, "type"_s);
         RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        type = jsString(vm, String("Warning"_s));
     }
 
     if (code.isCallable()) {
@@ -2528,16 +2533,18 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     if (warning.isString()) {
         auto s = warning.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
-        errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+        // Not createError(): it asserts that the message is not empty, and `new Error("")` is valid.
+        errorInstance = ErrorInstance::create(vm, globalObject->errorStructure(), s, JSValue());
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L196-L198
+        if (!type.toBoolean(globalObject)) type = jsString(vm, String("Warning"_s));
+        errorInstance->putDirect(vm, vm.propertyNames->name, type);
+        if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code);
+        if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
         return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning));
     }
-
-    if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
-    if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
 
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }

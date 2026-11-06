@@ -612,12 +612,12 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
-async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
+async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = [], env = bunEnv) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -2721,6 +2721,64 @@ describe.concurrent("resetModules", () => {
       2,
       args,
       oneWorkerEnv,
+    );
+  });
+
+  test.each(everyMode)("a module that was being transpiled at the reset is read again %j", async args => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export { text } from "./b.ts"; export { text as cjs } from "./b.cjs"; import "./c.ts";`,
+        "b.ts": `export const text = "v1";`,
+        "b.cjs": `exports.text = "v1";`,
+        "c.ts": `export {};`,
+        "alone.ts": `export {};`,
+        "earlier.test.ts": anEarlierTestFile,
+        "reset.test.ts": `
+          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+          import { expect, jest, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const path = name => join(import.meta.dir, name);
+          const cached = (...names) => names.map(name => isolatedModuleCacheSourceType(path(name)));
+          // Without a source cache, nothing is ever in it.
+          const inCache = (...types) => types.map(type => (${args.length > 0} ? type : null));
+          let whileLoading;
+          let atReset;
+          // The imports of a.ts are requested in turn, so the transpiles of b.ts and b.cjs are out when c.ts is resolved.
+          Bun.plugin({ setup(build) { build.onResolve({ filter: /c\\.ts$/ }, () => void whileLoading?.()); } });
+
+          test.each([["v2", jest], ["v3", vi]])("a dependency, %s", async (text, api) => {
+            api.resetModules();
+            whileLoading = () => {
+              whileLoading = undefined;
+              atReset = cached("a.ts", "b.ts", "b.cjs");
+              api.resetModules();
+            };
+            await import("./a.ts");
+            expect(atReset).toEqual(inCache("BunTranspiledModule", null, null));
+            // c.ts was asked for after the reset.
+            expect(cached("b.ts", "b.cjs", "c.ts")).toEqual(inCache(null, null, "BunTranspiledModule"));
+            writeFileSync(path("b.ts"), 'export const text = "' + text + '";');
+            writeFileSync(path("b.cjs"), 'exports.text = "' + text + '";');
+            const again = await import("./a.ts");
+            expect([again.text, again.cjs]).toEqual([text, text]);
+            expect(cached("a.ts", "b.ts", "b.cjs")).toEqual(inCache("BunTranspiledModule", "BunTranspiledModule", "Program"));
+          });
+
+          test("the import() itself", async () => {
+            const loading = import("./alone.ts");
+            expect(cached("alone.ts")).toEqual([null]);
+            jest.resetModules();
+            await loading;
+            expect(cached("alone.ts")).toEqual([null]);
+          });
+        `,
+      },
+      4,
+      args,
+      // Either of these transpiles on the JS thread, where no transpile is out at a reset.
+      { ...oneWorkerEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined, NODE_COMPILE_CACHE: undefined },
     );
   });
 });

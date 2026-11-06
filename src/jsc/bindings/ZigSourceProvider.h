@@ -52,6 +52,7 @@ public:
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
+    bool m_fromEarlierGeneration { false };
     // Set by vi.resetModules() once it has kept this source, which it asks about at every call.
     bool m_isExternalizedByVitest { false };
     // Set by IsolatedModuleCache::insert() and compared by lookup().
@@ -67,6 +68,7 @@ private:
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
+        , m_fromEarlierGeneration(resolvedSource.from_earlier_generation)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {

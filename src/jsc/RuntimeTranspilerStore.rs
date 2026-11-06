@@ -197,7 +197,7 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    /// Goes up between the test files of `bun test --isolate`. Only the JS thread uses it.
+    /// Goes up between the test files of `bun test --isolate` and at a `resetModules()`. Only the JS thread uses it.
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
@@ -584,6 +584,15 @@ impl TranspilerJob {
                     in_standalone_executable,
                     &self.path_text,
                 );
+                // SAFETY: as above; the count is a field of the store beside its job slots, so it is not in `self`.
+                let generation_number = unsafe {
+                    (*vm)
+                        .transpiler_store
+                        .generation_number
+                        .load(Ordering::SeqCst)
+                };
+                resolved_source.from_earlier_generation =
+                    self.generation_number != generation_number;
                 (out, Ok(resolved_source))
             }
         };

@@ -19,6 +19,8 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
+    /// Dispatched before a `resetModules()` that ran since, or for a test file that is over: not for `IsolatedModuleCache`.
+    pub from_earlier_generation: bool,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,
 
@@ -160,5 +162,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; from_earlier_generation @ 49, is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

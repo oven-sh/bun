@@ -48,7 +48,7 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
-    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource)
+    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource || provider.m_fromEarlierGeneration)
         return;
     provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
     WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
@@ -76,9 +76,11 @@ void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zi
 
 void IsolatedModuleCache::dropForReset(JSC::VM& vm, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps)
 {
-    WebCore::clientData(vm)->isolationSourceProviderCache.removeIf([&](auto& entry) {
+    auto* clientData = WebCore::clientData(vm);
+    clientData->isolationSourceProviderCache.removeIf([&](auto& entry) {
         return !keeps(entry.key, *static_cast<Zig::SourceProvider*>(entry.value.get()));
     });
+    Bun__VM__didResetModules(clientData->bunVM);
 }
 
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)

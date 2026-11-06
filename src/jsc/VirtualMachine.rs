@@ -6130,6 +6130,14 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// `jest.resetModules()` or `vi.resetModules()` ran. See `RuntimeTranspilerStore::generation_number`.
+    #[unsafe(export_name = "Bun__VM__didResetModules")]
+    pub extern "C" fn did_reset_modules(&self) {
+        self.transpiler_store
+            .generation_number
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+    }
+
     #[unsafe(export_name = "Bun__VM__isMainModule")]
     pub extern "C" fn is_main_module(&self, key: &bun_core::String) -> bool {
         self.main().is_some_and(|main| key.eql_utf8(main))

@@ -64,7 +64,7 @@ public:
     // the file or the same `pluginContents` and loader, with the same test globals ("bun:test" or "vitest").
     static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key, const CodeString* pluginContents = nullptr);
 
-    // No-op unless isTagCacheable(provider.m_tag) and !provider.m_dependsOnMoreThanSource.
+    // No-op unless isTagCacheable(provider.m_tag), !provider.m_dependsOnMoreThanSource and !provider.m_fromEarlierGeneration.
     // Replaces any existing entry, since two in-flight fetches of a key both miss and both insert.
     static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
 
@@ -79,7 +79,7 @@ public:
     // provider that is cached for the key stays.
     static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
 
-    // For resetModules(): evicts every entry that `keeps` doesn't claim.
+    // For resetModules(): evicts every entry that `keeps` doesn't claim. What a transpile that is out brings back is not cached either.
     static void dropForReset(JSC::VM&, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps);
 
     static void evict(JSC::VM&, const WTF::String& key);

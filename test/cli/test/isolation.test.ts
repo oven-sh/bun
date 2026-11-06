@@ -2370,11 +2370,14 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
         });
       `,
       "b-realm.test.ts": `
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
         import { expect, test } from "bun:test";
         import { join } from "node:path";
         test("gets the module that the finished file started to load", async () => {
           const { text } = await new Function("path", "return import(path)")(join(import.meta.dir, "m.ts"));
           expect(text).toBe("m");
+          // d.ts was transpiled for the finished file, so it is not cached as made for this one.
+          expect(isolatedModuleCacheSourceType(join(import.meta.dir, "d.ts"))).toBeNull();
         });
       `,
     });

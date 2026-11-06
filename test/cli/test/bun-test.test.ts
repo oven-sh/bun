@@ -2245,6 +2245,43 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a compiled hook reads a free test global where the file around it does", async () => {
+    const result = await compiled(
+      {
+        "src/useRunner.ts": `
+          import { mock } from "bun:test";
+          import { useState } from "react";
+          export function useRunner(own: unknown) {
+            const [factor] = useState(2);
+            const seen = { isOwn: expect === own, describe: typeof describe, factor, mock: typeof mock };
+            return seen;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { test } from "bun:test";
+          import { useRunner } from "./src/useRunner";
+          test("which are compiled", () => {
+            const all = { useRunner };
+            const before = useRunner(null);
+            const own = (globalThis.expect = () => {});
+            const after = useRunner(own);
+            delete globalThis.expect;
+            ${printCompiled.replace(`.join(" ")`, `.concat(JSON.stringify([before, after])).join(" ")`)}
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    const seen = { describe: "function", factor: 2, mock: "function" };
+    expect(result.compiled).toBe(
+      `useRunner ${JSON.stringify([
+        { isOwn: false, ...seen },
+        { isOwn: true, ...seen },
+      ])}`,
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

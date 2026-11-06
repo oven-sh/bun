@@ -2172,7 +2172,7 @@ impl<'a> Parser<'a> {
                 .items()
                 .iter()
                 .any(|record| bun_ast::import_record::is_test_module(record.path.text));
-            // There each name is a property of `globalThis`, which a free name reads.
+            // `globals = "vitest"` made each name a property of `globalThis`, and the free name reads that property.
             if imports_test_module && p.options.features.test_globals_are_properties {
                 break 'outer;
             }
@@ -2212,9 +2212,9 @@ impl<'a> Parser<'a> {
                 import_path,
             );
 
-            // A script can put a function of its own on `globalThis` at any time, and a module that imports a test
-            // module gets that one. So each read of the name looks there when it runs, and the export is bound to a
-            // name of its own for when nothing is there.
+            // A module that imports a test module gets the function that a script put on `globalThis` under the
+            // name. A script can do that at any time, so each read looks there when it runs. The export is bound to a
+            // name of its own, for a read that finds nothing there.
             if imports_test_module {
                 for (name, global) in used.iter_mut() {
                     let export =

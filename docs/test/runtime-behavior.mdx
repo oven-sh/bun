@@ -312,7 +312,7 @@ You can also import them explicitly:
 import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach, jest, vi } from "bun:test";
 ```
 
-If a file imports only some of them, the rest are still available as globals.
+If a file imports only some of them, the rest are still available as globals. A global of the same name that a script has set [takes their place](/test/configuration#globals).
 
 `console.timeStamp` isn't defined in tests, as in Jest and Vitest. React's development build logs every render to the browser's profiler if it finds that function, and reads into the components' props to do so. A getter that throws there breaks the render, and every later one fails with "Should not already be working."
 

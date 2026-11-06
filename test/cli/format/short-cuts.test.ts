@@ -4543,6 +4543,46 @@ describe("scripts that are too much for the quick way", () => {
     expect(short.memory).toBeLessThan(long.memory + 700);
   });
 
+  // A reading of the text that is tried and given up leaves nothing behind.
+  describe("after a trial that fails", () => {
+    const afterPredicate = ["function f() {}", "class A {\n  m() {}\n}", "y = () => {};", "y = { m() {} };"];
+    describe("Flow", () =>
+      expectSame(
+        "a.js",
+        [
+          ...afterPredicate.map(next => `x = a ? (b) : c % checks;\n${next}\n`),
+          "x = a ? (b) : (d: e) => f % checks;\n",
+          "x = a ? (b) : c % checks ? (d: e) => f : g;\n",
+          "x = <T>(a): b % checks;\nfunction f() {}\n",
+        ].map(text => `// @flow\n${text}`),
+        [[]],
+      ));
+  });
+
+  // One trial can hold another. What is given up is read again, but not tried again, and not without end.
+  describe("trials in trials", () => {
+    describe("TypeScript", () =>
+      expectSame(
+        "a.ts",
+        [40, 300].flatMap(depth => [
+          nest("<T>(a = ", "1", ")", depth),
+          nest("<T>(a = ", "<T>() => @", ")", depth),
+          nest("f < { [a = ", "1", "]: 1 }", depth),
+          nest("a ? (b) : (c = ", "1", ")", depth),
+          `type A = ${"T extends (infer U extends ".repeat(depth)}X${" ? 1 : 2) ? 1 : 2".repeat(depth)};\n`,
+          `x = [${"a < b, ".repeat(depth * 40)}];\n`,
+          `x = ${"a < ".repeat(depth * 40)}b;\n`,
+        ]),
+        [[]],
+      ));
+    describe("Flow", () =>
+      expectSame(
+        "a.js",
+        [40, 300].map(depth => `// @flow\n${nest("<T>(a = ", "1", ")", depth)}`),
+        [[]],
+      ));
+  });
+
   describe("escapes beyond the last character", () =>
     expectSame(
       "a.js",

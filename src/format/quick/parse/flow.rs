@@ -15,6 +15,7 @@ use crate::parse::core::SCOPE_FUNCTION;
 use crate::words::w;
 use crate::{Quick, R, Words, rare};
 
+#[derive(Clone, Copy)]
 pub(crate) struct ParseFlow {
     /// `A => B` without parentheses is not a function type here: in the return type of an arrow function
     pub(crate) no_anon_function_type: i32,
@@ -204,7 +205,7 @@ impl Quick {
             || self.lexer.tok == tk::This
         {
             let mut kind: i32 = 0;
-            let m = self.mark();
+            let trial = self.begin_trial();
             let w = self.word();
             if w == w::Implies || w == w::Asserts {
                 self.next()?;
@@ -224,7 +225,7 @@ impl Quick {
                     // `asserts is A`; a name on the next line, which the long way takes for what is asserted
                     return Err(self.text_refuse());
                 } else {
-                    self.rewind(m);
+                    self.abandon(&trial)?;
                 }
             }
             if self.lexer.tok == tk::Name || self.lexer.tok == tk::This {
@@ -239,7 +240,6 @@ impl Quick {
                 if self.word() == w::Is {
                     self.not_in_babel()?;
                     self.next()?;
-                    self.unmark(m);
                     let type_ = self.flow_parse_type()?;
                     return Ok(self.node2(
                         k::TypePredicate | (kind << SUB_SHIFT),
@@ -254,7 +254,6 @@ impl Quick {
                     return Err(self.text_refuse());
                 }
                 if kind == TP_ASSERTS {
-                    self.unmark(m);
                     return Ok(self.node2(
                         k::TypePredicate | (kind << SUB_SHIFT),
                         start,
@@ -264,7 +263,7 @@ impl Quick {
                     ));
                 }
             }
-            self.rewind(m);
+            self.abandon(&trial)?;
         }
         return self.flow_parse_type();
     }
@@ -310,7 +309,7 @@ impl Quick {
                 let mut flags: i32 = 0;
                 if self.lexer.tok == tk::Extends {
                     // `infer T extends U ? a : b` is a conditional type with `infer T` in front, unless none can stand here
-                    let m = self.mark();
+                    let trial = self.begin_trial();
                     self.next()?;
                     let bound_start = self.lexer.tok_start;
                     let saved = self.parse_flow.flow_no_conditional_types;
@@ -318,9 +317,8 @@ impl Quick {
                     let type_ = self.flow_parse_union()?;
                     self.parse_flow.flow_no_conditional_types = saved;
                     if saved == 0 && self.lexer.tok == tk::Question {
-                        self.rewind(m);
+                        self.abandon(&trial)?;
                     } else {
-                        self.unmark(m);
                         bound =
                             self.node1(k::TypeAnnotation, bound_start, self.lexer.prev_end, type_);
                         flags = F_EXTENDS_BOUND;
@@ -2315,10 +2313,10 @@ impl Quick {
 
     /// The current token is `declare`. 0 if it is just a name here.
     pub(crate) fn flow_parse_declare(&mut self, start: i32) -> R<i32> {
-        let m = self.mark();
+        let trial = self.begin_trial();
         self.next()?;
         if self.lexer.tok_nl != 0 {
-            self.rewind(m);
+            self.abandon(&trial)?;
             return Ok(0);
         }
         let result: i32;
@@ -2397,9 +2395,7 @@ impl Quick {
             result = self.flow_parse_declared(start, MOD_DECLARE)?;
         }
         if result == 0 {
-            self.rewind(m);
-        } else {
-            self.unmark(m);
+            self.abandon(&trial)?;
         }
         return Ok(result);
     }
@@ -2766,7 +2762,7 @@ impl Quick {
             return Ok(0);
         }
         // is there a `{` on the line of the closing parenthesis?
-        let m = self.mark();
+        let saved = self.save();
         self.next()?;
         let mut depth: i32 = 0;
         loop {
@@ -2778,14 +2774,14 @@ impl Quick {
                     break;
                 }
             } else if self.lexer.tok == tk::EOF {
-                self.rewind(m);
+                self.restore(saved);
                 return Ok(0);
             }
             self.next()?;
         }
         self.next()?;
         let is_match = self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0;
-        self.rewind(m);
+        self.restore(saved);
         if !is_match {
             return Ok(0);
         }
@@ -2930,23 +2926,21 @@ impl Quick {
             }
             w::Async => {
                 // async component
-                let m = self.mark();
+                let saved = self.save();
                 self.next()?;
                 if self.lexer.tok_nl == 0
                     && self.word() == w::Component
                     && self.peek_on_same_line()? == tk::Name
                 {
-                    self.unmark(m);
                     return self.flow_parse_component(start, k::ComponentDeclaration, F_ASYNC);
                 }
                 if self.lexer.tok_nl == 0
                     && self.word() == w::Hook
                     && self.peek_on_same_line()? == tk::Name
                 {
-                    self.unmark(m);
                     return self.flow_parse_hook(start, F_ASYNC);
                 }
-                self.rewind(m);
+                self.restore(saved);
             }
             _ => {}
         }
@@ -3004,10 +2998,10 @@ impl Quick {
             || (self.lexer.tok == tk::Name && !self.is_kw(kw::From));
         if self.is_kw(kw::From) {
             // `import type from from "x"`
-            let m = self.mark();
+            let at_from = self.save();
             self.next()?;
             is_kind = self.is_kw(kw::From);
-            self.rewind(m);
+            self.restore(at_from);
         }
         if is_kind {
             if self.lexer.tok == tk::Mul && kind == IK_TYPE {

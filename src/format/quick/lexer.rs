@@ -16,7 +16,7 @@ use bun_core::strings;
 /// What [`Quick::save`] gives.
 #[derive(Clone, Copy)]
 pub(crate) struct Saved {
-    pos: i32,
+    pub(crate) pos: i32,
     tok: i32,
     start: i32,
     end: i32,
@@ -42,10 +42,6 @@ pub(crate) struct Lexer {
     pub(crate) c: Vec<i32>,
     pub(crate) c_count: i32,
     pub(crate) c_base: i32,
-    // ---- going back: a lookahead saves these and restores them
-    /// The same for a parser that tries a reading of the text and may have to give it up. These nest.
-    pub(crate) marks: Vec<i32>,
-    pub(crate) marks_top: i32,
     /// Length of the white space character that starts with the non-ASCII byte at p, or 0. Line separators count + 16.
     /// Babel with the plugin "flow_comments": what stands in `/*:: .. */`, `/*: .. */` and `/* flow-include .. */` is code.
     pub(crate) flow_comments: bool,
@@ -69,8 +65,6 @@ impl Lexer {
             c: zeros(4096),
             c_count: 0,
             c_base: 0,
-            marks: zeros(144),
-            marks_top: 0,
             flow_comments: false,
             flow_comment_end: -1,
             lenient_jsx_text: false,
@@ -297,7 +291,6 @@ impl Quick {
         self.lexer.tok_flags = 0;
         self.lexer.tok_kw = 0;
         self.lexer.c_base = self.lexer.c_count;
-        self.lexer.marks_top = 0;
         // #! line
         if self.t.at(self.lexer.pos) == 35 && self.t.at(self.lexer.pos + 1) == 33 {
             let mut p = self.lexer.pos;
@@ -319,7 +312,8 @@ impl Quick {
         Ok(())
     }
 
-    /// Where the lexer stands, for a look ahead over a few tokens: [`Quick::restore`] goes back there.
+    /// Where the lexer stands, for a look ahead over a few tokens: [`Quick::restore`] goes back there. Between the two nothing is called but the lexer: whoever
+    /// calls a parser on trial takes `begin_trial()`.
     pub(crate) fn save(&self) -> Saved {
         Saved {
             pos: self.lexer.pos,
@@ -344,46 +338,6 @@ impl Quick {
         self.lexer.tok_kw = saved.kw;
         self.lexer.prev_end = saved.prev;
         self.lexer.c_count = saved.comments;
-    }
-
-    /// Remembers where the lexer stands. Every mark() is followed by rewind() or unmark() with its result.
-    pub(crate) fn mark(&mut self) -> i32 {
-        let m = self.lexer.marks_top;
-        if m + 9 > (self.lexer.marks.len() as i32) {
-            self.make_room(|q| &mut q.lexer.marks, m + 9);
-        }
-        self.lexer.marks.put(m, self.lexer.pos);
-        self.lexer.marks.put(m + 1, self.lexer.tok);
-        self.lexer.marks.put(m + 2, self.lexer.tok_start);
-        self.lexer.marks.put(m + 3, self.lexer.tok_end);
-        self.lexer.marks.put(m + 4, self.lexer.tok_nl);
-        self.lexer.marks.put(m + 5, self.lexer.tok_flags);
-        self.lexer.marks.put(m + 6, self.lexer.tok_kw);
-        self.lexer.marks.put(m + 7, self.lexer.prev_end);
-        self.lexer.marks.put(m + 8, self.lexer.c_count);
-        self.lexer.marks_top = m + 9;
-        self.keep_place(m / 9);
-        return m;
-    }
-
-    /// Goes back to the mark, and forgets it and all later ones.
-    pub(crate) fn rewind(&mut self, m: i32) {
-        self.lexer.pos = self.lexer.marks.at(m);
-        self.lexer.tok = self.lexer.marks.at(m + 1);
-        self.lexer.tok_start = self.lexer.marks.at(m + 2);
-        self.lexer.tok_end = self.lexer.marks.at(m + 3);
-        self.lexer.tok_nl = self.lexer.marks.at(m + 4);
-        self.lexer.tok_flags = self.lexer.marks.at(m + 5);
-        self.lexer.tok_kw = self.lexer.marks.at(m + 6);
-        self.lexer.prev_end = self.lexer.marks.at(m + 7);
-        self.lexer.c_count = self.lexer.marks.at(m + 8);
-        self.lexer.marks_top = m;
-        self.go_back_to_place(m / 9);
-    }
-
-    /// Forgets the mark and all later ones.
-    pub(crate) fn unmark(&mut self, m: i32) {
-        self.lexer.marks_top = m;
     }
 
     /// The current token starts with `<` or `>`: takes that one character for the token and reads the next token behind it.

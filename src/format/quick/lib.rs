@@ -532,7 +532,11 @@ pub(crate) fn zeros<T: Default + Clone>(length: i32) -> Vec<T> {
 /// No buffer has more items than this: bytes of text, words of the tree or of the document, entries of a stack. So a position or a length takes 26 bits, which is what
 /// the narrowest place has that packs one with something else (`op::Nop` and `op::IndentIfBreakOpen` of doc.rs), and sums of a few of them are far from the largest number.
 /// (The tests of this crate come to the limits with small texts.)
-pub(crate) const LARGEST: i32 = if cfg!(test) { 1 << 18 } else { 1 << 26 };
+pub(crate) const LARGEST: i32 = if cfg!(test) { 1 << 19 } else { 1 << 26 };
+
+/// See [`Quick::waste`]. (Real code comes to a fraction of a unit for each byte.)
+const WASTE_FOR_A_BYTE: i32 = 8;
+const WASTE_FOR_A_TEXT: i32 = 1 << 16;
 
 /// How long a buffer of `length` items becomes that has to hold `need` of them, if it may. It becomes much larger: memory that is not written to costs nothing.
 pub(crate) fn larger(length: i32, need: i32) -> Option<i32> {
@@ -599,6 +603,9 @@ pub struct Quick {
     stack_check: bun_core::StackCheck,
     /// Not 0: why the run is over, see end_run().
     ended: i32,
+    /// How much work of this run has been for nothing, and how much may be: see waste().
+    pub(crate) wasted: i32,
+    pub(crate) allowance: i32,
     pub(crate) dialect: Dialect,
     had_bom: bool,
     redone: i32,
@@ -627,6 +634,7 @@ pub struct Quick {
     pub(crate) parse_flow: parse::flow::ParseFlow,
     pub(crate) parse_typescript: parse::typescript::ParseTypescript,
     pub(crate) parse: parse::core::Parse,
+    pub(crate) parse_stacks: parse::core::ParseStacks,
     pub(crate) print_embed: print::embed::PrintEmbed,
     pub(crate) print_jest_each: print::jest_each::PrintJestEach,
     pub(crate) print_binaryish: print::binaryish::PrintBinaryish,
@@ -659,6 +667,8 @@ impl Quick {
             which_rare: Cell::new(rare::OTHER),
             stack_check: bun_core::StackCheck::default(),
             ended: why::NONE,
+            wasted: 0,
+            allowance: 0,
             dialect: Dialect::of_name(Language::JavaScript, b""),
             had_bom: false,
             redone: 0,
@@ -686,6 +696,7 @@ impl Quick {
             parse_flow: parse::flow::ParseFlow::new(),
             parse_typescript: parse::typescript::ParseTypescript::new(),
             parse: parse::core::Parse::new(),
+            parse_stacks: parse::core::ParseStacks::new(),
             print_embed: print::embed::PrintEmbed::new(),
             print_jest_each: print::jest_each::PrintJestEach::new(),
             print_binaryish: print::binaryish::PrintBinaryish::new(),
@@ -846,6 +857,26 @@ impl Quick {
     pub(crate) fn end_run(&mut self, why: i32) {
         self.ended = why;
         self.stack_check = bun_core::StackCheck::exhausted();
+    }
+
+    /// A text of `length` bytes is about to be formatted.
+    pub(crate) fn allow_waste_for(&mut self, length: i32) {
+        self.wasted = 0;
+        self.allowance = length
+            .saturating_mul(WASTE_FOR_A_BYTE)
+            .saturating_add(WASTE_FOR_A_TEXT);
+    }
+
+    /// Something has been tried and given up: so many bytes will be read again, so many words of the tree or of the document are dropped. One trial can hold another,
+    /// so there is no saying how often a byte is read at worst. What is known is the sum, which is taken where something fails, and a text whose trials cost many
+    /// times what the text itself costs is left to the long way.
+    pub(crate) fn waste(&mut self, amount: i32) -> R<()> {
+        self.wasted = self.wasted.saturating_add(amount);
+        if self.wasted > self.allowance {
+            self.end_run(why::TOO_LARGE);
+            return Err(self.stop(why::TOO_LARGE));
+        }
+        Ok(())
     }
 
     /// grow() for a buffer that is kept whole. Whoever calls this writes without a look at what has become of it.

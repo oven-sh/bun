@@ -548,6 +548,7 @@ impl Quick {
             self.print_nothing();
             return Ok(());
         }
+        self.allow_waste_for(length);
         self.reset_ast(length * 2 + 1024);
         self.reset_doc(length * 2 + 4096);
         self.reset_filters();
@@ -570,7 +571,7 @@ impl Quick {
         Ok(())
     }
 
-    /// Why the last file was refused: 1 a syntax error, 4 a mistake in here, 5 the output is too large, 6 the stack is full, 7 something rare, 8 code in another language.
+    /// Why the last file was refused: 1 a syntax error, 4 a mistake in here, 5 the text, what is made of it or what is tried on it is too much, 6 the stack is full, 7 something rare, 8 code in another language.
     pub fn why(&self) -> i32 {
         self.why.get()
     }
@@ -646,5 +647,9 @@ impl Quick {
     }
     pub fn set_no_guests(&mut self, value: bool) {
         self.no_guests = value;
+    }
+    /// How much work of the last run was for nothing: see `waste()`.
+    pub fn wasted(&self) -> i32 {
+        self.wasted
     }
 }

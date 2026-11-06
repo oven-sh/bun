@@ -18,13 +18,18 @@ use crate::fast::{
 use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
 use crate::lexer::{
-    C_END, C_FLAGS, C_ID_PART, C_START, C_STRIDE, CF_BLOCK, CF_CLAIMED, CT, PREC, kw, tk,
+    C_END, C_FLAGS, C_ID_PART, C_START, C_STRIDE, CF_BLOCK, CF_CLAIMED, CT, PREC, Saved, kw, tk,
 };
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
-use crate::parse::typescript::{PARAMETERS_OF_CONSTRUCTOR, PARAMETERS_OF_METHOD, PARAMETERS_PLAIN};
-use crate::{Bytes, Numbers, Quick, R, Stop, Words, rare, why, zeros};
+use crate::parse::flow::ParseFlow;
+use crate::parse::typescript::{
+    PARAMETERS_OF_CONSTRUCTOR, PARAMETERS_OF_METHOD, PARAMETERS_PLAIN, ParseTypescript,
+};
+use crate::{Bytes, Numbers, Quick, R, Stop, Words, larger, rare, why, zeros};
 
+/// What the parser knows, but for what is in lists ([`ParseStacks`]). A reading of the text on trial goes back to a copy of it: see [`Trial`].
+#[derive(Clone, Copy)]
 pub(crate) struct Parse {
     // ---- context
     pub(crate) in_function: i32,
@@ -73,10 +78,8 @@ pub(crate) struct Parse {
     pub(crate) wrap_kind: i32,
     /// F_DECIDED, if that goes for something in the blocks
     pub(crate) wrap_decided: i32,
-    /// Blocks that have been read, for a parser that comes by a second time: see parse_statement_with_blocks().
-    /// Those of the statement that is parsed again start at `known_blocks_base`, in the order of the text. What is parsed again is outside of all of them, and what is
-    /// in it is between two braces that none of them is between: the blocks of the statements around it are not met.
-    pub(crate) known_blocks: Vec<i32>,
+    /// How many of `ParseStacks::known_blocks` count. Those of the statement that is parsed again start at `known_blocks_base`, in the order of the text. What is
+    /// parsed again is outside of all of them, and what is in it is between two braces that none of them is between: the blocks of the statements around it are not met.
     pub(crate) known_blocks_count: i32,
     pub(crate) known_blocks_base: i32,
     /// The first one that does not start before the place that was asked about last.
@@ -102,12 +105,6 @@ pub(crate) struct Parse {
     pub(crate) attributes_flag: i32,
     // ---- for the rules that are about more than the order of the tokens
     pub(crate) place: Place,
-    /// What `place` was at each mark() of the lexer.
-    pub(crate) places: Vec<Place>,
-    /// The labels that are in force, each a start and an end in the text, and 1 if it stands in front of a loop.
-    pub(crate) labels: Vec<i32>,
-    /// The private names that the classes at hand have declared so far: a start, an end, and PRIVATE_*.
-    pub(crate) private_names: Vec<i32>,
     /// How many `await` and `yield` expressions there have been, but for those in the bodies of functions that have ended.
     pub(crate) suspensions: i32,
     /// PARAMETERS_PLAIN ..: whose parameters are read.
@@ -126,7 +123,7 @@ pub(crate) struct Parse {
     pub(crate) needs_module: bool,
 }
 
-/// Where the parser is. Whoever gives up a reading of the text goes back to what this was: see mark().
+/// Where the parser is.
 #[derive(Clone, Copy)]
 pub(crate) struct Place {
     /// How many loops are open in the function at hand (A_LOOP each) and how many `switch`es (A_SWITCH each).
@@ -217,7 +214,6 @@ impl Parse {
             wrap_last_length: 0,
             wrap_kind: 0,
             wrap_decided: 0,
-            known_blocks: zeros(16),
             known_blocks_count: 0,
             known_blocks_base: 0,
             known_blocks_next: 0,
@@ -231,9 +227,6 @@ impl Parse {
             object_is_binding: false,
             attributes_flag: 0,
             place: NOWHERE,
-            places: Vec::new(),
-            labels: Vec::new(),
-            private_names: Vec::new(),
             suspensions: 0,
             parameters_owner: PARAMETERS_PLAIN,
             default_export_at: 0,
@@ -246,6 +239,48 @@ impl Parse {
     }
 }
 
+/// The lists of the parser. How much of each counts is in [`Parse`], so that whoever goes back to an earlier state has no need to look at them.
+pub(crate) struct ParseStacks {
+    /// Blocks that have been read, for a parser that comes by a second time: see parse_statement_with_blocks().
+    pub(crate) known_blocks: Vec<i32>,
+    /// The labels that are in force, each a start and an end in the text, and 1 if it stands in front of a loop.
+    pub(crate) labels: Vec<i32>,
+    /// The private names that the classes at hand have declared so far: a start, an end, and PRIVATE_*.
+    pub(crate) private_names: Vec<i32>,
+    /// The trials that have failed inside of another trial: see is_known_to_fail(). A table of keys, 0 where there is none.
+    failed_trials: Vec<u64>,
+    failed_trials_count: i32,
+}
+impl ParseStacks {
+    pub(crate) fn new() -> Self {
+        Self {
+            known_blocks: zeros(16),
+            labels: Vec::new(),
+            private_names: Vec::new(),
+            failed_trials: Vec::new(),
+            failed_trials_count: 0,
+        }
+    }
+}
+
+/// What a reading of the text on trial goes back to if it fails: all that the lexer and the parsers know, and how much there is of what they have made.
+/// Whatever is added to [`Parse`], [`ParseFlow`] or [`ParseTypescript`] is part of it.
+#[derive(Clone, Copy)]
+pub(crate) struct Trial {
+    lexer: Saved,
+    parse: Parse,
+    flow: ParseFlow,
+    typescript: ParseTypescript,
+    nodes: i32,
+    list_items: i32,
+    texts: i32,
+}
+
+// The trials that can hold one another, so that what fails is read twice at every level.
+pub(crate) const TRIAL_RETURN_TYPE: u64 = 1;
+pub(crate) const TRIAL_TYPE_ARGUMENTS: u64 = 2;
+pub(crate) const TRIAL_GENERIC_ARROW: u64 = 3;
+
 /// By the kind of method: M_METHOD, M_GET, M_SET, M_CONSTRUCTOR.
 static PARAMETERS_OF: [i32; 4] = [
     PARAMETERS_OF_METHOD,
@@ -253,6 +288,16 @@ static PARAMETERS_OF: [i32; 4] = [
     PARAMETERS_OF_METHOD,
     PARAMETERS_OF_CONSTRUCTOR,
 ];
+
+/// Where `key` is in the table, or where it goes. The length of the table is a power of two, and half of it is free.
+fn slot_of_trial(table: &[u64], key: u64) -> usize {
+    let mask = table.len().wrapping_sub(1);
+    let mut slot = (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) as usize & mask;
+    while table.get(slot).is_some_and(|&it| it != 0 && it != key) {
+        slot = (slot + 1) & mask;
+    }
+    slot
+}
 
 // ---- which language: 0 JavaScript, 1 TypeScript, 2 Flow
 pub(crate) const TYPED_TS: i32 = 1;
@@ -276,27 +321,96 @@ impl Quick {
         self.set_comment_count(count);
     }
 
-    /// For mark() of the lexer. (What is asked about the place in TypeScript does no harm if it is out of date.)
+    /// A reading of the text starts that may have to be given up.
     #[inline]
-    pub(crate) fn keep_place(&mut self, index: i32) {
-        if self.parse.typed == TYPED_TS {
-            return;
-        }
-        let place = self.parse.place;
-        match self.parse.places.get_mut(index as u32 as usize) {
-            Some(slot) => *slot = place,
-            None => self.parse.places.push(place),
+    pub(crate) fn begin_trial(&self) -> Trial {
+        Trial {
+            lexer: self.save(),
+            parse: self.parse,
+            flow: self.parse_flow,
+            typescript: self.parse_typescript,
+            nodes: self.arena.n_pos,
+            list_items: self.arena.ls_pos,
+            texts: self.text.gen_pos,
         }
     }
 
-    /// For rewind() of the lexer.
+    /// The reading has failed: everything is as it was when it started. The nodes, the comments and the texts that it has made are gone, and nobody knows them: a node
+    /// that is older has at most been told that one of them is its parent, and whoever takes it next tells it otherwise.
+    pub(crate) fn abandon(&mut self, trial: &Trial) -> R<()> {
+        let read = (self.lexer.pos - trial.lexer.pos).max(0);
+        let made = self.arena.n_pos - trial.nodes;
+        self.restore(trial.lexer);
+        self.parse = trial.parse;
+        self.parse_flow = trial.flow;
+        self.parse_typescript = trial.typescript;
+        self.arena.n_pos = trial.nodes;
+        self.arena.ls_pos = trial.list_items;
+        self.text.gen_pos = trial.texts;
+        self.waste(read + made)
+    }
+
+    /// What the outcome of a trial that starts at the current token depends on.
+    fn key_of_trial(&self, kind: u64) -> u64 {
+        ((self.lexer.tok_start as u64) << 8)
+            | kind
+            | ((self.parse.in_function as u64 & 1) << 2)
+            | ((self.parse.in_async as u64 & 1) << 3)
+            | ((self.parse.in_generator as u64 & 1) << 4)
+            | ((self.parse.no_in as u64 & 7) << 5)
+    }
+
+    /// Has this trial failed before? What is read on trial and given up is read again, with all the trials in it. Without this each level of
+    /// `<T>(a = <T>(a = <T>(a = 1)))` doubles the work.
     #[inline]
-    pub(crate) fn go_back_to_place(&mut self, index: i32) {
-        if self.parse.typed == TYPED_TS {
-            return;
+    pub(crate) fn is_known_to_fail(&self, kind: u64) -> bool {
+        self.parse_stacks.failed_trials_count != 0 && self.has_failed(self.key_of_trial(kind))
+    }
+
+    #[cold]
+    fn has_failed(&self, key: u64) -> bool {
+        let table = &self.parse_stacks.failed_trials;
+        table.get(slot_of_trial(table, key)) == Some(&key)
+    }
+
+    /// abandon() for a trial of which is_known_to_fail() is asked.
+    pub(crate) fn abandon_for_good(&mut self, trial: &Trial, kind: u64) -> R<()> {
+        self.abandon(trial)?;
+        // nobody comes by a second time unless another trial is under way
+        if self.parse.speculating == 0 {
+            return Ok(());
         }
-        if let Some(place) = self.parse.places.get(index as u32 as usize) {
-            self.parse.place = *place;
+        let key = self.key_of_trial(kind);
+        let count = self.parse_stacks.failed_trials_count;
+        if (count + 1) * 2 > self.parse_stacks.failed_trials.len() as i32 {
+            let Some(length) = larger(
+                self.parse_stacks.failed_trials.len() as i32,
+                (count + 1) * 2,
+            ) else {
+                return Err(self.stop(why::TOO_LARGE));
+            };
+            let old = std::mem::replace(&mut self.parse_stacks.failed_trials, zeros(length));
+            let table = &mut self.parse_stacks.failed_trials;
+            for key in old.into_iter().filter(|&key| key != 0) {
+                let slot = slot_of_trial(table, key);
+                if let Some(slot) = table.get_mut(slot) {
+                    *slot = key;
+                }
+            }
+        }
+        let table = &mut self.parse_stacks.failed_trials;
+        let slot = slot_of_trial(table, key);
+        if let Some(slot) = table.get_mut(slot) {
+            self.parse_stacks.failed_trials_count += (*slot == 0) as i32;
+            *slot = key;
+        }
+        Ok(())
+    }
+
+    fn forget_failed_trials(&mut self) {
+        if self.parse_stacks.failed_trials_count != 0 {
+            self.parse_stacks.failed_trials.fill(0);
+            self.parse_stacks.failed_trials_count = 0;
         }
     }
 
@@ -335,7 +449,7 @@ impl Quick {
         return self.fail(self.lexer.tok_start);
     }
 
-    // The context, for those who try: four small numbers in one.
+    // The context: four small numbers in one.
     pub(crate) fn save_context(&self) -> i32 {
         return self.parse.in_function
             | (self.parse.in_async << 1)
@@ -513,6 +627,7 @@ impl Quick {
         self.parse.known_blocks_count = 0;
         self.parse.known_blocks_base = 0;
         self.parse.known_blocks_next = 0;
+        self.forget_failed_trials();
         self.parse.refused_at = 0;
         self.parse.list_depth = self.options.indentation;
         // (a syntax error can have left these as they were)
@@ -1393,18 +1508,18 @@ impl Quick {
     pub(crate) fn known_block_at(&mut self, start: i32) -> i32 {
         let mut i = self.parse.known_blocks_next;
         while i > self.parse.known_blocks_base
-            && self.n.at(self.parse.known_blocks.at(i - 1) + 1) >= start
+            && self.n.at(self.parse_stacks.known_blocks.at(i - 1) + 1) >= start
         {
             i -= 1;
         }
         while i < self.parse.known_blocks_count
-            && self.n.at(self.parse.known_blocks.at(i) + 1) < start
+            && self.n.at(self.parse_stacks.known_blocks.at(i) + 1) < start
         {
             i += 1;
         }
         self.parse.known_blocks_next = i;
         if i < self.parse.known_blocks_count {
-            let known = self.parse.known_blocks.at(i);
+            let known = self.parse_stacks.known_blocks.at(i);
             if self.n.at(known) != 0 && self.n.at(known + 1) == start {
                 return known;
             }
@@ -1621,12 +1736,12 @@ impl Quick {
         let count = (self.arena.ls_pos - list_mark) / 3;
         if after == AFTER_REFUSED {
             let base = self.parse.known_blocks_count;
-            if base + count > (self.parse.known_blocks.len() as i32) {
-                self.make_room(|q| &mut q.parse.known_blocks, base + count);
+            if base + count > (self.parse_stacks.known_blocks.len() as i32) {
+                self.make_room(|q| &mut q.parse_stacks.known_blocks, base + count);
             }
             let mut i: i32 = 0;
             while i < count {
-                self.parse
+                self.parse_stacks
                     .known_blocks
                     .put(base + i, self.arena.ls.at(list_mark + i * 3 + 2));
                 i += 1;
@@ -1637,7 +1752,10 @@ impl Quick {
             self.parse.known_blocks_next = base;
             self.list_truncate(list_mark);
             // the comments in the blocks stay; those behind the last block will be read again
-            self.drop_comments_from(self.n.at(self.parse.known_blocks.at(base + count - 1) + 2));
+            self.drop_comments_from(
+                self.n
+                    .at(self.parse_stacks.known_blocks.at(base + count - 1) + 2),
+            );
             let v0 = (|| -> R<i32> {
                 self.next_at(start, behind)?;
                 let v1 = if !is_class_member {
@@ -2164,12 +2282,12 @@ impl Quick {
         let mut i = self.parse.place.labels_base;
         while i < self.parse.place.labels_top {
             if self.is_same_text(
-                self.parse.labels.at(i),
-                self.parse.labels.at(i + 1),
+                self.parse_stacks.labels.at(i),
+                self.parse_stacks.labels.at(i + 1),
                 self.n.at(label + 1),
                 self.n.at(label + 2),
             ) {
-                return !is_continue || self.parse.labels.at(i + 3) != 0;
+                return !is_continue || self.parse_stacks.labels.at(i + 3) != 0;
             }
             i += 4;
         }
@@ -2195,27 +2313,27 @@ impl Quick {
         }
         while i < top {
             if self.is_same_text(
-                self.parse.labels.at(i),
-                self.parse.labels.at(i + 1),
+                self.parse_stacks.labels.at(i),
+                self.parse_stacks.labels.at(i + 1),
                 self.n.at(name + 1),
                 self.n.at(name + 2),
             ) {
                 return Err(self.text_refuse());
             }
             // `a: b: for (;;)`: a label of a label of a loop is the label of a loop
-            if self.parse.labels.at(i + 2) == start {
-                self.parse.labels.put(i + 2, self.lexer.tok_start);
-                self.parse.labels.put(i + 3, is_loop as i32);
+            if self.parse_stacks.labels.at(i + 2) == start {
+                self.parse_stacks.labels.put(i + 2, self.lexer.tok_start);
+                self.parse_stacks.labels.put(i + 3, is_loop as i32);
             }
             i += 4;
         }
-        if top + 4 > self.parse.labels.len() as i32 {
-            self.make_room(|q| &mut q.parse.labels, top + 4);
+        if top + 4 > self.parse_stacks.labels.len() as i32 {
+            self.make_room(|q| &mut q.parse_stacks.labels, top + 4);
         }
-        self.parse.labels.put(top, self.n.at(name + 1));
-        self.parse.labels.put(top + 1, self.n.at(name + 2));
-        self.parse.labels.put(top + 2, self.lexer.tok_start);
-        self.parse.labels.put(top + 3, is_loop as i32);
+        self.parse_stacks.labels.put(top, self.n.at(name + 1));
+        self.parse_stacks.labels.put(top + 1, self.n.at(name + 2));
+        self.parse_stacks.labels.put(top + 2, self.lexer.tok_start);
+        self.parse_stacks.labels.put(top + 3, is_loop as i32);
         self.parse.place.labels_top = top + 4;
         Ok(())
     }
@@ -3529,27 +3647,27 @@ impl Quick {
         }
         while i < top {
             if self.is_same_text(
-                self.parse.private_names.at(i),
-                self.parse.private_names.at(i + 1),
+                self.parse_stacks.private_names.at(i),
+                self.parse_stacks.private_names.at(i + 1),
                 start,
                 end,
             ) {
                 // the same place: it is read for the second time
-                if self.parse.private_names.at(i) == start {
+                if self.parse_stacks.private_names.at(i) == start {
                     return true;
                 }
-                let other = self.parse.private_names.at(i + 2);
-                self.parse.private_names.put(i + 2, 0);
+                let other = self.parse_stacks.private_names.at(i + 2);
+                self.parse_stacks.private_names.put(i + 2, 0);
                 return half != 0 && other != 0 && half != other && (half > 2) == (other > 2);
             }
             i += 3;
         }
-        if top + 3 > self.parse.private_names.len() as i32 {
-            self.make_room(|q| &mut q.parse.private_names, top + 3);
+        if top + 3 > self.parse_stacks.private_names.len() as i32 {
+            self.make_room(|q| &mut q.parse_stacks.private_names, top + 3);
         }
-        self.parse.private_names.put(top, start);
-        self.parse.private_names.put(top + 1, end);
-        self.parse.private_names.put(top + 2, half);
+        self.parse_stacks.private_names.put(top, start);
+        self.parse_stacks.private_names.put(top + 1, end);
+        self.parse_stacks.private_names.put(top + 2, half);
         self.parse.place.private_top = top + 3;
         return true;
     }
@@ -4570,8 +4688,11 @@ impl Quick {
         list_mark: i32,
         flags: i32,
     ) -> R<i32> {
-        let m = self.mark();
-        let context = self.save_context();
+        if self.is_known_to_fail(TRIAL_RETURN_TYPE) {
+            return Ok(0);
+        }
+        let trial = self.begin_trial();
+        let is_in_consequent = (self.parse.no_in & NO_IN_CONSEQUENT) != 0;
         let depth = self.parse.speculating;
         let list_top = self.arena.ls_pos;
         self.parse.speculating = depth + 1;
@@ -4590,7 +4711,7 @@ impl Quick {
                 return Err(self.text_refuse());
             }
             // `a ? (b) : c => d`: to whom the colon belongs is decided in more than one way
-            if (context & (NO_IN_CONSEQUENT << 4)) != 0 && list_top != list_mark {
+            if is_in_consequent && list_top != list_mark {
                 return Err(self.text_refuse());
             }
             // the parameters stay on the stack in case this fails
@@ -4600,14 +4721,10 @@ impl Quick {
                 i += 1;
             }
             let params = self.list_finish(list_top);
-            self.parse.speculating = if (context & (NO_IN_CONSEQUENT << 4)) != 0 {
-                depth + 1
-            } else {
-                depth
-            };
+            self.parse.speculating = if is_in_consequent { depth + 1 } else { depth };
             result = self.parse_typed_arrow_rest(start, params, flags, 0, return_type)?;
             // `a ? (b) : c => d`: the colon belongs to the conditional expression unless another one follows
-            if (context & (NO_IN_CONSEQUENT << 4)) != 0 && self.lexer.tok != tk::Colon {
+            if is_in_consequent && self.lexer.tok != tk::Colon {
                 return Err(self.unexpected());
             }
             Ok(None)
@@ -4627,11 +4744,8 @@ impl Quick {
         if let Some(v) = v0? {
             return Ok(v);
         }
-        self.parse.speculating = depth;
         if result == 0 {
-            self.rewind(m);
-            self.restore_context(context);
-            self.list_truncate(list_top);
+            self.abandon_for_good(&trial, TRIAL_RETURN_TYPE)?;
             // `a ? (b) : class {}`: the same, any word being the name of a type for TypeScript's parser
             if self.parse.typed == TYPED_TS {
                 let saved = self.save();
@@ -4644,7 +4758,7 @@ impl Quick {
             }
             return Ok(0);
         }
-        self.unmark(m);
+        self.parse.speculating = depth;
         let params = self.n.at(result + 6);
         let mut i: i32 = 1;
         while i <= self.n.at(params) {
@@ -5057,8 +5171,7 @@ impl Quick {
                                     return Ok(arrow);
                                 }
                                 // `async<A>(b)`: no call for Flow's own parser, and a rare one for the others. `async < a, b`: the start of a function
-                                // for TypeScript's parser, which reads every file first. (The trial has saved places of its own: restore() would not
-                                // lead back to `async`.)
+                                // for TypeScript's parser, which reads every file first.
                                 return Err(self.text_refuse());
                             } else if self.lexer.tok == tk::Name {
                                 // async x => y
@@ -6795,7 +6908,7 @@ impl Quick {
                 }
                 if self.parse.typed == TYPED_FLOW && self.lexer.tok == tk::Name {
                     // export default component X() {}, hook, enum, record
-                    let m = self.mark();
+                    let trial = self.begin_trial();
                     declaration = self.flow_parse_statement(decl_start)?;
                     let k = self.n.at(declaration) & 0xff;
                     if declaration != 0
@@ -6804,14 +6917,11 @@ impl Quick {
                         && k != k::EnumDeclaration
                         && k != k::RecordDeclaration
                     {
-                        self.rewind(m);
+                        self.abandon(&trial)?;
                         declaration = 0;
-                    } else {
-                        self.unmark(m);
+                    } else if (self.n.at(declaration) & F_ASYNC) != 0 && k != k::EnumDeclaration {
                         // (behind `default`, the long way knows `async` in front of `function` only)
-                        if (self.n.at(declaration) & F_ASYNC) != 0 && k != k::EnumDeclaration {
-                            return Err(self.text_refuse());
-                        }
+                        return Err(self.text_refuse());
                     }
                 }
                 if declaration == 0 && self.is_kw(kw::Async) {

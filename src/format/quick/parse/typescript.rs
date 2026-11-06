@@ -18,9 +18,11 @@ use crate::ast::{
 };
 use crate::fast::MEMBER_OF_INTERFACE;
 use crate::lexer::{PREC, kw, tk};
+use crate::parse::core::{TRIAL_GENERIC_ARROW, TRIAL_TYPE_ARGUMENTS};
 use crate::words::w;
 use crate::{Quick, R, Stop, Words, rare, why};
 
+#[derive(Clone, Copy)]
 pub(crate) struct ParseTypescript {
     /// In the `extends` part of a conditional type another conditional type needs parentheses.
     pub(crate) no_conditional_types: i32,
@@ -45,8 +47,7 @@ pub(crate) struct ParseTypescript {
     pub(crate) in_namespace: i32,
     /// What a class extends or implements, or an interface extends, is read.
     pub(crate) in_heritage: bool,
-    /// How many lists are open in the type that is read: the members of a tuple or an object type, parameters, type parameters. What a failure leaves behind is not taken
-    /// back: only differences count.
+    /// How many lists are open in the type that is read: the members of a tuple or an object type, parameters, type parameters.
     pub(crate) open_type_lists: i32,
     /// What ts_type_arguments_may_end() has found: between these two places there is no `>` behind which type arguments could have ended.
     pub(crate) no_end_from: i32,
@@ -382,7 +383,7 @@ impl Quick {
 
     /// The current token is `(`: do the parameters of a function type follow?
     pub(crate) fn is_unambiguously_start_of_function_type(&mut self) -> R<bool> {
-        let m = self.mark();
+        let saved = self.save();
         let mut result = false;
         self.next()?;
         if self.lexer.tok == tk::ParenR || self.lexer.tok == tk::Ellipsis {
@@ -415,7 +416,7 @@ impl Quick {
                 }
             }
         }
-        self.rewind(m);
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -583,8 +584,7 @@ impl Quick {
         let mut constraint: i32 = 0;
         if self.lexer.tok == tk::Extends {
             // `infer U extends X ? a : b` in the `extends` part is `(infer U) extends X ? ..` only where a conditional type may stand
-            let m = self.mark();
-            let list_top = self.arena.ls_pos;
+            let trial = self.begin_trial();
             let depth = self.parse.speculating;
             let saved = self.parse_typescript.no_conditional_types;
             self.set_speculating(depth + 1);
@@ -614,10 +614,7 @@ impl Quick {
             self.set_speculating(depth);
             self.parse_typescript.no_conditional_types = saved;
             if constraint == 0 {
-                self.rewind(m);
-                self.list_truncate(list_top);
-            } else {
-                self.unmark(m);
+                self.abandon(&trial)?;
             }
         }
         let parameter = self.node4(
@@ -891,7 +888,7 @@ impl Quick {
     }
 
     pub(crate) fn is_start_of_mapped_type(&mut self) -> R<bool> {
-        let m = self.mark();
+        let saved = self.save();
         self.next()?;
         let mut result = false;
         if self.lexer.tok == tk::Add || self.lexer.tok == tk::Sub {
@@ -909,7 +906,7 @@ impl Quick {
                 }
             }
         }
-        self.rewind(m);
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -1277,7 +1274,7 @@ impl Quick {
 
     /// The current token is `[`: does an index signature start here, and not a computed key?
     pub(crate) fn is_index_signature(&mut self) -> R<bool> {
-        let m = self.mark();
+        let saved = self.save();
         self.next()?;
         let mut result = false;
         if self.lexer.tok == tk::Ellipsis || self.lexer.tok == tk::BracketR {
@@ -1304,7 +1301,7 @@ impl Quick {
                 }
             }
         }
-        self.rewind(m);
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -2323,7 +2320,7 @@ impl Quick {
                     }
                     if (modifiers & MOD_ABSTRACT) == 0 && self.peek_on_same_line()? == tk::Name {
                         // abstract declare class
-                        let m = self.mark();
+                        let trial = self.begin_trial();
                         self.next()?;
                         let declaration = if self.word() == w::Declare {
                             self.parse_declaration(start, modifiers | MOD_ABSTRACT)?
@@ -2333,22 +2330,20 @@ impl Quick {
                         if declaration != 0
                             && (self.n.at(declaration) & 0xff) == k::ClassDeclaration
                         {
-                            self.unmark(m);
                             return Ok(declaration);
                         }
-                        self.rewind(m);
+                        self.abandon(&trial)?;
                     }
                 }
                 w::Declare => {
                     if (modifiers & MOD_DECLARE) != 0 {
                         break 's1;
                     }
-                    let m = self.mark();
+                    let trial = self.begin_trial();
                     self.next()?;
                     if self.lexer.tok_nl == 0 {
                         let declaration = self.parse_declaration(start, modifiers | MOD_DECLARE)?;
                         if declaration != 0 {
-                            self.unmark(m);
                             return Ok(declaration);
                         }
                         // `declare` is a name if an expression goes on behind it
@@ -2366,7 +2361,7 @@ impl Quick {
                             return Err(self.text_refuse());
                         }
                     }
-                    self.rewind(m);
+                    self.abandon(&trial)?;
                 }
                 // a modifier, whatever the line on which a declaration follows
                 w::Static => {
@@ -2447,7 +2442,7 @@ impl Quick {
         if self.lexer.tok == tk::Import {
             // export import a = b.c
             let import_start = self.lexer.tok_start;
-            let m = self.mark();
+            let saved = self.save();
             self.next()?;
             let mut import_kind: i32 = 0;
             if self.word() == w::Type && self.peek()? == tk::Name {
@@ -2455,10 +2450,9 @@ impl Quick {
                 import_kind = IK_TYPE;
             }
             if self.lexer.tok == tk::Name && self.peek()? == tk::Eq {
-                self.unmark(m);
                 return self.ts_parse_import_equals(import_start, import_kind);
             }
-            self.rewind(m);
+            self.restore(saved);
             return Ok(0);
         }
         if self.is_kw(kw::As) {
@@ -2712,9 +2706,11 @@ impl Quick {
 
     /// `<T, U>` behind an expression, tried: 0, with the lexer where it was, if `<` is an operator here.
     pub(crate) fn ts_try_parse_type_arguments_in_expression(&mut self) -> R<i32> {
-        let m = self.mark();
+        if self.is_known_to_fail(TRIAL_TYPE_ARGUMENTS) {
+            return Ok(0);
+        }
+        let trial = self.begin_trial();
         let list_top = self.arena.ls_pos;
-        let context = self.save_context();
         let depth = self.parse.speculating;
         let saved = self.parse_typescript.no_conditional_types;
         let is_shift =
@@ -2811,10 +2807,10 @@ impl Quick {
                                 | tk::Lt
                                 | tk::Shl
                         )));
-            self.parse_typescript.open_type_lists = open_lists;
-            self.rewind(m);
-            self.list_truncate(list_top);
-            self.restore_context(context);
+            // (a doubt about what is in a trial is one about that trial)
+            let was_doubtful = self.parse_typescript.trial_is_doubtful;
+            self.abandon_for_good(&trial, TRIAL_TYPE_ARGUMENTS)?;
+            self.parse_typescript.trial_is_doubtful |= was_doubtful;
             if is_doubtful && self.parse.typed != FLOW && self.ts_type_arguments_may_end()? {
                 return Err(self.text_refuse());
             }
@@ -2854,8 +2850,6 @@ impl Quick {
                 }
                 self.parse_typescript.no_call_to = p;
             }
-        } else {
-            self.unmark(m);
         }
         return Ok(result);
     }
@@ -2869,7 +2863,7 @@ impl Quick {
         if from >= self.parse_typescript.no_end_from && from < self.parse_typescript.no_end_to {
             return Ok(false);
         }
-        let m = self.mark();
+        let saved = self.save();
         let mut depth: i32 = 0;
         let mut result = false;
         let mut is_read = false;
@@ -2928,15 +2922,16 @@ impl Quick {
             self.parse_typescript.no_end_from = from;
             self.parse_typescript.no_end_to = self.lexer.tok_start;
         }
-        self.rewind(m);
+        self.restore(saved);
         return Ok(result);
     }
 
     /// `<T>(a: T): T => a`, tried. The current token is `<`.
     pub(crate) fn try_parse_generic_arrow(&mut self, start: i32, flags: i32) -> R<i32> {
-        let m = self.mark();
-        let list_top = self.arena.ls_pos;
-        let context = self.save_context();
+        if self.is_known_to_fail(TRIAL_GENERIC_ARROW) {
+            return Ok(0);
+        }
+        let trial = self.begin_trial();
         let depth = self.parse.speculating;
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
@@ -2987,18 +2982,14 @@ impl Quick {
         }
         self.set_speculating(depth);
         if result == 0 {
-            self.rewind(m);
-            self.list_truncate(list_top);
-            self.restore_context(context);
-        } else {
-            self.unmark(m);
+            self.abandon_for_good(&trial, TRIAL_GENERIC_ARROW)?;
         }
         return Ok(result);
     }
 
     /// In a file with JSX: does `<` start the type parameters of an arrow function?
     pub(crate) fn is_generic_arrow_in_jsx(&mut self) -> R<bool> {
-        let m = self.mark();
+        let saved = self.save();
         self.next()?;
         let mut result = false;
         if self.lexer.tok == tk::Const {
@@ -3015,7 +3006,7 @@ impl Quick {
                 result = self.lexer.tok == tk::Comma || self.lexer.tok == tk::Eq;
             }
         }
-        self.rewind(m);
+        self.restore(saved);
         return Ok(result);
     }
 

@@ -119,9 +119,14 @@ fn a_tree_that_is_too_large_is_refused() {
 #[test]
 fn an_output_that_is_too_long_is_refused() {
     let nest = |depth: usize| [&b"f(".repeat(depth)[..], &b")".repeat(depth), b";\n"].concat();
-    assert_eq!(lines_of(&print("a.js", &nest(100))), 199);
+    let options = Options {
+        tab_width: 64,
+        ..Options::default()
+    };
+    let print = |depth: usize| print_with(&mut Quick::new(), "a.js", &nest(depth), &options);
+    assert_eq!(lines_of(&print(50)), 99);
     // two lines for each level, each indented by its depth
-    assert_eq!(print("a.js", &nest(400)), Err(why::TOO_LARGE));
+    assert_eq!(print(100), Err(why::TOO_LARGE));
 }
 
 #[test]
@@ -218,4 +223,58 @@ fn a_guest_that_writes_too_much_text_is_refused() {
         });
         assert_eq!(printed, Err(why::TOO_LARGE));
     }
+}
+
+#[test]
+fn what_a_trial_has_made_is_gone_when_it_fails() {
+    // each `<` is tried as the start of type arguments, up to the end of the list
+    let count = 50;
+    let text = [&b"x = ["[..], &b"a < b, ".repeat(count), b"];\n"].concat();
+    let mut scratch = Quick::new();
+    let options = Options {
+        no_short_cuts: true,
+        ..Options::default()
+    };
+    let printed = print_with(&mut scratch, "a.ts", &text, &options);
+    assert_eq!(lines_of(&printed), count + 2);
+    assert!(scratch.arena.n_pos < count as i32 * 32);
+    assert!(scratch.wasted > count as i32 * count as i32);
+}
+
+#[test]
+fn trials_that_cost_too_much_end_the_run() {
+    let mut scratch = Quick::new();
+    scratch.start_run();
+    scratch.allow_waste_for(100);
+    let allowance = scratch.allowance;
+    assert!(scratch.waste(allowance).is_ok());
+    assert!(scratch.stack().is_ok());
+    assert!(scratch.waste(1).is_err());
+    assert_eq!(scratch.why(), why::TOO_LARGE);
+    assert!(scratch.stack().is_err());
+    scratch.allow_waste_for(i32::MAX);
+    assert!(scratch.waste(i32::MAX).is_ok());
+    assert!(scratch.waste(i32::MAX).is_ok());
+
+    let list = |count: usize| [&b"x = ["[..], &b"a < b, ".repeat(count), b"];\n"].concat();
+    assert_eq!(print("a.ts", &list(2000)), Err(why::TOO_LARGE));
+}
+
+#[test]
+fn a_trial_in_a_trial_is_not_tried_twice() {
+    let nest = |depth: usize| {
+        [
+            &b"x = "[..],
+            &b"<T>(a = ".repeat(depth),
+            b"1",
+            &b")".repeat(depth),
+            b";\n",
+        ]
+        .concat()
+    };
+    let mut scratch = Quick::new();
+    let printed = print_with(&mut scratch, "a.ts", &nest(30), &Options::default());
+    assert!(printed.is_ok());
+    // (the square of the depth, not a power of two)
+    assert!(scratch.wasted < 30 * 30 * 32);
 }

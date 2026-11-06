@@ -45,7 +45,7 @@ test("dev server html route: non-GET/HEAD requests complete without hanging", as
 });
 
 // A server whose JS wrapper survives to lastChanceToFinalize used to leak its
-// NewServer Box: finalize() -> schedule_deinit() enqueued a ManagedTask that
+// NewServer Box: finalize() -> schedule_deinit() enqueued a task that
 // the now-exiting event loop never ran. The html_bundle::Route.server
 // back-pointer makes the orphaned Box a pointer cycle, so LSan reports every
 // interior allocation as an indirect leak. Only observable via LeakSanitizer.

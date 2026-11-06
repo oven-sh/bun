@@ -1,0 +1,30 @@
+# sink(handedOver().slice(0, 2))
+# Nobody knows the receiver, so `slice` may be that of the typed arrays, and what it answers is of a class at or below %TypedArray%. It goes into unknown hands with what stands above it.
+# Buffer stands below Uint8Array, but nothing has made a Buffer and no operand can bring one: Buffer.prototype stays where it is, and so does what hangs on it in the table.
+# LIBRARY: own
+# RUN: valueflow-why escaped-builtin=BufferPrototype escaped-builtin=Buffer escaped-builtin=Uint8ArrayPrototype
+# CHECK: escaped-builtin=BufferPrototype
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped-builtin=Buffer
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped-builtin=Uint8ArrayPrototype
+# CHECK-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Call v1
+    v3 = PropGet v2 key="slice"
+    v4 = Integer integer=0
+    v5 = Integer integer=2
+    v6 = Call v3, v2, v4, v5
+    v7 = PropGet v0 key="sink" [isFreeName]
+    v8 = Call v7, -, v6
+    v9 = PropGet v6 key="constructor"
+    v10 = PropGet v9 key="prototype"
+    v11 = Call v7, -, v10
+    Return
+}

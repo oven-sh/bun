@@ -1,6 +1,6 @@
 // Original file: test/fixtures/test_service.proto
 
-import type * as grpc from './../../src/index'
+import type * as grpc from '@grpc/grpc-js'
 import type { MethodDefinition } from '@grpc/proto-loader'
 import type { Request as _Request, Request__Output as _Request__Output } from './Request';
 import type { Response as _Response, Response__Output as _Response__Output } from './Response';

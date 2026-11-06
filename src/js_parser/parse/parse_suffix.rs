@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use crate::Error;
 
@@ -87,6 +86,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     target,
                     index,
                     optional_chain: old_optional_chain,
+                    is_import_property_use: false,
                 },
                 loc,
             );
@@ -102,6 +102,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name = E::Str::new(p.lexer.identifier);
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
+            if matches!(target.data, ExprData::EImportMeta(_)) {
+                p.did_parse_import_meta_property(name.slice());
+            }
 
             let loc = left.loc;
             *left = p.new_expr(
@@ -124,18 +127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         left: &mut Expr,
-        flags: &mut EFlags,
     ) -> CResult {
-        if flags.contains(EFlags::IS_NEW_TARGET) {
-            p.log().add_range_error(
-                Some(p.source),
-                p.lexer.range(),
-                b"Cannot use an unparenthesized optional chain inside the target of \"new\"",
-            );
-            // Report this once per "new" target, not once per "?." in the chain
-            flags.remove(EFlags::IS_NEW_TARGET);
-        }
-
         p.lexer.next()?;
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
@@ -169,6 +161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         target,
                         index,
                         optional_chain: optional_start,
+                        is_import_property_use: false,
                     },
                     loc,
                 );
@@ -239,6 +232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             target,
                             index,
                             optional_chain: optional_start,
+                            is_import_property_use: false,
                         },
                         loc,
                     );
@@ -351,7 +345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //   }
         //
         // This matches the behavior of the TypeScript compiler.
-        if flags.contains(EFlags::TS_DECORATOR) {
+        if flags == EFlags::TsDecorator {
             return Ok(Continuation::Done);
         }
 
@@ -374,6 +368,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 target,
                 index,
                 optional_chain: old_optional_chain,
+                is_import_property_use: false,
             },
             loc,
         );
@@ -414,6 +409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         errors: Option<&mut DeferredErrors>,
         left: &mut Expr,
+        flags: EFlags,
     ) -> CResult {
         if level.gte(Level::Conditional) {
             return Ok(Continuation::Done);
@@ -460,7 +456,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //             ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::empty(), &mut e_if.yes)?;
+        p.parse_expr_with_flags(
+            Level::Comma,
+            EFlags::AfterQuestionAndBeforeColon,
+            &mut e_if.yes,
+        )?;
 
         p.allow_in = old_allow_in;
 
@@ -470,7 +470,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //                   ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::empty(), &mut e_if.no)?;
+        // Still between the "?" and ":" of an outer conditional when nested in its "yes"
+        let no_flags = if flags == EFlags::AfterQuestionAndBeforeColon {
+            flags
+        } else {
+            EFlags::None
+        };
+        p.parse_expr_with_flags(Level::Comma, no_flags, &mut e_if.no)?;
 
         // condition ? yes : no
         //                     ^
@@ -875,7 +881,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
@@ -966,7 +973,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
@@ -1445,7 +1453,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
-        mut flags: EFlags,
+        flags: EFlags,
     ) -> Result<(), Error> {
         let p = self;
 
@@ -1556,10 +1564,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
-                T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left),
-                T::TQuestionDot => {
-                    Self::sfx_t_question_dot(p, level, &mut optional_chain, left, &mut flags)
-                }
+                T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left, flags),
+                T::TQuestionDot => Self::sfx_t_question_dot(p, level, &mut optional_chain, left),
                 T::TTemplateHead => Self::sfx_t_template_head(
                     p,
                     level,

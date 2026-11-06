@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+function first() {
+  return /** @type {string} */ (
+    (someOptions && someOptions.resourceOfTheAsset) ||
+      theModule.getResource(someArgument)
+  );
+}
+function second() {
+  throw /** @type {Error} */ (
+    (someOptions && someOptions.resourceOfTheAsset) ||
+      theModule.getResource(someArgument)
+  );
+}
+function third() {
+  return /** @type {string} */ (first, second);
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function first() {
+  return /** @type {string} */ (
+    (someOptions && someOptions.resourceOfTheAsset) || theModule.getResource(someArgument)
+  );
+}
+function second() {
+  throw /** @type {Error} */ (
+    (someOptions && someOptions.resourceOfTheAsset) || theModule.getResource(someArgument)
+  );
+}
+function third() {
+  return /** @type {string} */ (first, second);
+}
+
+===================== End =====================

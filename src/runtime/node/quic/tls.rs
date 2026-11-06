@@ -115,6 +115,11 @@ impl TlsConfig {
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
             let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+            if bun_core::strings::contains_char(&bytes, 0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "servername must not contain null bytes"
+                )));
+            }
             bytes.push(0);
             config.servername = Some(bytes);
         }
@@ -340,6 +345,9 @@ fn load_private_key(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static s
 const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
 /// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
 const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
+/// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
+/// trust set does not shadow the valid certificate for the same issuer that the peer sends.
+const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
 
 fn load_crl_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     // SAFETY: as above.
@@ -431,6 +439,14 @@ impl TlsContext {
             {
                 return Err("failed to pin TLS 1.3");
             }
+            ssl::X509_VERIFY_PARAM_set_flags(
+                ssl::SSL_CTX_get0_param(ctx),
+                X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS,
+            );
+            if us_ssl_ctx_set_verify_signature_algorithms(ctx) != 1 {
+                return Err("failed to set the signature algorithms");
+            }
+            us_ssl_ctx_reject_blocked_keys(ctx);
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");
@@ -557,7 +573,11 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
 
 unsafe extern "C" {
     /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
-    fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
+    safe fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
+    /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
+    fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
+    /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
+    fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
@@ -567,24 +587,22 @@ pub(super) const X509_V_ERR_UNSPECIFIED: i32 = 1;
 /// The `(code name, reason)` pair node reports as
 /// `validationErrorCode` / `validationErrorReason`.
 pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str) {
-    // SAFETY: every arm of the C++ switch returns a string literal.
-    let name = unsafe { Bun__X509__validationErrorCode(code) };
+    let name = Bun__X509__validationErrorCode(code);
     let name = if name.is_null() {
         "UNSPECIFIED"
     } else {
-        // SAFETY: as above; NUL-terminated and 'static.
+        // SAFETY: every arm of the C++ switch returns a string literal.
         unsafe {
             core::ffi::CStr::from_ptr(name)
                 .to_str()
                 .unwrap_or("UNSPECIFIED")
         }
     };
-    // SAFETY: the returned string is a static name owned by BoringSSL.
-    let s = unsafe { ssl::X509_verify_cert_error_string(code as _) };
+    let s = ssl::X509_verify_cert_error_string(code as _);
     let reason = if s.is_null() {
         ""
     } else {
-        // SAFETY: as above.
+        // SAFETY: a static string owned by BoringSSL.
         unsafe { core::ffi::CStr::from_ptr(s).to_str().unwrap_or("") }
     };
     (name, reason)
@@ -613,12 +631,11 @@ pub(super) fn ephemeral_key_info(
     if group == 0 {
         return None;
     }
-    // SAFETY: returned string is static.
-    let name_ptr = unsafe { ssl::SSL_get_group_name(group) };
+    let name_ptr = ssl::SSL_get_group_name(group);
     let name = if name_ptr.is_null() {
         None
     } else {
-        // SAFETY: as above.
+        // SAFETY: a static string owned by BoringSSL.
         unsafe { core::ffi::CStr::from_ptr(name_ptr).to_str().ok() }
     };
     // Named-group sizes (RFC 8446 §4.2.7 / Node's GetEphemeralKey).
@@ -637,8 +654,10 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
     }
-    // SAFETY: returns a borrowed X509 owned by the SSL.
-    let cert = unsafe { ssl::SSL_get_certificate(ssl) };
+    // `load_cert_chain` only installs certificates on the context. The context parses its
+    // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
+    // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
     if cert.is_null() {
         return None;
     }
@@ -677,32 +696,6 @@ pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
             None
         };
         ssl::X509_free(cert);
-        result
-    }
-}
-
-pub(super) fn leaf_certificate_der(stack: *mut core::ffi::c_void) -> Option<Vec<u8>> {
-    if stack.is_null() {
-        return None;
-    }
-    // SAFETY: lsquic returns a STACK_OF(X509)* the caller must free; the
-    // leaf is at index 0.
-    unsafe {
-        let cert = ssl::sk_X509_value(stack.cast(), 0);
-        let result = if cert.is_null() {
-            None
-        } else {
-            let mut der: *mut u8 = null_mut();
-            let len = ssl::i2d_X509(cert, core::ptr::from_mut(&mut der));
-            if len > 0 && !der.is_null() {
-                let bytes = core::slice::from_raw_parts(der, len as usize).to_vec();
-                ssl::OPENSSL_free(der.cast());
-                Some(bytes)
-            } else {
-                None
-            }
-        };
-        ssl::sk_X509_pop_free(stack.cast());
         result
     }
 }

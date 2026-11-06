@@ -1,6 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
-use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
@@ -230,7 +229,7 @@ where
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
         let mut depth_buf = tree::depth_buf_uninit();
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
         for tree_id in 0..this.buffers.trees.as_slice().len() {
@@ -244,6 +243,7 @@ where
             let (relative_path, depth) =
                 tree::relative_path_and_depth::<{ IteratorPathStyle::NodeModules }>(
                     this.buffers.trees.as_slice(),
+                    hoisted_deps,
                     this.buffers.dependencies.as_slice(),
                     this.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).expect("int cast"),
@@ -382,6 +382,13 @@ where
                     }
                 }
 
+                let _ = w.end_array();
+            }
+
+            if let Some(libc) = pkg.meta.libc.single_name() {
+                w.object_field(b"libc")?;
+                w.begin_array()?;
+                w.write(libc)?;
                 let _ = w.end_array();
             }
 
@@ -597,12 +604,6 @@ impl JsonScalar for &[u8] {
         encode_json_string(self, out);
     }
 }
-impl<const N: usize> JsonScalar for &[u8; N] {
-    #[inline]
-    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
-        self.as_slice().write_json(out, opts);
-    }
-}
 
 /// Quote + escape the minimal RFC-8259 set (`"`, `\`, U+0000..U+001F). Input is
 /// treated as already-valid UTF-8/WTF-8; the lockfile string buffer never
@@ -638,7 +639,7 @@ pub struct WriteStreamOptions {
 }
 
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
-/// `bun_install_js_bindings::jsParseLockfile`.
+/// `bun_install_jsc::install_binding::parse_lockfile`.
 pub struct WriteStream {
     pub(crate) out: Vec<u8>,
     opts: WriteStreamOptions,

@@ -1,4 +1,3 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 // Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
@@ -17,8 +16,7 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    u16::try_from($crate::posix::errno())
-                        .map_or($crate::E::EUNKNOWN, $crate::E::from_raw)
+                    $crate::last_error()
                 } else {
                     $crate::E::SUCCESS
                 }
@@ -206,7 +204,7 @@ pub use windows_errno::{posix, *};
 // `E`); this block is the shared POSIX-target definition.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(not(windows))]
-#[allow(non_camel_case_types, non_snake_case)]
+#[allow(non_camel_case_types)]
 pub mod posix {
     /// glibc/musl/bionic `mode_t` == `unsigned int`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -234,24 +232,26 @@ pub mod posix {
     pub use bun_core::ffi::errno;
 }
 
-/// Errno extraction strategy, modeled as a trait with per-type impls — call
-/// as `rc.get_errno()` or `get_errno(rc)`.
-///
-/// The trait declaration is target-independent; each per-OS module supplies its
-/// own `impl GetErrno for {i32,u32,isize,usize,...}` (Linux decodes raw-syscall
-/// `-errno` from `usize`, Darwin/FreeBSD read thread-local errno on `-1`,
-/// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
+/// Decode a POSIX syscall return value: `rc.get_errno()` / `get_errno(rc)` is
+/// `SUCCESS` unless `rc` is the failure sentinel, in which case it is the errno
+/// (Linux raw syscalls decode `-errno` from `usize`; libc wrappers read the
+/// thread-local errno on `-1`).
+#[cfg(not(windows))]
 pub trait GetErrno: Copy {
     fn get_errno(self) -> E;
 }
 
-// Free-function shim over the trait method. POSIX-only:
-// Windows defines its own divergent `get_errno<T>(_rc)` (no trait bound, reads
-// GetLastError/WSAGetLastError) in windows_errno.rs.
 #[cfg(not(windows))]
 #[inline]
 pub fn get_errno<T: GetErrno>(rc: T) -> E {
     rc.get_errno()
+}
+
+/// The thread-local errno as `E` (`SUCCESS` when it is 0).
+#[cfg(not(windows))]
+#[inline]
+pub fn last_error() -> E {
+    u16::try_from(posix::errno()).map_or(E::EUNKNOWN, E::from_raw)
 }
 
 /// Decode a Node-style **negated** errno (`c_int`, as written by
@@ -294,12 +294,23 @@ pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
 }
 
+impl SystemErrno {
+    /// `None` if `err` is not an OS error or its code has no `SystemErrno`.
+    pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
+        // A Win32 code there, which the `u32` entry point maps (`i64` would take it for an errno).
+        #[cfg(windows)]
+        return SystemErrno::init(err.raw_os_error()? as u32);
+        #[cfg(not(windows))]
+        return SystemErrno::init(i64::from(err.raw_os_error()?));
+    }
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).
     //
     // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
-    // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
+    // i64/DWORD/c_int) in windows_errno.rs, so this impl is POSIX-only.
     pub fn init(code: i64) -> Option<SystemErrno> {
         u16::try_from(code.unsigned_abs())
             .ok()
@@ -541,6 +552,21 @@ mod errno_name_tests {
         assert_eq!(<&'static str>::from(E::SUCCESS), "SUCCESS");
         #[cfg(windows)]
         assert_eq!(<&'static str>::from(E::UV_ENOENT), "UV_ENOENT");
+    }
+
+    #[test]
+    fn io_error_to_errno() {
+        let of = |code| SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(code));
+        #[cfg(not(windows))]
+        assert_eq!(of(SystemErrno::ENOMEM as i32), Some(SystemErrno::ENOMEM));
+        // Win32 ERROR_NOT_ENOUGH_MEMORY / ERROR_ACCESS_DENIED; as errno values 8 and 5 are ENOEXEC and EIO.
+        #[cfg(windows)]
+        assert_eq!(
+            (of(8), of(5)),
+            (Some(SystemErrno::ENOMEM), Some(SystemErrno::EPERM))
+        );
+        let not_os = std::io::Error::other("not from the OS");
+        assert_eq!(SystemErrno::from_io_error(&not_os), None);
     }
 
     #[test]

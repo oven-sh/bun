@@ -73,7 +73,7 @@ class Performance final : public RefCounted<Performance>, public ContextDestruct
     WTF_MAKE_TZONE_ALLOCATED(Performance);
 
 public:
-    static Ref<Performance> create(ScriptExecutionContext* context, MonotonicTime timeOrigin) { return adoptRef(*new Performance(context, timeOrigin)); }
+    static Ref<Performance> create(ScriptExecutionContext* context) { return adoptRef(*new Performance(context)); }
     ~Performance();
 
     DOMHighResTimeStamp now() const;
@@ -102,10 +102,11 @@ public:
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
+    // A Bun.ModuleGraph's context stopped: the observers its script made observe nothing more
+    // (they are registered with the realm's Performance, which would keep them and their graph).
+    void disconnectObserversOf(const ScriptExecutionContext&);
 
     static Seconds reduceTimeResolution(Seconds);
-
-    MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
@@ -115,7 +116,7 @@ public:
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
-    Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);
+    Performance(ScriptExecutionContext*);
 
     void contextDestroyed() override;
 
@@ -133,8 +134,6 @@ private:
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
 
     bool m_hasScheduledTimingBufferDeliveryTask { false };
-
-    MonotonicTime m_timeOrigin;
 
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 

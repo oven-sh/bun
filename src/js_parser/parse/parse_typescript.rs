@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 // This matches the behavior of the TypeScript compiler.
                 let mut expr = Expr::EMPTY;
-                p.parse_expr_with_flags(Level::New, EFlags::TS_DECORATOR, &mut expr)?;
+                p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
                 decorators.push(expr);
             }
         }
@@ -139,6 +139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 target: expr,
                                 index,
                                 optional_chain: None,
+                                is_import_property_use: false,
                             },
                             loc,
                         );
@@ -448,11 +449,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     underscores += 1;
                 };
                 arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-                // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {
+                // Not a member: a reference to the name inside the namespace
+                // resolves to a merged sibling's export of that name first.
                 arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             }
+            // Named in this scope so that no binding inside shadows it.
+            VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             ts_namespace.arg_ref = arg_ref;
         }
         p.pop_scope();

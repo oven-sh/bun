@@ -10,7 +10,7 @@ use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{MAX_PATH_BYTES, SEP};
 use bun_sys::{self as sys, Fd, O};
 
 pub const STATUS_FAILED: i32 = 0;
@@ -39,10 +39,6 @@ struct CacheState {
     portable: bool,
     entries: HashMap<u64, Entry, IdentityContext<u64>>,
 }
-
-// SAFETY: `CacheState` is only reached through the global `STATE` mutex; the
-// `sys::Dir` fd is just an integer handle.
-unsafe impl Send for CacheState {}
 
 struct Entry {
     /// `path.text` of the module (absolute file path).
@@ -400,10 +396,15 @@ fn platform_tmp_dir() -> &'static [u8] {
 
 fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     let tag = version_tag();
+    let path_too_long = || EnableResult {
+        status: STATUS_FAILED,
+        directory: None,
+        message: Some("Cannot create cache directory: path too long".to_string()),
+    };
 
     // Resolve `dir` to an absolute path against the process cwd.
-    let mut abs_buf = PathBuffer::uninit();
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let abs: &[u8] = if bun_paths::is_absolute(dir) {
         dir
     } else {
@@ -420,19 +421,16 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 };
             }
         };
-        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::resolve_path::platform::Auto>(
-            &cwd_buf[..cwd_len],
-            &mut abs_buf[..],
-            &[dir],
-        )
-        .as_bytes()
+        match bun_paths::resolve_path::join_abs_string_buf_checked::<
+            bun_paths::resolve_path::platform::Auto,
+        >(&cwd_buf[..cwd_len], &mut abs_buf[..], &[dir])
+        {
+            Some(abs) => abs,
+            None => return path_too_long(),
+        }
     };
     if abs.len() + 1 + tag.len() + 2 > MAX_PATH_BYTES {
-        return EnableResult {
-            status: STATUS_FAILED,
-            directory: None,
-            message: Some("Cannot create cache directory: path too long".to_string()),
-        };
+        return path_too_long();
     }
 
     let mut tagged: Vec<u8> = Vec::with_capacity(abs.len() + 1 + tag.len());
@@ -512,8 +510,8 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         if portable {
             // Resolve symlinks (e.g. macOS /var -> /private/var) so relative
             // keys match Bun's realpath'd module paths.
-            let mut z_buf = bun_core::PathBuffer::uninit();
-            let mut real_buf = bun_core::PathBuffer::uninit();
+            let mut z_buf = bun_paths::path_buffer_pool::get();
+            let mut real_buf = bun_paths::path_buffer_pool::get();
             let tagged_z = bun_paths::resolve_path::z(&tagged, &mut z_buf);
             if let Ok(real) = sys::realpath(tagged_z, &mut real_buf) {
                 tagged = real.to_vec();
@@ -911,11 +909,14 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                 .spawn(move || {
                     for job in rx {
                         let url = BunString::clone_utf8(&job.url);
+                        // No bytecode optimizer: it doubles the write that lands after
+                        // `exit` on every cold start. `bun build --bytecode` pays it once.
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
                             job.format,
                             &job.code,
                             &url,
                             u32::MAX,
+                            false,
                             None,
                         );
                         let _ = job.resp.send(result);
@@ -1021,7 +1022,7 @@ fn write_persist_job_locked(
     let cache_hash = sha256(blob);
 
     let basename = cache_basename(job.key);
-    let mut tmpname_buf = PathBuffer::uninit();
+    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpname_zstr: &ZStr =
         match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], job.key) {
             Ok(z) => z,
@@ -1208,17 +1209,14 @@ pub fn persist_now() {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-/// # Safety
-/// `dir` is null or a live `BunString`; both out-params are valid for write.
-pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
-    dir: *const BunString,
+pub extern "C" fn Bun__NodeCompileCache__enable(
+    dir: Option<&BunString>,
     // -1 = not specified (fall back to NODE_COMPILE_CACHE_PORTABLE).
     portable: i32,
-    out_directory: *mut BunString,
-    out_message: *mut BunString,
+    out_directory: &mut core::mem::MaybeUninit<BunString>,
+    out_message: &mut core::mem::MaybeUninit<BunString>,
 ) -> i32 {
-    // SAFETY: C++ passes null or a live BunString plus valid out-params.
-    let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
+    let dir_utf8 = dir.map(|d| d.to_utf8());
     let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
     let result = enable(
         dir_slice,
@@ -1229,12 +1227,10 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
         },
     );
     if let Some(directory) = result.directory {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { out_directory.write(BunString::clone_utf8(&directory)) };
+        out_directory.write(BunString::clone_utf8(&directory));
     }
     if let Some(message) = result.message {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { out_message.write(BunString::clone_utf8(message.as_bytes())) };
+        out_message.write(BunString::clone_utf8(message.as_bytes()));
     }
     result.status
 }

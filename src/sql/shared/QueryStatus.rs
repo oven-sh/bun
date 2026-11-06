@@ -3,6 +3,8 @@
 pub enum Status {
     /// The query was just enqueued, statement status can be checked for more details
     Pending,
+    /// Only the request that prepares the statement is written, the one that runs it is not
+    Preparing,
     /// The query is being bound to the statement
     Binding,
     /// The query is running

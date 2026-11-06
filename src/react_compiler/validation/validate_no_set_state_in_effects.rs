@@ -12,17 +12,17 @@
 //!
 //! Port of ValidateNoSetStateInEffects.ts.
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{IdBitSet, IdMap};
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
-use crate::hir::dominator::{compute_post_dominator_tree, post_dominator_frontier};
+use crate::hir::dominator::{compute_post_dominator_tree, post_dominator_frontiers};
 use crate::hir::environment::Environment;
 use crate::hir::{
-    BlockId, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue,
-    PlaceOrSpread, PropertyLiteral, SourceLocation, Terminal, Type, is_ref_value_type,
-    is_set_state_identifier, is_use_effect_event_type, is_use_effect_hook_type,
+    BasicBlock, BlockId, HirFunction, Identifier, IdentifierId, IdentifierName, Instruction,
+    InstructionValue, PlaceOrSpread, PropertyLiteral, SourceLocation, Terminal, Type,
+    is_ref_value_type, is_set_state_identifier, is_use_effect_event_type, is_use_effect_hook_type,
     is_use_insertion_effect_hook_type, is_use_layout_effect_hook_type, is_use_ref_type, visitors,
 };
 
@@ -37,7 +37,7 @@ pub(crate) fn validate_no_set_state_in_effects(
     let enable_allow_set_state_from_refs = env.config.enable_allow_set_state_from_refs_in_effects;
 
     // Map from IdentifierId to the Place where the setState originated
-    let mut set_state_functions: HashMap<IdentifierId, SetStateInfo> = HashMap::new();
+    let mut set_state_functions: IdMap<IdentifierId, SetStateInfo> = IdMap::new();
     let mut errors = CompilerError::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -45,14 +45,12 @@ pub(crate) fn validate_no_set_state_in_effects(
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::LoadLocal { place, .. } => {
-                    if set_state_functions.contains_key(&place.identifier) {
-                        let info = set_state_functions[&place.identifier].clone();
+                    if let Some(info) = set_state_functions.get(place.identifier).cloned() {
                         set_state_functions.insert(instr.lvalue.identifier, info);
                     }
                 }
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
-                    if set_state_functions.contains_key(&value.identifier) {
-                        let info = set_state_functions[&value.identifier].clone();
+                    if let Some(info) = set_state_functions.get(value.identifier).cloned() {
                         set_state_functions.insert(lvalue.place.identifier, info.clone());
                         set_state_functions.insert(instr.lvalue.identifier, info);
                     }
@@ -62,7 +60,7 @@ pub(crate) fn validate_no_set_state_in_effects(
                     let inner_func = &functions[lowered_func.func.0 as usize];
                     let has_set_state_operand = inner_func.context.iter().any(|ctx_place| {
                         is_set_state_identifier(ctx_place.identifier, identifiers, types)
-                            || set_state_functions.contains_key(&ctx_place.identifier)
+                            || set_state_functions.contains_key(ctx_place.identifier)
                     });
 
                     if has_set_state_operand {
@@ -89,9 +87,10 @@ pub(crate) fn validate_no_set_state_in_effects(
                     if is_use_effect_event_type(prop_type) {
                         if let Some(first_arg) = args.first() {
                             if let PlaceOrSpread::Place(arg_place) = first_arg {
-                                if let Some(info) = set_state_functions.get(&arg_place.identifier) {
-                                    set_state_functions
-                                        .insert(instr.lvalue.identifier, info.clone());
+                                if let Some(info) =
+                                    set_state_functions.get(arg_place.identifier).cloned()
+                                {
+                                    set_state_functions.insert(instr.lvalue.identifier, info);
                                 }
                             }
                         }
@@ -101,7 +100,7 @@ pub(crate) fn validate_no_set_state_in_effects(
                     {
                         if let Some(first_arg) = args.first() {
                             if let PlaceOrSpread::Place(arg_place) = first_arg {
-                                if let Some(info) = set_state_functions.get(&arg_place.identifier) {
+                                if let Some(info) = set_state_functions.get(arg_place.identifier) {
                                     push_error(&mut errors, info, enable_verbose);
                                 }
                             }
@@ -114,9 +113,10 @@ pub(crate) fn validate_no_set_state_in_effects(
                     if is_use_effect_event_type(callee_type) {
                         if let Some(first_arg) = args.first() {
                             if let PlaceOrSpread::Place(arg_place) = first_arg {
-                                if let Some(info) = set_state_functions.get(&arg_place.identifier) {
-                                    set_state_functions
-                                        .insert(instr.lvalue.identifier, info.clone());
+                                if let Some(info) =
+                                    set_state_functions.get(arg_place.identifier).cloned()
+                                {
+                                    set_state_functions.insert(instr.lvalue.identifier, info);
                                 }
                             }
                         }
@@ -126,7 +126,7 @@ pub(crate) fn validate_no_set_state_in_effects(
                     {
                         if let Some(first_arg) = args.first() {
                             if let PlaceOrSpread::Place(arg_place) = first_arg {
-                                if let Some(info) = set_state_functions.get(&arg_place.identifier) {
+                                if let Some(info) = set_state_functions.get(arg_place.identifier) {
                                     push_error(&mut errors, info, enable_verbose);
                                 }
                             }
@@ -235,47 +235,13 @@ fn push_error(errors: &mut CompilerError, info: &SetStateInfo, enable_verbose: b
     }
 }
 
-/// Recursively collect all Place identifiers from a destructure pattern.
-fn collect_destructure_places(
-    pattern: &crate::hir::Pattern,
-    ref_derived_values: &mut HashSet<IdentifierId>,
-) {
-    match pattern {
-        crate::hir::Pattern::Array(arr) => {
-            for item in &arr.items {
-                match item {
-                    crate::hir::ArrayPatternElement::Place(p) => {
-                        ref_derived_values.insert(p.identifier);
-                    }
-                    crate::hir::ArrayPatternElement::Spread(s) => {
-                        ref_derived_values.insert(s.place.identifier);
-                    }
-                    crate::hir::ArrayPatternElement::Hole => {}
-                }
-            }
-        }
-        crate::hir::Pattern::Object(obj) => {
-            for prop in &obj.properties {
-                match prop {
-                    crate::hir::ObjectPropertyOrSpread::Property(p) => {
-                        ref_derived_values.insert(p.place.identifier);
-                    }
-                    crate::hir::ObjectPropertyOrSpread::Spread(s) => {
-                        ref_derived_values.insert(s.place.identifier);
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn is_derived_from_ref(
     id: IdentifierId,
-    ref_derived_values: &HashSet<IdentifierId>,
+    ref_derived_values: &IdBitSet<IdentifierId>,
     identifiers: &[Identifier],
     types: &[Type],
 ) -> bool {
-    if ref_derived_values.contains(&id) {
+    if ref_derived_values.contains(id) {
         return true;
     }
     let ident = &identifiers[id.0 as usize];
@@ -283,73 +249,90 @@ fn is_derived_from_ref(
     is_use_ref_type(ty) || is_ref_value_type(ty)
 }
 
-/// Collects all operand IdentifierIds from an instruction value.
-/// Uses the canonical `each_instruction_value_operand_with_functions` from visitors.
-fn collect_operands(value: &InstructionValue, functions: &[HirFunction]) -> Vec<IdentifierId> {
-    visitors::each_instruction_value_operand_with_functions(value, functions)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
-}
-
-/// Creates a function that checks whether a block is "control-dominated" by
-/// a ref-derived condition. A block is ref-controlled if its post-dominator
-/// frontier contains a block whose terminal tests a ref-derived value.
-fn create_ref_controlled_block_checker(
-    func: &HirFunction,
-    next_block_id_counter: u32,
-    ref_derived_values: &HashSet<IdentifierId>,
+/// Whether the terminal branches on a ref-derived value.
+fn tests_ref_derived_value(
+    terminal: &Terminal,
+    ref_derived_values: &IdBitSet<IdentifierId>,
     identifiers: &[Identifier],
     types: &[Type],
-) -> Result<HashMap<BlockId, bool>, CompilerDiagnostic> {
-    let post_dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
-    let mut cache: HashMap<BlockId, bool> = HashMap::new();
+) -> bool {
+    matches!(
+        terminal,
+        Terminal::If { .. } | Terminal::Branch { .. } | Terminal::Switch { .. }
+    ) && visitors::terminal_operands(terminal)
+        .any(|test| is_derived_from_ref(test.identifier, ref_derived_values, identifiers, types))
+}
 
-    for (block_id, _block) in &func.body.blocks {
-        let frontier = post_dominator_frontier(func, &post_dominators, *block_id);
-        let mut is_controlled = false;
-
-        for frontier_block_id in &frontier {
-            let control_block = &func.body.blocks[frontier_block_id];
-            match &control_block.terminal {
-                Terminal::If { test, .. } | Terminal::Branch { test, .. } => {
-                    if is_derived_from_ref(test.identifier, ref_derived_values, identifiers, types)
-                    {
-                        is_controlled = true;
-                        break;
-                    }
-                }
-                Terminal::Switch { test, cases, .. } => {
-                    if is_derived_from_ref(test.identifier, ref_derived_values, identifiers, types)
-                    {
-                        is_controlled = true;
-                        break;
-                    }
-                    for case in cases {
-                        if let Some(case_test) = &case.test {
-                            if is_derived_from_ref(
-                                case_test.identifier,
-                                ref_derived_values,
-                                identifiers,
-                                types,
-                            ) {
-                                is_controlled = true;
-                                break;
-                            }
-                        }
-                    }
-                    if is_controlled {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        cache.insert(*block_id, is_controlled);
+/// Finds the blocks that are "control-dominated" by a ref-derived condition.
+/// A block is ref-controlled if its post-dominator
+/// frontier contains a block whose terminal tests a ref-derived value.
+fn find_ref_controlled_blocks(
+    func: &HirFunction,
+    next_block_id_counter: u32,
+    ref_derived_values: &IdBitSet<IdentifierId>,
+    identifiers: &[Identifier],
+    types: &[Type],
+) -> Result<IdBitSet<BlockId>, CompilerDiagnostic> {
+    let mut controlled = IdBitSet::default();
+    let tests_ref_derived_value = |block: &BasicBlock| {
+        tests_ref_derived_value(&block.terminal, ref_derived_values, identifiers, types)
+    };
+    let is_any_tested = func.body.blocks.values().any(tests_ref_derived_value);
+    if !is_any_tested && !cfg!(debug_assertions) {
+        return Ok(controlled);
     }
 
-    Ok(cache)
+    let post_dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
+    let frontiers = post_dominator_frontiers(func, &post_dominators)?;
+
+    for &block_id in func.body.blocks.keys() {
+        let mut frontier = frontiers.get(block_id).into_iter().flatten();
+        if frontier.any(|id| tests_ref_derived_value(&func.body.blocks[id])) {
+            controlled.insert(block_id);
+        }
+    }
+
+    debug_assert!(is_any_tested || controlled.is_empty());
+    Ok(controlled)
+}
+
+/// What an instruction with a ref-derived operand makes ref-derived, and `.current` of a ref.
+fn track_ref_derived_values(
+    instr: &Instruction,
+    ref_derived_values: &mut IdBitSet<IdentifierId>,
+    identifiers: &[Identifier],
+    types: &[Type],
+    functions: &[HirFunction],
+) {
+    let has_ref_operand = visitors::operands(&instr.value, functions).any(|operand| {
+        is_derived_from_ref(operand.identifier, ref_derived_values, identifiers, types)
+    });
+
+    if has_ref_operand {
+        ref_derived_values.insert(instr.lvalue.identifier);
+        // For Destructure, also mark all pattern places as ref-derived.
+        // For StoreLocal, propagate to the local variable
+        if let InstructionValue::Destructure { .. } | InstructionValue::StoreLocal { .. } =
+            &instr.value
+        {
+            ref_derived_values
+                .extend(visitors::value_lvalues(&instr.value).map(|place| place.identifier));
+        }
+    }
+
+    // Special case: PropertyLoad of .current on ref/refValue
+    if let InstructionValue::PropertyLoad {
+        object, property, ..
+    } = &instr.value
+    {
+        if matches!(property, PropertyLiteral::String(s) if s == b"current") {
+            let obj_ident = &identifiers[object.identifier.0 as usize];
+            let obj_ty = &types[obj_ident.type_.0 as usize];
+            if is_use_ref_type(obj_ty) || is_ref_value_type(obj_ty) {
+                ref_derived_values.insert(instr.lvalue.identifier);
+            }
+        }
+    }
 }
 
 /// Checks inner function body for direct setState calls. Returns the callee Place info
@@ -357,7 +340,7 @@ fn create_ref_controlled_block_checker(
 /// Tracks ref-derived values to allow setState when the value being set comes from a ref.
 fn get_set_state_call(
     func: &HirFunction,
-    set_state_functions: &mut HashMap<IdentifierId, SetStateInfo>,
+    set_state_functions: &mut IdMap<IdentifierId, SetStateInfo>,
     identifiers: &[Identifier],
     types: &[Type],
     functions: &[HirFunction],
@@ -365,7 +348,7 @@ fn get_set_state_call(
     next_block_id_counter: u32,
     source_code: Option<&str>,
 ) -> Result<Option<SetStateInfo>, CompilerDiagnostic> {
-    let mut ref_derived_values: HashSet<IdentifierId> = HashSet::new();
+    let mut ref_derived_values: IdBitSet<IdentifierId> = IdBitSet::default();
 
     // First pass: collect ref-derived values (needed before building control dominator checker)
     // We do a pre-pass to seed ref_derived_values so the control dominator checker has them.
@@ -381,42 +364,20 @@ fn get_set_state_call(
             }
 
             for &instr_id in &block.instructions {
-                let instr = &func.instructions[instr_id.0 as usize];
-
-                let operands = collect_operands(&instr.value, functions);
-                let has_ref_operand = operands.iter().any(|op_id| {
-                    is_derived_from_ref(*op_id, &ref_derived_values, identifiers, types)
-                });
-
-                if has_ref_operand {
-                    ref_derived_values.insert(instr.lvalue.identifier);
-                    if let InstructionValue::Destructure { lvalue, .. } = &instr.value {
-                        collect_destructure_places(&lvalue.pattern, &mut ref_derived_values);
-                    }
-                    if let InstructionValue::StoreLocal { lvalue, .. } = &instr.value {
-                        ref_derived_values.insert(lvalue.place.identifier);
-                    }
-                }
-
-                if let InstructionValue::PropertyLoad {
-                    object, property, ..
-                } = &instr.value
-                {
-                    if matches!(property, PropertyLiteral::String(s) if s == b"current") {
-                        let obj_ident = &identifiers[object.identifier.0 as usize];
-                        let obj_ty = &types[obj_ident.type_.0 as usize];
-                        if is_use_ref_type(obj_ty) || is_ref_value_type(obj_ty) {
-                            ref_derived_values.insert(instr.lvalue.identifier);
-                        }
-                    }
-                }
+                track_ref_derived_values(
+                    &func.instructions[instr_id.0 as usize],
+                    &mut ref_derived_values,
+                    identifiers,
+                    types,
+                    functions,
+                );
             }
         }
     }
 
     // Build control dominator checker after collecting ref-derived values
     let ref_controlled_blocks = if enable_allow_set_state_from_refs {
-        create_ref_controlled_block_checker(
+        find_ref_controlled_blocks(
             func,
             next_block_id_counter,
             &ref_derived_values,
@@ -424,15 +385,11 @@ fn get_set_state_call(
             types,
         )?
     } else {
-        HashMap::new()
+        IdBitSet::default()
     };
 
-    let is_ref_controlled_block = |block_id: BlockId| -> bool {
-        ref_controlled_blocks
-            .get(&block_id)
-            .copied()
-            .unwrap_or(false)
-    };
+    let is_ref_controlled_block =
+        |block_id: BlockId| -> bool { ref_controlled_blocks.contains(block_id) };
 
     // Reset and redo: second pass with control dominator info available
     ref_derived_values.clear();
@@ -476,55 +433,30 @@ fn get_set_state_call(
 
             // Track ref-derived values through instructions
             if enable_allow_set_state_from_refs {
-                let operands = collect_operands(&instr.value, functions);
-                let has_ref_operand = operands.iter().any(|op_id| {
-                    is_derived_from_ref(*op_id, &ref_derived_values, identifiers, types)
-                });
-
-                if has_ref_operand {
-                    ref_derived_values.insert(instr.lvalue.identifier);
-                    // For Destructure, also mark all pattern places as ref-derived
-                    if let InstructionValue::Destructure { lvalue, .. } = &instr.value {
-                        collect_destructure_places(&lvalue.pattern, &mut ref_derived_values);
-                    }
-                    // For StoreLocal, propagate to the local variable
-                    if let InstructionValue::StoreLocal { lvalue, .. } = &instr.value {
-                        ref_derived_values.insert(lvalue.place.identifier);
-                    }
-                }
-
-                // Special case: PropertyLoad of .current on ref/refValue
-                if let InstructionValue::PropertyLoad {
-                    object, property, ..
-                } = &instr.value
-                {
-                    if matches!(property, PropertyLiteral::String(s) if s == b"current") {
-                        let obj_ident = &identifiers[object.identifier.0 as usize];
-                        let obj_ty = &types[obj_ident.type_.0 as usize];
-                        if is_use_ref_type(obj_ty) || is_ref_value_type(obj_ty) {
-                            ref_derived_values.insert(instr.lvalue.identifier);
-                        }
-                    }
-                }
+                track_ref_derived_values(
+                    instr,
+                    &mut ref_derived_values,
+                    identifiers,
+                    types,
+                    functions,
+                );
             }
 
             match &instr.value {
                 InstructionValue::LoadLocal { place, .. } => {
-                    if set_state_functions.contains_key(&place.identifier) {
-                        let info = set_state_functions[&place.identifier].clone();
+                    if let Some(info) = set_state_functions.get(place.identifier).cloned() {
                         set_state_functions.insert(instr.lvalue.identifier, info);
                     }
                 }
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
-                    if set_state_functions.contains_key(&value.identifier) {
-                        let info = set_state_functions[&value.identifier].clone();
+                    if let Some(info) = set_state_functions.get(value.identifier).cloned() {
                         set_state_functions.insert(lvalue.place.identifier, info.clone());
                         set_state_functions.insert(instr.lvalue.identifier, info);
                     }
                 }
                 InstructionValue::CallExpression { callee, args, .. } => {
                     if is_set_state_identifier(callee.identifier, identifiers, types)
-                        || set_state_functions.contains_key(&callee.identifier)
+                        || set_state_functions.contains_key(callee.identifier)
                     {
                         if enable_allow_set_state_from_refs {
                             // Check if the first argument is ref-derived

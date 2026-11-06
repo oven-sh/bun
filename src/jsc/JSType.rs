@@ -36,7 +36,7 @@
 //! • number → immediate double/int32 or HeapBigInt
 //! • boolean → immediate true/false
 //! • symbol → Symbol
-//! • bigint → HeapBigInt or BigInt32 (immediate)
+//! • bigint → HeapBigInt
 //! • null/undefined → immediate values
 //!
 //! JavaScript Objects → JSType:
@@ -205,20 +205,22 @@ impl JSType {
     /// Global context for Promise.all() (new in recent WebKit).
     pub(crate) const PromiseAllGlobalContext: JSType = JSType(24);
 
+    pub(crate) const CompiledEnvironment: JSType = JSType(33);
+
     /// Base JavaScript object type.
     /// ```js
     /// {}
     /// new Object()
     /// ```
-    pub const Object: JSType = JSType(33);
+    pub const Object: JSType = JSType(34);
 
     /// Optimized object type for object literals with fixed properties.
     /// ```js
     /// { a: 1, b: 2 }
     /// ```
-    pub const FinalObject: JSType = JSType(34);
+    pub const FinalObject: JSType = JSType(35);
 
-    pub const JSCallee: JSType = JSType(35);
+    pub const JSCallee: JSType = JSType(36);
 
     /// JavaScript function object created from JavaScript source code.
     /// ```js
@@ -228,7 +230,9 @@ impl JSType {
     ///   method() {}
     /// }
     /// ```
-    pub const JSFunction: JSType = JSType(36);
+    pub const JSFunction: JSType = JSType(37);
+
+    pub const CompiledClosure: JSType = JSType(38);
 
     /// Built-in function implemented in native code.
     /// ```js
@@ -237,21 +241,21 @@ impl JSType {
     /// parseInt
     /// console.log
     /// ```
-    pub const InternalFunction: JSType = JSType(37);
+    pub const InternalFunction: JSType = JSType(39);
 
     /// Boxed Boolean object.
     /// ```js
     /// new Boolean(true)
     /// new Boolean(false)
     /// ```
-    pub const BooleanObject: JSType = JSType(39);
+    pub const BooleanObject: JSType = JSType(41);
 
     /// Boxed Number object.
     /// ```js
     /// new Number(42)
     /// new Number(3.14)
     /// ```
-    pub const NumberObject: JSType = JSType(40);
+    pub const NumberObject: JSType = JSType(42);
 
     /// JavaScript Error object and its subclasses.
     /// ```js
@@ -259,9 +263,9 @@ impl JSType {
     /// new TypeError()
     /// throw new RangeError()
     /// ```
-    pub const ErrorInstance: JSType = JSType(41);
+    pub const ErrorInstance: JSType = JSType(43);
 
-    pub const GlobalProxy: JSType = JSType(42);
+    pub const GlobalProxy: JSType = JSType(44);
 
     /// Arguments object for function parameters.
     /// ```js
@@ -270,10 +274,10 @@ impl JSType {
     ///   console.log(arguments.length);
     /// }
     /// ```
-    pub(crate) const DirectArguments: JSType = JSType(43);
+    pub(crate) const DirectArguments: JSType = JSType(45);
 
-    pub(crate) const ScopedArguments: JSType = JSType(44);
-    pub(crate) const ClonedArguments: JSType = JSType(45);
+    pub(crate) const ScopedArguments: JSType = JSType(46);
+    pub(crate) const ClonedArguments: JSType = JSType(47);
 
     /// JavaScript Array object.
     /// ```js
@@ -282,94 +286,94 @@ impl JSType {
     /// new Array(10)
     /// Array.from(iterable)
     /// ```
-    pub const Array: JSType = JSType(46);
+    pub const Array: JSType = JSType(48);
 
     /// Array subclass created through class extension.
     /// ```js
     /// class MyArray extends Array {}
     /// const arr = new MyArray();
     /// ```
-    pub const DerivedArray: JSType = JSType(47);
+    pub const DerivedArray: JSType = JSType(49);
 
     /// ArrayBuffer for binary data storage.
     /// ```js
     /// new ArrayBuffer(1024)
     /// ```
-    pub const ArrayBuffer: JSType = JSType(48);
+    pub const ArrayBuffer: JSType = JSType(50);
 
     /// Typed array for 8-bit signed integers.
     /// ```js
     /// new Int8Array(buffer)
     /// new Int8Array([1, -1, 127])
     /// ```
-    pub const Int8Array: JSType = JSType(49);
+    pub const Int8Array: JSType = JSType(51);
 
     /// Typed array for 8-bit unsigned integers.
     /// ```js
     /// new Uint8Array(buffer)
     /// new Uint8Array([0, 255])
     /// ```
-    pub const Uint8Array: JSType = JSType(50);
+    pub const Uint8Array: JSType = JSType(52);
 
     /// Typed array for 8-bit unsigned integers with clamping.
     /// ```js
     /// new Uint8ClampedArray([0, 300]) // 300 becomes 255
     /// ```
-    pub const Uint8ClampedArray: JSType = JSType(51);
+    pub const Uint8ClampedArray: JSType = JSType(53);
 
     /// Typed array for 16-bit signed integers.
     /// ```js
     /// new Int16Array(buffer)
     /// ```
-    pub const Int16Array: JSType = JSType(52);
+    pub const Int16Array: JSType = JSType(54);
 
     /// Typed array for 16-bit unsigned integers.
     /// ```js
     /// new Uint16Array(buffer)
     /// ```
-    pub const Uint16Array: JSType = JSType(53);
+    pub const Uint16Array: JSType = JSType(55);
 
     /// Typed array for 32-bit signed integers.
     /// ```js
     /// new Int32Array(buffer)
     /// ```
-    pub const Int32Array: JSType = JSType(54);
+    pub const Int32Array: JSType = JSType(56);
 
     /// Typed array for 32-bit unsigned integers.
     /// ```js
     /// new Uint32Array(buffer)
     /// ```
-    pub const Uint32Array: JSType = JSType(55);
+    pub const Uint32Array: JSType = JSType(57);
 
     /// Typed array for 16-bit floating point numbers.
     /// ```js
     /// new Float16Array(buffer)
     /// ```
-    pub const Float16Array: JSType = JSType(56);
+    pub const Float16Array: JSType = JSType(58);
 
     /// Typed array for 32-bit floating point numbers.
     /// ```js
     /// new Float32Array(buffer)
     /// ```
-    pub const Float32Array: JSType = JSType(57);
+    pub const Float32Array: JSType = JSType(59);
 
     /// Typed array for 64-bit floating point numbers.
     /// ```js
     /// new Float64Array(buffer)
     /// ```
-    pub const Float64Array: JSType = JSType(58);
+    pub const Float64Array: JSType = JSType(60);
 
     /// Typed array for 64-bit signed BigInt values.
     /// ```js
     /// new BigInt64Array([123n, -456n])
     /// ```
-    pub const BigInt64Array: JSType = JSType(59);
+    pub const BigInt64Array: JSType = JSType(61);
 
     /// Typed array for 64-bit unsigned BigInt values.
     /// ```js
     /// new BigUint64Array([123n, 456n])
     /// ```
-    pub const BigUint64Array: JSType = JSType(60);
+    pub const BigUint64Array: JSType = JSType(62);
 
     /// DataView for flexible binary data access.
     /// ```js
@@ -377,7 +381,7 @@ impl JSType {
     /// view.getInt32(0)
     /// view.setFloat64(8, 3.14)
     /// ```
-    pub const DataView: JSType = JSType(61);
+    pub const DataView: JSType = JSType(63);
 
     /// Global object containing all global variables and functions.
     /// ```js
@@ -385,12 +389,12 @@ impl JSType {
     /// window // in browsers
     /// global // in Node.js
     /// ```
-    pub const GlobalObject: JSType = JSType(62);
+    pub const GlobalObject: JSType = JSType(64);
 
-    pub const GlobalLexicalEnvironment: JSType = JSType(63);
-    pub const LexicalEnvironment: JSType = JSType(64);
-    pub const ModuleEnvironment: JSType = JSType(65);
-    pub const StrictEvalActivation: JSType = JSType(66);
+    pub const GlobalLexicalEnvironment: JSType = JSType(65);
+    pub const LexicalEnvironment: JSType = JSType(66);
+    pub const ModuleEnvironment: JSType = JSType(67);
+    pub const StrictEvalActivation: JSType = JSType(68);
 
     /// Scope object for with statements.
     /// ```js
@@ -398,16 +402,16 @@ impl JSType {
     ///   prop; // looks up prop in obj first
     /// }
     /// ```
-    pub const WithScope: JSType = JSType(67);
+    pub const WithScope: JSType = JSType(69);
 
     /// Namespace object for ES6 modules.
     /// ```js
     /// import * as ns from 'module';
     /// ns.exportedFunction()
     /// ```
-    pub const ModuleNamespaceObject: JSType = JSType(70);
+    pub const ModuleNamespaceObject: JSType = JSType(72);
 
-    pub(crate) const ShadowRealm: JSType = JSType(71);
+    pub(crate) const ShadowRealm: JSType = JSType(73);
 
     /// Regular expression object.
     /// ```js
@@ -415,7 +419,7 @@ impl JSType {
     /// new RegExp('pattern', 'flags')
     /// /abc/gi
     /// ```
-    pub const RegExpObject: JSType = JSType(72);
+    pub const RegExpObject: JSType = JSType(74);
 
     /// JavaScript Date object for date/time operations.
     /// ```js
@@ -423,7 +427,7 @@ impl JSType {
     /// new Date('2023-01-01')
     /// Date.now()
     /// ```
-    pub const JSDate: JSType = JSType(73);
+    pub const JSDate: JSType = JSType(75);
 
     /// Proxy object that intercepts operations on another object.
     /// ```js
@@ -431,7 +435,7 @@ impl JSType {
     ///   get(obj, prop) { return obj[prop]; }
     /// })
     /// ```
-    pub const ProxyObject: JSType = JSType(74);
+    pub const ProxyObject: JSType = JSType(76);
 
     /// Generator object created by generator functions.
     /// ```js
@@ -439,7 +443,7 @@ impl JSType {
     /// const g = gen();
     /// g.next()
     /// ```
-    pub(crate) const Generator: JSType = JSType(75);
+    pub(crate) const Generator: JSType = JSType(77);
 
     /// Async generator object for asynchronous iteration.
     /// ```js
@@ -447,17 +451,17 @@ impl JSType {
     ///   yield await promise;
     /// }
     /// ```
-    pub(crate) const AsyncGenerator: JSType = JSType(77);
+    pub(crate) const AsyncGenerator: JSType = JSType(79);
 
     /// Iterator for Array objects.
     /// ```js
     /// [1,2,3][Symbol.iterator]()
     /// for (const x of array) {}
     /// ```
-    pub(crate) const JSArrayIterator: JSType = JSType(78);
+    pub(crate) const JSArrayIterator: JSType = JSType(80);
 
-    pub(crate) const Iterator: JSType = JSType(79);
-    pub(crate) const IteratorHelper: JSType = JSType(80);
+    pub(crate) const Iterator: JSType = JSType(81);
+    pub(crate) const IteratorHelper: JSType = JSType(82);
 
     /// Iterator for Map objects.
     /// ```js
@@ -466,30 +470,30 @@ impl JSType {
     /// map.entries()
     /// for (const [k,v] of map) {}
     /// ```
-    pub(crate) const MapIterator: JSType = JSType(81);
+    pub(crate) const MapIterator: JSType = JSType(83);
 
     /// Iterator for Set objects.
     /// ```js
     /// set.values()
     /// for (const value of set) {}
     /// ```
-    pub(crate) const SetIterator: JSType = JSType(82);
+    pub(crate) const SetIterator: JSType = JSType(84);
 
     /// Iterator for String objects.
     /// ```js
     /// 'hello'[Symbol.iterator]()
     /// for (const char of string) {}
     /// ```
-    pub(crate) const StringIterator: JSType = JSType(83);
+    pub(crate) const StringIterator: JSType = JSType(85);
 
-    pub(crate) const WrapForValidIterator: JSType = JSType(84);
+    pub(crate) const WrapForValidIterator: JSType = JSType(86);
 
     /// Iterator for RegExp string matching.
     /// ```js
     /// 'abc'.matchAll(/./g)
     /// for (const match of string.matchAll(regex)) {}
     /// ```
-    pub(crate) const RegExpStringIterator: JSType = JSType(85);
+    pub(crate) const RegExpStringIterator: JSType = JSType(87);
 
     /// JavaScript Promise object for asynchronous operations.
     /// ```js
@@ -497,7 +501,7 @@ impl JSType {
     /// Promise.resolve(42)
     /// async function foo() { await promise; }
     /// ```
-    pub const JSPromise: JSType = JSType(87);
+    pub const JSPromise: JSType = JSType(89);
 
     /// JavaScript Map object for key-value storage.
     /// ```js
@@ -505,7 +509,7 @@ impl JSType {
     /// map.set(key, value)
     /// map.get(key)
     /// ```
-    pub const Map: JSType = JSType(88);
+    pub const Map: JSType = JSType(90);
 
     /// JavaScript Set object for unique value storage.
     /// ```js
@@ -513,33 +517,37 @@ impl JSType {
     /// set.add(value)
     /// set.has(value)
     /// ```
-    pub const Set: JSType = JSType(89);
+    pub const Set: JSType = JSType(91);
 
     /// WeakMap for weak key-value references.
     /// ```js
     /// new WeakMap()
     /// weakMap.set(object, value)
     /// ```
-    pub const WeakMap: JSType = JSType(90);
+    pub const WeakMap: JSType = JSType(92);
 
     /// WeakSet for weak value references.
     /// ```js
     /// new WeakSet()
     /// weakSet.add(object)
     /// ```
-    pub const WeakSet: JSType = JSType(91);
+    pub const WeakSet: JSType = JSType(93);
 
-    pub(crate) const WebAssemblyModule: JSType = JSType(92);
-    pub(crate) const WebAssemblyInstance: JSType = JSType(93);
-    pub(crate) const WebAssemblyGCObject: JSType = JSType(94);
+    pub(crate) const WebAssemblyModule: JSType = JSType(94);
+    pub(crate) const WebAssemblyInstance: JSType = JSType(95);
+    pub(crate) const WebAssemblyGCObject: JSType = JSType(96);
+
+    pub const CompiledObject: JSType = JSType(97);
+    pub const SlimClosure: JSType = JSType(98);
+    pub const SlimClosureWithProperties: JSType = JSType(99);
 
     /// Boxed String object.
     /// ```js
     /// new String("hello")
     /// ```
-    pub const StringObject: JSType = JSType(95);
+    pub const StringObject: JSType = JSType(100);
 
-    pub const DerivedStringObject: JSType = JSType(96);
+    pub const DerivedStringObject: JSType = JSType(101);
 
     pub const Event: JSType = JSType(0b11101111);
     pub const DOMWrapper: JSType = JSType(0b11101110);
@@ -605,6 +613,10 @@ impl JSType {
                 | JSType::AsyncGenerator
                 | JSType::JSDate
                 | JSType::JSFunction
+                | JSType::CompiledClosure
+                | JSType::CompiledObject
+                | JSType::SlimClosure
+                | JSType::SlimClosureWithProperties
                 | JSType::Generator
                 | JSType::Map
                 | JSType::MapIterator
@@ -642,7 +654,12 @@ impl JSType {
     pub fn is_function(self) -> bool {
         matches!(
             self,
-            JSType::JSFunction | JSType::FunctionExecutable | JSType::InternalFunction
+            JSType::JSFunction
+                | JSType::CompiledClosure
+                | JSType::SlimClosure
+                | JSType::SlimClosureWithProperties
+                | JSType::FunctionExecutable
+                | JSType::InternalFunction
         )
     }
 
@@ -725,6 +742,7 @@ impl JSType {
                 | JSType::FullPromiseReaction
                 | JSType::PromiseAllContext
                 | JSType::PromiseAllGlobalContext
+                | JSType::CompiledEnvironment
         )
     }
 
@@ -793,6 +811,10 @@ impl JSType {
                 | JSType::DerivedArray
                 | JSType::ErrorInstance
                 | JSType::JSFunction
+                | JSType::CompiledClosure
+                | JSType::CompiledObject
+                | JSType::SlimClosure
+                | JSType::SlimClosureWithProperties
                 | JSType::InternalFunction
                 | JSType::ArrayBuffer
                 | JSType::BigInt64Array

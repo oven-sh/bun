@@ -241,10 +241,10 @@ export function greet() {
     // The executable should be at subdir/myapp (with .exe on Windows)
     expect(await Bun.file(join(subdirPath, `myapp${exeSuffix}`)).exists()).toBe(true);
 
-    // The .map file should be in subdir/ (next to the executable)
+    // The .map file should be in subdir/ (next to the executable), named after the executable
     const glob = new Bun.Glob("*.map");
     const mapFiles = Array.from(glob.scanSync({ cwd: subdirPath }));
-    expect(mapFiles.length).toBe(1);
+    expect(mapFiles).toEqual(["myapp.map"]);
 
     // Validate the sourcemap is valid JSON
     const mapContent = JSON.parse(await Bun.file(join(subdirPath, mapFiles[0])).text());

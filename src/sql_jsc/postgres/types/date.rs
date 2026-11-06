@@ -1,4 +1,6 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use crate::jsc::{JSGlobalObject, JSValue};
+use bun_sql::postgres::postgres_protocol::{NewWriter, WriterContext};
+use bun_sql::postgres::postgres_types::{AnyPostgresError, Tag};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -36,22 +38,7 @@ pub(crate) fn parse_infinity(bytes: &[u8]) -> Option<f64> {
     None
 }
 
-/// Decode a Postgres `timestamp` (WITHOUT TIME ZONE) text value as UTC, so the
-/// text/simple-query path agrees with the binary path (which is already UTC).
-/// Postgres emits these as `YYYY-MM-DD HH:MM:SS[.ffffff]` with no offset;
-/// without this they'd go through JS `Date.parse` and be read as local time on
-/// non-UTC hosts. Returns `None` for anything that isn't this exact shape
-/// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
-/// `Date.parse`.
-pub(crate) fn timestamp_text_to_ms_utc(
-    global_object: &JSGlobalObject,
-    bytes: &[u8],
-) -> Option<f64> {
-    let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
-    components_to_ms_utc(global_object, &parsed)
-}
-
-/// Same for `timestamptz` text, whose trailing `±HH[:MM[:SS]]` offset is applied here.
+/// Text without a `±HH[:MM[:SS]]` offset is UTC, as the binary format is.
 pub(crate) fn timestamptz_text_to_ms_utc(
     global_object: &JSGlobalObject,
     bytes: &[u8],
@@ -67,7 +54,7 @@ fn components_to_ms_utc(
 ) -> Option<f64> {
     global_object
         .gregorian_date_time_to_ms_utc(
-            i32::from(parsed.year),
+            parsed.year,
             i32::from(parsed.month),
             i32::from(parsed.day),
             i32::from(parsed.hour),
@@ -78,29 +65,35 @@ fn components_to_ms_utc(
         .ok()
 }
 
-pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
-    let double_value = if value.is_date() {
-        value.get_unix_timestamp()
-    } else if value.is_number() {
-        value.as_number()
-    } else if value.is_string() {
-        let str = value.to_bun_string(global_object).expect("unreachable");
-        bun_string_jsc::parse_date(&str, global_object)?
-    } else {
-        return Ok(0);
-    };
+pub(crate) fn to_binary(date: JSValue) -> Option<i64> {
+    let unix_ms = date.get_unix_timestamp();
+    if unix_ms.is_nan() {
+        return None;
+    }
+    Some((unix_ms as i64 - POSTGRES_EPOCH_DATE) * US_PER_MS)
+}
 
-    // Round-trip the ±Infinity the decoder produces back to DT_NOEND /
-    // DT_NOBEGIN; otherwise `f64::INFINITY as i64` saturates to i64::MAX and
-    // the subtract/multiply below overflows.
-    if double_value == f64::INFINITY {
-        return Ok(i64::MAX);
+pub(crate) fn write_text<Context: WriterContext>(
+    global_object: &JSGlobalObject,
+    date: JSValue,
+    tag: Tag,
+    writer: NewWriter<Context>,
+) -> Result<(), AnyPostgresError> {
+    let mut buf = [0u8; 64];
+    let Some(len) = date.to_iso_string(global_object, &mut buf).map(<[u8]>::len) else {
+        return writer.write(b"Invalid Date");
+    };
+    let iso = &mut buf[..len];
+    if tag.is_json() {
+        writer.write(b"\"")?;
+        writer.write(iso)?;
+        return writer.write(b"\"");
     }
-    if double_value == f64::NEG_INFINITY {
-        return Ok(i64::MIN);
+    // Their input functions reject the `T`.
+    if matches!(tag, Tag::time | Tag::timetz) {
+        if let Some(t) = bun_core::strings::index_of_char_usize(iso, b'T') {
+            iso[t] = b' ';
+        }
     }
-    let unix_timestamp: i64 = double_value as i64;
-    Ok(unix_timestamp
-        .saturating_sub(POSTGRES_EPOCH_DATE)
-        .saturating_mul(US_PER_MS))
+    writer.write(iso)
 }

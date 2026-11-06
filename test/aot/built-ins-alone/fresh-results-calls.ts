@@ -143,19 +143,10 @@ export const calls: Record<string, string[]> = {
   ...Object.fromEntries(
     [
       ["addListener", '"x", () => {}'],
-      ["emit", '"x"'],
-      ["eventNames", ""],
-      ["getMaxListeners", ""],
-      ["listenerCount", '"x"'],
-      ["listeners", '"x"'],
-      ["off", '"x", () => {}'],
       ["on", '"x", () => {}'],
       ["once", '"x", () => {}'],
       ["prependListener", '"x", () => {}'],
       ["prependOnceListener", '"x", () => {}'],
-      ["rawListeners", '"x"'],
-      ["removeAllListeners", ""],
-      ["removeListener", '"x", () => {}'],
       ["setMaxListeners", "1"],
     ].map(([name, operands]) => [
       `%EventEmitter%.prototype.${name} > EventEmitter`,

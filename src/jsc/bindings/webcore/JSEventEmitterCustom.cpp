@@ -33,22 +33,9 @@ EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
     return nullptr;
 }
 
-JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
+JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* thisObject, DefineEvents defineEvents)
 {
-    if (!thisValue.isCell()) [[unlikely]] {
-        return nullptr;
-    }
-
-    JSCell* thisCell = thisValue.asCell();
-    if (!thisCell->isObject()) [[unlikely]] {
-        return nullptr;
-    }
-
-    auto* thisObject = asObject(thisCell);
-
-    if (thisObject->inherits<JSEventEmitter>())
-        return uncheckedDowncast<JSEventEmitter>(thisObject);
-
+    ASSERT(!thisObject->inherits<JSEventEmitter>());
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
@@ -57,6 +44,9 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     if (_events.inherits<JSEventEmitter>()) {
         return uncheckedDowncast<JSEventEmitter>(asObject(_events));
     }
+
+    if (defineEvents == DefineEvents::No)
+        return nullptr;
 
     auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto impl = EventEmitter::create(*globalObject->currentScriptExecutionContext());

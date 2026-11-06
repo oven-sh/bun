@@ -579,6 +579,16 @@ static JSValue handleVirtualModuleResult(
     }
 }
 
+// Whether `bun test --isolate` retired the realm of the loader that fetched (empty: the global object's), or its Bun.ModuleGraph is disposed.
+extern "C" bool Bun__isModuleLoaderGone(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedModuleLoader)
+{
+    if (Bun::isRetiredTestIsolationRealm(globalObject))
+        return true;
+    JSValue moduleLoader = JSC::JSValue::decode(encodedModuleLoader);
+    Bun::JSModuleGraph* graph = moduleLoader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader)) : nullptr;
+    return graph && graph->disposed();
+}
+
 extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,

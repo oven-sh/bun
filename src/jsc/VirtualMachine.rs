@@ -6457,6 +6457,10 @@ impl VirtualMachine {
         self.close_test_file_sockets();
         debug_assert!(!self.has_test_file_sockets());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+        // A transpile that the file left on the thread pool is of an earlier generation now.
+        self.transpiler_store
+            .generation_number
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
 
         // The outgoing file's JS timers would otherwise release their pins only
         // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a

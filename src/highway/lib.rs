@@ -754,7 +754,11 @@ impl HtmlMarksBuffer {
     pub fn found(&self) -> HtmlMarks<'_> {
         let plane = |index: usize| {
             let start = index * self.plane_len;
-            Stops(self.planes.get(start..start + self.plane_len).unwrap_or_default())
+            Stops(
+                self.planes
+                    .get(start..start + self.plane_len)
+                    .unwrap_or_default(),
+            )
         };
         HtmlMarks {
             odd: plane(0),

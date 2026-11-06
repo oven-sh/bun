@@ -17,8 +17,9 @@ use bun_windows_sys::externs::{
     FILE_DEVICE_NULL, FILE_DISPOSITION_INFORMATION, FILE_DISPOSITION_INFORMATION_EX,
     FILE_END_OF_FILE_INFORMATION, FILE_FS_DEVICE_INFORMATION, FILE_FS_VOLUME_INFORMATION,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_INFORMATION_CLASS, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILETIME, FS_INFORMATION_CLASS,
-    GENERIC_WRITE, GetCurrentDirectoryW, GetFileAttributesExW, NT_ERROR, NT_SUCCESS, RtlGenRandom,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_ALERT,
+    FILE_SYNCHRONOUS_IO_NONALERT, FILETIME, FS_INFORMATION_CLASS, GENERIC_WRITE,
+    GetCurrentDirectoryW, GetFileAttributesExW, NT_ERROR, NT_SUCCESS, RtlGenRandom,
     SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE, SYMBOLIC_LINK_FLAG_DIRECTORY, UNICODE_STRING,
     VOLUME_NAME_DOS, WAIT_OBJECT_0, WIN32_FILE_ATTRIBUTE_DATA,
 };
@@ -29,7 +30,8 @@ use super::{
     FILE_DISPOSITION_POSIX_SEMANTICS, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
     FILE_TYPE_CHAR, FILE_TYPE_DISK, FILE_TYPE_PIPE, GetFileInformationByHandle, HANDLE, INFINITE,
     INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, LPCWSTR, MOVEFILE_REPLACE_EXISTING, NTSTATUS,
-    OPEN_EXISTING, SetFilePointerEx, ULONG, Win32Error, Win32ErrorExt as _, kernel32, ntdll,
+    OPEN_EXISTING, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetFilePointerEx, ULONG,
+    Win32Error, Win32ErrorExt as _, kernel32, ntdll,
 };
 use crate::{E, Error, Fd, Maybe, Mode, PlatformIoVec, PlatformIoVecConst, Tag, TimeLike, syslog};
 
@@ -598,6 +600,35 @@ fn with_transfer_event<R>(transfer: impl FnOnce(HANDLE) -> R) -> Win32Result<R> 
     }
 }
 
+/// Whether `handle` is a standard handle for synchronous I/O, whose transfers are over when the call returns and need no event.
+fn is_synchronous_stdio(handle: HANDLE) -> bool {
+    static HANDLES: OnceLock<[usize; 3]> = OnceLock::new();
+    let synchronous = |id: DWORD| {
+        let handle = kernel32::GetStdHandle(id);
+        let mut io: IO_STATUS_BLOCK = zeroed();
+        let mut mode: ULONG = 0;
+        // SAFETY: both out-params outlive the call.
+        let status = unsafe {
+            ntdll::NtQueryInformationFile(
+                handle,
+                &raw mut io,
+                from_mut(&mut mode).cast(),
+                size_of::<ULONG>() as ULONG,
+                FILE_INFORMATION_CLASS::FileModeInformation,
+            )
+        };
+        let flags = FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT;
+        if NT_SUCCESS(status) && mode & flags != 0 {
+            handle as usize
+        } else {
+            INVALID_HANDLE_VALUE as usize
+        }
+    };
+    HANDLES
+        .get_or_init(|| [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(synchronous))
+        .contains(&(handle as usize))
+}
+
 /// An operation on an overlapped handle that its thread waits for in [`transfer_once`].
 struct PendingTransfer {
     thread_id: DWORD,
@@ -678,7 +709,7 @@ fn transfer_once(
 ) -> (usize, Option<Win32Error>) {
     let cell = UnsafeCell::new(zeroed::<IO_STATUS_BLOCK>());
     let io = cell.get();
-    let status = with_transfer_event(|event| {
+    let issue = |event: HANDLE| {
         let offset = offset.as_ref().map_or(null(), from_ref);
         let (base, len) = (buf.iov_base, buf.iov_len as u32);
         // SAFETY: an iovec names memory of its length, writable if it is read into. That, `io` and `offset`
@@ -714,14 +745,20 @@ fn transfer_once(
             return status;
         }
         let _entry = PendingTransferEntry::new(handle, io);
-        // Until the event is set, `io` and the buffer are the system's to write to.
+        // Without an event the system sets the file itself. Until then, `io` and the buffer are the system's to write to.
+        let set_when_over = if event.is_null() { handle } else { event };
         assert_eq!(
-            kernel32::WaitForSingleObject(event, INFINITE),
+            kernel32::WaitForSingleObject(set_when_over, INFINITE),
             WAIT_OBJECT_0
         );
         // SAFETY: the operation is over.
         NTSTATUS(unsafe { (*io).Status } as u32)
-    });
+    };
+    let status = if is_synchronous_stdio(handle) {
+        Ok(issue(null_mut()))
+    } else {
+        with_transfer_event(issue)
+    };
     let status = match status {
         Ok(status) => status,
         Err(code) => return (0, Some(code)),

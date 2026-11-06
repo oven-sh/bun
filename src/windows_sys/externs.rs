@@ -218,6 +218,7 @@ pub const FILE_OVERWRITE_IF: ULONG = 5;
 
 // `NtCreateFile` CreateOptions (`ntifs.h`).
 pub const FILE_DIRECTORY_FILE: ULONG = 0x0000_0001;
+pub const FILE_SYNCHRONOUS_IO_ALERT: ULONG = 0x0000_0010;
 pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
 pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
 pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
@@ -297,6 +298,7 @@ impl FILE_INFORMATION_CLASS {
     pub const FileStandardInformation: Self = Self(5);
     pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
+    pub const FileModeInformation: Self = Self(16);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
     pub const FilePipeInformation: Self = Self(23);

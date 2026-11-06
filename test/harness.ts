@@ -187,6 +187,11 @@ if (isDebug && !locksEnvironment) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
   bunEnv.BUN_DEBUG_NO_DUMP = "1";
+  // Only a debug build shows JSC's private stack frames and private names, and code built with --aot never does.
+  // JSC reads the name of an option in any case.
+  if (!Object.keys(bunEnv).some(key => /^BUN_JSC_showPrivateScriptsInStackTraces$/i.test(key))) {
+    bunEnv.BUN_JSC_showPrivateScriptsInStackTraces = "0";
+  }
 }
 
 export function bunExe() {

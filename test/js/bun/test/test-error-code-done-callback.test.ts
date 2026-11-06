@@ -24,7 +24,7 @@ test("done(error) ends a test that returns a promise that never settles", async 
 test("verify we print error messages passed to done callbacks", () => {
   const { stdout, stderr } = Bun.spawnSync({
     cmd: [bunExe(), "test", path.resolve(import.meta.dir, "test-error-done-callback-fixture.ts")],
-    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

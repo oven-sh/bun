@@ -2170,8 +2170,7 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.cjs"],
     cwd: String(dir),
-    // Debug builds show the frames of builtin JavaScript unless this is off.
-    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

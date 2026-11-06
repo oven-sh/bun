@@ -1,6 +1,6 @@
 status: 0
-script: 266debbc05b048d4
-source: 543da25aae054bab
+script: ba9d282fe20aba8d
+source: ad525bf399c3490a
 ---
 function, the rest in | if else | 8 rows d6f1fd46
 function, the rest in | elif | 8 rows d0f796b2
@@ -34,6 +34,13 @@ function, the rest in | break in try | 8 rows f336b9af
 function, the rest in | break in handler | 8 rows 945b8e36
 function, the rest in | break in with | 8 rows 77a28b88
 function, the rest in | with if else | 8 rows 708af22a
+function, the rest in | except* | 8 rows b75566ae
+function, the rest in | except* as | 8 rows b75566ae
+function, the rest in | except* else | 8 rows 194ef121
+function, the rest in | except* raises, if | 8 rows 77127855
+function, the rest in | except* twice | 8 rows 3bf1136b
+function, the rest in | except* clause raises | 8 rows b94811f2
+function, the rest in | except* not caught | 8 rows 78d7163b
 in if, the rest behind | if else | 8 rows cbfe6b7b
 in if, the rest behind | elif | 8 rows 7ae2ad8f
 in if, the rest behind | elif, no else | 8 rows 65f9d086
@@ -66,6 +73,13 @@ in if, the rest behind | break in try | 8 rows 4a0df957
 in if, the rest behind | break in handler | 8 rows cf586833
 in if, the rest behind | break in with | 8 rows 105cb884
 in if, the rest behind | with if else | 8 rows ccf51e33
+in if, the rest behind | except* | 8 rows 867e5a7a
+in if, the rest behind | except* as | 8 rows 867e5a7a
+in if, the rest behind | except* else | 8 rows 1b198622
+in if, the rest behind | except* raises, if | 8 rows cf545bcc
+in if, the rest behind | except* twice | 8 rows 70f9f1eb
+in if, the rest behind | except* clause raises | 8 rows 8a824ee7
+in if, the rest behind | except* not caught | 8 rows f137024b
 in else, the rest in | if else | 8 rows 2a02cb09
 in else, the rest in | elif | 8 rows eb9327b6
 in else, the rest in | elif, no else | 8 rows dce83037
@@ -98,6 +112,13 @@ in else, the rest in | break in try | 8 rows 4a8b7e24
 in else, the rest in | break in handler | 8 rows 3eaf89f1
 in else, the rest in | break in with | 8 rows b0ad61a7
 in else, the rest in | with if else | 8 rows d6c31adc
+in else, the rest in | except* | 8 rows 60b1565f
+in else, the rest in | except* as | 8 rows 60b1565f
+in else, the rest in | except* else | 8 rows bd730c79
+in else, the rest in | except* raises, if | 8 rows 050118ec
+in else, the rest in | except* twice | 8 rows 3ec8a90d
+in else, the rest in | except* clause raises | 8 rows 8b567ed1
+in else, the rest in | except* not caught | 8 rows cf0baf7d
 in try, the rest in | if else | 8 rows 32e9fff6
 in try, the rest in | elif | 8 rows 4fd7146e
 in try, the rest in | elif, no else | 8 rows bc3e8ffd
@@ -130,6 +151,13 @@ in try, the rest in | break in try | 8 rows 8619b004
 in try, the rest in | break in handler | 8 rows acf9d9ca
 in try, the rest in | break in with | 8 rows 51d11523
 in try, the rest in | with if else | 8 rows 7f28c3f1
+in try, the rest in | except* | 8 rows 6cca1fa3
+in try, the rest in | except* as | 8 rows 6cca1fa3
+in try, the rest in | except* else | 8 rows 7ac01ea3
+in try, the rest in | except* raises, if | 8 rows 1218054b
+in try, the rest in | except* twice | 8 rows 755047ba
+in try, the rest in | except* clause raises | 8 rows 166a7035
+in try, the rest in | except* not caught | 8 rows a1592af8
 in try, the rest behind | if else | 8 rows 32ba6688
 in try, the rest behind | elif | 8 rows 589b57d6
 in try, the rest behind | elif, no else | 8 rows 5a511562
@@ -162,6 +190,13 @@ in try, the rest behind | break in try | 8 rows cc8a56b0
 in try, the rest behind | break in handler | 8 rows 34dc5932
 in try, the rest behind | break in with | 8 rows ca6b5580
 in try, the rest behind | with if else | 8 rows 046ff0aa
+in try, the rest behind | except* | 8 rows 51d3907e
+in try, the rest behind | except* as | 8 rows 51d3907e
+in try, the rest behind | except* else | 8 rows 6dd0461a
+in try, the rest behind | except* raises, if | 8 rows 01a2e8d4
+in try, the rest behind | except* twice | 8 rows 1345c2d7
+in try, the rest behind | except* clause raises | 8 rows 8350dfce
+in try, the rest behind | except* not caught | 8 rows 455a6d13
 in handler, the rest in | if else | 8 rows 2a594086
 in handler, the rest in | elif | 8 rows 08520251
 in handler, the rest in | elif, no else | 8 rows ba98cdd9
@@ -194,6 +229,13 @@ in handler, the rest in | break in try | 8 rows 4258d718
 in handler, the rest in | break in handler | 8 rows ec2dac35
 in handler, the rest in | break in with | 8 rows 249d1584
 in handler, the rest in | with if else | 8 rows 1de22548
+in handler, the rest in | except* | 8 rows 68c63f91
+in handler, the rest in | except* as | 8 rows 68c63f91
+in handler, the rest in | except* else | 8 rows f57922ea
+in handler, the rest in | except* raises, if | 8 rows c7842443
+in handler, the rest in | except* twice | 8 rows f00eb0fe
+in handler, the rest in | except* clause raises | 8 rows 5b763e46
+in handler, the rest in | except* not caught | 8 rows 9f5623b3
 in handler, the rest behind | if else | 8 rows 12dd698f
 in handler, the rest behind | elif | 8 rows 4d602392
 in handler, the rest behind | elif, no else | 8 rows 9f7560fe
@@ -206,10 +248,12 @@ in handler, the rest behind | try raises | 8 rows a94374c2
 in handler, the rest behind | try raises as | 8 rows a94374c2
 in handler, the rest behind | try raises, if | 8 rows bc65afac
 in handler, the rest behind | try raises as, if | 8 rows bc65afac
+in handler, the rest behind | try raises, if else | 8 rows 1c74bb00
 in handler, the rest behind | two handlers | 8 rows 75aef2ac
 in handler, the rest behind | try else | 8 rows 88f212d8
 in handler, the rest behind | try else if | 8 rows 227a61db
 in handler, the rest behind | finally | 8 rows fd076b87
+in handler, the rest behind | finally if else | 8 rows 4d5add44
 in handler, the rest behind | try except finally | 8 rows 9391c77a
 in handler, the rest behind | finally, raising | 8 rows 3b65d9d6
 in handler, the rest behind | match | 8 rows 5bbcee4b
@@ -224,6 +268,13 @@ in handler, the rest behind | break in try | 8 rows 7d9d5597
 in handler, the rest behind | break in handler | 8 rows 4666bcc2
 in handler, the rest behind | break in with | 8 rows d9fc1511
 in handler, the rest behind | with if else | 8 rows 3f6d0dd9
+in handler, the rest behind | except* | 8 rows 9366c3eb
+in handler, the rest behind | except* as | 8 rows 9366c3eb
+in handler, the rest behind | except* else | 8 rows 6445821a
+in handler, the rest behind | except* raises, if | 8 rows a80193aa
+in handler, the rest behind | except* twice | 8 rows baa57f21
+in handler, the rest behind | except* clause raises | 8 rows 1905c9f6
+in handler, the rest behind | except* not caught | 8 rows 14edeb6a
 in for, the rest in | if else | 8 rows 3943c783
 in for, the rest in | elif | 8 rows d935b8d8
 in for, the rest in | elif, no else | 8 rows 71a3f31c
@@ -254,6 +305,13 @@ in for, the rest in | break in try | 8 rows 800918ca
 in for, the rest in | break in handler | 8 rows b57410b5
 in for, the rest in | break in with | 8 rows 0d5e1438
 in for, the rest in | with if else | 8 rows f73170d5
+in for, the rest in | except* | 8 rows 982efb38
+in for, the rest in | except* as | 8 rows 982efb38
+in for, the rest in | except* else | 8 rows 2140bfe5
+in for, the rest in | except* raises, if | 8 rows 18ef3e21
+in for, the rest in | except* twice | 8 rows ab24989f
+in for, the rest in | except* clause raises | 8 rows 961261fe
+in for, the rest in | except* not caught | 8 rows 16df9a2a
 in while, the rest in | if else | 8 rows 585e6774
 in while, the rest in | elif | 8 rows f0505a78
 in while, the rest in | elif, no else | 8 rows 3f6e3b72
@@ -284,6 +342,13 @@ in while, the rest in | break in try | 8 rows 466f2fee
 in while, the rest in | break in handler | 8 rows ea1efbfc
 in while, the rest in | break in with | 8 rows 49d1d7ba
 in while, the rest in | with if else | 8 rows a362860b
+in while, the rest in | except* | 8 rows 22c8f0fc
+in while, the rest in | except* as | 8 rows 22c8f0fc
+in while, the rest in | except* else | 8 rows 90b1081c
+in while, the rest in | except* raises, if | 8 rows 1c051b6e
+in while, the rest in | except* twice | 8 rows 9989ccbe
+in while, the rest in | except* clause raises | 8 rows 519f7da2
+in while, the rest in | except* not caught | 8 rows 1e9862d1
 in with, the rest in | if else | 8 rows 69b22ee4
 in with, the rest in | elif | 8 rows 3a099e05
 in with, the rest in | elif, no else | 8 rows e44d8d01
@@ -316,6 +381,13 @@ in with, the rest in | break in try | 8 rows 4c7b53e4
 in with, the rest in | break in handler | 8 rows f111a0c1
 in with, the rest in | break in with | 8 rows 674ab53f
 in with, the rest in | with if else | 8 rows d60b0014
+in with, the rest in | except* | 8 rows 36b86299
+in with, the rest in | except* as | 8 rows 36b86299
+in with, the rest in | except* else | 8 rows cd24efc8
+in with, the rest in | except* raises, if | 8 rows b999d2ef
+in with, the rest in | except* twice | 8 rows d37ba669
+in with, the rest in | except* clause raises | 8 rows 1744df5e
+in with, the rest in | except* not caught | 8 rows 302d06a4
 in case, the rest in | if else | 8 rows b620601a
 in case, the rest in | elif | 8 rows c7344951
 in case, the rest in | elif, no else | 8 rows 074d6385
@@ -348,3 +420,10 @@ in case, the rest in | break in try | 8 rows 5534e113
 in case, the rest in | break in handler | 8 rows 547ace0d
 in case, the rest in | break in with | 8 rows 67923cf2
 in case, the rest in | with if else | 8 rows 93e10121
+in case, the rest in | except* | 8 rows 185a0a74
+in case, the rest in | except* as | 8 rows 185a0a74
+in case, the rest in | except* else | 8 rows 3030ebd8
+in case, the rest in | except* raises, if | 8 rows 7ed3ef37
+in case, the rest in | except* twice | 8 rows b0f2a50c
+in case, the rest in | except* clause raises | 8 rows c1950a3a
+in case, the rest in | except* not caught | 8 rows d1853ef1

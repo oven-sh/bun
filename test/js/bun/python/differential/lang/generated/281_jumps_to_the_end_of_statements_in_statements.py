@@ -99,11 +99,11 @@ try: CLOSING = {'in try': '    except KeyError:\n        raise\n', 'in case': ' 
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: CLOSING = {'in try': ' except KeyError:\\n raise\\n', 'in case': ' case...")
 try: WHERE = {'function': ('in',), 'in if': ('behind',), 'in try': ('in', 'behind'), 'in handler': ('in', 'behind')}
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: WHERE = {'function': ('in',), 'in if': ('behind',), 'in try': ('in', ...")
-# Not as in CPython yet: where the last pattern of a `match` fails at the end of the body of a loop; where a jump leads that stays in front of the end of a handler.
+# Not as in CPython yet: where the last pattern of a `match` fails at the end of the body of a loop; a `try` in a `case` there, or in a handler.
 try: LEFT_OUT = {
     ('in for', 'in'): ('match', 'match if', 'try in case'),
     ('in while', 'in'): ('match', 'match if', 'try in case'),
-    ('in handler', 'behind'): ('try raises, if else', 'finally if else', 'finally in handler', 'try raises in both', 'try in case', 'while in handler', 'for in handler'),
+    ('in handler', 'behind'): ('try in case',),
 }
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: LEFT_OUT = { ('in for', 'in'): ('match', 'match if', 'try in case'), ...")
 

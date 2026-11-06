@@ -66,6 +66,13 @@ HEADS = {
     'break in handler': '@for i in (1, 2):\n@    try:\n@        raise E\n@    except E:\n@        if a:\n@            break\n',
     'break in with': '@for i in (1, 2):\n@    with CM():\n@        if a:\n@            break\n',
     'with if else': '@with CM():\n@    if a:\n@        x = 1\n@    else:\n@        x = 2\n',
+    'except*': '@try:\n@    x = 1 // a\n@except* ZeroDivisionError:\n@    x = 2\n',
+    'except* as': '@try:\n@    x = 1 // a\n@except* ZeroDivisionError as e:\n@    x = 2\n',
+    'except* else': '@try:\n@    x = 1 // a\n@except* ZeroDivisionError:\n@    x = 2\n@else:\n@    x = 3\n',
+    'except* raises, if': '@try:\n@    raise E\n@except* E:\n@    if a:\n@        x = 2\n',
+    'except* twice': '@try:\n@    raise (E if a else KeyError)\n@except* KeyError:\n@    x = 1\n@except* E:\n@    if b:\n@        x = 2\n',
+    'except* clause raises': '@try:\n@    try:\n@        raise E\n@    except* E:\n@        raise KeyError\n@    except* KeyError:\n@        x = 1\n@except* KeyError:\n@    x = 2\n',
+    'except* not caught': '@try:\n@    try:\n@        raise E\n@    except* KeyError:\n@        x = 1\n@except E:\n@    x = 2\n',
 }
 TAILS = {
     'nothing': '',
@@ -86,11 +93,11 @@ WRAPS = {
 }
 CLOSING = {'in try': '    except KeyError:\n        raise\n', 'in case': '     case 2:\n        x = 7\n'}
 WHERE = {'function': ('in',), 'in if': ('behind',), 'in try': ('in', 'behind'), 'in handler': ('in', 'behind')}
-# Not as in CPython yet: where the last pattern of a `match` fails at the end of the body of a loop; where a jump leads that stays in front of the end of a handler.
+# Not as in CPython yet: where the last pattern of a `match` fails at the end of the body of a loop; a `try` in a `case` there, or in a handler.
 LEFT_OUT = {
     ('in for', 'in'): ('match', 'match if', 'try in case'),
     ('in while', 'in'): ('match', 'match if', 'try in case'),
-    ('in handler', 'behind'): ('try raises, if else', 'finally if else', 'finally in handler', 'try raises in both', 'try in case', 'while in handler', 'for in handler'),
+    ('in handler', 'behind'): ('try in case',),
 }
 
 

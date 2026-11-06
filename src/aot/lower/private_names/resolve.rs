@@ -1,7 +1,7 @@
 use bun_sema::bind::{PrivateMembers, PrivateNameId};
 use bun_sema::hir::{Flags, MemberId};
 
-use super::{PrivateBinding, PrivateHolder, StoredValue, Written};
+use super::{PrivateBinding, PrivateHolder, StoredValue};
 use crate::lower::{FileLowering, class, layouts};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -53,7 +53,7 @@ impl FileLowering<'_, '_, '_, '_> {
             class,
             member,
             holder,
-            written: Written::Nowhere,
+            written: None,
         }
     }
 }

@@ -79,6 +79,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
       "TS1477: a property access follows an instantiation expression",
     [`${decorators} > members stay where they are written > a read of the class name before its class decorators run is undefined`]:
       "the read throws a ReferenceError, as it does natively: the name is not initialized yet",
+    [`${decorators} > members stay where they are written > a direct eval reaches an undecorated accessor #x as a getter and a setter`]:
+      "code from a string answers false to `#x in this` until the accessor field has its value",
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedPackages,

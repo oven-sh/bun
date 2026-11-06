@@ -165,7 +165,7 @@ attempt("Intl receiver", () => { Intl.NumberFormat.prototype.format.call(plain);
 // The same in the position of a tail call: strict code leaves its frame before such a call.
 attempt("tail call native", () => Math.max(opaque(1n)));
 
-// An `accessor` field on a private name is a getter and a setter. For an object that is no instance, an executable still words the error as it words that of a field.
+// Plain Bun reads and stores the value of an `accessor` field on a private name in a field that its transpiler names, and quotes that name.
 attempt("read accessor field of other", () => { class A { accessor #p = 1; static read(o) { return o.#p; } } return A.read(plain); });
 attempt("store accessor field of other", () => { class A { accessor #p = 1; static write(o) { o.#p = 2; } } return A.write(plain); });
 /* Output:

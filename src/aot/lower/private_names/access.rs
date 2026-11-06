@@ -2,7 +2,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{PrivateMembers, PrivateNameId};
 use bun_sema::hir::{ClassId, ExprId, ExprKind, MemberId};
 
-use super::{PrivateBinding, PrivateHolder, StoredValue, Written};
+use super::{PrivateBinding, PrivateHolder, StoredValue};
 use crate::ir::generated::{BlockFrequency, RuntimeErrorKind};
 use crate::ir::{ClassSlot, Edge, LayoutId, TypeTable, ValueId};
 use crate::lower::member::PropertyName;
@@ -15,12 +15,15 @@ impl StoredValue {
             class: binding.class,
             member,
             holder: binding.presence,
-            written: Written::Nowhere,
+            written: None,
         }
     }
 
-    fn written_as(self, written: Written) -> StoredValue {
-        StoredValue { written, ..self }
+    fn written_as(self, name: Atom) -> StoredValue {
+        StoredValue {
+            written: Some(name),
+            ..self
+        }
     }
 
     pub(in crate::lower) fn instance_slot(self) -> Option<(LayoutId, u32)> {
@@ -102,12 +105,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         object: ValueId,
         error: RuntimeErrorKind,
     ) -> ValueId {
-        let (error_of_another_object, field) = match stored.written {
-            Written::Nowhere => (error, None),
-            Written::Field(name) => (error, Some(name)),
-            Written::Accessor => (RuntimeErrorKind::InvalidPrivateBrand, None),
-        };
-        self.emit_class_object_test(stored.class, object, error_of_another_object, field);
+        self.emit_class_object_test(stored.class, object, error, stored.written);
         let slot = ClassSlot::StaticField(stored.member);
         let value = self.get_class_slot(stored.class, slot);
         let split = self.split_on_type(value, TypeTable::ABSENT);
@@ -197,13 +195,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 call::emit_call(self, getter, Some(object), &[])
             }
             PrivateMembers::Field(member) => {
-                let written = Written::Field(self.file.bound.private_name(name).name);
+                let written = self.file.bound.private_name(name).name;
                 let stored = StoredValue::of_name(binding, member).written_as(written);
                 self.emit_stored_read(stored, object)
             }
+            // `bun run` reads the field that its transpiler makes for the value.
             PrivateMembers::AutoAccessor(member) => {
+                let written = self.file.bound.private_name(name).name;
                 let stored = self.file.resolve_accessor_storage(member);
-                self.emit_stored_read(stored.written_as(Written::Accessor), object)
+                self.emit_stored_read(stored.written_as(written), object)
             }
             PrivateMembers::Method(member) => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateBrand);
@@ -239,13 +239,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 call::emit_call(self, setter, Some(object), &[value]);
             }
             PrivateMembers::Field(member) => {
-                let written = Written::Field(self.file.bound.private_name(name).name);
+                let written = self.file.bound.private_name(name).name;
                 let stored = StoredValue::of_name(binding, member).written_as(written);
                 self.emit_stored_write(stored, object, value, source);
             }
             PrivateMembers::AutoAccessor(member) => {
+                let written = self.file.bound.private_name(name).name;
                 let stored = self.file.resolve_accessor_storage(member);
-                self.emit_stored_write(stored.written_as(Written::Accessor), object, value, source);
+                self.emit_stored_write(stored.written_as(written), object, value, source);
             }
             PrivateMembers::Method(_) => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateBrand);

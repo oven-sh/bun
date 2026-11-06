@@ -33,16 +33,8 @@ pub(in crate::lower) struct StoredValue {
     class: ClassId,
     member: MemberId,
     holder: PrivateHolder,
-    written: Written,
-}
-
-/// How the program names a stored value where it writes an access to it: `o.#x`.
-#[derive(Copy, Clone)]
-enum Written {
-    Nowhere,
-    Field(Atom),
-    /// The brand of the class says which objects have an accessor.
-    Accessor,
+    /// The name, where the program writes an access to it: `o.#x`.
+    written: Option<Atom>,
 }
 
 #[derive(Copy, Clone)]

@@ -9100,6 +9100,100 @@ describe("rules", () => {
     rows(chrome80, [[":where(.x){--a:1}:where(.x){--b:2}"]]);
   });
 
+  // A rule on a vendor-prefixed selector and a neighbor rule on its plain twin, with equal blocks,
+  // become one rule that keeps one of the two selectors and prints once per vendor prefix.
+  describe("an earlier rule that merged with its vendor-prefixed twin is removed only if the later rule prints both", () => {
+    const defaults = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    const twins = [
+      ["::-moz-placeholder", "::placeholder"],
+      ["::-webkit-input-placeholder", "::placeholder"],
+      [":-webkit-full-screen", ":fullscreen"],
+      [":-moz-full-screen", ":fullscreen"],
+      [":-webkit-any-link", ":any-link"],
+      [":-moz-read-only", ":read-only"],
+      ["::-moz-selection", "::selection"],
+      [":-webkit-autofill", ":autofill"],
+      ["::-webkit-file-upload-button", "::file-selector-button"],
+      [":-webkit-any(.x,.y)", ":is(.x,.y)"],
+    ];
+    const other = ".m{order:8}";
+    /** The prefixed rule, the rule on its plain twin, another rule, and the prefixed rule again. */
+    const sheet = (prefix: string, twin: string, block = "order:1") =>
+      `.a${prefix}{${block}}.a${twin}{${block}}${other}.a${prefix}{${block}}`;
+    const webkitFullscreen = ".a:-webkit-full-screen{order:1}";
+    const fullscreen = ".a:fullscreen{order:1}";
+    const webkitPlaceholder = ".a::-webkit-input-placeholder{order:1}";
+    const mozPlaceholder = ".a::-moz-placeholder{order:1}";
+    const placeholder = ".a::placeholder{order:1}";
+
+    describe("no targets", () => {
+      rows(undefined, [
+        ...twins.map(([prefix, twin]) => [sheet(prefix, twin)]),
+        [sheet("::-moz-selection", "::selection", "color:red;top:0")],
+        [sheet(":-moz-read-only", ":read-only", "order:1!important")],
+        [`@media print{${sheet(":-webkit-full-screen", ":fullscreen")}}`],
+        [`@supports (display:grid){${sheet(":-webkit-full-screen", ":fullscreen")}}`],
+        [`@layer x{${sheet(":-webkit-full-screen", ":fullscreen")}}`],
+        [`@container (width>1px){${sheet(":-webkit-full-screen", ":fullscreen")}}`],
+        [".p{&:-webkit-full-screen{order:1}&:fullscreen{order:1}& .m{order:8}&:-webkit-full-screen{order:1}}"],
+        // The second and the third rule become one rule first, and the first rule then merges with it.
+        [
+          mozPlaceholder + ".a::placeholder{order:2}" + placeholder + other + mozPlaceholder,
+          mozPlaceholder + placeholder + other + mozPlaceholder,
+        ],
+        // The later prefixed rule is compared when it is pushed, before it merges with its own twin.
+        [webkitFullscreen + fullscreen + other + webkitFullscreen + fullscreen],
+      ]);
+    });
+
+    describe("the default targets of the bundler", () => {
+      rows(defaults, [
+        // No target needs `::-moz-placeholder`, so the merged rule prints the plain selector only.
+        [mozPlaceholder + placeholder + other + mozPlaceholder, placeholder + other + mozPlaceholder],
+        // Safari 14 needs `:-webkit-full-screen`, so the merged rule prints both selectors.
+        [webkitFullscreen + fullscreen + other + webkitFullscreen],
+        // For the same reason the later plain rule prints both selectors, and the merged rule goes.
+        [fullscreen + webkitFullscreen + other + fullscreen, other + webkitFullscreen + fullscreen],
+        // The later prefixed rule is compared when it is pushed, before it merges with its own twin.
+        [mozPlaceholder + placeholder + other + mozPlaceholder + placeholder, placeholder + other + placeholder],
+      ]);
+    });
+
+    // The merged rule prints the plain name for a twin whose prefix differs from its own. These cases
+    // do not pin that name: the last rule must remove nothing.
+    test.each([
+      [webkitPlaceholder + mozPlaceholder + other, webkitPlaceholder],
+      [webkitPlaceholder + mozPlaceholder + placeholder + other, webkitPlaceholder],
+      [placeholder + mozPlaceholder + other, placeholder],
+    ])("%s%s", (head, last) => {
+      for (const targets of [undefined, defaults]) {
+        const minify = (source: string) => cssInternals.minifyTest(source, "", targets);
+        expect(minify(head + last)).toBe(minify(head) + minify(last));
+      }
+    });
+
+    describe("a later rule with the same selector and the same vendor prefixes removes the earlier rule", () => {
+      rows(undefined, [
+        [webkitFullscreen + other + webkitFullscreen, other + webkitFullscreen],
+        [fullscreen + other + fullscreen, other + fullscreen],
+        [webkitFullscreen + other + webkitFullscreen + fullscreen, other + webkitFullscreen + fullscreen],
+      ]);
+    });
+
+    test("Bun.build", async () => {
+      const source = mozPlaceholder + placeholder + other + mozPlaceholder;
+      using dir = tempDir("css-vendor-prefixed-twin", { "a.css": source });
+      const build = async (target: "browser" | "bun") => {
+        const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], minify: true, target });
+        return (await result.outputs[0].text()).trim();
+      };
+      expect({ browser: await build("browser"), bun: await build("bun") }).toEqual({
+        browser: placeholder + other + mozPlaceholder,
+        bun: source,
+      });
+    });
+  });
+
   describe("property names that have no type are compared", () => {
     rows(undefined, [
       [".a{transition:--x 1s}.b{transition:--y 1s}"],

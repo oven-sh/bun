@@ -880,7 +880,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         merge_state.last_compat = sty_compat;
 
         // Check if this rule is a duplicate of an earlier rule, meaning it has
-        // the same selectors and declarations. If so, remove the earlier rule.
+        // the same selectors, vendor prefix passes and declarations. If so,
+        // remove the earlier rule.
         if has_no_rules {
             let key = StyleRuleKey::new(rules, idx);
             if idx > 0
@@ -888,8 +889,13 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
                 && i < rules.len()
                 && let CssRule::Style(other) = &rules[i]
                 && (!context.css_modules || source_index == other.loc.source_index)
-                // A browser that cannot parse a value of this rule falls back to `other`.
                 && let CssRule::Style(later) = &rules[idx]
+                // A merge with a rule that is equivalent minus prefixes changes the vendor
+                // prefix passes of `other` and not its selectors, so `other` can print what
+                // `later` does not. In `is_duplicate` this check would leave `other` in its
+                // bucket for every later lookup.
+                && later.vendor_prefix == other.vendor_prefix
+                // A browser that cannot parse a value of this rule falls back to `other`.
                 && later.declarations.eql(&other.declarations)
             {
                 rules[i] = CssRule::Ignored;

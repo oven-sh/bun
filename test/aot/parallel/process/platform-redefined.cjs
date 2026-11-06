@@ -25,11 +25,9 @@ Object.defineProperty(process, "platform", { value: "other" });
 console.log("platform is defined anew: " + separator() + " " + seen() + " " + optional());
 Object.defineProperty(process, "platform", real);
 console.log("put back: " + separator() + " " + seen() + " " + optional());
-const arch = process.arch,
-  version = process.versions.bun;
+// A store to process.versions.bun throws in an executable of --aot: what-says-which-runtime-is-read-only.cjs.
+const arch = process.arch;
 process.arch = "other";
-process.versions.bun = "other";
-console.log("arch and versions.bun are stored to: " + seen());
+console.log("arch is stored to: " + seen());
 process.arch = arch;
-process.versions.bun = version;
 console.log("put back: " + seen());

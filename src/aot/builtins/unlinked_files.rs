@@ -8,8 +8,8 @@ use bun_sema::program::{FileId, Files};
 
 use super::table::{self, MemberLookup};
 use super::{
-    BuiltinId, BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins,
-    SourceDialect, named_value_of, resolve_file,
+    BuiltinId, BuiltinNames, ImportTargets, Platforms, ReplacedMembersSought, ResolveInput,
+    ResolvedBuiltins, SourceDialect, named_value_of, resolve_file,
 };
 
 const PLATFORM: Platforms = Platforms::LINUX;
@@ -37,6 +37,8 @@ impl<'a, 's> UnlinkedFiles<'a, 's> {
                 names: &names,
                 platform: PLATFORM,
                 dialect: SourceDialect::Program,
+                replaced: &[],
+                replaced_members_sought: ReplacedMembersSought::None,
             }));
         }
         UnlinkedFiles {

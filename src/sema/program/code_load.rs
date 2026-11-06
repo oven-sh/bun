@@ -2,13 +2,14 @@ use super::code_barrels::ImportRequests;
 use super::projects::Projects;
 use super::*;
 use crate::file_analysis::FileAnalysis;
-use crate::fold::FoldInputs;
+use crate::fold::{FoldInputs, StoredByMocks};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
-    CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
-    HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
+    CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest, CodeResolution,
+    DeclaredSideEffects, EnclosingPackage, HostPayload, JsxSettings, ProjectResolvers,
+    SiteResolution, TranspileSettings,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -16,10 +17,13 @@ pub enum MainModule {
     EntryPoint,
     EntryPointOfProcessOrWorker,
     Elsewhere,
+    AnyFile,
 }
 
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
+    /// Asked each time every file that was found is parsed, until it names nothing new. The load goes on with what it names, and ends as a load of all of them ends.
+    pub finds_entry_points: Option<&'a FindsEntryPoints<'a>>,
     pub main_module: MainModule,
     /// The program of the build that has loaded these files. This load folds each file and follows its imports as that one did.
     pub loaded_before: Option<&'a Files<'s>>,
@@ -72,7 +76,13 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) atoms: Interner<'s>,
     pub(super) projects: Projects<'s>,
     pub(super) project_resolvers: ProjectResolvers<'r>,
-    pub(super) entry_points: Vec<CodeTarget<'r>>,
+    /// `CompileInputs::entry_points`
+    written_entry_points: Vec<CodeTarget<'r>>,
+    keys_of_entry_points: FxHashSet<(Cow<'r, [u8]>, HostLoader)>,
+    /// What `CompileInputs::finds_entry_points` has named.
+    found_entry_points: Guarded<Vec<CodeTarget<'r>>>,
+    main_modules_beside_entry_points: FxHashSet<Vec<u8>>,
+    entry_points_only_imported_from_above: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
     shares_parsed_files: bool,
     files_loaded_before: FxHashMap<(Cow<'a, [u8]>, HostLoader), FileId>,
@@ -102,7 +112,33 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             let request = resolver.loader_request(path, CodeImportKind::EntryPoint, None, None);
             CodeTarget::of_path(resolver.keep(path), compile.host.loader_of(&request))
         });
+        let entry_points: Vec<CodeTarget<'r>> = entry_points.collect();
         let is_case_sensitive = compile.host.is_case_sensitive();
+        let keys_of_entry_points = (entry_points.iter())
+            .map(|it| (to_path(it.key.path, is_case_sensitive), it.key.loader))
+            .collect();
+        let code = compile.inputs.code;
+        let main_modules_beside_entry_points = (code.main_modules_beside_entry_points.iter())
+            .filter_map(|path| {
+                let resolution = resolver.resolve_code(&CodeRequest {
+                    specifier: path,
+                    importer: b"",
+                    directory: &code.working_directory,
+                    kind: CodeImportKind::EntryPoint,
+                    form: CodeImportForm::Static,
+                });
+                match resolution {
+                    CodeResolution::File(file) if file.host_module.is_none() => {
+                        Some(to_path(file.path, is_case_sensitive).into_owned())
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        let entry_points_only_imported_from_above = (code.entry_points_only_imported_from_above)
+            .iter()
+            .map(|path| to_path(path, is_case_sensitive).into_owned())
+            .collect();
         let loaded_before = compile.inputs.loaded_before;
         let files_loaded_before = loaded_before.into_iter().flat_map(|files| {
             files.loaded_code_files().iter().filter_map(move |&file| {
@@ -119,7 +155,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             atoms: compile.inputs.atoms,
             projects: Projects::new(session),
             project_resolvers: ProjectResolvers::new(),
-            entry_points: entry_points.collect(),
+            written_entry_points: entry_points,
+            keys_of_entry_points,
+            found_entry_points: Guarded::new(Vec::new()),
+            main_modules_beside_entry_points,
+            entry_points_only_imported_from_above,
             is_case_sensitive,
             shares_parsed_files: compile.shares_parsed_files,
             files_loaded_before: files_loaded_before.collect(),
@@ -151,11 +191,49 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
     }
 
+    pub(super) fn entry_points(&self) -> Vec<CodeTarget<'r>> {
+        let found = self.found_entry_points.lock();
+        (self.written_entry_points.iter().chain(found.iter()))
+            .copied()
+            .collect()
+    }
+
+    pub(super) fn entry_point_count(&self) -> usize {
+        self.written_entry_points.len() + self.found_entry_points.lock().len()
+    }
+
     pub(super) fn is_entry_point(&self, key: LoadKey<'_>) -> bool {
-        self.entry_points.iter().any(|entry_point| {
-            entry_point.key.loader == key.loader
-                && is_same_path(entry_point.key.path, key.path, self.is_case_sensitive)
-        })
+        let path = to_path(key.path, self.is_case_sensitive);
+        let is_same = |found: &CodeTarget<'r>| {
+            found.key.loader == key.loader
+                && *to_path(found.key.path, self.is_case_sensitive) == *path
+        };
+        if self.found_entry_points.lock().iter().any(is_same) {
+            return true;
+        }
+        self.keys_of_entry_points.contains(&(path, key.loader))
+    }
+
+    /// `None`: the program begins there already.
+    pub(super) fn add_entry_point(&self, path: &[u8]) -> Option<CodeTarget<'r>> {
+        let resolver = self.resolver;
+        let request = resolver.loader_request(path, CodeImportKind::EntryPoint, None, None);
+        let target = CodeTarget::of_path(resolver.keep(path), self.host.loader_of(&request));
+        if self.is_entry_point(target.key) {
+            return None;
+        }
+        self.found_entry_points.lock().push(target);
+        Some(target)
+    }
+
+    pub(super) fn is_only_imported_from_above(&self, key: LoadKey<'_>) -> bool {
+        let path = to_path(key.path, self.is_case_sensitive);
+        self.entry_points_only_imported_from_above.contains(&*path)
+    }
+
+    pub(super) fn is_main_module_beside_entry_points(&self, key: LoadKey<'_>) -> bool {
+        let path = to_path(key.path, self.is_case_sensitive);
+        self.main_modules_beside_entry_points.contains(&*path)
     }
 }
 
@@ -171,6 +249,10 @@ pub(super) struct CodeTarget<'r> {
     pub(super) host_module: Option<HostModuleId>,
     pub(super) increases_depth: bool,
     pub(super) has_loader_attribute: bool,
+    /// An import or export statement asks for it, so it is loaded with the graph of the file.
+    pub(super) is_loaded_with_importer: bool,
+    /// The statement writes a `type` other than "json". The loader of `bun run` keeps one module for a path and all of those.
+    pub(super) has_shared_type: bool,
 }
 
 impl<'r> CodeTarget<'r> {
@@ -180,6 +262,8 @@ impl<'r> CodeTarget<'r> {
             host_module: None,
             increases_depth: false,
             has_loader_attribute: false,
+            is_loaded_with_importer: false,
+            has_shared_type: false,
         }
     }
 }
@@ -197,6 +281,7 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) is_aot_source: bool,
     pub(super) import_meta_main: Option<bool>,
     pub(super) is_called_before_it_runs: bool,
+    pub(super) stored_by_mocks: StoredByMocks<'s>,
     pub(super) is_only_imported: bool,
 }
 

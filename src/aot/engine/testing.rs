@@ -5,7 +5,7 @@ use super::ResultSection as Section;
 use super::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, BunAOTBytes,
     DeclineRecord, EngineResult, FeatureUseRecord, LimitId, LocaleUseRecord, ObfuscatedSiteRecord,
-    RemainingCheckRecord, ResultRecord, UnseenCodeRecord,
+    OtherOriginsRecord, RemainingCheckRecord, ResultRecord, UnseenCodeRecord,
 };
 use crate::ir::generated::StatisticId;
 
@@ -16,11 +16,6 @@ pub(super) fn to_words(bytes: &[u8]) -> Vec<u64> {
         u64::from_ne_bytes(word)
     };
     bytes.chunks(8).map(to_word).collect()
-}
-
-pub(super) fn bytes_of(words: &[u64]) -> &[u8] {
-    // SAFETY: every byte of an initialized `u64` is initialized, and the slice ends with `words`.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words)) }
 }
 
 fn bytes_of_records<T: ResultRecord>(records: &[T]) -> &[u8] {
@@ -57,7 +52,9 @@ impl Sections {
     fn as_bytes(&self) -> [BunAOTBytes; Section::COUNT] {
         Section::ALL.map(|section| {
             let index = section as usize;
-            BunAOTBytes::from_slice(&bytes_of(&self.words[index])[..self.lengths[index]])
+            BunAOTBytes::from_slice(
+                &bun_core::slice_as_bytes(&self.words[index])[..self.lengths[index]],
+            )
         })
     }
 }
@@ -82,6 +79,7 @@ pub(crate) struct ResultRecords<'a> {
     pub locales_used: &'a [LocaleUseRecord],
     pub access_counts: &'a [AccessCountRecord],
     pub accesses: &'a [AccessRecord],
+    pub other_origins: &'a [OtherOriginsRecord],
     pub remaining_checks: &'a [RemainingCheckRecord],
     pub declines: &'a [DeclineRecord],
     pub allocation_remarks: &'a [AllocationRemarkRecord],
@@ -97,13 +95,17 @@ impl ResultRecords<'_> {
         let sections = Sections::new()
             .with(Section::Image, self.image)
             .with(Section::Text, self.text)
-            .with(Section::LimitValues, bytes_of(&limit_values))
+            .with(
+                Section::LimitValues,
+                bun_core::slice_as_bytes(&limit_values),
+            )
             .with_records(self.unseen_code)
             .with_records(self.builtins_used)
             .with_records(self.features_used)
             .with_records(self.locales_used)
             .with_records(self.access_counts)
             .with_records(self.accesses)
+            .with_records(self.other_origins)
             .with_records(self.remaining_checks)
             .with_records(self.declines)
             .with_records(self.allocation_remarks)

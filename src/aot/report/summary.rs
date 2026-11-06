@@ -3,6 +3,7 @@ use core::cmp::Reverse;
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 
+use super::causes::count_operations_by_limit;
 use super::format::{self, PathPrinter};
 use super::json::JsonWriter;
 use super::levels::{
@@ -41,12 +42,15 @@ pub fn write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>) {
 }
 
 pub(super) fn collect_details(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
+    let origin_of = |module: ModuleId| input.names.module_origin(module);
+    let untyped = count_operations_by_limit(input.engine.accesses(), &origin_of);
     let text = details_text(
         input.engine.access_counts(),
         |module| input.names.module_path(module),
         |module| input.names.module_origin(module),
         input.statistics,
         |limit| input.engine.limit_value(limit),
+        |limit| untyped.get(&limit).copied().unwrap_or(0),
         &PathPrinter::new(),
     );
     out.extend(text.map(|text| ReportEntry::line(ExplainSet::TEXT, text)));
@@ -138,6 +142,7 @@ fn details_text<'r>(
     origin_of: impl Fn(ModuleId) -> ModuleOrigin,
     statistics: &Statistics,
     limit_value_of: impl Fn(LimitId) -> u64,
+    untyped_because_of: impl Fn(LimitId) -> u64,
     printer: &PathPrinter,
 ) -> Option<Vec<u8>> {
     let all = totals_of(records, &origin_of).combined().access_costs;
@@ -162,7 +167,7 @@ fn details_text<'r>(
     format::write_count(&mut text, statistics.get(StatisticId::IndirectCalls));
     text.extend_from_slice(b" indirect");
     write_untyped_files(&mut text, &files, printer);
-    write_reached_limits(&mut text, statistics, limit_value_of);
+    write_reached_limits(&mut text, statistics, limit_value_of, untyped_because_of);
     Some(text)
 }
 
@@ -208,6 +213,7 @@ fn write_reached_limits(
     out: &mut Vec<u8>,
     statistics: &Statistics,
     limit_value_of: impl Fn(LimitId) -> u64,
+    untyped_because_of: impl Fn(LimitId) -> u64,
 ) {
     let mut reached = LimitId::ALL
         .into_iter()
@@ -224,6 +230,14 @@ fn write_reached_limits(
         format::write_count(out, limit_value_of(limit));
         out.extend_from_slice(b", hit ");
         format::write_counted(out, hits, "time", "times");
+        match untyped_because_of(limit) {
+            0 => out.extend_from_slice(b", left nothing untyped"),
+            untyped => {
+                out.extend_from_slice(b", left ");
+                format::write_counted(out, untyped, "operation", "operations");
+                out.extend_from_slice(b" untyped");
+            }
+        }
         format::write_parts(out, &[b" (limits ", limit.purpose().as_bytes(), b")"]);
     }
 }

@@ -204,20 +204,13 @@ pub fn install_with_manager(
                     let to_update = manager.to_update;
                     let mgr: *mut PackageManager = manager;
                     // SAFETY: `mgr` is the sole provenance root for the manager
-                    // from here on; `Diff::generate` reborrows disjoint fields
-                    // (`lockfile`, `update_requests`) through it. No other live
-                    // `&mut` to `*mgr` exists across the call.
+                    // from here on; `Diff::generate` gets `lockfile` reborrowed
+                    // through it. No other live `&mut` to `*mgr` exists across
+                    // the call.
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
-                    let update_requests = if to_update {
-                        // SAFETY: shared reborrow of a field disjoint from `lockfile`; `mgr` is the
-                        // sole provenance root and `Diff::generate` does not mutate `update_requests`.
-                        Some(unsafe { &(&(*mgr).update_requests)[..] })
-                    } else {
-                        None
-                    };
                     Diff::generate(
                         // SAFETY: `mgr` is the sole provenance root; `Diff::generate` touches only
-                        // `PackageManager` fields disjoint from `lockfile`/`update_requests` via this.
+                        // `PackageManager` fields disjoint from `lockfile` via this.
                         unsafe { &mut *mgr },
                         log,
                         // SAFETY: `from_lockfile` projects `(*mgr).lockfile`; `Diff::generate` never
@@ -226,7 +219,7 @@ pub fn install_with_manager(
                         &mut lockfile,
                         &root,
                         &maybe_root,
-                        update_requests,
+                        to_update,
                         Some(&mut mapping[..]),
                     )?
                 };
@@ -398,7 +391,7 @@ pub fn install_with_manager(
                         old_resolutions_list.get(lf.resolutions).to_vec();
 
                     // `extend_from_fn`
-                    // writes into `spare_capacity_mut()` then bumps `len`, so we
+                    // writes into spare capacity then bumps `len`, so we
                     // never form `&mut [T]` over uninitialized storage and never drop garbage.
                     debug_assert_eq!(lf.dependencies.len(), off as usize);
                     debug_assert_eq!(lf.resolutions.len(), off as usize);
@@ -747,16 +740,9 @@ pub fn install_with_manager(
 
     // append scripts to lockfile before generating new metahash
     manager.load_root_lifecycle_scripts(&root);
-    struct ClearRootLifecycleScripts(*mut PackageManager);
-    impl Drop for ClearRootLifecycleScripts {
-        fn drop(&mut self) {
-            // SAFETY: the pointer was derived from the live exclusive `manager`
-            // borrow; this runs once at scope exit (before `manager` is returned
-            // to the caller) and is the sole access to it at that instant.
-            unsafe { (*self.0).root_lifecycle_scripts = None };
-        }
-    }
-    let _clear_root_lifecycle_scripts = ClearRootLifecycleScripts(&raw mut *manager);
+    let mut clear_root_lifecycle_scripts =
+        scopeguard::guard(manager, |manager| manager.root_lifecycle_scripts = None);
+    let manager = &mut **clear_root_lifecycle_scripts;
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
         root_scripts.append_to_lockfile(&mut manager.lockfile);

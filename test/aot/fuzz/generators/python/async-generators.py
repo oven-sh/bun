@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""async-generators.py <seed>: random strict TypeScript programs about ASYNC GENERATORS AND WHO DRIVES THEM: sources, mappers, delegation by yield*, over arrays, sync generators and other async generators, one to four deep;
-driven by `for await` (run out, left by break | return | throw), by hand (several requests at once; next | return | throw in any order; after the end), by Promise.all over requests, by another generator;
-what is yielded | awaited | returned: plain values, promises fulfilled | rejected | still pending (opened later by gates), thenables that call back at once | late | twice | throw | whose `then` getter throws, promises whose `constructor` getter throws,
-promises of a subclass, objects with a `then` that is no function; try | catch | finally with awaits and yields inside; tickers beside them. EVERYTHING THAT HAPPENS IS LOGGED IN ORDER: the log must be plain Bun's."""
+"""async-generators.py <seed>: Random strict TypeScript programs about async generators and their drivers: sources,
+mappers, delegation with yield* over arrays, sync generators and other async generators, one to four levels deep.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

@@ -182,7 +182,7 @@ console.log(describe(byDirectCalls), byDirectCalls.a);
 // CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="takesDefaultToo"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 captures=[{type=undefined|null|[[f_4]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 captures=[{type=undefined|null|[[f_4]] flags=[IsExpected] variableName="real"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_4]], v1: undefined|null|object, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -218,7 +218,7 @@ console.log(describe(byDirectCalls), byDirectCalls.a);
 // CHECK-NEXT: Jump -> next b2(v11)
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="calls"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|object, v2: anything, v3: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

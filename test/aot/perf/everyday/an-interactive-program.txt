@@ -141,3 +141,34 @@ const entries: Entry[] = [{ key: null }, { kind: "row" }, { key: "k", pinned: tr
 function turn(i: number): number {
   return (globalThis as any).same(entries[i & 3], entries[(i >> 2) & 3]);
 }
+//// a-small-cache-asked-with-a-long-text-joined-anew
+const joinedHead = "x".repeat(20_000);
+const joinedTails = ["a", "bb", "ccc", "dddd"];
+const joinedCache: Record<string, number> = {};
+joinedTails.forEach((tail, k) => (joinedCache[joinedHead + tail] = k + 1));
+function turn(i: number): number {
+  return joinedCache[joinedHead + joinedTails[i & 3]!]!;
+}
+//// a-small-cache-asked-with-a-long-flat-text-made-anew
+const flatHead = "x".repeat(20_000);
+const flatTails = ["a", "bb", "ccc", "dddd"];
+const flatCache: Record<string, number> = {};
+flatTails.forEach((tail, k) => (flatCache[flatHead + tail] = k + 1));
+function turn(i: number): number {
+  return flatCache[[flatHead, flatTails[i & 3]!].join("")]!;
+}
+//// a-small-cache-asked-with-a-long-text-that-it-lacks
+const lackedHead = "x".repeat(20_000);
+const lackedTails = ["a", "bb", "ccc", "dddd"];
+const lackedCache: Record<string, number> = {};
+lackedTails.forEach((tail, k) => (lackedCache[lackedHead + tail] = k + 1));
+function turn(i: number): number {
+  return lackedCache[lackedHead + "eeeeeeee" + lackedTails[i & 3]!] ?? 7;
+}
+//// a-small-cache-asked-with-the-same-long-text
+const sameCache: Record<string, number> = {};
+sameCache["x".repeat(20_000) + "a"] = 1;
+const sameKey = ["x".repeat(20_000), "a"].join("");
+function turn(i: number): number {
+  return sameCache[sameKey]! + (i & 1);
+}

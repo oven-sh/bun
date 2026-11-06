@@ -732,9 +732,9 @@ function f31 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
-# CHECK: m0 position=2614 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=i32 site=w32 flags=[IsExpected]}] thisType={type=anything} results=[{type=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f24] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f34 fallback=f37} {
-# CHECK-NEXT: b0(v0: anything ~ i32):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=i32
+# CHECK: m0 position=2614 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=int site=w32}] thisType={type=anything} results=[{type=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f24] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f34 fallback=f37} {
+# CHECK-NEXT: b0(v0: int):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=i32
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: i32):
 # CHECK-NEXT: v3: Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f34
@@ -788,12 +788,12 @@ function f31 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: undefined = CallDirect function=f40
 # CHECK-NEXT: v1: i32 = ResultAt v0
-# CHECK-NEXT: v2: anything = ResultAt v0 index=1
-# CHECK-NEXT: v3: i32 = ResultAt v0 index=2
-# CHECK-NEXT: v4: anything = ResultAt v0 index=3
-# CHECK-NEXT: v5: i32 = ResultAt v0 index=4
-# CHECK-NEXT: v6: undefined|int = ResultAt v0 index=5
-# CHECK-NEXT: v7: undefined|string = ResultAt v0 index=6
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: i32 = ResultAt v0 index=1
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: i32 = ResultAt v0 index=2
+# CHECK-NEXT: v6: undefined|int = ResultAt v0 index=3
+# CHECK-NEXT: v7: undefined|string = ResultAt v0 index=4
 # CHECK-NEXT: v8: Array<undefined|boolean|number|string, Contiguous> = NewArray v1, v2, v3, v4, v5, v6, v7 contents=undefined|boolean|number|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v9: Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v9
@@ -818,17 +818,7 @@ function f31 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="add"
-# CHECK: module=m0 position=3141 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 site=w100 flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f29] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f35 fallback=f38} {
-# CHECK-NEXT: b0(v0: env L2, v1: anything ~ i32):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: i32):
-# CHECK-NEXT: v4: undefined = CallDirect v0, v3 function=f35
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined = CallDirect v0, v1 function=f38
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=3141 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int site=w100}] results=[{type=undefined}] functionTypes=[f29] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f35 fallback=f38}
 # CHECK-LABEL: function {{*}}name="add"
 # CHECK: module=m0 position=3141 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 site=w100}] results=[{type=undefined}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f20 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: env L2, v1: i32):
@@ -841,17 +831,7 @@ function f31 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="add"
-# CHECK: module=m0 position=3141 kind=Arrow role=GenericVersion flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 site=w100 flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f29] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f20 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f35} {
-# CHECK-NEXT: b0(v0: env L2, v1: anything) frequency=Unlikely:
-# CHECK-NEXT: v2: undefined|int = AssumeType v1 provenType=undefined|int
-# CHECK-NEXT: v3: i32 = GetEnvironmentField v0 layout=L2
-# CHECK-NEXT: v4: number = Add v3, v2 form=Numbers
-# CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: v6: i32 = BitOr v4, v5 form=Numbers
-# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L2
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: }
+# CHECK: module=m0 position=3141 kind=Arrow role=GenericVersion flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int site=w100}] results=[{type=undefined}] functionTypes=[f29] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f20 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f35}
 # CHECK-LABEL: function {{*}}name="Cursor"
 # CHECK: module=m0 position=1764 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=2 captures=[{type=f7}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything, v3: anything, v4: anything):

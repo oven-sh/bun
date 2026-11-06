@@ -19,6 +19,10 @@ const passedOver = new Set([
   "globalThis.Bun.env",
   "globalThis.process.mainModule",
   "globalThis.ShadowRealm",
+  // A compiled program makes the agent at its first read, so there this is an accessor.
+  "node:_http_agent.globalAgent",
+  "node:_http_agent.globalAgent<get>",
+  "node:_http_agent.globalAgent<set>",
 ]);
 const visit = (value, path) => {
   if (Object(value) !== value || found.has(value) || passedOver.has(path)) return;

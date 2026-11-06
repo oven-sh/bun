@@ -479,8 +479,8 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f52 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f55 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f56 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f55 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f56 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f57 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w105}, {type=number site=w106}] results=[{type=number site=w107}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f58 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w108 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w109}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: anything):
@@ -496,127 +496,155 @@ function f59 name="appendParts" module=m3 position=1242 role=Library flags=[IsCh
 function f60 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w113 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f61 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w114 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w115 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w116}, {type=number site=w117}] results=[{type=undefined|null|string site=w118 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f62 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w119}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f63 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w120 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w121}, {type=undefined|number site=w122}, {type=number site=w123}, {type=undefined|null|Array site=w124 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=65 function=f56
-runtimefunction id=69 function=f55
-runtimefunction id=131091 function=f63 visibility=Private
+function f63 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w120 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w121}, {type=undefined|number site=w122}, {type=number site=w123}, {type=undefined|null|Array site=w124 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=ArrayPrototypeMap function=f56
+runtimefunction id=ArrayIteratorPrototypeNext function=f55
+runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # -- generated: f0 note getters f14 f15 f16 attempt inOrder
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f4 @Cell = NewClosure function=f4 allocationSite=0 storage=Frame closureForm=Slim
-# CHECK-NEXT: v1: Array<string, Contiguous> @Cell = NewArray contents=string allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v1 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: PutModuleVariable v2 variable=g4
-# CHECK-NEXT: v4: L0 @Cell = NewObject layout=L0 allocationSite=5 allocation=1 allocationClass=0
-# CHECK-NEXT: PutModuleVariable v4 variable=g5
-# CHECK-NEXT: v6: "not callable" @JSValue = String string="not callable"
-# CHECK-NEXT: v7: f13 @Cell = NewClosure function=f13 allocationSite=6 storage=Frame closureForm=Slim
-# CHECK-NEXT: v8: string|L0|L2 @Cell = CallDirect v7 function=f67 accessSite=0
-# CHECK-NEXT: v9: f14 @Cell = NewClosure function=f14 allocationSite=7 storage=Frame closureForm=Slim
-# CHECK-NEXT: v10: string|L0|L2 @Cell = CallDirect v9 function=f67 accessSite=1
-# CHECK-NEXT: v11: boolean @Boolean = PropHas v4 key="c" accessSite=2 receivers=[L0]
-# CHECK-NEXT: v12: f15 @Cell = NewClosure function=f15 allocationSite=8 storage=Frame closureForm=Slim
-# CHECK-NEXT: v13: string|L0|L2 @Cell = CallDirect v12 function=f67 accessSite=3
-# CHECK-NEXT: v14: "d" @Cell = String string="d"
-# CHECK-NEXT: TryCallInline -, v4, v14 inlineBuiltin=ObjectGetOwnPropertyDescriptor overload=ObjectGetOwnPropertyDescriptor/0 accessSite=4 -> done b7(), miss b8()
-# CHECK-NEXT: b1(v48: Array<string> @JSValue):
-# CHECK-NEXT: v49: Array<never, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v48 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v50: anything @JSValue = Call v0, -, v44, v45, v46, v47, v49 calleeName="show" accessSite=22 callees=[f4]
-# CHECK-NEXT: v51: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v51
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v53: Array<string> @JSValue = CallBuiltin -, v43 overload=ObjectKeys/0 accessSite=21
-# CHECK-NEXT: Jump -> next b1(v53)
-# CHECK-NEXT: b3(v43: Object @JSValue):
-# CHECK-NEXT: v44: "in a loop" @JSValue = String string="in a loop"
-# CHECK-NEXT: v52: undefined @Void = PropGetPair v43 key="p" secondKey="q" readOrigin={position=4294967295} accessSite=18 secondAccessSite=19
-# CHECK-NEXT: v46: anything @JSValue = ResultAt v52 index=1
-# CHECK-NEXT: v45: anything @JSValue = ResultAt v52
-# CHECK-NEXT: v47: anything @JSValue = PropGet v43 key="r" accessSite=20
-# CHECK-NEXT: TryCallInline -, v43 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=21 -> done b1(), miss b2()
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v54: Object @JSValue = CallBuiltin -, v42 overload=ObjectCreate/0
-# CHECK-NEXT: Jump -> next b3(v54)
-# CHECK-NEXT: b5(v24: Array<string> @JSValue):
-# CHECK-NEXT: v25: Array<string, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v24 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v26: anything @JSValue = Call v0, -, v18, v20, v21, v23, v25 calleeName="show" accessSite=10 callees=[f4]
-# CHECK-NEXT: v27: L2 @Cell = NewObject layout=L2 allocationSite=10 allocation=5 allocationClass=2
-# CHECK-NEXT: v28: "x" @JSValue = String string="x"
-# CHECK-NEXT: v29: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: v30: f18 @Cell = NewClosure function=f18 allocationSite=12 closureForm=Slim
-# CHECK-NEXT: v31: L0|L2 @Cell = CallDirect v27, v28, v29, v30 function=f78 accessSite=11
-# CHECK-NEXT: v32: 7 @JSValue = Integer integer=7
-# CHECK-NEXT: v33: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: v34: f24 @Cell = NewClosure function=f24 allocationSite=14 closureForm=Slim
-# CHECK-NEXT: v35: L0|L2 @Cell = CallDirect v4, v32, v33, v34 function=f78 accessSite=13
-# CHECK-NEXT: v36: anything @JSValue = PropGet v4 key=symbol("mark")@m0:47 accessSite=14 receivers=[L0]
-# CHECK-NEXT: v37: L4 @Cell = NewObject layout=L4 allocationSite=15 allocation=6 allocationClass=3
-# CHECK-NEXT: v38: boolean @Boolean = ToBoolean v36 form=Generic
-# CHECK-NEXT: v39: L4 @Cell = CallDirect v37, v38 function=f7 accessSite=15
-# CHECK-NEXT: v40: "order" @JSValue = String string="order"
-# CHECK-NEXT: v41: anything @JSValue = Call v0, -, v40, v2 calleeName="show" accessSite=16 callees=[f4]
-# CHECK-NEXT: v42: null @JSValue = Null
-# CHECK-NEXT: TryCallInline -, v42 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b3(), miss b4()
-# CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v55: Array<string> @JSValue = CallBuiltin -, v4 overload=ObjectKeys/0 accessSite=9
-# CHECK-NEXT: Jump -> next b5(v55)
-# CHECK-NEXT: b7(v15: undefined|object @JSValue):
-# CHECK-NEXT: v16: undefined|object @JSValue = Upcast v15 castType=anything
-# CHECK-NEXT: v17: anything @JSValue = Call v0, -, v6, v8, v10, v11, v13, v16 calleeName="show" accessSite=5 callees=[f4]
-# CHECK-NEXT: v18: "values" @JSValue = String string="values"
-# CHECK-NEXT: v19: anything @JSValue = PropGet v4 key="v" accessSite=6 receivers=[L0]
-# CHECK-NEXT: v20: undefined|int @JSValue = AssumeType v19 provenType=undefined|int
-# CHECK-NEXT: v21: anything @JSValue = PropGet v4 key="w" accessSite=7 receivers=[L0]
-# CHECK-NEXT: v22: f16 @Cell = NewClosure function=f16 allocationSite=9 storage=Frame closureForm=Slim
-# CHECK-NEXT: v23: string|L0|L2 @Cell = CallDirect v22 function=f67 accessSite=8
-# CHECK-NEXT: TryCallInline -, v4 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=9 -> done b5(), miss b6()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v56: undefined|object @JSValue = CallBuiltin -, v4, v14 overload=ObjectGetOwnPropertyDescriptor/0 accessSite=4
-# CHECK-NEXT: Jump -> next b7(v56)
+# CHECK-NEXT: v0: Array<"first"|"flag"|"key"|"target", Contiguous> @Cell = NewArray contents="first"|"flag"|"key"|"target" allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v1: Array<"first"|"flag"|"key"|"target", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v0 provenType=Array<"first"|"flag"|"key"|"target", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v1 variable=g4
+# CHECK-NEXT: v3: L0 @Cell = NewObject layout=L0 allocationSite=5 allocation=1 allocationClass=0
+# CHECK-NEXT: PutModuleVariable v3 variable=g5
+# CHECK-NEXT: v5: f13 @Cell = NewClosure function=f13 allocationSite=6 storage=Frame closureForm=Slim
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v6: undefined|null|object @JSValue = Call v5 calleeName="run" accessSite=27 callees=[f13, f14, f15, f16]
+# CHECK-NEXT: v7: L0|L2 @JSValue = AssumeType v6 provenType="stored"|L0|L2
+# CHECK-NEXT: Jump -> next b3(v7)
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v8: anything @JSValue = CatchValue
+# CHECK-NEXT: v9: string @Cell = CallDirect v8 function=f75
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v10: string|L0|L2 @JSValue) handler=b4():
+# CHECK-NEXT: v11: L0|L2 @Cell = CallDirect function=f14 accessSite=27
+# CHECK-NEXT: Jump -> next b5(v11)
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v12: anything @JSValue = CatchValue
+# CHECK-NEXT: v13: string @Cell = CallDirect v12 function=f75
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b5(v14: string|L0|L2 @Cell):
+# CHECK-NEXT: v15: boolean @Boolean = PropHas v3 key="c" accessSite=2 receivers=[L0]
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6() handler=b7():
+# CHECK-NEXT: v16: L0|L2 @Cell = CallDirect function=f15 accessSite=27
+# CHECK-NEXT: Jump -> next b8(v16)
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: v17: anything @JSValue = CatchValue
+# CHECK-NEXT: v18: string @Cell = CallDirect v17 function=f75
+# CHECK-NEXT: Jump -> next b8(v18)
+# CHECK-NEXT: b8(v19: string|L0|L2 @Cell):
+# CHECK-NEXT: v20: "d" @Cell = String string="d"
+# CHECK-NEXT: TryCallInline -, v3, v20 inlineBuiltin=ObjectGetOwnPropertyDescriptor overload=ObjectGetOwnPropertyDescriptor/0 accessSite=4 -> done b10(), miss b9()
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v21: undefined|object @JSValue = CallBuiltin -, v3, v20 overload=ObjectGetOwnPropertyDescriptor/0 accessSite=4
+# CHECK-NEXT: Jump -> next b10(v21)
+# CHECK-NEXT: b10(v22: undefined|object @JSValue):
+# CHECK-NEXT: v23: undefined|object @JSValue = Upcast v22 castType=anything
+# CHECK-NEXT: v24: f4 @Cell = NewClosure function=f4 allocationSite=0 storage=Frame closureForm=Slim
+# CHECK-NEXT: v25: "not callable" @JSValue = String string="not callable"
+# CHECK-NEXT: v26: anything @JSValue = Call v24, -, v25, v10, v14, v15, v19, v23 calleeName="show" accessSite=5 callees=[f4]
+# CHECK-NEXT: v27: anything @JSValue = PropGet v3 key="v" accessSite=6 receivers=[L0]
+# CHECK-NEXT: v28: undefined|int @JSValue = AssumeType v27 provenType=undefined|int
+# CHECK-NEXT: v29: anything @JSValue = PropGet v3 key="w" accessSite=7 receivers=[L0]
+# CHECK-NEXT: v30: undefined @JSValue = AssumeType v29 provenType=undefined
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11() handler=b12():
+# CHECK-NEXT: v31: "stored" @LiteralString = CallDirect function=f16 accessSite=27
+# CHECK-NEXT: Jump -> next b13(v31)
+# CHECK-NEXT: b12() role=CatchHandler:
+# CHECK-NEXT: v32: anything @JSValue = CatchValue
+# CHECK-NEXT: v33: string @Cell = CallDirect v32 function=f75
+# CHECK-NEXT: Jump -> next b13(v33)
+# CHECK-NEXT: b13(v34: string @JSValue):
+# CHECK-NEXT: TryCallInline -, v3 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=9 -> done b15(), miss b14()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v35: Array<string> @JSValue = CallBuiltin -, v3 overload=ObjectKeys/0 accessSite=9
+# CHECK-NEXT: Jump -> next b15(v35)
+# CHECK-NEXT: b15(v36: Array<string> @JSValue):
+# CHECK-NEXT: v37: Array<string, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v36 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v38: "values" @JSValue = String string="values"
+# CHECK-NEXT: v39: anything @JSValue = Call v24, -, v38, v28, v30, v34, v37 calleeName="show" accessSite=10 callees=[f4]
+# CHECK-NEXT: v40: L2 @Cell = NewObject layout=L2 allocationSite=10 allocation=5 allocationClass=2
+# CHECK-NEXT: v41: "x" @JSValue = String string="x"
+# CHECK-NEXT: v42: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: v43: f18 @Cell = NewClosure function=f18 allocationSite=12 closureForm=Slim
+# CHECK-NEXT: v44: L0|L2 @Cell = CallDirect v40, v41, v42, v43 function=f74 accessSite=11
+# CHECK-NEXT: v45: 7 @JSValue = Integer integer=7
+# CHECK-NEXT: v46: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: v47: f24 @Cell = NewClosure function=f24 allocationSite=14 closureForm=Slim
+# CHECK-NEXT: v48: L0|L2 @Cell = CallDirect v3, v45, v46, v47 function=f74 accessSite=13
+# CHECK-NEXT: v49: anything @JSValue = PropGet v3 key=symbol("mark")@m0:47 accessSite=14 receivers=[L0]
+# CHECK-NEXT: v50: L4 @Cell = NewObject layout=L4 allocationSite=15 allocation=6 allocationClass=3
+# CHECK-NEXT: v51: boolean @Boolean = ToBoolean v49 form=Generic
+# CHECK-NEXT: v52: L4 @Cell = CallDirect v50, v51 function=f7 accessSite=15
+# CHECK-NEXT: v53: "order" @JSValue = String string="order"
+# CHECK-NEXT: v54: anything @JSValue = Call v24, -, v53, v1 calleeName="show" accessSite=16 callees=[f4]
+# CHECK-NEXT: v55: null @JSValue = Null
+# CHECK-NEXT: TryCallInline -, v55 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b17(), miss b16()
+# CHECK-NEXT: b16() frequency=Rare:
+# CHECK-NEXT: v56: Object @JSValue = CallBuiltin -, v55 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next b17(v56)
+# CHECK-NEXT: b17(v57: Object @JSValue):
+# CHECK-NEXT: v58: "in a loop" @JSValue = String string="in a loop"
+# CHECK-NEXT: v59: anything @JSValue = PropGet v57 key="p" accessSite=18
+# CHECK-NEXT: v60: undefined @JSValue = AssumeType v59 provenType=undefined
+# CHECK-NEXT: v61: anything @JSValue = PropGet v57 key="q" accessSite=19
+# CHECK-NEXT: v62: undefined @JSValue = AssumeType v61 provenType=undefined
+# CHECK-NEXT: v63: anything @JSValue = PropGet v57 key="r" accessSite=20
+# CHECK-NEXT: v64: undefined @JSValue = AssumeType v63 provenType=undefined
+# CHECK-NEXT: TryCallInline -, v57 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=21 -> done b19(), miss b18()
+# CHECK-NEXT: b18() frequency=Rare:
+# CHECK-NEXT: v65: Array<string> @JSValue = CallBuiltin -, v57 overload=ObjectKeys/0 accessSite=21
+# CHECK-NEXT: Jump -> next b19(v65)
+# CHECK-NEXT: b19(v66: Array<string> @JSValue):
+# CHECK-NEXT: v67: Array<never, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v66 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v68: anything @JSValue = Call v24, -, v58, v60, v62, v64, v67 calleeName="show" accessSite=22 callees=[f4]
+# CHECK-NEXT: v69: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v69
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="note"
-# CHECK: module=m0 position=536 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=true|"k"|L4|f29 site=w1}] results=[{type=true|"k"|L4|f29 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string @Cell, v1: true|"k"|L4|f29 @JSValue):
-# CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g4
+# CHECK: module=m0 position=536 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="first"|"flag"|"key"|"target" site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=true|"k"|L4|f29 site=w1}] results=[{type=true|"k"|L4|f29 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "first"|"flag"|"key"|"target" @LiteralString, v1: true|"k"|L4|f29 @JSValue):
+# CHECK-NEXT: v2: Array<"first"|"flag"|"key"|"target", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g4
 # CHECK-NEXT: v3: int[0, 4294967295] @Int64 = CallInline v2, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="getters"
-# CHECK: module=m0 position=617 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=L0|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=7|"c"|"d"|"x" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w5}, {type=undefined|f17|f23|f34}, {type=null|"text"|f18|f24}] results=[{type=L0|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L2 @Cell, v1: 7|"c"|"d"|"x" @JSValue, v2: boolean @Boolean, v3: undefined|f17|f23|f34 @JSValue, v4: null|"text"|f18|f24 @JSValue):
-# CHECK-NEXT: v5: L0|L2 @Cell = CallDirect v0, v1, v2, v4 function=f78
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=617 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=L0|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=7|"c"|"d"|"x" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w5}, {type=undefined|f17|f23|f34}, {type=null|"text"|f18|f24}] results=[{type=L0|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=377 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f13|f14|f15|f16 site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string|L0|L2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="inOrder"
 # CHECK: module=m0 position=1284 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L4 site=w20 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w21}] results=[{type=L4 site=w22 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: L4 @Cell, v1: boolean @Boolean):
 # CHECK-NEXT: v2: "target" @JSValue = String string="target"
-# CHECK-NEXT: v3: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g4
-# CHECK-NEXT: v4: int[0, 4294967295] @Int64 = CallInline v3, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
-# CHECK-NEXT: v5: "key" @JSValue = String string="key"
-# CHECK-NEXT: v6: int[0, 4294967295] @Int64 = CallInline v3, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v3: fact @Void = Entered function=f1
+# CHECK-NEXT: v4: Array<"first"|"flag"|"key"|"target", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable fact=v3 variable=g4
+# CHECK-NEXT: v5: int[0, 4294967295] @Int64 = CallInline v4, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v6: "key" @JSValue = String string="key"
+# CHECK-NEXT: v7: int[0, 4294967295] @Int64 = CallInline v4, v6 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v7: "first" @JSValue = String string="first"
-# CHECK-NEXT: v8: f29 @Cell = NewClosure function=f29 allocationSite=19 closureForm=Slim
-# CHECK-NEXT: v9: int[0, 4294967295] @Int64 = CallInline v3, v7 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
-# CHECK-NEXT: v10: L1 @Cell = NewObject -, v8 layout=L1 fields=[2] allocationSite=20 allocation=4 allocationClass=1
-# CHECK-NEXT: v11: L1 @Cell = FinishObject v10
-# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: v8: "first" @JSValue = String string="first"
+# CHECK-NEXT: v9: f29 @Cell = NewClosure function=f29 allocationSite=19 closureForm=Slim
+# CHECK-NEXT: v10: int[0, 4294967295] @Int64 = CallInline v4, v8 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v11: L1 @Cell = NewObject -, v9 layout=L1 fields=[2] allocationSite=20 allocation=4 allocationClass=1
+# CHECK-NEXT: v12: L1 @Cell = FinishObject v11
+# CHECK-NEXT: Jump -> next b3(v12)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v12: "flag" @JSValue = String string="flag"
-# CHECK-NEXT: v13: true @JSValue = Boolean boolean=true
-# CHECK-NEXT: v14: int[0, 4294967295] @Int64 = CallInline v3, v12 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
-# CHECK-NEXT: v15: L1 @Cell = NewObject -, v13 layout=L1 fields=[1] allocationSite=21 allocation=3 allocationClass=1
-# CHECK-NEXT: v16: L1 @Cell = FinishObject v15
-# CHECK-NEXT: Jump -> next b3(v16)
-# CHECK-NEXT: b3(v17: L1 @Cell):
-# CHECK-NEXT: v18: "k" @JSValue = String string="k"
-# CHECK-NEXT: v19: L4 @JSValue = CallBuiltin -, v0, v18, v17 overload=ObjectDefineProperty/0 accessSite=35 @0 tail
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v13: "flag" @JSValue = String string="flag"
+# CHECK-NEXT: v14: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: v15: int[0, 4294967295] @Int64 = CallInline v4, v13 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v16: L1 @Cell = NewObject -, v14 layout=L1 fields=[1] allocationSite=21 allocation=3 allocationClass=1
+# CHECK-NEXT: v17: L1 @Cell = FinishObject v16
+# CHECK-NEXT: Jump -> next b3(v17)
+# CHECK-NEXT: b3(v18: L1 @Cell):
+# CHECK-NEXT: v19: "k" @JSValue = String string="k"
+# CHECK-NEXT: v20: L4 @JSValue = CallBuiltin -, v0, v19, v18 overload=ObjectDefineProperty/0 accessSite=35 @0 tail
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
 # CHECK: m0 position=1860 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0|L2 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -625,7 +653,7 @@ runtimefunction id=131091 function=f63 visibility=Private
 # CHECK-NEXT: v1: "c" @JSValue = String string="c"
 # CHECK-NEXT: v2: false @Boolean = Boolean
 # CHECK-NEXT: v3: "text" @JSValue = String string="text"
-# CHECK-NEXT: v4: L0|L2 @Cell = CallDirect v0, v1, v2, v3 function=f78 accessSite=36
+# CHECK-NEXT: v4: L0|L2 @Cell = CallDirect v0, v1, v2, v3 function=f74 accessSite=36
 # CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|object site=w90 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|object site=w33 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=L0|L2} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
@@ -635,11 +663,11 @@ runtimefunction id=131091 function=f63 visibility=Private
 # CHECK-NEXT: v1: "d" @JSValue = String string="d"
 # CHECK-NEXT: v2: true @Boolean = Boolean boolean=true
 # CHECK-NEXT: v3: null @JSValue = Null
-# CHECK-NEXT: v4: L0|L2 @Cell = CallDirect v0, v1, v2, v3 function=f78 accessSite=37
+# CHECK-NEXT: v4: L0|L2 @Cell = CallDirect v0, v1, v2, v3 function=f74 accessSite=37
 # CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|object site=w91 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|object site=w34 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=L0|L2} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
-# CHECK: m0 position=2113 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=2113 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type="stored" site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0 @Cell = GetModuleVariable variable=g5
 # CHECK-NEXT: v1: 3 @OptionalInt64 = Integer integer=3
@@ -649,46 +677,11 @@ runtimefunction id=131091 function=f63 visibility=Private
 # CHECK-NEXT: PutSlotOrAdd v0, v6, v1 key="v" receivers=[L0] level=Expected accessSite=38 fieldAccess=0
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v3: "stored" @Cell = String string="stored"
+# CHECK-NEXT: v3: "stored" @LiteralString = String string="stored"
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: PropSet v0, v1 key="v" accessSite=38 receivers=[L0]
 # CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=377 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f13|f14|f15|f16}] results=[{type=string|L0|L2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameter=1073741824 parameterMap=[{original=0}]} creator=Version{provenVersion=f5} {
-# CHECK-NEXT: b0(v0: f13|f14|f15|f16 @Cell):
-# CHECK-NEXT: v1: boolean @Boolean = TypeTest v0 testedType=f14
-# CHECK-NEXT: TestAndBranch v1 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1() handler=b8():
-# CHECK-NEXT: v2: L0|L2 @Cell = CallDirect function=f14 accessSite=27
-# CHECK-NEXT: Jump -> next b7(v2)
-# CHECK-NEXT: b2(v3: f13|f15|f16 @Cell):
-# CHECK-NEXT: v4: boolean @Boolean = TypeTest v3 testedType=f15
-# CHECK-NEXT: TestAndBranch v4 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3() handler=b8():
-# CHECK-NEXT: v5: L0|L2 @Cell = CallDirect function=f15 accessSite=27
-# CHECK-NEXT: Jump -> next b7(v5)
-# CHECK-NEXT: b4(v6: f13|f16 @Cell):
-# CHECK-NEXT: v7: boolean @Boolean = TypeTest v6 testedType=f16
-# CHECK-NEXT: TestAndBranch v7 -> taken b5(), notTaken b6(| 0)
-# CHECK-NEXT: b5() handler=b8():
-# CHECK-NEXT: v8: string @Cell = CallDirect function=f16 accessSite=27
-# CHECK-NEXT: Jump -> next b7(v8)
-# CHECK-NEXT: b6(v9: f13 @Cell) frequency=Unlikely handler=b8():
-# CHECK-NEXT: v10: undefined|null|object @JSValue = Call v9 calleeName="run" accessSite=27 callees=[f13, f14, f15, f16]
-# CHECK-NEXT: v11: L0|L2 @JSValue = AssumeType v10 provenType=string|L0|L2
-# CHECK-NEXT: Jump -> next b7(v11)
-# CHECK-NEXT: b7(v12: string|L0|L2 @Cell):
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b8() role=CatchHandler:
-# CHECK-NEXT: v13: anything @JSValue = CatchValue
-# CHECK-NEXT: v14: "threw " @JSValue = String string="threw "
-# CHECK-NEXT: v15: anything @JSValue = Upcast v13 castType=anything
-# CHECK-NEXT: v16: anything @JSValue = PropGet v15 key="name" accessSite=28 siteCache=0
-# CHECK-NEXT: v17: anything @JSValue = Expect v16 expectedType=undefined|null|string
-# CHECK-NEXT: v18: string @JSValue = Add v14, v17 form=Generic
-# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="getters"
 # CHECK: module=m0 position=617 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=L0|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=7|"c"|"d"|"x" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w5}, {type=null|"text"|f18|f24}] results=[{type=L0|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}, {original=4}]} {

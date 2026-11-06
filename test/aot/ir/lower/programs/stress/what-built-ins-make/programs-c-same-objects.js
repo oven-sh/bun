@@ -60,44 +60,47 @@ for (const line of lines) console.log(line);
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[f_1]] flags=[IsExpected]}
 // CHECK-NEXT: v5 = NewClosure v1 function=[[f_2]]
 // CHECK-NEXT: v6 = Call v4, v2, v5 calleeKey="filter" calleeName="names.filter"
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="lines"
-// CHECK-NEXT: v9 = PropGet v8 key="push"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = ToString v0
-// CHECK-NEXT: v12 = String string=": "
-// CHECK-NEXT: v13 = PropGet v2 key="length"
-// CHECK-NEXT: v14 = Convert v13 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v6 key="length"
-// CHECK-NEXT: v16 = Convert v15 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v17 = Sub v14, v16
-// CHECK-NEXT: v18 = ToString v17
-// CHECK-NEXT: v19 = String string=" of "
-// CHECK-NEXT: v20 = PropGet v2 key="length"
-// CHECK-NEXT: v21 = Convert v20 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v22 = ToString v21
-// CHECK-NEXT: v23 = String string=" are the globals"
-// CHECK-NEXT: v24 = PropGet v6 key="length"
-// CHECK-NEXT: v25 = ToBoolean v24
-// CHECK-NEXT: Branch v25 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v26):
+// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v9 = CheckInitialized v8 name="lines"
+// CHECK-NEXT: v10 = PropGet v9 key="push"
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
+// CHECK-NEXT: v12 = ToString v0
+// CHECK-NEXT: v13 = String string=": "
+// CHECK-NEXT: v14 = PropGet v2 key="length"
+// CHECK-NEXT: v15 = Convert v14 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v16 = PropGet v7 key="length"
+// CHECK-NEXT: v17 = Convert v16 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v18 = Sub v15, v17
+// CHECK-NEXT: v19 = ToString v18
+// CHECK-NEXT: v20 = String string=" of "
+// CHECK-NEXT: v21 = PropGet v2 key="length"
+// CHECK-NEXT: v22 = Convert v21 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v23 = ToString v22
+// CHECK-NEXT: v24 = String string=" are the globals"
+// CHECK-NEXT: v25 = PropGet v7 key="length"
+// CHECK-NEXT: v26 = Convert v25 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v27 = ToBoolean v26
+// CHECK-NEXT: Branch v27 -> taken b2(| 0), notTaken b4(| 0)
+// CHECK-NEXT: b2(v28):
 // CHECK-NEXT: Jump -> next b3()
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v27 = String string=", not "
-// CHECK-NEXT: v28 = PropGet v6 key="join"
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v30 = Call v29, v6 calleeKey="join" calleeName="different.join"
-// CHECK-NEXT: v31 = Add v27, v30
-// CHECK-NEXT: Jump -> next b6(v31)
-// CHECK-NEXT: b4(v32):
+// CHECK-NEXT: v29 = String string=", not "
+// CHECK-NEXT: v30 = PropGet v7 key="join"
+// CHECK-NEXT: v31 = Convert v30 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
+// CHECK-NEXT: v32 = Call v31, v7 calleeKey="join" calleeName="different.join"
+// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v34 = Add v29, v33
+// CHECK-NEXT: Jump -> next b6(v34)
+// CHECK-NEXT: b4(v35):
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5():
-// CHECK-NEXT: v33 = String string=""
-// CHECK-NEXT: Jump -> next b6(v33)
-// CHECK-NEXT: b6(v34):
-// CHECK-NEXT: v35 = ToString v34
-// CHECK-NEXT: v36 = Strcat v11, v12, v18, v19, v22, v23, v35
-// CHECK-NEXT: v37 = Call v10, v8, v36 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v38 = Undefined
-// CHECK-NEXT: Return v38
+// CHECK-NEXT: v36 = String string=""
+// CHECK-NEXT: Jump -> next b6(v36)
+// CHECK-NEXT: b6(v37):
+// CHECK-NEXT: v38 = ToString v37
+// CHECK-NEXT: v39 = Strcat v12, v13, v19, v20, v23, v24, v38
+// CHECK-NEXT: v40 = Call v11, v9, v39 calleeKey="push" calleeName="lines.push"
+// CHECK-NEXT: v41 = Undefined
+// CHECK-NEXT: Return v41
 // CHECK-NEXT: }

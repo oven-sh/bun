@@ -1,19 +1,17 @@
-// Programs in which `null`, `undefined` or a NaN with unusual bits reaches an operator or a built-in function where a number is expected.
-//
-// The compiler keeps a value that is a number or `undefined` or `null` as a double, in which two NaNs stand for the two. What stands for
-// `undefined` must never come out of an operation as its result, be compared, printed, hashed or stored as if it were a number.
-//
-// `sources` are the ways in which such a value comes about, by what the compiler knows of it: written out, a variable nobody stores to, a
-// parameter every caller leaves out, a parameter that is sometimes a number, an optional field, the end of an array, and so on. `operations`
-// are what is done with it; X is the value. A program is one source through every operation. Each pair is a function of its own, so that
-// what the compiler knows of the operand is what the source says and nothing else, and each prints its result and what is seen of the
-// result afterwards: typeof, ===, == null, ??, as a string, and once more after it has gone through a variable, a field and an array that
-// may hold `undefined` as well.
+// `null`, `undefined` or a NaN with unusual bits reaches an operator or built-in that expects a number. The compiler
+// stores a value that is a number, `undefined` or `null` as a double in which two NaN patterns encode the latter two;
+// they must never be confused with a real NaN.
 export type Source = {
   name: string;
-  /** The program is TypeScript. An operation on what may be null is a type error, so the file begins with `// @ts-nocheck`. */
+  /**
+   * The program is TypeScript. An operation on what may be null is a type error, so the file begins with `//
+   * @ts-nocheck`.
+   */
   typescript?: true;
-  /** Well typed only under `"strict": false`, where a `number` may be null. Such a program is checked, and has the operations that are well typed on a number. */
+  /**
+   * Only well typed with `"strict": false`, where a `number` may be null. Such a program is checked, and contains the
+   * operations that are well typed on a number.
+   */
   loose?: true;
 } & (
   | { expression: string }
@@ -211,7 +209,7 @@ export const sources: Source[] = [
   { name: "a field x?: boolean | null that holds undefined", typescript: true, parameter: "o: { x?: boolean | null; y: number }", read: "o.x", calls: ["({ y: 1, x: undefined })", "({ y: 1, x: null })"] },
 ];
 
-/** The operation, and whether it is well typed where X is a `number`. */
+/** The operation, and whether it is well typed if X is a `number`. */
 export const operations: [string, boolean][] = [
   ["+X", true],
   ["-X", true],
@@ -1496,10 +1494,10 @@ const say = (label${text}, f${run}) => { let r${text}; try { r = show(f()); } ca
 const afterwards =
   '[r, typeof r, r === r, r == null, r === undefined, r ?? "nullish", "" + r, typeof r === "number" && Number.isNaN(r), ...(() => { const u = unknown(1) ? r : undefined, n = unknown(1) ? r : null, h = { v: unknown(0) ? undefined : r }, l = [1.5, r]; return [u === undefined, u ?? "nullish", typeof u, n === null, n ?? "nullish", typeof n, h.v === undefined, typeof h.v, h.v ?? "nullish", l[1] === undefined, typeof l[1], 1 in l]; })()]';
 
-/** The operation with the operand in the place of each X that stands alone. */
+/** The operation with the operand substituted for each standalone X. */
 const withOperand = (operation: string, operand: string) => operation.replace(/(?<![A-Za-z0-9_$"'])X(?![A-Za-z0-9_$"'])/g, () => operand);
 
-/** One source through every operation, or through those that are handed in. */
+/** One source through every operation, or through the given ones. */
 export function program(source: Source, done: [string, boolean][] = operations): { file: string; text: string; files?: Record<string, string> } {
   const lines: string[] = [];
   if (source.typescript && !source.loose) lines.push("// @ts-nocheck");

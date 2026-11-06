@@ -270,25 +270,15 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 
     if is_map {
         let source_id = source_map_store::SourceId(id);
-        // Note: `render_json` needs `&mut DevServer` while `entry` borrows
-        // `dev.source_maps.entries[_]`. The entry is read-only (`&self`) and
-        // `render_json` does not touch `source_maps.entries`, so erase the
-        // entry borrow to a raw pointer and reborrow `dev` for the call.
         let Some(entry) = dev
             .source_maps
             .entries
-            .get_mut(&source_map_store::Key::init(id))
+            .get(&source_map_store::Key::init(id))
         else {
             return not_found(resp);
         };
-        let entry_ptr: *const source_map_store::Entry = &raw const *entry;
-        // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
-        // which is not reallocated by `render_json`.
         let json_bytes =
-            match unsafe { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
-                Ok(b) => b,
-                Err(e) => bun_core::handle_oom(Err(e)),
-            };
+            bun_core::handle_oom(entry.render_json(source_id.kind(), bake::Side::Client));
         let response = StaticRoute::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
@@ -360,7 +350,6 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: std::ptr::from_mut::<DevServer>(dev),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,

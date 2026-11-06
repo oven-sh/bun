@@ -70,7 +70,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let span = self.file.span_at(self.position());
             self.file
                 .diagnostics
-                .report(Code::UnsupportedOption, span, &[text]);
+                .report(Code::ShadowRealmIsAbsent, span, &[]);
         }
     }
 

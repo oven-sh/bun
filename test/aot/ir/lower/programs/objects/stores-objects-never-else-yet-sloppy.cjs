@@ -88,7 +88,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|[[L_8]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_8]] flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|[[L_8]] flags=[IsExpected] variableName="o"}] thisType={type=anything} results=[{type=undefined|null|[[L_8]] flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_8]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -129,7 +129,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, IsSloppy, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|Generator<undefined|null|[[L_8]]> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, IsSloppy, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="i"}] thisType={type=anything} results=[{type=undefined|null|Generator<undefined|null|[[L_8]]> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

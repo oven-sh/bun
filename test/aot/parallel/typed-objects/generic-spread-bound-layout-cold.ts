@@ -1,6 +1,7 @@
 // Flags: --aot-heat=everything-is-cold
-// Where the bound of the type parameter has a layout, what a generic function makes with a spread is made with one, and becomes what the call says in its own cell: it is one object, and no type is opened for it.
-// IR- ^    v\d+: [^=~\n]*(?<![=\w])L\d+(?![!\d])
+// What a generic function makes with a spread of its parameter and a name of its own is a copy with the layout of what arrives, and the written name gets a field there: it is one object, and no type is opened for it.
+// IR- ^layout (?!.*IsNeverAllocated)(?!.*impossibleMutations=\[[^\]]*AddProperty)
+// IR- ^    v\d+: boolean = HasNoExtraProperties
 interface Base {
   name: string;
 }

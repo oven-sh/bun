@@ -7,8 +7,8 @@ pub struct DotNotation {
     allow_pattern: Option<Regex>,
 }
 
-const USE_DOT: Message = Message::new("useDot", "[{{key}}] is better written in dot notation.");
-const USE_BRACKETS: Message = Message::new("useBrackets", ".{{key}} is a syntax error.");
+const USE_DOT: &Message = &Message::new("useDot", "[{{key}}] is better written in dot notation.");
+const USE_BRACKETS: &Message = &Message::new("useBrackets", ".{{key}} is a syntax error.");
 
 /// True if `e`, an `a.b`, can be written `a["b"]`. It can't in a JSX tag name or in a decorator without parentheses.
 fn can_be_computed(e: Expr<'_>) -> bool {

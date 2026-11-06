@@ -7,8 +7,8 @@ use smallvec::SmallVec;
 /// Prefer `import.meta.{dirname,filename}` over legacy techniques for getting file paths.
 pub struct PreferImportMetaProperties;
 
-const DIRNAME: Message = Message::new("", "Do not construct dirname.");
-const FILENAME: Message = Message::new("", "Do not construct filename using `fileURLToPath()`.");
+const DIRNAME: &Message = &Message::new("", "Do not construct dirname.");
+const FILENAME: &Message = &Message::new("", "Do not construct filename using `fileURLToPath()`.");
 
 /// A function of a Node.js module.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]

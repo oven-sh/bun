@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// such as numbers or numeric strings.
 pub struct PreferBigintLiterals;
 
-const PREFER_BIGINT_LITERALS: Message = Message::new("", "Prefer bigint literals over `BigInt(...)`.");
+const PREFER_BIGINT_LITERALS: &Message = &Message::new("", "Prefer bigint literals over `BigInt(...)`.");
 
 fn trim_leading_zeros(raw: &[u8]) -> &[u8] {
     let zeros = raw.iter().take_while(|it| **it == b'0').count();

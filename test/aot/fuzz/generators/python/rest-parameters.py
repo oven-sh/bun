@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""rest-parameters.py <seed>: A TYPED program: functions with a rest parameter of many element types, entered by a direct call, a closure in a variable, a method, a spread, call | apply | bind, new; handed whole numbers, fractions, every road to NaN, -0, infinities, what stands for undefined | null | absent among raw numbers (an element beyond the end, an optional member, an optional parameter), and lies under `as`. Each array is then asked everything in which a hole, a NaN and an undefined differ. As plain Bun or a throw. (No `undefined as number`: a cast between primitives converts under --aot.)"""
+"""rest-parameters.py <seed>: A typed program: functions with a rest parameter of many element types, entered by a
+direct call, a closure in a variable, a method, a spread, call, apply, bind and new, with integers, doubles and every
+other kind of argument.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

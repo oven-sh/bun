@@ -71,5 +71,5 @@ function f1 name="countOfControlCharacters" module=m0 position=1588 flags=[IsChe
 # -- generated: countOfControlCharacters
 # CHECK-LABEL: function {{*}}name="countOfControlCharacters"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 63, patchpoints: 20, rare instructions: 27
+# CHECK-NEXT: instructions: 61, patchpoints: 10, rare instructions: 31
 # CHECK-NEXT: end of function f1

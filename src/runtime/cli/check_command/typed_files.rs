@@ -11,6 +11,7 @@ use bun_sema::config::{
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::session::Session;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::typed_files::{
     ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
@@ -91,7 +92,7 @@ impl NotedModuleTypes {
 
     pub(super) fn take(&self) -> Vec<ModuleTypes> {
         let mut noted = std::mem::take(&mut *self.0.lock());
-        noted.sort_by_key(|module| module.0);
+        noted.shared_sort_by_key(|module| module.0);
         noted.into_iter().map(|module| module.1).collect()
     }
 }

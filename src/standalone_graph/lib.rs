@@ -10,7 +10,7 @@ pub mod compiled_program;
 mod executable_file;
 pub mod executable_request;
 pub use compiled_program::{
-    CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput,
+    CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };
 pub use executable_file::with_executable_image;
 

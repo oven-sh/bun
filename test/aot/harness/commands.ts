@@ -1,19 +1,21 @@
 // How the tests of test/aot start a command, and what they make of how it ended.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { closeSync, existsSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync, utimesSync } from "fs";
 import { bunExe, isASAN, isLinux, isWindows } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
 import { locksEnvironment } from "../hardened";
+import { raiseDefaultTimeout } from "./default-timeout";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./memory-limit";
+import { reportsToTheRunnerAlone, throughAtOnce, withoutCoreDump } from "./without-core-dump";
 
 export { unsupported } from "./compiler";
 
 // One build takes about as long as the whole default limit of bun:test.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.
-const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
+export const slots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
 let free = slots;
 const waiting: (() => void)[] = [];
 const takeSlot = (isNext = false) =>
@@ -52,8 +54,8 @@ export async function withEverySlot<T>(held: 0 | 1, work: () => Promise<T>): Pro
   }
 }
 
-// AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned() takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
-const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
+// AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned(), and every build of frameworks/, takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
+export const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
 
 export const limitOfARun = 90_000;
 export const limitWithASAN = 240_000;
@@ -79,9 +81,9 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
         : limitOfARun);
   const start = performance.now();
   await using proc = Bun.spawn({
-    cmd,
+    cmd: throughAtOnce(cmd),
     cwd,
-    env,
+    env: reportsToTheRunnerAlone(env),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -131,18 +133,7 @@ export const collectsAtEveryAllocation = (env: Record<string, string | undefined
 export const collectsEveryMillisecond = (env: Record<string, string | undefined>) =>
   env.BUN_JSC_collectContinuously === "1";
 
-// Where the kernel hands a core to a program (systemd-coredump, apport) it starts that program whatever the limit is, but for a limit of one byte, and the process that a signal ended is
-// gone only when the program has read it: seconds on a busy machine.
-export const withoutCoreDump = (cmd: string[]) =>
-  isWindows
-    ? cmd
-    : [
-        "/bin/sh",
-        "-c",
-        `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`,
-        "--",
-        ...cmd,
-      ];
+export { withoutCoreDump };
 /** For a process that is meant to end by a signal. CI's runner books a report that a passing file leaves on the next file that fails. */
 export const withoutCrashReport: Record<string, string> = {
   BUN_ENABLE_CRASH_REPORTING: "0",
@@ -167,8 +158,15 @@ export function told(run: { stdout: string; stderr: string; exitCode: number }) 
   };
 }
 
+function withoutItsMiddle(text: string, kept = 8192) {
+  if (text.length <= 4 * kept) return text;
+  const middle = text.slice(kept, -kept);
+  const errors = (middle.match(/^error\b.*$/gm) ?? []).slice(0, 20).map(line => `\n${line.slice(0, 400)}`);
+  return `${text.slice(0, kept)} [${middle.length} characters are left out here]${errors.join("")}\n[and then] ${text.slice(-kept)}`;
+}
+
 export function built(build: { stderr: string; exitCode: number }) {
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+  expect({ stderr: withoutItsMiddle(build.stderr), exitCode: build.exitCode }).toEqual({
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,
   });
@@ -197,7 +195,8 @@ export function namesOfSections(path: string) {
 // Every build writes the Bun that runs it once more, and CI tests bun-profile, which on Linux has its debug information in it:
 // three times the bytes of the Bun that ships. A file of many programs builds on a copy without it. The copy lies in the
 // temporary directory under a name that tells this Bun from any other. It is made once and found again by every test file,
-// process and run, so no test removes it; whoever makes one removes those that nobody has used for a day.
+// process and run, so no test removes it. Every use marks it, a test file takes minutes, and a machine that tests a new Bun every
+// few minutes would hold dozens: whoever makes one removes those that nobody has used for an hour.
 export function withoutDebugInformation(_folder?: string): string[] {
   const strip = isLinux && Bun.which("strip");
   const { ino, size, mtimeMs } = statSync(bunExe());
@@ -212,8 +211,7 @@ export function withoutDebugInformation(_folder?: string): string[] {
   for (const name of readdirSync(tmpdir())) {
     if (
       name.startsWith(prefix) &&
-      Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) >
-        24 * 60 * 60 * 1000
+      Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) > 60 * 60 * 1000
     )
       rmSync(join(tmpdir(), name), { force: true });
   }

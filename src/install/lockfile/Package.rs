@@ -22,7 +22,7 @@ use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::versioned_url::VersionedURLType;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageManager, PackageNameHash, TruncatedPackageNameHash, UpdateRequest, bin,
+    Npm, PackageID, PackageManager, PackageNameHash, TruncatedPackageNameHash, bin,
     default_trusted_dependencies, dependency, initialize_store, invalid_package_id,
 };
 
@@ -976,7 +976,7 @@ impl Diff {
         to_lockfile: &mut Lockfile,
         from: &Package,
         to: &Package,
-        update_requests: Option<&[UpdateRequest]>,
+        to_update: bool,
         id_mapping: Option<&mut [PackageID]>,
     ) -> crate::Result<DiffSummary> {
         let mut removed_names: Vec<PackageNameHash> = Vec::new();
@@ -987,7 +987,7 @@ impl Diff {
             to_lockfile,
             from,
             to,
-            update_requests,
+            to_update,
             id_mapping,
             &mut removed_names,
         )
@@ -1001,7 +1001,7 @@ impl Diff {
         to_lockfile: &mut Lockfile,
         from: &Package,
         to: &Package,
-        update_requests: Option<&[UpdateRequest]>,
+        to_update: bool,
         mut id_mapping: Option<&mut [PackageID]>,
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<DiffSummary> {
@@ -1020,7 +1020,8 @@ impl Diff {
                 to_lockfile.buffers.string_bytes.as_slice()
             };
         }
-        let named_update_here = pm.update_requests.is_empty()
+        let none_named = pm.update_requests.is_empty();
+        let named_update_here = none_named
             || crate::update_scope::UpdateScope::of(&*pm).contains_workspace(
                 from.resolution.tag == ResolutionTag::Root,
                 from.name_hash,
@@ -1278,14 +1279,13 @@ impl Diff {
                 && (from_dep.behavior.is_peer()
                     || to_lockfile.overrides.has_rule_for_name(from_dep.name_hash))
                 && (to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
-            let is_explicit_update_target = update_requests.is_some_and(|updates| {
-                updates.is_empty()
+            let is_explicit_update_target = to_update
+                && (none_named
                     || (named_update_here
                         && pm.is_update_request(
                             from_dep.name_hash,
                             from_dep.name.slice(from_buf!()),
-                        ))
-            });
+                        )));
             if (same || same_folder) && !retyped {
                 if is_explicit_update_target
                     || (from_dep.version.tag == dependency::version::Tag::Tarball
@@ -1406,7 +1406,7 @@ impl Diff {
                         to_lockfile,
                         &from_pkg,
                         &workspace_pkg,
-                        update_requests,
+                        to_update,
                         None,
                         removed_names,
                     )?;
@@ -1704,7 +1704,7 @@ impl Diff {
             to_lockfile,
             &from_pkg,
             &folder_pkg,
-            None,
+            false,
             None,
             removed_names,
         )
@@ -2176,7 +2176,7 @@ impl Package<u64> {
             ),
         )
         .unwrap_or_default();
-        let mut workspace_range: Option<semver::query::Group> = None;
+        let mut workspace_range: Option<(semver::query::Group, &[u8])> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;
         let name_hash = match dependency_version.tag {
@@ -2195,18 +2195,21 @@ impl Package<u64> {
                         {
                             let at = strings::last_index_of_char(input, b'@').unwrap_or(0);
                             if at > 0 {
-                                workspace_range = Some(
-                                    semver::query::parse(&input[at as usize + 1..], sliced)
+                                let range = &input[at as usize + 1..];
+                                workspace_range = Some((
+                                    semver::query::parse(range, sliced)
                                         .unwrap_or_else(|_| bun_core::out_of_memory()),
-                                );
+                                    range,
+                                ));
                                 break 'brk semver::string::Builder::string_hash(
                                     &input[0..at as usize],
                                 );
                             }
-                            workspace_range = Some(
+                            workspace_range = Some((
                                 semver::query::parse(input, sliced)
                                     .unwrap_or_else(|_| bun_core::out_of_memory()),
-                            );
+                                input,
+                            ));
                         }
                         external_alias.hash
                     }
@@ -2339,7 +2342,7 @@ impl Package<u64> {
                         .then(|| parsed.version.min());
                 }
                 if let Some(path) = workspace_path {
-                    if let Some(range) = &workspace_range {
+                    if let Some((range, range_literal)) = &workspace_range {
                         if let Some(ver) = workspace_version {
                             if range.satisfies(ver, buf, version_buf) {
                                 dependency_version.value.workspace = path;
@@ -2349,10 +2352,8 @@ impl Package<u64> {
 
                         // `foo@      `, `foo@^`, `foo@~` and `../foo` do not name a version, so
                         // they link the workspace whatever its version is, like `workspace:^`.
-                        // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
-                        // (set by `semver::query::parse` above), which is live here.
                         let version_literal =
-                            strings::trim(unsafe { &*range.input }, &strings::WHITESPACE_CHARS);
+                            strings::trim(range_literal, &strings::WHITESPACE_CHARS);
                         if range.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)

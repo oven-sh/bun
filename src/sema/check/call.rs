@@ -183,13 +183,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Yield { value, .. } => {
                 value.is_some() && self.is_context_sensitive(file, value)
             }
-            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
-            ExprKind::Object(props) => props.iter().any(|p| {
-                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
-                    && hir[p].value.is_some()
-                    && self.is_context_sensitive(file, hir[p].value)
-            }),
-            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
+            ExprKind::Object(_) | ExprKind::Array(_) => self.is_context_sensitive_literal(file, e),
             ExprKind::Cond { branches, .. } => {
                 let Branches { yes, no } = hir.branches(branches);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
@@ -201,6 +195,37 @@ impl<'p, 's> Checker<'p, 's> {
             } => self.is_context_sensitive(file, left) || self.is_context_sensitive(file, right),
             _ => false,
         }
+    }
+
+    fn is_context_sensitive_literal(&self, file: FileId, e: ExprId) -> bool {
+        /// Results aren't cached for literals fewer levels inside the one that was asked about.
+        const MANY: u32 = 8;
+        let recent = &self.recent_context_sensitive_literals;
+        let depth = self.context_sensitivity_depth.get();
+        if depth >= MANY
+            && let Some(known) = recent.borrow().get(file.0 + 1, e.0)
+        {
+            return known != 0;
+        }
+        let hir = self.hir(file);
+        let times_cut_short = self.times_cut_short.get();
+        self.context_sensitivity_depth.set(depth + 1);
+        let answer = match hir[e].kind {
+            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
+            ExprKind::Object(props) => props.iter().any(|p| {
+                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                    && hir[p].value.is_some()
+                    && self.is_context_sensitive(file, hir[p].value)
+            }),
+            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
+            _ => false,
+        };
+        self.context_sensitivity_depth.set(depth);
+        // An answer that was cut short by a low stack depends on the caller, so it isn't cached.
+        if depth >= MANY && self.times_cut_short.get() == times_cut_short {
+            recent.borrow_mut().put(file.0 + 1, e.0, u32::from(answer));
+        }
+        answer
     }
 
     /// `isContextSensitiveFunctionLikeDeclaration`
@@ -490,6 +515,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_in_progress {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
+            self.store_errors_of_nested_resolutions(file, call);
         }
         // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is
         // non-empty.
@@ -504,16 +530,20 @@ impl<'p, 's> Checker<'p, 's> {
             && self.taints == self.taints_before_patterns;
         let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
         // A call that's requested while it's being resolved is resolved again, and `resolveCall`
-        // reports its errors in the state at that time. Only the first resolution is retained.
+        // reports its errors in the state at that time.
         if is_in_progress {
-            if let Some(reported) = reported
-                && (self.p.diagnostics_of_re_resolved_calls)
-                    .get_ref(&self.task, &(file, call))
-                    .is_none()
-            {
-                let (key, stored) = ((file, call), Stored::new());
-                (self.p.diagnostics_of_re_resolved_calls)
-                    .insert_ref(&self.task, key, reported, stored);
+            if let Some(reported) = reported {
+                let all = &mut self.errors_of_nested_resolutions;
+                match all.iter_mut().find(|r| r.0 == file && r.1 == call) {
+                    Some((.., known)) => {
+                        for diagnostic in reported {
+                            if !known.contains(&diagnostic) {
+                                known.push(diagnostic);
+                            }
+                        }
+                    }
+                    None => all.push((file, call, reported)),
+                }
             }
             // The enclosing resolution takes the result from `Program::calls` or, if it depends on
             // a frame in progress, from `signatures_resolved_within`. It doesn't take a result that
@@ -548,6 +578,19 @@ impl<'p, 's> Checker<'p, 's> {
         resolved
     }
 
+    fn store_errors_of_nested_resolutions(&mut self, file: FileId, call: ExprId) {
+        let all = &mut self.errors_of_nested_resolutions;
+        if let Some(at) = all.iter().position(|r| r.0 == file && r.1 == call) {
+            let (.., reported) = all.swap_remove(at);
+            (self.p.diagnostics_of_re_resolved_calls).insert_ref(
+                &self.task,
+                (file, call),
+                reported,
+                Stored::new(),
+            );
+        }
+    }
+
     /// `resolved_signature` for one of `calls_to_resolve_afresh`, run once for each. What's stored and what was
     /// reported for the call stay unchanged. Returns `None` if `call` isn't one of them, or if it's requested while
     /// it's being resolved this way. Then the stored result is used.
@@ -575,6 +618,7 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.with_return_type(resolved);
         self.pop_resolved_meanwhile();
         let _ = self.leave(Query::Call(file, call));
+        self.store_errors_of_nested_resolutions(file, call);
         self.calls_resolved_afresh[at].1 = Some(resolved);
         Some(resolved)
     }

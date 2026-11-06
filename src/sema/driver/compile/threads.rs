@@ -28,6 +28,22 @@ pub fn run_on_one_thread_while<A: Send, B>(
     )
 }
 
+/// Calls `work` with every index below `count` on at most `threads` pool threads while the calling thread runs `meanwhile`.
+/// On a pool thread, `meanwhile` runs after them.
+pub fn run_on_threads_while<B>(
+    caches: &ThreadCaches,
+    threads: usize,
+    count: usize,
+    work: &(dyn Fn(usize) + Sync),
+    meanwhile: impl FnOnce() -> B,
+) -> B {
+    let (mut meanwhile, mut result) = (Some(meanwhile), None);
+    for_each_parallel_while(caches, threads, count, 1, work, &mut || {
+        result = meanwhile.take().map(|meanwhile| meanwhile());
+    });
+    result.expect("called once")
+}
+
 pub unsafe extern "C" fn run_on_region_thread(
     run: unsafe extern "C" fn(*mut c_void),
     argument: *mut c_void,

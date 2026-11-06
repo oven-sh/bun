@@ -120,9 +120,9 @@ function f3 name="make" module=m0 position=2165 flags=[HasExplicitName] length=1
 # -- generated: indexOf sumUntilNegative
 # CHECK-LABEL: function {{*}}name="indexOf"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 68, patchpoints: 8, rare instructions: 53, polls: 3
-# CHECK-NEXT: end of function f1
+# CHECK-NEXT: instructions: 108, patchpoints: 11, rare instructions: 71, polls: 2
+# CHECK-NEXT: end of function f8
 # CHECK-LABEL: function {{*}}name="sumUntilNegative"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 56, patchpoints: 7, rare instructions: 101, polls: 3
+# CHECK-NEXT: instructions: 55, patchpoints: 7, rare instructions: 100, polls: 3
 # CHECK-NEXT: end of function f2

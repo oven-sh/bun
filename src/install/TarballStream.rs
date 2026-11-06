@@ -41,13 +41,12 @@ use crate::package_manager_real::PackageManager;
 type Task = crate::package_manager_task::Task<'static>;
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
-type OSPathZMut<'a> = &'a mut OSPathSliceZ;
 
 // `extract_task` / `package_manager` are raw pointers, not
-// `&'a mut` / `&'a`. This struct is heap-allocated (`heap::alloc`),
+// `&'a mut` / `&'a`. This struct is heap-allocated,
 // crosses threads via `drain_task`, and self-destroys in `finish()`, so a
 // borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
-// `populate_result` materialises another `&mut Task` from a raw copy of it
+// `finish` borrows the task's fields through a raw copy of it
 // would be aliased UB; raw pointers avoid forming aliased references.
 pub struct TarballStream {
     // ---------------------------------------------------------------------
@@ -175,13 +174,13 @@ impl TarballStream {
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
         manager: *mut PackageManager,
-    ) -> *mut TarballStream {
+    ) -> Box<TarballStream> {
         // Caller guarantees `extract_task` is live for the lifetime of this
         // stream (it is published back to the main thread only in `finish()`).
         // Wrapped once as `ParentRef` so
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
-        // variant for streaming tarballs (set by `enqueue_extract_npm_package`,
+        // variant for streaming tarballs (set by `create_extract_task_for_streaming`,
         // `tag == Tag::Extract`).
         let extract_task =
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
@@ -223,10 +222,7 @@ impl TarballStream {
             compute_if_missing,
         );
 
-        // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
-        // recovered via `container_of` from the thread-pool callback and
-        // freed in `finish()` via heap::take.
-        bun_core::heap::into_raw(Box::new(TarballStream {
+        Box::new(TarballStream {
             mutex: Mutex::new(),
             pending: Vec::new(),
             closed: false,
@@ -261,7 +257,7 @@ impl TarballStream {
             },
             network_task,
             package_manager: manager,
-        }))
+        })
     }
 
     /// Called from the HTTP thread for each response-body chunk. Returns
@@ -270,7 +266,7 @@ impl TarballStream {
     /// responsive.
     ///
     /// # Safety
-    /// `this` must be the live pointer returned by `init()`. Runs on the
+    /// `this` must point to the live stream that `init()` boxed. Runs on the
     /// HTTP thread concurrently with `drain()` on a worker, so this never
     /// materialises `&mut TarballStream` — all access is via raw-ptr field
     /// projection.
@@ -338,7 +334,7 @@ impl TarballStream {
     /// state (EOF / error — finish).
     ///
     /// # Safety
-    /// `this` must be the live pointer returned by `init()`. Runs on a
+    /// `this` must point to the live stream that `init()` boxed. Runs on a
     /// worker thread; the HTTP thread may concurrently call `on_chunk()`
     /// touching the mutex-guarded producer fields, so this never holds a
     /// `&mut TarballStream` across those accesses. May free `*this` (via
@@ -700,9 +696,7 @@ impl Extraction {
         };
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;
-        // SAFETY: norm_buf[norm_len] == 0 written above.
-        let path: OSPathZMut =
-            unsafe { OSPathSliceZ::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
+        let path = &mut norm_buf[..norm_len];
         if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
             return Ok(());
         }
@@ -720,7 +714,7 @@ impl Extraction {
         }
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute_windows_wtf16(&path[..]) {
+            if bun_paths::is_absolute_windows_wtf16(path) {
                 return Ok(());
             }
             if self.npm_mode {
@@ -728,9 +722,7 @@ impl Extraction {
             }
         }
 
-        // Mutation (Windows escape rewrite) is done; reborrow as shared so
-        // `path` and `path_slice` can coexist.
-        let path: OSPathZ = &*path;
+        let path: OSPathZ = OSPathSliceZ::from_buf(&norm_buf[..], norm_len);
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.unwrap();
 
@@ -757,10 +749,10 @@ impl Extraction {
 
 impl TarballStream {
     /// # Safety
-    /// `this` must be the live pointer returned by `init()`. Frees `*this`
+    /// `this` must point to the live stream that `init()` boxed. Frees `*this`
     /// — caller must not touch it after return. Takes a raw pointer (not
-    /// `&mut self`) so no Rust reference dangles across the
-    /// `heap::take` self-destruction.
+    /// `&mut self`) so no Rust reference dangles across the drop of the
+    /// `Box` in `network_task.tarball_stream`.
     // The `&(&(*task).request.extract)` wrappers below are deliberate — they
     // sidestep `dangerous_implicit_autorefs` by making the ref explicit before
     // the union deref. `needless_borrow` flags them as redundant but they are not.
@@ -768,10 +760,10 @@ impl TarballStream {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
         // are live raw pointers; this fn is the sole owner. After
-        // `heap::take(this)` nothing touches `this`.
+        // `tarball_stream.take()` is dropped nothing touches `this`.
         unsafe {
             // Fields are already raw pointers (see the struct-level note), so copying
-            // them out before `heap::take(this)` is just a pointer copy — no
+            // them out before the stream is dropped is just a pointer copy — no
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
             let task: *mut Task = (*this).extraction.extract_task.as_mut_ptr();
             let network: *mut NetworkTask = (*this).network_task;
@@ -793,11 +785,31 @@ impl TarballStream {
             // set, so `http_err` is stable without the lock.
             let http_err = (*this).http_err;
 
-            // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
+            // SAFETY: `task` is live until pushed onto `resolve_tasks` below, and `extract` is
+            // its active `request` variant (set by `create_extract_task_for_streaming`).
             // `(*this).extraction.extract_task` is a raw `*mut Task` (not `&mut`), so this
             // is the only writer — no aliasing with a stored reference.
             // `populate_result` does not touch `(*this).extraction.extract_task`.
-            (*this).populate_result(task, http_err);
+            match (*this).populate_result(
+                &(&(*task).request.extract).tarball,
+                &mut (*task).log,
+                http_err,
+            ) {
+                Ok(data) => {
+                    (*task).data = TaskData {
+                        extract: ManuallyDrop::new(data),
+                    };
+                    (*task).err = None;
+                    (*task).status = TaskStatus::Success;
+                }
+                Err(err) => {
+                    (*task).data = TaskData {
+                        extract: ManuallyDrop::new(Default::default()),
+                    };
+                    (*task).err = Some(err);
+                    (*task).status = TaskStatus::Fail;
+                }
+            }
 
             // Temp-dir cleanup must happen before we release the stream or
             // publish the task: both `(*this).extraction.tmpname` and
@@ -838,7 +850,7 @@ impl TarballStream {
             }
 
             // The `Box<TarballStream>` lives in `(*network).tarball_stream`
-            // (runTasks.rs:1863 stores `Some(heap::take(init(..)))` there). Take
+            // (`generate_network_task_for_tarball` stores `Some(init(..))` there). Take
             // it out via the Option and drop the Box — this both runs `Drop` and
             // leaves `tarball_stream = None` so `HiveArray::put`'s
             // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
@@ -870,153 +882,119 @@ impl TarballStream {
         } // unsafe
     }
 
-    /// # Safety
-    /// `task` must be live and exclusively owned by this drain. Takes a raw
-    /// pointer so `tarball` (a borrow into
-    /// `task.request`) can coexist with writes to `task.log`/`task.data`.
-    // The `&(&(*task).request.extract)` wrapper below sidesteps
-    // `dangerous_implicit_autorefs`; `needless_borrow` is wrong here.
-    #[allow(clippy::needless_borrow)]
-    unsafe fn populate_result(&mut self, task: *mut Task, http_err: Option<crate::Error>) {
-        // SAFETY: see fn-level # Safety — `task` is live and exclusively
-        // owned by this drain; union field `extract` is the active variant
-        // for streaming tarballs (set by `enqueue_extract_npm_package`).
-        unsafe {
-            let tarball = &(&(*task).request.extract).tarball;
-            (*task).data = TaskData {
-                extract: ManuallyDrop::new(Default::default()),
-            };
-            (*task).err = None;
-
-            if let Some(err) = self.fail {
-                if matches!(err, crate::Error::Http(_)) {
-                    // Reported (or retried) by `run_tasks`; see `finish()`.
-                } else if self.extraction.invalid_name {
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Refusing to install package with invalid name \"{}\"",
-                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name_and_basename().0)),
-                        ),
-                    );
-                } else {
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
-                            err.name(),
-                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
-                            if self.extraction.fail_detail.is_empty() {
-                                ""
-                            } else {
-                                ": "
-                            },
-                            bun_fmt::EscapeControlChars(bstr::BStr::new(
-                                &self.extraction.fail_detail
-                            )),
-                            self.extraction.bytes_consumed,
-                            self.content_length
-                                .as_ref()
-                                .map_or(&"unknown" as &dyn core::fmt::Display, |n| n),
-                        ),
-                    );
-                }
-                (*task).err = Some(err);
-                (*task).status = TaskStatus::Fail;
-                return;
+    fn populate_result(
+        &mut self,
+        tarball: &crate::ExtractTarball,
+        log: &mut bun_ast::Log,
+        http_err: Option<crate::Error>,
+    ) -> Result<crate::ExtractData, crate::Error> {
+        if let Some(err) = self.fail {
+            if matches!(err, crate::Error::Http(_)) {
+                // Reported (or retried) by `run_tasks`; see `finish()`.
+            } else if self.extraction.invalid_name {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to install package with invalid name \"{}\"",
+                        bun_fmt::for_terminal(bstr::BStr::new(tarball.name_and_basename().0)),
+                    ),
+                );
+            } else {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
+                        err.name(),
+                        bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
+                        if self.extraction.fail_detail.is_empty() {
+                            ""
+                        } else {
+                            ": "
+                        },
+                        bun_fmt::EscapeControlChars(bstr::BStr::new(&self.extraction.fail_detail)),
+                        self.extraction.bytes_consumed,
+                        self.content_length
+                            .as_ref()
+                            .map_or(&"unknown" as &dyn core::fmt::Display, |n| n),
+                    ),
+                );
             }
+            return Err(err);
+        }
 
-            if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
-                if !self.hasher.verify() {
-                    if let Some(http_err) = http_err {
-                        // The decoder found the end-of-archive marker but the
-                        // body still ended early (gzip trailer, tar padding):
-                        // the same failed download as above.
-                        (*task).err = Some(http_err);
-                        (*task).status = TaskStatus::Fail;
-                        return;
-                    }
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Integrity check failed for tarball: {}",
-                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
-                        ),
-                    );
-                    (*task).err = Some(crate::Error::IntegrityCheckFailed);
-                    (*task).status = TaskStatus::Fail;
-                    return;
+        if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
+            if !self.hasher.verify() {
+                if let Some(http_err) = http_err {
+                    // The decoder found the end-of-archive marker but the
+                    // body still ended early (gzip trailer, tar padding):
+                    // the same failed download as above.
+                    return Err(http_err);
                 }
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Integrity check failed for tarball: {}",
+                        bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
+                    ),
+                );
+                return Err(crate::Error::IntegrityCheckFailed);
             }
+        }
 
-            if tarball.resolution.tag == ResolutionTag::Github {
-                'insert_tag: {
-                    if self.extraction.resolved_github_dirname.is_empty() {
-                        break 'insert_tag;
-                    }
-                    if bun_sys::File::openat(
+        if tarball.resolution.tag == ResolutionTag::Github {
+            'insert_tag: {
+                if self.extraction.resolved_github_dirname.is_empty() {
+                    break 'insert_tag;
+                }
+                if bun_sys::File::openat(
+                    self.extraction.dest.unwrap(),
+                    bun_core::zstr!(".bun-tag"),
+                    O::WRONLY | O::CREAT | O::TRUNC | if cfg!(windows) { 0 } else { O::NOFOLLOW },
+                    0o664,
+                )
+                .and_then(|f| f.write_all(self.extraction.resolved_github_dirname))
+                .is_err()
+                {
+                    let _ = bun_sys::unlinkat(
                         self.extraction.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
-                        O::WRONLY
-                            | O::CREAT
-                            | O::TRUNC
-                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
-                        0o664,
-                    )
-                    .and_then(|f| f.write_all(self.extraction.resolved_github_dirname))
-                    .is_err()
-                    {
-                        let _ = bun_sys::unlinkat(
-                            self.extraction.dest.unwrap(),
-                            bun_core::zstr!(".bun-tag"),
-                        );
-                    }
+                    );
                 }
             }
+        }
 
-            // Close the temp dir handle before renaming so Windows can move it.
-            if let Some(d) = self.extraction.dest.take() {
-                d.close();
-            }
+        // Close the temp dir handle before renaming so Windows can move it.
+        if let Some(d) = self.extraction.dest.take() {
+            d.close();
+        }
 
-            let (name, basename) = tarball.name_and_basename();
+        let (name, basename) = tarball.name_and_basename();
 
-            let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
-            let mut result = match tarball.move_to_cache_directory(
-                &mut (*task).log,
-                StagedEntry::new(tarball.temp_dir, self.extraction.tmpname.as_zstr()),
-                name,
-                basename,
-                self.extraction.resolved_github_dirname,
-                &integrity,
-            ) {
-                Ok(r) => r,
-                Err(err) => {
-                    (*task).err = Some(err);
-                    (*task).status = TaskStatus::Fail;
-                    return;
-                }
-            };
-            result.integrity = integrity;
+        let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
+        let mut result = tarball.move_to_cache_directory(
+            log,
+            StagedEntry::new(tarball.temp_dir, self.extraction.tmpname.as_zstr()),
+            name,
+            basename,
+            self.extraction.resolved_github_dirname,
+            &integrity,
+        )?;
+        result.integrity = integrity;
 
-            if PackageManager::verbose_install() {
-                bun_core::pretty_errorln!(
-                    "[{}] Streamed {} tarball → {} entries<r>",
-                    bun_fmt::for_terminal(bstr::BStr::new(name)),
-                    bun_fmt::size(self.bytes_received, Default::default()),
-                    self.extraction.entry_count,
-                );
-                Output::flush();
-            }
+        if PackageManager::verbose_install() {
+            bun_core::pretty_errorln!(
+                "[{}] Streamed {} tarball → {} entries<r>",
+                bun_fmt::for_terminal(bstr::BStr::new(name)),
+                bun_fmt::size(self.bytes_received, Default::default()),
+                self.extraction.entry_count,
+            );
+            Output::flush();
+        }
 
-            (*task).data = TaskData {
-                extract: ManuallyDrop::new(result),
-            };
-            (*task).status = TaskStatus::Success;
-        } // unsafe
+        Ok(result)
     }
 
     /// Prepare this stream for another HTTP attempt after a failed request
@@ -1134,11 +1112,11 @@ fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[
 }
 
 #[cfg(windows)]
-fn apply_windows_npm_path_escapes(path: OSPathZMut) {
+fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
     // Same transformation as Archiver.extractToDir: encode characters
     // Windows rejects in filenames into the 0xf000 private-use range so
     // the extraction round-trips with node-tar.
-    let mut remain: &mut [OSPathChar] = path.as_mut_slice();
+    let mut remain: &mut [OSPathChar] = path;
     if strings::starts_with_windows_drive_letter_t(&*remain) {
         remain = &mut remain[2..];
     }

@@ -212,7 +212,7 @@ everyCase("after 2000");
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=[[L_11]] flags=[IsExpected]} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=[[L_11]] flags=[IsExpected]} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: [[L_11]], v2: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -256,7 +256,7 @@ everyCase("after 2000");
 // CHECK-NEXT: ReturnCall v17 casts=[{declared={type=boolean flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_14]]|Generator flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} results=[{type=undefined|null|[[L_14]]|Generator flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

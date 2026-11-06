@@ -1,12 +1,13 @@
 use crate::diagnostics::LoadMessages;
 use crate::load::source_provider::{SourceFile, SourceProvider};
-use bun_ast::Loader;
+use bun_ast::{Loader, Loc, Location};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKind, Span, StmtKind, UnOp};
 use bun_sema::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, module_from_data};
 use bun_sema::session::Arena;
 use bun_sema::util::FxHashMap;
+use bun_sema_driver::host::to_native;
 use bun_sema_parser::summarize;
 use std::collections::hash_map::Entry;
 
@@ -24,7 +25,17 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
-    let module = messages.with_log(|log| provider.parse_data(source, arena, atoms, log));
+    let module = messages.with_log(|log| {
+        let module = provider.parse_data(source, arena, atoms, log);
+        // Whoever asks in which files the errors stand finds this one.
+        for message in log.msgs.iter_mut().filter(|it| it.data.location.is_none()) {
+            message.data.location = Some(Location {
+                file: Box::from(to_native(source.path)),
+                ..Default::default()
+            });
+        }
+        module
+    });
     let in_place_of_failed = DataModule::Value {
         default: &DataValue::Undefined,
         exports_keys: false,
@@ -40,6 +51,27 @@ pub(crate) fn parse_data_module<'s>(
     }
 }
 
+/// `bun test` hands the text of a JSON file to `JSON.parse`, which takes no empty text. The bundler's parser reads `{}` there, as it does for an executable.
+/// A file with an error is left to the loader of a test run, which says it in its own words.
+pub(crate) fn report_blank_json(messages: &LoadMessages, source: &SourceFile<'_>) {
+    if source.loader != Loader::Json || !source.contents.iter().all(u8::is_ascii_whitespace) {
+        return;
+    }
+    messages.with_log(|log| {
+        log.add_error_fmt(
+            None,
+            Loc::EMPTY,
+            format_args!("JSON Parse error: Unexpected EOF"),
+        );
+        for message in &mut log.msgs {
+            message.data.location = Some(Location {
+                file: Box::from(to_native(source.path)),
+                ..Default::default()
+            });
+        }
+    });
+}
+
 pub(crate) fn parse_json<'s>(
     text: &[u8],
     arena: &'s Arena,
@@ -48,7 +80,16 @@ pub(crate) fn parse_json<'s>(
     if skip_trivia(text, 0) == text.len() {
         return None;
     }
-    let hir = summarize(arena, b"/value.json", None, text, atoms, false, false);
+    let hir = summarize(
+        arena,
+        b"/value.json",
+        None,
+        text,
+        atoms,
+        false,
+        false,
+        false,
+    );
     if hir.has_errors || hir.has_parse_diagnostics {
         return None;
     }

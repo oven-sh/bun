@@ -87,8 +87,9 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue bufferValue = callFrame->argument(1);
 
     // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/cipher.js#L67-L87
-    auto preparedKey = KeyObject::prepareAsymmetricKey(globalObject, scope, optionsValue,
-        keyType == KeyType::Private ? KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate : KeyObject::PrepareAsymmetricKeyMode::ConsumePublic);
+    auto preparedKey = keyType == KeyType::Private
+        ? KeyObject::preparePrivateKey(globalObject, scope, optionsValue, "privateKey"_s)
+        : KeyObject::preparePublicOrPrivateKey(globalObject, scope, optionsValue, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     int32_t padding = defaultPadding;

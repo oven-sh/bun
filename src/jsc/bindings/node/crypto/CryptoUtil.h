@@ -93,11 +93,11 @@ BufferArgument getBuffer(JSC::JSValue maybeBuffer);
 // Like Node, throws ERR_OUT_OF_RANGE "<argName> is too big" if `bytes` is longer than INT32_MAX.
 std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName);
 
-// For output encoding
-void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
-void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
+// `prefix` is the path of `enc` as the caller's errors name it: "options", "options.publicKeyEncoding", "key", "privateKey".
+void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::ASCIILiteral prefix, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
+void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::ASCIILiteral prefix, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
 // With `passphraseOwner`, the passphrase comes back as the buffer that holds it and `config.passphrase` stays empty.
-void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config, BufferArgument* passphraseOwner = nullptr);
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::ASCIILiteral prefix, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config, BufferArgument* passphraseOwner = nullptr);
 
 // Modified version of ByteSource from node
 //

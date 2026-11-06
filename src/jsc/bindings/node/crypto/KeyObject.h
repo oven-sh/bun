@@ -101,9 +101,9 @@ public:
         JSC::JSValue namedCurve {};
     };
 
-    static PreparedAsymmetricKey prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name = "key"_s);
-    static PreparedAsymmetricKey preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s);
-    static PreparedAsymmetricKey preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s);
+    static PreparedAsymmetricKey prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name);
+    static PreparedAsymmetricKey preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name);
+    static PreparedAsymmetricKey preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name);
 
     // The only reader of key material. A KeyObject or a CryptoKey stays on the inline path.
     ALWAYS_INLINE static KeyObject importPreparedKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, PreparedAsymmetricKey&& prepared)
@@ -115,7 +115,7 @@ public:
     }
 
     // Both steps, for a function that validates nothing else in between.
-    ALWAYS_INLINE static KeyObject getAsymmetricKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name = "key"_s)
+    ALWAYS_INLINE static KeyObject getAsymmetricKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name)
     {
         auto prepared = prepareAsymmetricKey(globalObject, scope, keyValue, mode, name);
         RETURN_IF_EXCEPTION(scope, {});

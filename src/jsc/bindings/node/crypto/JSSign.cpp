@@ -440,12 +440,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::CRYPTO_SIGN_KEY_REQUIRED(scope, lexicalGlobalObject);
     }
 
-    if (!options.isCell()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
-    }
-
     // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/sig.js#L133-L156
-    auto preparedKey = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    auto preparedKey = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options, "privateKey"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Get RSA padding mode and salt length if applicable

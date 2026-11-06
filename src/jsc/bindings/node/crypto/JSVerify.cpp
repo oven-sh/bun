@@ -332,7 +332,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSValue sigEncodingValue = callFrame->argument(2);
 
     // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/sig.js#L235-L257
-    auto preparedKey = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options);
+    auto preparedKey = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Get RSA padding mode and salt length if applicable

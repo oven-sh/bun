@@ -470,6 +470,7 @@ impl Scanner<'_> {
         let mut p = start;
         loop {
             match byte(css, p) {
+                b'u' | b'U' if starts_with_url(css, p) => return None,
                 b'a'..=b'z'
                 | b'A'..=b'Z'
                 | b'@'

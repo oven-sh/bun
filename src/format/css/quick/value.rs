@@ -1696,6 +1696,8 @@ impl Scanner<'_> {
                             }
                             b'/' | 0 => return None,
                             _ if self.owner == Owner::CustomProperty => return None,
+                            // To `postcss` the comma is part of the word, which isn't `url` then.
+                            _ if starts_with_url(css, p) => return None,
                             _ => {
                                 // The blank is missing.
                                 self.cut(p, p);

@@ -1319,6 +1319,11 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       ".a {\n  .m(#31b0e0);\n  .m( #31b0e0 );\n  .m(#1e3);\n  .m(#1e03, #00e0ff);\n  .m(#e0e0e0, #a1e0, #3ae0, #000, #12ab34);\n  .m(#0e0) {\n  }\n  b: #31b0e0;\n}\n",
     "start-of-a-comment-in-a-url.css":
       "a {\n  b: url(img/*.png) no-repeat, url(c.png) repeat;\n  b: url(img/*.png)   no-repeat;\n  b: url(*/);\n  b: url(a/b*.png)  c;\n}\n",
+    "url-behind-a-comma.css": "a{b:c,url(/*);d:e;f:url(*/)}\ng{b:c,url(d)}\n",
+    "url-behind-a-comma.less": "a{b:c,url(/*);d:e;f:url(*/)}\ng{b:c,url(d)}\n",
+    "url-behind-a-comma.scss": "a{b:c,url(/*);d:e;f:url(*/)}\ng{b:c,url(d)}\n",
+    "bracket-in-a-url-behind-a-comma.css": "a{background:url(a.png),url(/i/[.png)}\n",
+    "url-in-a-guard.less": '.a when ((@a) = url) {\n  @x: (a")");\n}\n',
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

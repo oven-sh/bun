@@ -12,6 +12,7 @@ import { beforeAll, describe, expect } from "bun:test";
 import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
+import { connect, createServer, type AddressInfo, type Socket as NetSocket } from "node:net";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 import { locksEnvironment } from "./aot/hardened";
@@ -19,6 +20,36 @@ import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
 import "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
+
+/** Route both schemes through one port: a TLS handshake record (0x16) selects the HTTPS backend. */
+export async function serveBothSchemes(httpPort: number, httpsPort: number) {
+  const sockets = new Set<NetSocket>();
+  const server = createServer(client => {
+    sockets.add(client);
+    client.on("close", () => sockets.delete(client));
+    client.on("error", () => client.destroy());
+    client.once("data", (first: Buffer) => {
+      const upstream = connect(first[0] === 0x16 ? httpsPort : httpPort, "127.0.0.1");
+      sockets.add(upstream);
+      upstream.on("close", () => sockets.delete(upstream));
+      client.on("close", () => upstream.destroy());
+      upstream.on("error", () => client.destroy());
+      upstream.write(first);
+      client.pipe(upstream).pipe(client);
+    });
+  });
+  const listening = Promise.withResolvers<void>();
+  server.on("error", listening.reject);
+  server.listen(0, "127.0.0.1", listening.resolve);
+  await listening.promise;
+  return {
+    port: (server.address() as AddressInfo).port,
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+    },
+  };
+}
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";

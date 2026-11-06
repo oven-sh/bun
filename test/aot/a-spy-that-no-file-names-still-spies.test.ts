@@ -112,17 +112,39 @@ const folderOf = (name: string) => name.replace(/\W+/g, "-");
 // `total` of each folder begins at a number of its own: a file that got the module of another folder says so.
 const beginOf = (name: string) => 1 + Object.keys(ways).indexOf(name);
 
-// A folder of every project. It spies on nothing, and its namespace object goes only to a callee that the build knows:
-// the build leaves its exports closed. One that opened them would let a way pass that it did not follow.
-const nobodySpies = `
+// The words that several ways share, as a statement that says them and nothing else. In a project of its own it has to
+// take the spy out of the build's sight: then each of those ways does so by these words alone, whatever else it says,
+// and none of them leans on another.
+const alone: Record<string, string> = {
+  [`Bun[["je", "st"].join("")](import.meta.path)`]: `Bun[["je", "st"].join("")](import.meta.path);`,
+  [`new Function(`]: `new Function(textOf("operand"));`,
+};
+const wordsAlone = (statement: string) => `
+import { test } from "bun:test";
+import { readFileSync } from "node:fs";
+const textOf = name => readFileSync(import.meta.dir + "/" + name + ".txt", "utf8");
+test("the words alone", () => {
+  ${statement}
+  console.error("SEEN the words");
+});
+`;
+
+// A test file that spies on nothing and hands its namespace object to a callee.
+const noSpy = (callee: string) => `
 import { test } from "bun:test";
 import * as lib from "./lib.js";
 import { read } from "./reader.js";
-const namesOf = object => Object.keys(object);
+const callee = ${callee};
 test("no spy", () => {
-  console.error("SEEN " + JSON.stringify([read(), namesOf(lib)]));
+  console.error("SEEN " + JSON.stringify([read(), callee(lib)]));
 });
 `;
+// To a callee that the build knows, in the project of every way: the build leaves its exports closed. One that opened
+// them would let a way pass that it did not follow.
+const nobodySpies = noSpy(`object => Object.keys(object)`);
+// To a callee nobody knows, beside the words alone: the build opens its exports once the words have taken the spy out
+// of its sight.
+const handedOver = noSpy(`new Proxy(() => 7, {})`);
 
 const filesOf = (text: string, begin: number) => ({
   "lib.js": `export function sumOf(pair) { return pair.x + pair.y; }\nexport function total(list) { let sum = ${begin}; for (const item of list) sum += item; return sum; }\n`,
@@ -153,10 +175,8 @@ async function ranWith(project: string, ...flags: string[]) {
   return { stdout: normalizeBunSnapshot(stdout), said, ended, opened: opened ? Number(opened) : undefined, exitCode };
 }
 
-const runs = new Map<string, ReturnType<typeof ranBoth>>();
-async function ranBoth(words: string) {
-  const folders: Record<string, ReturnType<typeof filesOf>> = { "nobody-spies": filesOf(nobodySpies, 0) };
-  for (const name of projects.get(words)!) folders[folderOf(name)] = filesOf(testFile(ways[name]), beginOf(name));
+/** The folders as one project, under plain `bun test` and under `bun test --aot`. */
+async function ranBoth(folders: Record<string, ReturnType<typeof filesOf>>) {
   using dir = tempDir("aot-spy-that-no-file-names", {
     "package.json": `{ "name": "spy-that-no-file-names", "type": "module" }`,
     ...folders,
@@ -166,8 +186,14 @@ async function ranBoth(words: string) {
   await Promise.allSettled([plain, compiled]);
   return { plain: await plain, compiled: await compiled };
 }
-/** A project runs once, for all the tests that ask. */
-const ranProject = (words: string) => runs.getOrInsertComputed(words, ranBoth);
+const runs = new Map<string, ReturnType<typeof ranBoth>>();
+/** The project of the ways with these words runs once, for all the tests that ask. */
+const ranProject = (words: string) =>
+  runs.getOrInsertComputed(words, () => {
+    const folders: Parameters<typeof ranBoth>[0] = { "nobody-spies": filesOf(nobodySpies, 0) };
+    for (const name of projects.get(words)!) folders[folderOf(name)] = filesOf(testFile(ways[name]), beginOf(name));
+    return ranBoth(folders);
+  });
 
 // These come before the tests of the ways: each starts the runs of one project. The ways of a project all wait for the
 // same build, and as many of them as may run at once would keep the next project from starting.
@@ -189,6 +215,28 @@ test.concurrent.each([...projects])(
     expect(besideWays(compiled)).toEqual({ ...besideWays(plain), opened: 2 * names.length });
   },
 );
+
+// What a project of several ways leans on: see `alone`.
+const shared = [...projects].filter(([, names]) => names.length > 1).map(([words]) => words);
+test.concurrent.each(shared)("%s alone takes the spy out of sight", async words => {
+  if (!alone[words]) throw new Error(`Several ways have the words ${words}. \`alone\` has to say them by themselves.`);
+  const { plain, compiled } = await ranBoth({
+    "the-words": filesOf(wordsAlone(alone[words]), 0),
+    "handed-over": filesOf(handedOver, 0),
+  });
+  expect(plain).toEqual({
+    stdout: "bun test <version> (<revision>)",
+    said: {
+      "handed-over": ["SEEN [[3,6],7]", "(pass) no spy"],
+      "the-words": ["SEEN the words", "(pass) the words alone"],
+    },
+    ended: [" 2 pass", " 0 fail", "Ran 2 tests across 2 files."],
+    opened: undefined,
+    exitCode: 0,
+  });
+  // Both exports of the folder that hands its namespace object over.
+  expect(compiled).toEqual({ ...plain, opened: 2 });
+});
 
 test.concurrent.each(Object.keys(ways))("%s", async name => {
   const { plain, compiled } = await ranProject(wordsOf(name));

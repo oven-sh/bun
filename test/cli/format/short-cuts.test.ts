@@ -1310,6 +1310,9 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       "@keyframes f {\n  FROM {\n  }\n}\nFROM {\n}\n",
     "empty-line-behind-a-call-with-two-dashes.scss":
       "a{b:(1 --c(),\n\nd)}\ne{b:f(1 --c(),\n\nd)}\ng{b:(1 -c(),\n\nd)}\n",
+    "empty-string-and-slashes-in-selectors.css":
+      'a[alt=""], a[href^="http://"] {\n  e: f;\n}\na[alt=""],\na[href^="http://"] {\n  e: f;\n}\na[href^="http://"],\na[alt=""] {\n  e: f;\n}\n' +
+      'a[alt=""] b[c="/*"] {\n  e: f;\n}\na[alt="/"],\na[c="/d/e"] {\n  e: f;\n}\na[href^="http://"] {\n  e: f;\n}\n',
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

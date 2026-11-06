@@ -7,6 +7,7 @@
 //! line each.
 
 use super::super::Parser as Syntax;
+use super::super::selector_parser::has_comment;
 use super::layout::Page;
 use super::value::starts_with_url;
 use super::{BLANK, DASH, DIGIT, LOWER, Shape, UNDERSCORE, UPPER, byte, class, skip, skip_long};
@@ -28,6 +29,9 @@ struct Scanner<'a> {
     has_upper: bool,
     /// The compound selector that's being read has a string in the quotes that aren't printed.
     has_other_quotes: bool,
+    /// A string has `//` or `/*` in it. Behind an empty string, that's outside of a string to who looks for comments, and
+    /// selectors with a comment are printed as they're written: `has_comment`.
+    has_comment_mark: bool,
 }
 
 /// A compound selector of the most common kind: names in lower case, with `.`, `#`, `:`, `::` or `&` before them.
@@ -155,12 +159,13 @@ pub(super) fn end_of_standing_selectors(
                     quote,
                     has_upper: false,
                     has_other_quotes: false,
+                    has_comment_mark: false,
                 };
                 let end = match byte(css, p) {
                     b'0'..=b'9' => scanner.percentage(p)?,
                     _ => scanner.any_compound(p)?,
                 };
-                if scanner.has_other_quotes {
+                if scanner.has_other_quotes || scanner.has_comment_mark {
                     return None;
                 }
                 has_upper |= scanner.has_upper;
@@ -311,11 +316,18 @@ impl Scanner<'_> {
             }
             self.has_other_quotes |= quote != self.quote;
             p += 1;
-            while !matches!(
-                byte(css, p),
-                0..=0x1F | 0x7F.. | b'"' | b'\'' | b'\\' | b'{' | b'}'
-            ) {
+            loop {
+                while !matches!(
+                    byte(css, p),
+                    0..=0x1F | 0x7F.. | b'"' | b'\'' | b'\\' | b'{' | b'}' | b'/'
+                ) {
+                    p += 1;
+                }
+                if byte(css, p) != b'/' {
+                    break;
+                }
                 p += 1;
+                self.has_comment_mark |= matches!(byte(css, p), b'/' | b'*');
             }
             if byte(css, p) != quote {
                 return None;
@@ -600,6 +612,7 @@ pub(super) fn read(
         quote,
         has_upper: false,
         has_other_quotes: false,
+        has_comment_mark: false,
     };
     // What's printed is copied from the source in pieces that are as long as possible. This is where the next one
     // starts.
@@ -696,6 +709,9 @@ pub(super) fn read(
         if is_last {
             // `FROM` is printed in lower case in `@keyframes`.
             if scanner.has_upper && is_in_at_rule {
+                return None;
+            }
+            if scanner.has_comment_mark && has_comment(&css[start..end]) {
                 return None;
             }
             if !(next == end + 1 && css[end] == b' ') {

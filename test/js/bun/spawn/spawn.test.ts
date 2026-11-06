@@ -18,7 +18,17 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -631,11 +641,23 @@ describe.each([
     );
   });
 
-  it("failed spawn cwd keeps the executable path when cwd exists", () => {
+  it("failed spawn cwd names the dangling directory link", () => {
+    using dir = tempDir("spawn-dangling-cwd", { target: { "file.txt": "" } });
+    const target = join(String(dir), "target");
+    const cwd = join(String(dir), "link");
+    symlinkSync(target, cwd, isWindows ? "junction" : "dir");
+    rmSync(target, { recursive: true });
+    expect(() => run({ cmd: [bunExe(), "--version"], cwd })).toThrow(
+      expect.objectContaining({ code: "ENOENT", path: cwd, message: expect.stringContaining(cwd) }),
+    );
+  });
+
+  it.each(["plain", "dot"])("failed spawn cwd keeps the executable path with a valid %s cwd", form => {
     using dir = tempDir("spawn-missing-executable", {});
     // Use an explicit executable path so the failure comes from the spawn call.
     const executable = join(String(dir), "missing.exe");
-    expect(() => run({ cmd: [executable], cwd: String(dir) })).toThrow(
+    const cwd = form === "dot" ? `${dir}${path.sep}.` : String(dir);
+    expect(() => run({ cmd: [executable], cwd })).toThrow(
       expect.objectContaining({ code: "ENOENT", path: executable }),
     );
   });

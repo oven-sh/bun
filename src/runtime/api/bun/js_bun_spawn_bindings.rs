@@ -1227,11 +1227,8 @@ fn spawn_maybe_sync(
                         let invalid_cwd = user_specified_cwd
                             && matches!(err.syscall, sys::Tag::posix_spawn | sys::Tag::uv_spawn)
                             && matches!(errno, sys::Errno::ENOENT | sys::Errno::ENOTDIR)
-                            && match sys::exists_at_type(
-                                sys::Fd::cwd(),
-                                ZBox::from_bytes(cwd).as_zstr(),
-                            ) {
-                                Ok(kind) => matches!(kind, sys::ExistsAtType::File),
+                            && match sys::stat(ZBox::from_bytes(cwd).as_zstr()) {
+                                Ok(stat) => !bun_core::S::ISDIR(stat.st_mode as _),
                                 Err(stat_err) => matches!(
                                     stat_err.get_errno(),
                                     sys::Errno::ENOENT | sys::Errno::ENOTDIR

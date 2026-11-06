@@ -40,10 +40,12 @@
 
 #include "BunClientData.h"
 #include "BuiltinModuleKeys.h"
+#include "IsolatedModuleCache.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include "ModuleLoader.h"
 #include "PathInlines.h"
+#include "ZigSourceProvider.h"
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
@@ -2207,6 +2209,14 @@ static bool isInNodeModules(const String& path)
 
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 
+static bool isESModuleByExtensionOrPackageType(Zig::GlobalObject* globalObject, const String& key)
+{
+    size_t query = key.find('?');
+    String path = query == notFound ? key : key.left(query);
+    BunString borrowedPath = Bun::toString(path);
+    return Bun__isESModuleByExtensionOrPackageType(globalObject, &borrowedPath);
+}
+
 // Vitest externalizes packages: Node loads them, outside the module graph that Vitest mocks and resets.
 // It inlines an ES module that Node would read as CommonJS (".js" in a package without "type": "module") and loads it like the project's modules.
 static bool isExternalizedByVitest(Zig::GlobalObject* globalObject, const String& key)
@@ -2216,10 +2226,16 @@ static bool isExternalizedByVitest(Zig::GlobalObject* globalObject, const String
     auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
     if (!entry || !dynamicDowncast<JSC::JSModuleRecord>(entry->record()))
         return true;
-    size_t query = key.find('?');
-    String path = query == notFound ? key : key.left(query);
-    BunString borrowedPath = Bun::toString(path);
-    return Bun__isESModuleByExtensionOrPackageType(globalObject, &borrowedPath);
+    return isESModuleByExtensionOrPackageType(globalObject, key);
+}
+
+// The same for a source in IsolatedModuleCache, by what the source is: the running test file may not have loaded the module.
+static bool isExternalizedByVitest(Zig::GlobalObject* globalObject, const String& key, Zig::SourceProvider& source)
+{
+    // vi.resetModules() asks for every cached source each time, and a source has one answer.
+    if (!source.m_isExternalizedByVitest)
+        source.m_isExternalizedByVitest = isInNodeModules(key) && (source.sourceType() == JSC::SourceProviderSourceType::Program || isESModuleByExtensionOrPackageType(globalObject, key));
+    return source.m_isExternalizedByVitest;
 }
 
 struct ModulesToEvict {
@@ -2377,8 +2393,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         // It may have failed because of a mock, and JSC forgets a failed module's requests, so it's never found as an importer.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
         bool isEvictedWithAll = evict.all && !(evict.exceptPackages && isExternalizedByVitest(globalObject, key));
-        if (isEvictedWithAll || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError()))
+        bool hasFailed = entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError());
+        if (isEvictedWithAll || hasFailed)
             keys.append(key);
+        // vi.resetModules() left the source of this package in IsolatedModuleCache, and the package is loaded again.
+        if (evict.all && hasFailed && !isEvictedWithAll)
+            Bun::IsolatedModuleCache::evict(vm, key);
         if (!record || evict.all)
             continue;
         if (String mocked = specifierOfUnwaitedModuleMockKey(key); !mocked.isNull())
@@ -3430,6 +3450,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    // After a reset a load reads its file, so the sources that `bun test --isolate` keeps go, except those of the packages that vi.resetModules() leaves loaded.
+    Bun::IsolatedModuleCache::dropForReset(vm, [&](const String& key, Zig::SourceProvider& source) {
+        return !callFactoriesAgain && isExternalizedByVitest(globalObject, key, source);
+    });
 
     ModulesToEvict evict;
     evict.all = true;

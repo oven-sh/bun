@@ -197,6 +197,7 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
+    /// Goes up between the test files of `bun test --isolate` and at a `resetModules()`. Only the JS thread uses it.
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
@@ -227,6 +228,11 @@ impl Taskable for RuntimeTranspilerStore {
     }
 }
 
+unsafe extern "C" {
+    /// Whether `bun test --isolate` retired `global`, or the `Bun.ModuleGraph` of `module_loader` (empty: none) is disposed.
+    safe fn Bun__isModuleLoaderGone(global: &JSGlobalObject, module_loader: JSValue) -> bool;
+}
+
 impl RuntimeTranspilerStore {
     pub(crate) fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
@@ -248,12 +254,18 @@ impl RuntimeTranspilerStore {
                 break;
             }
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
-            unsafe {
-                (*job).promise.deinit();
-                (*job).module_loader.deinit();
-                (*job).reset_for_pool();
-                self.store.put(job);
-            }
+            unsafe { self.release_unrun_job(job) };
+        }
+    }
+
+    /// Releases a job whose completion will not run. `job` is live, and this thread popped it from the queue.
+    unsafe fn release_unrun_job(&mut self, job: *mut TranspilerJob) {
+        // SAFETY: per the contract; the slot is this thread's again.
+        unsafe {
+            (*job).promise.deinit();
+            (*job).module_loader.deinit();
+            (*job).reset_for_pool();
+            self.store.put(job);
         }
     }
 
@@ -278,6 +290,21 @@ impl RuntimeTranspilerStore {
         let mut job = iter.next();
         let mut first = true;
         while !job.is_null() {
+            // A loader goes with its test file, so only a job of an earlier generation can have lost its own.
+            // SAFETY: `job` is a live job popped from the intrusive queue, and its promise keeps its global object alive.
+            let loader_is_gone = unsafe {
+                (*job).generation_number != self.generation_number.load(Ordering::SeqCst)
+                    && Bun__isModuleLoaderGone(
+                        &(*job).global_this,
+                        (*job).module_loader.get().unwrap_or_default(),
+                    )
+            };
+            if loader_is_gone {
+                // SAFETY: as above; released exactly once, here.
+                unsafe { self.release_unrun_job(job) };
+                job = iter.next();
+                continue;
+            }
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
                 // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
@@ -431,6 +458,7 @@ pub struct TranspilerJob {
     pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
+    /// The store's `generation_number` when the job was dispatched.
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
@@ -556,6 +584,15 @@ impl TranspilerJob {
                     in_standalone_executable,
                     &self.path_text,
                 );
+                // SAFETY: as above; the count is a field of the store beside its job slots, so it is not in `self`.
+                let generation_number = unsafe {
+                    (*vm)
+                        .transpiler_store
+                        .generation_number
+                        .load(Ordering::SeqCst)
+                };
+                resolved_source.from_earlier_generation =
+                    self.generation_number != generation_number;
                 (out, Ok(resolved_source))
             }
         };
@@ -659,19 +696,6 @@ impl TranspilerJob {
         // accesses below dereference per-field via `(*vm).field` (place
         // expressions / leaf-field borrows) only.
         let vm: *mut VirtualMachine = this.vm;
-
-        // SAFETY: `vm` is the live owning VM (BACKREF — see note above);
-        // atomic load on a leaf field, no `&VirtualMachine` formed.
-        let store_generation = unsafe {
-            (*vm)
-                .transpiler_store
-                .generation_number
-                .load(Ordering::Relaxed)
-        };
-        if this.generation_number != store_generation {
-            this.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
-            return;
-        }
 
         // `borrowing()`: the AST node store and the
         // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`

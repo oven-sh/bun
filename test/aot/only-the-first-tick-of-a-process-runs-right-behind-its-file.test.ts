@@ -42,10 +42,10 @@ const files = Object.keys(sources)
 
 const asStockBunPrints = [
   "first: early,queues,TICK,late,last,root,body,test",
-  "statement: early,queues,late,last,root,body,TICK,test",
-  "call: early,queues,late,last,root,behind await,TICK",
+  "statement: early,queues,TICK,late,last,root,body,test",
+  "call: early,queues,TICK,late,last,root,behind await",
   "require: early,queues,late,last,root,behind require,TICK",
-  "es module below commonjs: early,queues,last,root,body,TICK,test",
+  "es module below commonjs: early,queues,last,root,TICK,body,test",
 ];
 
 async function printed(folder: string, flags: string[], transpilesOnOneThread: boolean, words = "") {

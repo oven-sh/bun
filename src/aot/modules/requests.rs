@@ -573,9 +573,11 @@ impl FileScanner<'_, '_> {
                     .extend(runtime_modules.map(ModuleRef::Runtime));
                 let start = self.spellings.len() as u32;
                 let spelled = spellings.iter().filter_map(find_spelled_module);
+                let prefixed = spelled.clone().map(|it| it.spelling);
+                let prefixed = prefixed.filter(|&name| self.is_name_for_transpiler_alone(name));
                 let unread = self.find_names_for_transpiler_alone_that_it_does_not_read(
                     site,
-                    spelled.clone().map(|it| it.spelling),
+                    prefixed.collect(),
                 );
                 let spelled: Vec<SpelledModule> = spelled
                     .filter(|it| !unread.contains(&it.spelling))
@@ -600,14 +602,15 @@ impl FileScanner<'_, '_> {
         }
     }
 
+    fn is_name_for_transpiler_alone(&self, name: Atom) -> bool {
+        Alias::bun_prefixed_builtin(self.files.atoms.bytes(name)).is_some()
+    }
+
     fn find_names_for_transpiler_alone_that_it_does_not_read(
         &self,
         site: &ImportSite,
-        names: impl Iterator<Item = Atom>,
+        mut prefixed: Vec<Atom>,
     ) -> Vec<Atom> {
-        let is_prefixed =
-            |name: &Atom| Alias::bun_prefixed_builtin(self.files.atoms.bytes(*name)).is_some();
-        let mut prefixed: Vec<Atom> = names.filter(is_prefixed).collect();
         if !prefixed.is_empty() {
             let (bound, decisions) = (
                 self.files.bound(self.file),
@@ -621,10 +624,10 @@ impl FileScanner<'_, '_> {
 
     fn add_spellings_named_in(&mut self, site: &ImportSite, start: u32) {
         let named = modules_named_in(self.named_in_choices, site.specifier_node);
-        let unread = self.find_names_for_transpiler_alone_that_it_does_not_read(
-            site,
-            named.iter().map(|it| it.name),
-        );
+        let prefixed = named.iter().map(|it| it.name);
+        let prefixed = prefixed.filter(|&name| self.is_name_for_transpiler_alone(name));
+        let unread =
+            self.find_names_for_transpiler_alone_that_it_does_not_read(site, prefixed.collect());
         for named in named {
             if unread.contains(&named.name) {
                 continue;

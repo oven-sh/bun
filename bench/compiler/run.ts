@@ -55,6 +55,9 @@ const aot = (entry: string, ...flags: string[]) => [
   "--outfile",
   "app",
 ];
+// On Windows every compiler here writes `<name>.exe`.
+const builtIn = (folder: string, { executable }: Scenario) =>
+  join(folder, process.platform === "win32" ? `${executable}.exe` : executable);
 const open = `\nif (process.argv.length > 90) await import(process.argv[90]);\n`;
 const evaluates = `\nif (process.argv.length > 90) eval(process.argv[90]);\n`;
 const scenarios: Scenario[] = [
@@ -308,7 +311,7 @@ try {
         cpuSeconds: mean(measured.map(run => run.cpu)),
         peakMB: mean(measured.map(run => run.peakMB)),
         instructions: measured[0].instructions === undefined ? undefined : mean(measured.map(run => run.instructions!)),
-        executableBytes: statSync(join(folder, scenario.executable)).size,
+        executableBytes: statSync(builtIn(folder, scenario)).size,
         closingLine: measured.at(-1)!.closingLine,
         everyRun: measured,
       };
@@ -317,7 +320,7 @@ try {
         `${size} ${scenario.name}: ${whole(row.lines)} lines, ${row.wallSeconds.toFixed(2)} s, ${row.cpuSeconds.toFixed(2)} CPU-s`,
       );
       if (has("check")) {
-        const ran = spawnSync({ cmd: [join(folder, scenario.executable)], stdout: "pipe", stderr: "pipe" });
+        const ran = spawnSync({ cmd: [builtIn(folder, scenario)], stdout: "pipe", stderr: "pipe" });
         if (ran.exitCode === 0) answers.set(scenario.name, ran.stdout.toString().trim());
         else {
           const failure = `its executable ended with ${ran.signalCode ?? ran.exitCode}: ${ran.stderr.toString().trim().slice(0, 300)}`;

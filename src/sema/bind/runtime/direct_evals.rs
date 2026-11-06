@@ -231,7 +231,12 @@ impl ReferencePass<'_, '_> {
                     self.uses_arguments.push(CodeUnit::File);
                     return;
                 }
-                ScopeKind::FieldInitializer(_) => return,
+                ScopeKind::FieldInitializer(_) => {
+                    let around = bound.scopes[scope.parent.idx()].kind;
+                    if !matches!(around, ScopeKind::ClassDecorators(_)) {
+                        return;
+                    }
+                }
                 ScopeKind::Module(_)
                 | ScopeKind::Block
                 | ScopeKind::Class(_)

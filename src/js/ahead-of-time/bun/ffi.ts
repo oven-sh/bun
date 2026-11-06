@@ -173,7 +173,10 @@ function FFIBuilder(params: unknown[], functionToCall: $Node.FFIFunction, name: 
 }
 
 const native = {
-  dlopen: ffi.dlopen,
+  // The function of Bun.FFI itself, asked for where it is read: nothing that loads machine code is read while the module loads.
+  get dlopen() {
+    return ffi.dlopen;
+  },
   callback: () => {
     throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
   },

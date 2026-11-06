@@ -22,11 +22,14 @@ test("a name that the benchmark does not have ends the run, and the names are li
 
 test("a scenario is chosen by its whole name, and nothing else runs", async () => {
   const { stdout, stderr, exitCode } = await benchmark("--scenarios=typed on one thread", "--sizes=300", "--runs=1");
-  expect(stderr.split("\n").filter(line => line.startsWith("300 "))).toEqual([
-    expect.stringMatching(/^300 typed on one thread: /),
-  ]);
+  // A run that fails shows all that it printed. On Windows the benchmark looked for `app`, where a build writes `app.exe`, and this test said only that a line was missing.
+  const told = stderr.split(/\r?\n/).filter(line => line.startsWith("300 "));
+  expect({ told, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+    told: [expect.stringMatching(/^300 typed on one thread: /)],
+    exitCode: 0,
+    stderr: "",
+  });
   expect(stdout).toContain(
     "\ntyped on one thread  bun build --compile --aot --explain=statistics --aot-threads=1 main.ts --outfile app\n",
   );
-  expect(exitCode).toBe(0);
 }, 120_000);

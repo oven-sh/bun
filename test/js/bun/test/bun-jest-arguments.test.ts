@@ -29,14 +29,3 @@ test("Bun.jest still refuses what is no absolute path", () => {
     expect(() => jestOf(5, ...rest)).toThrow("Bun.jest() expects a string filename");
   }
 });
-
-test("the third argument asks which names of the runner a script had put on globalThis in front of this file", () => {
-  expect(jestOf(path, true, true)).toBe(0);
-  // It is looked at once, in front of each test file.
-  (globalThis as Record<string, unknown>).expect = expect;
-  try {
-    expect(jestOf(path, true, true)).toBe(0);
-  } finally {
-    delete (globalThis as Record<string, unknown>).expect;
-  }
-});

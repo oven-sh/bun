@@ -575,7 +575,6 @@ void updateOnEachMicrotaskTick(JSC::VM&);
 }
 
 static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
-static thread_local bool didDrainFirstNextTickQueueOfThread;
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
@@ -586,10 +585,8 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
         globalObject->resetOnEachMicrotaskTick();
     if (!drainsNextTickQueue)
         return;
-    if (auto queue = globalObject->m_nextTickQueue.get()) {
-        didDrainFirstNextTickQueueOfThread = true;
+    if (auto queue = globalObject->m_nextTickQueue.get())
         queue->drain(vm, globalObject);
-    }
 }
 
 void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
@@ -642,8 +639,6 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
-    if (didDrainFirstNextTickQueueOfThread && vm->hasCompiledCode())
-        return;
     newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }

@@ -1,6 +1,6 @@
 status: 0
-script: ee8c8613d469dac3
-source: a4d6257a89b6c401
+script: 39192e787bf1eed6
+source: f94ac8b235bce75b
 ---
 another argument raises, and the same call is made again: ['E', (0, 'x'), 'closed zip 1', 'after the loop', 'E', (0, 'x'), 'closed zip 3', 'after the loop']
 the same for a function: ['E', 'closed sum 1', 3, 'E', 'closed sum 3', 3]
@@ -15,3 +15,4 @@ and lets go of it: ['closed seen too']
 a thread that waits between the making and the use: ['closed main', 'after the loop in main', 'closed sum', 3, ('the thread', 0, 'x'), 'closed the thread', 'after the loop in the thread']
 and another thread gets hold of the generator meanwhile: [('the thread', 0, 'x'), 'after the loop in the thread', [1]]
 and lets go of it: ['closed the thread']
+the argument has targets of its own, which are taken apart first: ['closed first', 'too many', 'closed first second', 'too many', 'closed second', 'not to be taken apart', 'after']

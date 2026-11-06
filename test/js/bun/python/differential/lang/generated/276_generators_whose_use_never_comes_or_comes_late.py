@@ -218,6 +218,7 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def wait():')
 
 
+
 try:
     def waits(name):
         for a, b in zip(g(name), wait()):
@@ -280,3 +281,28 @@ try: log.sort()
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: log.sort()')
 try: show('and lets go of it:')
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: show('and lets go of it:')")
+
+
+
+try:
+    def taken_apart(pairs):
+        try:
+            a, b = g([p for p, q in pairs][0])
+        except ValueError:
+            log.append('too many')
+        try:
+            [a, b] = g('%s %s' % [(p, q) for [p, q] in pairs][0])
+        except ValueError:
+            log.append('too many')
+        try:
+            (a, b), c = g({p: q for p, q in pairs}['first'], 2)
+        except TypeError:
+            log.append('not to be taken apart')
+        log.append('after')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def taken_apart(pairs):')
+
+
+try: taken_apart([('first', 'second')])
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: taken_apart([('first', 'second')])")
+try: show('the argument has targets of its own, which are taken apart first:')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: show('the argument has targets of its own, which are taken apart firs...")

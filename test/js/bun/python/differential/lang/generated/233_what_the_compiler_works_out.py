@@ -508,3 +508,33 @@ try: lines_of(search_over_lines, 2)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: lines_of(search_over_lines, 2)')
 try: lines_of(search_names_over_lines, 2, 1)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: lines_of(search_names_over_lines, 2, 1)')
+
+try: print('--- the names of keyword arguments are a tuple like any other')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: '--- the names of keyword arguments are a tuple like any other'")
+
+
+try:
+    def keywords(**k): return sorted(k)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def keywords(**k): return sorted(k)')
+try:
+    def tuple_first(): return ('a',), keywords(a=1)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: def tuple_first(): return ('a',), keywords(a=1)")
+try:
+    def names_first(): return keywords(a=1), ('a',)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: def names_first(): return keywords(a=1), ('a',)")
+try:
+    def names_twice(): return keywords(a=1, b=2), keywords(a=3, b=4), ('a', 'b'), ('b', 'a')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: def names_twice(): return keywords(a=1, b=2), keywords(a=3, b=4), ('a...")
+try:
+    def in_a_tuple(): return keywords(a=1), (('a',), 1)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: def in_a_tuple(): return keywords(a=1), (('a',), 1)")
+try:
+    def same_object(): return ('a', 'b') is same_object.__code__.co_consts[-1], keywords(a=1, b=2)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: def same_object(): return ('a', 'b') is same_object.__code__.co_const...")
+
+
+try:
+    for f in (tuple_first, names_first, names_twice, in_a_tuple, same_object):
+        try: show(f)
+        except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: show(f)')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for f in (tuple_first, names_first, names_twice, in_a_tuple, same_obj...')

@@ -1,6 +1,6 @@
 status: 0
-script: 71b84e3ffeaaf063
-source: c04e882ad40ade68
+script: 215ef582aea39a27
+source: f92cb9b4a00c603b
 ---
 --- operations
 seconds 86400 (60, 86400)
@@ -148,3 +148,9 @@ none_on_its_own_line [('call', 0), ('line', 1), ('line', 2), ('line', 1), ('line
 partly_over_lines [('call', 0), ('line', 1), ('line', 3), ('line', 1), ('line', 4), ('return', 4)]
 search_over_lines [('call', 0), ('line', 1), ('line', 2), ('line', 1), ('return', 1)]
 search_names_over_lines [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 2), ('line', 1), ('return', 1)]
+--- the names of keyword arguments are a tuple like any other
+tuple_first (('a',), ['a']) ('a', ('a',))
+names_first (['a'], ('a',)) (1, ('a',))
+names_twice (['a', 'b'], ['a', 'b'], ('a', 'b'), ('b', 'a')) (1, ('a', 'b'), ('b', 'a'))
+in_a_tuple (['a'], (('a',), 1)) (1, ('a',), (('a',), 1))
+same_object (True, ['a', 'b']) ('a', ('a', 'b'))

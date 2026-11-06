@@ -151,6 +151,7 @@ def wait():
     return 'xy'
 
 
+
 def waits(name):
     for a, b in zip(g(name), wait()):
         log.append((name, a, b))
@@ -185,3 +186,24 @@ del mine
 gc.collect()
 log.sort()
 show('and lets go of it:')
+
+
+
+def taken_apart(pairs):
+    try:
+        a, b = g([p for p, q in pairs][0])
+    except ValueError:
+        log.append('too many')
+    try:
+        [a, b] = g('%s %s' % [(p, q) for [p, q] in pairs][0])
+    except ValueError:
+        log.append('too many')
+    try:
+        (a, b), c = g({p: q for p, q in pairs}['first'], 2)
+    except TypeError:
+        log.append('not to be taken apart')
+    log.append('after')
+
+
+taken_apart([('first', 'second')])
+show('the argument has targets of its own, which are taken apart first:')

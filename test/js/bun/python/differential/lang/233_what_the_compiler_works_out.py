@@ -289,3 +289,17 @@ for f in (operation_over_lines, loop_over_lines, loop_over_set_over_lines, tuple
 lines_of(partly_over_lines, 2)
 lines_of(search_over_lines, 2)
 lines_of(search_names_over_lines, 2, 1)
+
+print('--- the names of keyword arguments are a tuple like any other')
+
+
+def keywords(**k): return sorted(k)
+def tuple_first(): return ('a',), keywords(a=1)
+def names_first(): return keywords(a=1), ('a',)
+def names_twice(): return keywords(a=1, b=2), keywords(a=3, b=4), ('a', 'b'), ('b', 'a')
+def in_a_tuple(): return keywords(a=1), (('a',), 1)
+def same_object(): return ('a', 'b') is same_object.__code__.co_consts[-1], keywords(a=1, b=2)
+
+
+for f in (tuple_first, names_first, names_twice, in_a_tuple, same_object):
+    show(f)

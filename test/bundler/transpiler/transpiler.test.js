@@ -242,7 +242,20 @@ describe("Bun.Transpiler", () => {
         check("name arrow", () => ({ f: () => {} }).f.name, "=> f");
         check("name fn",    () => ({ f: function () {} }).f.name, "=> f");
         check("name class", () => ({ f: class {} }).f.name, "=> f");
+        check("name paren", () => ({ f: (() => {}) }).f.name, "=> f");
         check("name own",   () => ({ f: function g() {} }).f.name, "=> g");
+        // The key names no function that is the value of another expression.
+        var unnamed = [
+          ({ f: (0, () => {}) }).f.name,
+          ({ f: (0, function () {}) }).f.name,
+          ({ f: (0, class {}) }).f.name,
+          ({ f: [() => {}][0] }).f.name,
+          ({ f: true && (() => {}) }).f.name,
+          ({ f: null ?? (() => {}) }).f.name,
+          ({ f: true ? () => {} : 0 }).f.name,
+          ({ f: false || (() => {}) }).f.name,
+        ];
+        check("unnamed",    () => JSON.stringify(unnamed), '=> ["","","","","","","",""]');
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -266,7 +279,9 @@ describe("Bun.Transpiler", () => {
         "name arrow: ok",
         "name fn: ok",
         "name class: ok",
+        "name paren: ok",
         "name own: ok",
+        "unnamed: ok",
       ]);
       expect(exitCode).toBe(0);
     });

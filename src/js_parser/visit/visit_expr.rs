@@ -973,6 +973,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Asked before the visit, which can leave a function bare that the key does not name: `{ f: (0, () => {}) }`.
+        let target_names_value = e_.target.names_its_one_value();
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1115,7 +1117,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target)
-                                .with_is_property_access_target(in_.is_property_access_target);
+                                .with_is_property_access_target(in_.is_property_access_target)
+                                .with_target_names_value(target_names_value);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1495,6 +1498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        let target_names_value = e_.target.names_its_one_value();
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1542,7 +1546,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
-                .with_is_property_access_target(in_.is_property_access_target);
+                .with_is_property_access_target(in_.is_property_access_target)
+                .with_target_names_value(target_names_value);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,

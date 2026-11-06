@@ -645,8 +645,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
-    /// The `#private` field that the lowering made for each undecorated `accessor #x`.
-    pub(crate) accessor_storage_fields: List<'a, Ref>,
+    pub(crate) plain_accessors: List<'a, crate::lower::lower_decorators::PlainAccessor>,
 
     /// `(inner_class_ref, class name)` of each enclosing class whose body
     /// reads the class through `inner_class_ref`. A write to the name targets
@@ -6177,6 +6176,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             js_ast::ExprData::EDot(ex) => return ex.can_be_removed_if_unused,
+            // `{ key: value }[key]`: the literal has that property itself, so the read asks nothing else.
+            js_ast::ExprData::EIndex(ex) => {
+                if ex.optional_chain.is_none()
+                    && let js_ast::ExprData::EObject(object) = &ex.target.data
+                    && let [property] = object.properties.slice()
+                    && property.kind == js_ast::g::PropertyKind::Normal
+                    && !property.flags.contains(Flags::Property::IsSpread)
+                    && let (Some(key), Some(value)) = (&property.key, &property.value)
+                    && let js_ast::ExprData::EString(key) = &key.data
+                    && let js_ast::ExprData::EString(index) = &ex.index.data
+                    && !key.is_utf16
+                    && !index.is_utf16
+                    && key.next.is_none()
+                    && index.next.is_none()
+                    && *key.data == *index.data
+                    && (property.flags.contains(Flags::Property::IsComputed)
+                        || *key.data != *b"__proto__")
+                {
+                    return self.expr_can_be_removed_if_unused_without_dce_check(value);
+                }
+            }
             js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(&**ex),
             js_ast::ExprData::EIdentifier(ex) => {
                 debug_assert!(!ex.ref_.is_source_contents_slice()); // was not visited
@@ -8321,6 +8341,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for ref_ in stale {
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
+            self.plain_accessors
+                .retain(|accessor| (accessor.name.inner_index() as usize) < snapshot.symbols_len);
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
@@ -9098,8 +9120,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             // The minifier can give a `#private` name that it renames the spelling of one that an `eval` pins.
-            for field in self.accessor_storage_fields.iter() {
-                self.symbols[field.inner_index() as usize].set_must_not_be_renamed(true);
+            for accessor in self.plain_accessors.iter() {
+                self.symbols[accessor.storage.inner_index() as usize].set_must_not_be_renamed(true);
             }
         }
 
@@ -9839,7 +9861,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
-            accessor_storage_fields: BumpVec::new_in(arena),
+            plain_accessors: BumpVec::new_in(arena),
             decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,

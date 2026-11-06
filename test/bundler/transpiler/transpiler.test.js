@@ -192,6 +192,11 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
       ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
+    it("bails out when the property names an anonymous function or class", () => {
+      ts.expectPrintedMin_("x = ({f: () => {}}).f", "x = { f: () => {} }.f");
+      ts.expectPrintedMin_("x = ({f: function() {}}).f", "x = { f: function() {} }.f");
+      ts.expectPrintedMin_("x = ({f: function g() {}}).f", "x = function g() {}");
+    });
     it("bails out or strips `this` when the index is a call/assignment target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
       // so `this` is the array; inlining to `obj.m()` would bind `this` to
@@ -234,6 +239,10 @@ describe("Bun.Transpiler", () => {
         check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
         var ab = { b: class {} };
         check("new obj",    () => new ({ f: ab?.b }).f() instanceof ab.b, "=> true");
+        check("name arrow", () => ({ f: () => {} }).f.name, "=> f");
+        check("name fn",    () => ({ f: function () {} }).f.name, "=> f");
+        check("name class", () => ({ f: class {} }).f.name, "=> f");
+        check("name own",   () => ({ f: function g() {} }).f.name, "=> g");
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -254,6 +263,10 @@ describe("Bun.Transpiler", () => {
         "this: ok",
         "assign: ok",
         "new obj: ok",
+        "name arrow: ok",
+        "name fn: ok",
+        "name class: ok",
+        "name own: ok",
       ]);
       expect(exitCode).toBe(0);
     });

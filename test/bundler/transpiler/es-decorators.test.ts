@@ -1922,23 +1922,117 @@ describe("ES Decorators", () => {
     });
 
     test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
-      // Its name is not one the class or a class around it declares, and its
-      // initializer runs as the field it is: no new.target, any constructor,
-      // a storage of its own for each evaluation of the class.
+      // Its name is not one the class, a class around it or a class in it
+      // declares, and its initializer runs as the field it is: no new.target,
+      // any constructor, a storage of its own for each evaluation of the class.
       const { stdout, stderr, exitCode } = await runDecorator(`
         const dec = (v, ctx) => {};
         class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
           read() { return [this.#p_accessor_storage, this.#p, this.#p_accessor_storage2, this.#p_accessor_storage3] } }
         class Outer { #q_accessor_storage = "outer"; static Inner = class { accessor #q = "q"; read(outer) { return [outer.#q_accessor_storage, this.#q] } } }
+        class Around { accessor #r = "around"; static Nested = class { #r_accessor_storage = "nested"; read(around) { return [around.#r, this.#r_accessor_storage] } } }
         class Base {}
         class Last { accessor #p = new.target; static read(o) { return o.#p } }
         class Cond extends Base { accessor #p = 1; constructor(c) { if (c) super(); else super(); } static read(o) { return o.#p } }
         const twice = [];
         for (let i = 0; i < 2; i++) { const C = class { accessor #p = i; static read(o) { return o.#p } }; twice.push([C, new C()]); }
-        console.log(JSON.stringify([new Own().read(), new Outer.Inner().read(new Outer()), Last.read(new Last()), Cond.read(new Cond()), twice.map(([C, o]) => C.read(o))]));
+        console.log(JSON.stringify([new Own().read(), new Outer.Inner().read(new Outer()), new Around.Nested().read(new Around()), Last.read(new Last()), Cond.read(new Cond()), twice.map(([C, o]) => C.read(o))]));
       `);
       expect(stderr).toBe("");
-      expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],null,1,[0,1]]\n');
+      expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],["around","nested"],null,1,[0,1]]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a read or a write of an undecorated accessor #x names its private field", async () => {
+      using dir = tempDir("es-dec-accessor-forms", {
+        "forms.js": `
+          class U {
+            accessor #p = 1;
+            static accessor #s = 1;
+            self = this;
+            forms(o) {
+              const seen = [this.#p++, ++this.#p, (this.#p += 2), (this.#p ??= 9), o?.#p];
+              [this.#p] = [11];
+              ({ a: this.#p } = { a: this.#p + 1 });
+              seen.push(this.#p);
+              this.#p = () => 7;
+              seen.push(this.#p(), "" + U.#s++ + U.#s, #p in o, #s in U);
+              const same = o.self;
+              return seen.concat(same.#p === this.#p);
+            }
+          }
+          const u = new U();
+          console.log(JSON.stringify(u.forms(u)));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["forms.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('[1,3,5,5,5,12,7,"12",true,true,true]\n');
+      expect(exitCode).toBe(0);
+
+      // No call of the getter or the setter is printed. `#p in o` asks for them.
+      const printed = await runIn(String(dir), ["build", "--no-bundle", "forms.js"]);
+      expect(filterStderr(printed.stderr)).toBe("");
+      expect(printed.stdout).not.toMatch(/\.#[ps]\b/);
+      expect(printed.stdout).toContain("#p in o");
+      expect(printed.exitCode).toBe(0);
+    });
+
+    test.concurrent("a direct eval reaches an undecorated accessor #x as a getter and a setter", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class U {
+          before = eval("#p in this");
+          accessor #p = eval("#p in this") ? 1 : 0;
+          m() { eval("this.#p += 1"); return [this.before, eval("this.#p"), this.#p]; }
+        }
+        class S {
+          static before = eval("#s in S");
+          static accessor #s = 1;
+          static m() { eval("S.#s += 1"); return [S.before, eval("S.#s"), S.#s]; }
+        }
+        console.log(JSON.stringify([new U().m(), S.m()]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[[true,2,2],[true,2,2]]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a bundle has no unused class with an undecorated accessor #x", async () => {
+      using dir = tempDir("es-dec-accessor-unused", {
+        "unused.js": `
+          class A { accessor #a = 1 }
+          class B { static accessor #b = 2 }
+          class C { static accessor #c = () => {} }
+          class D { static accessor #d = class {} }
+          class E { static accessor #e = function () {} }
+          console.log("kept");
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["build", "unused.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).not.toContain("class");
+      expect(stdout).toContain('console.log("kept")');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an anonymous function in an undecorated accessor #x has the name #x in a bundle", async () => {
+      using dir = tempDir("es-dec-accessor-name", {
+        "names.js": `
+          class C {
+            accessor #p = () => {};
+            static accessor #s = class {};
+            accessor #q = function () {};
+            names() { return [this.#p.name, C.#s.name, this.#q.name]; }
+          }
+          console.log(JSON.stringify(new C().names()));
+        `,
+      });
+      // Bun parses this bundle again when it runs it. It does not parse a "--target=bun" bundle again.
+      const build = await runIn(String(dir), ["build", "names.js", "--target=node", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('["#p","#s","#q"]\n');
       expect(exitCode).toBe(0);
     });
 

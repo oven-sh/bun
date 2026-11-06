@@ -82,6 +82,16 @@ enum AccessorStorage {
     Private(Ref),
 }
 
+/// An undecorated `accessor #x`, listed where it is declared.
+#[derive(Clone, Copy)]
+pub(crate) struct PlainAccessor {
+    /// `#x`, a getter and a setter.
+    pub(crate) name: Ref,
+    /// The `#private` field of its value.
+    pub(crate) storage: Ref,
+    pub(crate) class_body: js_ast::StoreRef<js_ast::Scope>,
+}
+
 /// `accessor #x` with no decorators.
 fn is_plain_private_accessor(prop: &Property) -> bool {
     prop.kind == PropertyKind::AutoAccessor
@@ -245,7 +255,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A new `#private` field that neither the class (`taken`) nor a class around it declares.
+    /// Whether `field` has the value of an undecorated `accessor #x`.
+    pub(crate) fn is_accessor_storage(&self, field: Ref) -> bool {
+        let mut accessors = self.plain_accessors.iter();
+        accessors.any(|accessor| accessor.storage.eql(field))
+    }
+
+    /// The `#private` field with the value of `name`, an undecorated `accessor #x`.
+    pub(crate) fn accessor_storage(&self, kind: js_ast::symbol::Kind, name: Ref) -> Option<Ref> {
+        use js_ast::symbol::Kind;
+        if !matches!(
+            kind,
+            Kind::PrivateGetSetPair | Kind::PrivateStaticGetSetPair
+        ) {
+            return None;
+        }
+        let mut accessors = self.plain_accessors.iter();
+        let found = accessors.find(|accessor| accessor.name.eql(name));
+        found.map(|accessor| accessor.storage)
+    }
+
+    /// The `#private` field for the value of `accessor`, under a name that reaches it from every place that reaches `accessor`.
     fn accessor_storage_field(
         &mut self,
         accessor: Ref,
@@ -255,9 +285,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let accessor_name: &'a [u8] = self.symbols[accessor.inner_index() as usize]
             .original_name
             .slice();
+        let mut listed = self.plain_accessors.iter();
+        let listed = listed.find(|listed| listed.name.eql(accessor)).copied();
+        debug_assert!(
+            listed.is_some(),
+            "the parser lists every undecorated `accessor #x`"
+        );
         let mut name = self.bump_name3(accessor_name, b"_accessor_storage", b"");
         let mut suffix = 1u32;
-        while taken.contains(&name) || self.enclosing_scope_declares(name) {
+        while taken.contains(&name)
+            || self.enclosing_scope_declares(name)
+            || listed.is_some_and(|listed| self.scope_below_declares(listed.class_body, name))
+        {
             suffix += 1;
             name = bun_alloc::arena_format!(
                 in self.arena,
@@ -269,16 +308,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes();
         }
         taken.push(name);
-        let storage = self.new_sym(
-            if is_static {
+        let Some(listed) = listed else {
+            let kind = if is_static {
                 js_ast::symbol::Kind::PrivateStaticField
             } else {
                 js_ast::symbol::Kind::PrivateField
-            },
-            name,
-        );
-        self.accessor_storage_fields.push(storage);
-        storage
+            };
+            return self.new_sym(kind, name);
+        };
+        self.symbols[listed.storage.inner_index() as usize].original_name =
+            js_ast::StoreStr::new(name);
+        listed.storage
     }
 
     fn enclosing_scope_declares(&self, name: &[u8]) -> bool {
@@ -288,6 +328,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return true;
             }
             scope = current.parent;
+        }
+        false
+    }
+
+    /// Whether a scope in `scope` declares `name`.
+    fn scope_below_declares(&self, scope: js_ast::StoreRef<js_ast::Scope>, name: &[u8]) -> bool {
+        let mut pending = BumpVec::new_in(self.arena);
+        pending.extend(scope.children.slice().iter().copied());
+        while let Some(current) = pending.pop() {
+            if current.members.contains_key(name) {
+                return true;
+            }
+            pending.extend(current.children.slice().iter().copied());
         }
         false
     }
@@ -319,8 +372,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut flags = prop.flags;
         flags.insert(Flags::Property::IsMethod);
-        let getter = self.accessor_getter(AccessorStorage::Private(storage), loc);
-        let setter = self.accessor_setter(AccessorStorage::Private(storage), loc);
+        let getter = self.accessor_getter(AccessorStorage::Private(storage), key.loc);
+        let setter = self.accessor_setter(AccessorStorage::Private(storage), key.loc);
         [(PropertyKind::Get, getter), (PropertyKind::Set, setter)].map(|(kind, value)| Property {
             key: Some(key),
             value: Some(value),

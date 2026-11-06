@@ -884,7 +884,7 @@ fn format_once(
                         original_text: &text,
                         format: &options,
                         filepath: Some(path).filter(|path| !path.is_empty()),
-                        has_parent_parser: false,
+                        has_parent_parser: options.is_in_markdown,
                         script_flavor,
                     },
                     out: writer::Writer::new(f, Some(0), true),

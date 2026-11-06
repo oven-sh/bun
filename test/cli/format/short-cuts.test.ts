@@ -3904,6 +3904,8 @@ describe("code in Markdown and MDX", () => {
     '- ```js\n  const a = css`\n    a {\n      color: red;\n\n      /* c\n\n         d */\n\n      margin: 0;\n    }\n  `;\n  ```\n\n> ```js\n> const a = css`\n>   /* prettier-ignore */\n>   a   {\n>\n>   b:c }\n>   d { content: "x\\\n>\n> y" }\n> `;\n> ```\n',
     "> ```js\n> const h = html`\n>   <style>\n>     /* a\n>\n>      b */\n>     a {\n>       color: red;\n>     }\n>   </style>\n>   <script>\n>     // prettier-ignore\n>     const a = [\n>       1,0,\n>\n>       0,1,\n>     ];\n>   </script>\n> `;\n> ```\n",
     '- ```js\n  const m = markdown`\n    ~~~toml\n    a = 1\n\n\n\n    [b]\n    ~~~\n\n    ~~~yaml\n    a: |\n      x\n\n      y\n    ~~~\n  `;\n  ```\n\n> ```js\n> const h = html`\n>   <script type="importmap">a\n>\n>\n>   b</script>\n>   <script type="text/x-handlebars-template">\n>   a = b</script>\n> `;\n> ```\n',
+    // Markup below the root has a parent all the same.
+    '```html\n<div>\n  <style>\n    div {\n      & span[foo="bar short\\\n    short"] {\n        color: red;\n      }\n    }\n  </style>\n</div>\n```\n\n```html\n<style>\n  a b[c="dddddddddddddddddddddddddddddddddd\\\n  eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"] f {\n    color: red;\n  }\n</style>\n<script>\n  let  a\n</script>\n```\n',
     // The fence is longer than every run in the code, before and after.
     "````js\nfoo(`a\n```\nb`);\n````\n\n```js\n// ``\n```\n\n~~~js\n// ```\n~~~\n\n```md\n~~~js\nconst  a=1\n~~~\n```\n\n~~~md\n```js\nconst  a=1\n```\n~~~\n\n`````js\na\n`````\n",
     // Nothing in it, white space in it, white space at its end.

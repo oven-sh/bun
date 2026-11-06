@@ -204,6 +204,15 @@ static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navig
     if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
 }
 
+// WKNavigationDelegatePrivate. The navigation argument is the document's
+// original WKNavigation (or nil), never the loadRequest: that caused the
+// fragment change, so it is not read.
+static void delegateDidSameDocumentNavigation(id self, SEL, id /*webView*/, id /*navigation*/, long type)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onSameDocumentNavigation(type);
+}
+
 static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigation*/, id error)
 {
     ObjCRuntime::ARPool pool;
@@ -534,6 +543,10 @@ bool ObjCRuntime::load()
         reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailProvisionalNavigation), "v@:@@@");
+    // q = NSInteger (_WKSameDocumentNavigationType). WebKit checks
+    // respondsToSelector: for this SPI when the delegate is set.
+    addMethod(NavigationDelegate::cls, sel("_webView:navigation:didSameDocumentNavigation:"),
+        reinterpret_cast<IMP>(delegateDidSameDocumentNavigation), "v@:@@q");
     // Also adopt WKUIDelegate to suppress context menus. The method is
     // in WKUIDelegatePrivate but protocol adoption isn't checked for it;
     // WebKit does respondsToSelector:.

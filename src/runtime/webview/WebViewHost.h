@@ -57,6 +57,10 @@ public:
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
     void onNavigationFinished();
+    // _webView:navigation:didSameDocumentNavigation: (a #fragment change,
+    // pushState, replaceState, or a history traversal within the document).
+    // type is a _WKSameDocumentNavigationType.
+    void onSameDocumentNavigation(long type);
     void onNavigationFailed(const WTF::String& err);
     void onEvalComplete(id result, id error);
     void onScreenshotComplete(id nsimage, id error);

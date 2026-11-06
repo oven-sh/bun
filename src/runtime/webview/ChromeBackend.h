@@ -226,7 +226,7 @@ private:
 // TargetCreateTarget + TargetAttachToTarget + PageEnable form an internal
 // chain kicked off by the first navigate() on a view. Their responses
 // don't settle a user promise; the last one (PageEnable) sends the actual
-// Page.navigate and the promise resolves on Page.loadEventFired.
+// Page.navigate and the promise resolves on the commit that ends it.
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
     TargetCreateTarget,
@@ -235,13 +235,17 @@ enum class Method : uint8_t {
     // User-facing ops — responses settle (or errors reject) a slot.
     PageNavigate,
     PageReload,
-    // Chained from Page.loadEventFired: Runtime.evaluate("document.title")
-    // → set m_title, settle Navigate. Makes `await navigate(); view.title`
-    // work like WKWebView (which packs title in NavDone).
+    // Chained from the commit that ends the view's navigation:
+    // Runtime.evaluate("document.title") → set m_title, settle Navigate.
+    // Makes `await navigate(); view.title` work like WKWebView (which packs
+    // title in NavDone).
     PageTitle,
+    // The same fetch after a load the view did not ask for (the page's own
+    // link, a redirect): sets m_title and settles nothing.
+    PageTitleRefresh,
     // goBack/goForward chain: getNavigationHistory → navigateToHistoryEntry.
     // The first picks entries[currentIndex + delta].id; the second navigates.
-    // Page.loadEventFired settles, same as navigate/reload.
+    // The commit settles, same as navigate/reload.
     PageGetNavigationHistory,
     PageNavigateToHistoryEntry,
     PageCaptureScreenshot,
@@ -343,8 +347,6 @@ struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
-    // PageTitle: the JSWebView::m_chromeNavigationSeq this fetch ends, or 0 for a title refresh that settles nothing.
-    uint32_t navigation = 0;
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
@@ -474,8 +476,9 @@ public:
     void onFrameNavigated(JSWebView*, std::span<const char> params);
     void onNavigatedWithinDocument(JSWebView*, std::span<const char> params);
     void onLoadEventFired(JSWebView*);
-    // Fetches document.title into m_title; with endsNavigation the reply also settles the Navigate slot.
-    void sendTitleFetch(JSWebView*, bool endsNavigation);
+    void onFrameStoppedLoading(JSWebView*, std::span<const char> params);
+    // Fetches document.title into m_title. A PageTitle reply also settles the Navigate slot.
+    void sendTitleFetch(JSWebView*, Method);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);

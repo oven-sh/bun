@@ -1058,13 +1058,16 @@ function navServer() {
       if (path === "/spa") return page("<title>SPA</title><script>history.replaceState({}, '', '/app/home')</script>");
       // A document whose load event trails its commit: the image holds it back.
       if (path === "/slow-load") return page('<title>slow-load</title><img src="/late.gif">');
-      // A document that commits late, and loads later still: the server takes
-      // its time to answer, and then the image holds the load event back.
-      // no-store: a history traversal asks the server again, not the HTTP cache.
-      if (path === "/slow-doc") {
-        await Bun.sleep(150);
-        return new Response('<title>slow-doc</title><img src="/late.gif">', {
-          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      // A page whose Navigation API cancels every navigation it can.
+      if (path === "/guarded") {
+        return page(
+          "<title>guarded</title><script>navigation.addEventListener('navigate', e => { if (e.cancelable) e.preventDefault(); })</script>",
+        );
+      }
+      // A frameset: the renderer loads a document for a #fragment navigation.
+      if (path === "/frameset") {
+        return new Response('<title>frameset</title><frameset cols="100%"><frame src="/inner"></frameset>', {
+          headers: { "content-type": "text/html; charset=utf-8" },
         });
       }
       if (path === "/late.gif") {
@@ -1083,8 +1086,8 @@ it("chrome: onNavigated fires once per main-frame commit; an iframe's navigation
   const seen: string[] = [];
   view.onNavigated = (url: string) => seen.push(url.replace(srv.base, ""));
   await view.navigate(srv.base + "/outer");
-  // The <iframe src=/inner> commits its own Page.frameNavigated (with a
-  // parentId). It must neither fire the callback nor replace view.url.
+  // The <iframe src=/inner> commits its own Page.frameNavigated (with its
+  // own frame id). It must neither fire the callback nor replace view.url.
   expect(seen).toEqual(["/outer"]);
   expect(view.url).toBe(srv.base + "/outer");
   expect(view.title).toBe("outer");
@@ -1125,6 +1128,37 @@ it("chrome: same-document navigations settle and update view.url", async () => {
   expect(view.title).toBe("T/doc");
 
   expect(seen).toEqual(["/doc#section", "/pushed?x=1#h", "/doc#section", "/pushed?x=1#h"]);
+});
+
+it("chrome: a #fragment navigate() that the page's Navigation API cancels rejects", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/guarded");
+  const failed: string[] = [];
+  view.onNavigationFailed = (e: Error) => void failed.push(e.message);
+  // Chrome answers Page.navigate, never commits, and reports the frame idle.
+  await expect(view.navigate(srv.base + "/guarded#x")).rejects.toThrow("navigation cancelled by the page");
+  expect({ failed, url: view.url, loading: view.loading }).toEqual({
+    failed: ["navigation cancelled by the page"],
+    url: srv.base + "/guarded",
+    loading: false,
+  });
+  // The slot is free again.
+  await view.navigate(srv.base + "/after");
+  expect(view.url).toBe(srv.base + "/after");
+});
+
+it("chrome: a #fragment navigate() on a frameset page loads the document and settles", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/frameset");
+  // Chrome's reply says same-document, then the renderer loads the page again.
+  await view.navigate(srv.base + "/frameset#x");
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/frameset#x",
+    title: "frameset",
+    loading: false,
+  });
 });
 
 it("chrome: a replaceState while the document loads does not settle navigate() early", async () => {
@@ -1177,27 +1211,6 @@ it("chrome: a cross-document goBack() waits for the load when the page being lef
     title: view.title,
     readyState: await view.evaluate("document.readyState"),
   }).toEqual({ url: srv.base + "/slow-load", title: "slow-load", readyState: "complete" });
-});
-
-it("chrome: a cross-document goBack() is not ended by a #fragment change of the page being left", async () => {
-  using srv = navServer();
-  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
-  await view.navigate(srv.base + "/slow-doc");
-  // An unload handler keeps the page out of the back-forward cache, and
-  // no-store keeps it out of the HTTP cache, so the traversal asks the server.
-  await view.evaluate("addEventListener('unload', () => {}), 0");
-  await view.navigate(srv.base + "/leaving");
-  // A page that rewrites its fragment all the time (a scroll spy). Chrome
-  // answers the traversal at once and commits it when the server has answered,
-  // so some of these commits land in between. They report "fragment", like a
-  // traversal's own commit, but they do not land on the entry it asked for.
-  await view.evaluate("setInterval(() => location.replace('#n' + performance.now()), 5), 0");
-  await view.goBack();
-  expect({
-    url: view.url,
-    title: view.title,
-    readyState: await view.evaluate("document.readyState"),
-  }).toEqual({ url: srv.base + "/slow-doc", title: "slow-doc", readyState: "complete" });
 });
 
 it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {

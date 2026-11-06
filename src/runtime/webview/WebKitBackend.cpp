@@ -329,7 +329,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         WTF::String title = r.str();
         view->m_url = url;
         view->m_title = title;
-        view->m_loading = false;
+        // A same-document commit of the page's own (pushState) can land while
+        // the view's navigation loads. Only that navigation's end clears it.
+        if (!view->m_pendingNavigate) view->m_loading = false;
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
                 JSValue::encode(jsString(vm, url)), JSValue::encode(jsString(vm, title)));
@@ -405,6 +407,7 @@ void HostClient::handleReply(const Frame& h, Reader r)
 
     case Reply::NavDone:
         // url/title already cached by the preceding NavEvent.
+        view->m_loading = false;
         settleSlot(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:

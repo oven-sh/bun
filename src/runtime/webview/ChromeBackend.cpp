@@ -661,21 +661,31 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
     return view->m_pendingMisc;
 }
 
+// Clears the bits that say which commit ends the navigation in the slot.
+static void settleNavigateSlot(JSGlobalObject* g, JSWebView* view, bool ok, JSValue v)
+{
+    view->m_chromeSettleOnSameDocument = false;
+    view->m_chromeSettleOnLoad = false;
+    view->m_chromeNavigationCommitted = false;
+    settleSlot(g, view, view->m_pendingNavigate, ok, v);
+}
+
 // Wraps settleSlot (JSWebView.cpp) with PendingSlot → barrier lookup.
 static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok, JSValue v)
 {
+    if (slot == PendingSlot::Navigate) return settleNavigateSlot(g, view, ok, v);
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
 // Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
 // onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
-// for PageTitle: that is the post-load title fetch, and its failure (for
-// example a redirect destroying the context) is not a navigation failure.
+// for a title fetch: that follows the commit, and its failure (for example
+// a redirect destroying the context) is not a navigation failure.
 // The slot settles before the callback runs, so a retry with navigate()
 // from inside the callback sees an empty slot instead of ERR_INVALID_STATE.
 static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, Method method, JSValue errValue)
 {
-    bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
+    bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle && method != Method::PageTitleRefresh;
     if (navigationFailed) view->m_loading = false;
     settle(g, view, slot, false, errValue);
     if (navigationFailed) {
@@ -687,11 +697,11 @@ static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, 
 }
 
 // Slots, not m_pending: a navigation that Chrome has already answered is
-// waiting for Page.loadEventFired and exists only in its slot.
+// waiting for its commit and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;
-    settleSlot(g, view, view->m_pendingNavigate, false, err);
+    settleNavigateSlot(g, view, false, err);
     settleSlot(g, view, view->m_pendingEval, false, err);
     settleSlot(g, view, view->m_pendingScreenshot, false, err);
     settleSlot(g, view, view->m_pendingMisc, false, err);
@@ -702,50 +712,14 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;
+    view->m_chromeSettleOnSameDocument = false;
+    view->m_chromeSettleOnLoad = false;
+    view->m_chromeNavigationCommitted = false;
     rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
     rejectSlotAsHandled(g, view, view->m_pendingEval, err);
     rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
     rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
     rejectSlotAsHandled(g, view, view->m_pendingCdp, err);
-}
-
-// A navigation command of the view's goes out now: nothing of it has committed, and no earlier title fetch ends it.
-static void startNavigation(JSWebView* view, ChromeNavigationKind kind)
-{
-    view->m_chromeNavigationKind = kind;
-    view->m_chromeNavigationCommitted = false;
-    view->m_chromeNavigationSeq++;
-}
-
-// A traversal's own commit lands on the entry it targeted. Both URLs come out of the same JSON decoder.
-static bool commitLandsOnTraversalTarget(JSWebView* view, std::span<const char> params)
-{
-    if (view->m_chromeTraversalUrl.isNull()) return true;
-    auto root = JSON::Value::parseJSON(
-        StringView::fromLatin1(std::span<const Latin1Character>(
-            reinterpret_cast<const Latin1Character*>(params.data()), params.size())));
-    auto o = root ? root->asObject() : nullptr;
-    return !o || o->getString("url"_s) == view->m_chromeTraversalUrl;
-}
-
-// Which commit is the view's? No loader id, so the state says. "historyApi" is the page's own pushState()/replaceState(): navigate() and a traversal report "fragment".
-static bool sameDocumentCommitEndsNavigation(JSWebView* view, std::span<const char> params)
-{
-    if (!view->m_pendingNavigate) return false;
-    auto navigationType = jsonString(jsonField(params, { "navigationType", 14 }));
-    if (navigationType.size() == 10 && memcmp(navigationType.data(), "historyApi", 10) == 0) return false;
-    auto kind = view->m_chromeNavigationKind;
-    // A cross-document traversal commits late: a #fragment change of the page being left is not it.
-    if (kind == ChromeNavigationKind::Unknown) return commitLandsOnTraversalTarget(view, params);
-    return kind == ChromeNavigationKind::SameDocument;
-}
-
-// The view's navigation is over once its title fetch is in flight. A later commit is the page's own.
-static void navigationConsumed(JSWebView* view)
-{
-    view->m_loading = false;
-    view->m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
-    view->m_chromeNavigationCommitted = false;
 }
 
 // Build an Error from CDP exceptionDetails. exception.description is V8's
@@ -812,12 +786,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     JSWebView* view = viewFor(entry.viewId);
     if (!view) return; // user dropped both view and the awaited promise
 
-    // A title fetch ends the navigation it was sent for, never a later one.
-    bool endsNavigation = entry.method == Method::PageTitle
-        && entry.navigation && entry.navigation == view->m_chromeNavigationSeq;
-
     if (!error.empty()) {
-        if (entry.method == Method::PageTitle && !endsNavigation) return;
+        if (entry.method == Method::PageTitleRefresh) return;
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
@@ -831,8 +801,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     // First navigate() sends Target.createTarget; each response chains
     // into the next command by re-adding to m_pending with WTFMove'd
     // Weak. The chain carries entry.slot (= Navigate) so errors at any
-    // stage reject the right promise. The promise RESOLVES on
-    // Page.loadEventFired — not on any response in this chain.
+    // stage reject the right promise. The promise RESOLVES on the commit
+    // that ends the navigation — not on any response in this chain.
     case Method::TargetCreateTarget: {
         // {"targetId":"<hex>"}
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
@@ -879,8 +849,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
         // Page.navigate with the url stashed by the first navigate() call.
-        // The response confirms the navigation STARTED; Page.loadEventFired
-        // confirms completion. We keep the pending entry alive for the
+        // The response confirms the navigation STARTED; the commit it
+        // names confirms completion. We keep the pending entry alive for the
         // response so errorText rejects the right slot.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId });
@@ -899,25 +869,27 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
                 createError(g, errStr.isEmpty() ? "navigation failed"_s : errStr));
             return;
         }
-        // Don't settle — the commit does. A reply without loaderId loads no document.
-        if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested) {
-            view->m_chromeNavigationKind = jsonField(result, { "loaderId", 8 }).empty()
-                ? ChromeNavigationKind::SameDocument
-                : ChromeNavigationKind::CrossDocument;
-        }
+        // Don't settle — the commit does. A reply without loaderId loads no
+        // document: Page.navigatedWithinDocument ends it. Otherwise the load
+        // event does, once Page.frameNavigated has committed the document.
+        if (jsonField(result, { "loaderId", 8 }).empty())
+            view->m_chromeSettleOnSameDocument = true;
+        else
+            view->m_chromeSettleOnLoad = true;
         return;
     }
     case Method::PageReload:
-        // Same as navigate: don't settle, Page.loadEventFired does.
+        // Same as navigate: don't settle, the commit does.
         return;
 
-    case Method::PageTitle: {
+    case Method::PageTitle:
+    case Method::PageTitleRefresh: {
         // Runtime.evaluate("document.title") chained from a commit.
         // result.result.value is the string. Set m_title, settle Navigate.
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonString(jsonField(inner, { "value", 5 }));
         view->m_title = WTF::String::fromUTF8(value);
-        if (endsNavigation) settle(g, view, entry.slot, true, jsUndefined());
+        if (entry.method == Method::PageTitle) settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
 
@@ -945,18 +917,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         }
         auto elem = entries->get(static_cast<unsigned>(target))->asObject();
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
-        view->m_chromeTraversalUrl = elem ? elem->getString("url"_s) : WTF::String();
-        // Chain into navigateToHistoryEntry. The traversal starts now.
-        startNavigation(view, ChromeNavigationKind::Requested);
+        // Chain into navigateToHistoryEntry. Chrome's {} reply does not say
+        // whether the entry is a document of its own, so either commit kind
+        // ends the traversal.
+        view->m_chromeSettleOnSameDocument = true;
+        view->m_chromeSettleOnLoad = true;
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
         send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId)).num("entryId"_s, entryId));
         return;
     }
     case Method::PageNavigateToHistoryEntry:
-        // Empty {} on success: the traversal is underway, so the next commit is its own.
-        if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested)
-            view->m_chromeNavigationKind = ChromeNavigationKind::Unknown;
+        // Empty {} on success. The commit settles.
         return;
 
     case Method::RuntimeEvaluate: {
@@ -1158,24 +1130,34 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 }
 
-// Subframes navigate too. Before the first main frame commit there are none.
+// The main frame's id is the target's id. Subframes (an <iframe>) navigate too,
+// and those commits are not the view's.
 static bool isMainFrame(JSWebView* view, std::span<const char> frameId)
 {
-    return view->m_mainFrameId.isEmpty() || view->m_mainFrameId == WTF::String::fromUTF8(frameId);
+    auto& target = view->m_targetId;
+    if (!target.is8Bit() || target.length() != frameId.size()) return false;
+    return memcmp(target.span8().data(), frameId.data(), frameId.size()) == 0;
 }
 
-// Chrome answers a navigation command before its document commits, so a commit in any other state is the page's own.
-static bool commitIsNavigations(JSWebView* view)
-{
-    auto kind = view->m_chromeNavigationKind;
-    return kind != ChromeNavigationKind::NotRequested && kind != ChromeNavigationKind::Requested;
-}
-
-void Transport::sendTitleFetch(JSWebView* view, bool endsNavigation)
+// Runtime.evaluate("document.title"). A PageTitle reply settles the Navigate
+// slot, so it goes out once per navigation; a PageTitleRefresh only updates
+// m_title.
+void Transport::sendTitleFetch(JSWebView* view, Method method)
 {
     uint32_t tid = nextId();
-    m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, endsNavigation ? view->m_chromeNavigationSeq : 0 });
+    m_pending.add(tid, Pending { method, PendingSlot::Navigate, view->m_viewId });
     send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+}
+
+// The view's navigation ends here: its title fetch settles the slot. The bits
+// clear now so a second commit before the reply is the page's own.
+static void endNavigation(Transport& t, JSWebView* view)
+{
+    view->m_loading = false;
+    view->m_chromeSettleOnSameDocument = false;
+    view->m_chromeSettleOnLoad = false;
+    view->m_chromeNavigationCommitted = false;
+    t.sendTitleFetch(view, Method::PageTitle);
 }
 
 static void fireOnNavigated(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
@@ -1186,15 +1168,19 @@ static void fireOnNavigated(JSGlobalObject* g, JSWebView* view, const WTF::Strin
     }
 }
 
-// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?}, type}: a document committed.
+// Page.frameNavigated {frame: {id, url, urlFragment?}, type}: a document committed.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto frame = jsonField(params, { "frame", 5 });
-    if (!jsonField(frame, { "parentId", 8 }).empty()) return; // an <iframe>'s own navigation
-    view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
-    if (commitIsNavigations(view)) {
+    if (!isMainFrame(view, jsonString(jsonField(frame, { "id", 2 })))) return;
+    // A document commit while a navigation is armed is that navigation's, and
+    // its load event ends it, whatever the reply said: the renderer turns a
+    // same-document Page.navigate into a document load for a <frameset> page
+    // or when a pushState() races it, and a traversal's reply says nothing.
+    if (view->m_chromeSettleOnSameDocument || view->m_chromeSettleOnLoad) {
+        view->m_chromeSettleOnSameDocument = false;
+        view->m_chromeSettleOnLoad = true;
         view->m_chromeNavigationCommitted = true;
-        view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
     }
 
     // frame.url omits the fragment; frame.urlFragment ("#x") carries it.
@@ -1214,28 +1200,49 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     fireOnNavigated(m_global, view, view->m_url);
 }
 
-// Page.navigatedWithinDocument {frameId, url, navigationType?}: a same-document commit (#fragment, pushState). No load event follows.
+// Page.navigatedWithinDocument {frameId, url, navigationType?}: a same-document
+// commit. No load event follows. Only "historyApi" (the page's own pushState()
+// or replaceState()) is known not to be the view's navigation: a #fragment
+// navigate() and a traversal report "fragment", or "other" when the page's
+// Navigation API intercepts them, the same as the page's own location.hash
+// changes. navigationType is Chrome 129+; without it every commit counts.
 void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char> params)
 {
     if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
 
-    if (sameDocumentCommitEndsNavigation(view, params)) {
-        sendTitleFetch(view, true);
-        navigationConsumed(view);
+    if (view->m_chromeSettleOnSameDocument && view->m_pendingNavigate) {
+        auto navigationType = jsonString(jsonField(params, { "navigationType", 14 }));
+        bool pagesOwn = navigationType.size() == 10 && memcmp(navigationType.data(), "historyApi", 10) == 0;
+        if (!pagesOwn) endNavigation(*this, view);
     }
 
     // After the settle decision: the callback is user code and may navigate() next.
     fireOnNavigated(m_global, view, view->m_url);
 }
 
-// Page.loadEventFired (page-level: no frame, no loader): the live document loaded. Title fetch, then settle.
+// Page.frameStoppedLoading {frameId}: the frame is idle again. A same-document
+// navigate() that the page's Navigation API cancelled (preventDefault()) gets
+// this and no commit, so the navigation has failed. For every other kind the
+// commit has cleared or converted the same-document bit before this arrives.
+void Transport::onFrameStoppedLoading(JSWebView* view, std::span<const char> params)
+{
+    if (!view->m_chromeSettleOnSameDocument || view->m_chromeSettleOnLoad || !view->m_pendingNavigate) return;
+    if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
+    settleFailure(m_global, view, PendingSlot::Navigate, Method::PageNavigate, createError(m_global, "navigation cancelled by the page"_s));
+}
+
+// Page.loadEventFired (page-level: no frame, no loader): the live document
+// loaded. It ends the view's navigation only once that navigation's own
+// document has committed; a load the page started on its own only refreshes
+// the title.
 void Transport::onLoadEventFired(JSWebView* view)
 {
-    bool endsNavigation = view->m_pendingNavigate && view->m_chromeNavigationCommitted;
-    // For a load that is not the view's navigation, the fetch only updates m_title.
-    sendTitleFetch(view, endsNavigation);
-    if (endsNavigation) navigationConsumed(view);
+    if (view->m_chromeSettleOnLoad && view->m_chromeNavigationCommitted && view->m_pendingNavigate)
+        return endNavigation(*this, view);
+    // The view's navigation, if any, is still loading.
+    if (!view->m_pendingNavigate) view->m_loading = false;
+    sendTitleFetch(view, Method::PageTitleRefresh);
 }
 
 void Transport::handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId)
@@ -1282,9 +1289,11 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return onFrameNavigated(view, params);
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0)
         return onLoadEventFired(view);
-    // Not intercepted before, so it goes on to addEventListener() below as it always has.
+    // Neither was intercepted before, so both go on to addEventListener() below as they always have.
     if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
         onNavigatedWithinDocument(view, params);
+    if (method.size() == 24 && memcmp(method.data(), "Page.frameStoppedLoading", 24) == 0)
+        onFrameStoppedLoading(view, params);
 
     // Runtime.consoleAPICalled — fires for every console.* call in the page.
     // params: {"type":"log","args":[<RemoteObject>,...],"stackTrace":{...}}.
@@ -1510,8 +1519,9 @@ void Transport::retireGlobal(Zig::GlobalObject* global)
 // One CDP::Command per op. Input.* and Page.captureScreenshot are
 // synchronous-reply — the response means the operation completed, so these
 // settle immediately on response. Page.navigate's response means the
-// navigation started; actual load completion arrives via Page.loadEventFired
-// (handled in Transport::handleEvent).
+// navigation started; completion arrives as an event (handled in
+// Transport::handleEvent): Page.loadEventFired for a document load,
+// Page.navigatedWithinDocument for a #fragment of the current one.
 
 namespace Ops {
 
@@ -1545,12 +1555,11 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
 // The first navigate() kicks off the attach chain: Target.createTarget
 // (browser-level, no sessionId) → Target.attachToTarget → Page.enable →
 // Page.navigate(url). Each response chains into the next command; the
-// Navigate slot promise resolves on Page.loadEventFired, not on any
-// response. Subsequent navigates skip straight to Page.navigate.
+// Navigate slot promise resolves on the commit, not on any response.
+// Subsequent navigates skip straight to Page.navigate.
 JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
 {
     auto& t = transport();
-    startNavigation(view, ChromeNavigationKind::Requested);
 
     if (!view->m_sessionId.isEmpty()) {
         uint32_t id = t.nextId();
@@ -1563,7 +1572,7 @@ JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
     // First navigate: start the chain. Stash url; the PageEnable response
     // handler in Transport::handleResponse reads it and sends Page.navigate.
     // The Navigate slot promise is created now; it resolves much later on
-    // Page.loadEventFired. The chain carries the same Weak<view> forward
+    // the commit. The chain carries the same Weak<view> forward
     // so the pending activity count keeps this object rooted the whole time.
     //
     // newWindow:true is required for width/height — without it Chrome
@@ -1844,11 +1853,9 @@ static JSPromise* historyGo(JSGlobalObject* g, JSWebView* view, int8_t delta)
 {
     auto& t = transport();
     view->m_chromeHistoryDelta = delta;
-    // Nothing is asked of Chrome until the history lookup replies.
-    view->m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
     uint32_t id = t.nextId();
-    // Navigate slot — navigateToHistoryEntry IS a navigation and
-    // Page.loadEventFired settles PendingSlot::Navigate only.
+    // Navigate slot — navigateToHistoryEntry IS a navigation and its commit
+    // settles PendingSlot::Navigate only.
     return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
         Method::PageGetNavigationHistory, id,
         Command(id, "Page.getNavigationHistory"_s, sidSpan(view->m_sessionId)));
@@ -1860,10 +1867,11 @@ JSPromise* goForward(JSGlobalObject* g, JSWebView* view) { return historyGo(g, v
 JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 {
     auto& t = transport();
-    // A reload always loads the document again. Its reply comes from the renderer and can trail the commit, so it gates nothing.
-    startNavigation(view, ChromeNavigationKind::CrossDocument);
+    // A reload always loads the document again. Chrome's reply comes from
+    // the renderer and can trail the commit, so the bit is set now.
+    view->m_chromeSettleOnLoad = true;
     uint32_t id = t.nextId();
-    // Navigate slot — reload IS a navigation. Page.loadEventFired only
+    // Navigate slot — reload IS a navigation. The load event only
     // settles PendingSlot::Navigate; using Misc would hang waiting for a
     // settle that never comes. WKWebView's reload uses Misc because its
     // Op::Reload Ack is synchronous.

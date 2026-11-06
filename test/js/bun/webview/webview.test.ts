@@ -324,6 +324,93 @@ it("onNavigated callback fires", async () => {
   expect(view.onNavigated).toBe(null);
 });
 
+// A navigation that stays in the same document (a #fragment change) gets no
+// didFinishNavigation:. The host settles it from the same-document delegate
+// instead, once per navigation, and a history traversal within the document
+// reports through the same path.
+it("navigate() to a #fragment of the current page resolves and fires onNavigated once", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("<title>frag</title><h1>hi</h1>", { headers: { "content-type": "text/html" } }),
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(base);
+  const urls: string[] = [];
+  view.onNavigated = (url: string) => void urls.push(url);
+
+  await view.navigate(base + "#one");
+  expect({ url: view.url, hash: await view.evaluate("location.hash"), loading: view.loading }).toEqual({
+    url: base + "#one",
+    hash: "#one",
+    loading: false,
+  });
+  // The URL the view is already at is a reload for WebKit (FrameLoadType::Same),
+  // which ends with didFinishNavigation:. A fragment seen before is a
+  // same-document navigation again.
+  await view.navigate(base + "#one");
+  await view.navigate(base + "#two");
+  await view.navigate(base + "#one");
+  expect(urls).toEqual([base + "#one", base + "#one", base + "#two", base + "#one"]);
+
+  // A traversal between two #fragment entries reports through the same path.
+  await view.goBack();
+  expect(await view.evaluate("location.hash")).toBe("#two");
+  expect(urls.at(-1)).toBe(base + "#two");
+});
+
+it("a pushState() by the page updates view.url and fires onNavigated", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("<title>spa</title><h1>hi</h1>", { headers: { "content-type": "text/html" } }),
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(base);
+  const urls: string[] = [];
+  view.onNavigated = (url: string) => void urls.push(url);
+  await view.evaluate("history.pushState({}, '', '/app/home'), 0");
+  // The NavEvent is ahead of the next reply on the pipe.
+  await view.evaluate("1");
+  expect({ url: view.url, urls, loading: view.loading }).toEqual({
+    url: base + "app/home",
+    urls: [base + "app/home"],
+    loading: false,
+  });
+});
+
+it("a replaceState() while the document loads does not end navigate() or clear loading", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/late.gif") {
+        await Bun.sleep(300);
+        return new Response("GIF89a", { headers: { "content-type": "image/gif" } });
+      }
+      return new Response(
+        "<title>spa</title><script>history.replaceState({}, '', '/app/home')</script><img src='/late.gif'>",
+        { headers: { "content-type": "text/html" } },
+      );
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  const seen: [string, boolean][] = [];
+  view.onNavigated = (url: string) => void seen.push([url, view.loading]);
+  await view.navigate(base + "spa");
+  // The page's own commit reports with the navigation still in flight. The
+  // load ends it, and the callback runs before the promise resolves.
+  expect({ url: view.url, loading: view.loading, seen }).toEqual({
+    url: base + "app/home",
+    loading: false,
+    seen: [
+      [base + "app/home", true],
+      [base + "app/home", true],
+    ],
+  });
+});
+
 it("console callback receives (type, ...args)", async () => {
   const calls: [string, ...unknown[]][] = [];
   await using view = new Bun.WebView({

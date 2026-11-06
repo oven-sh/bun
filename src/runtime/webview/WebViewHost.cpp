@@ -708,6 +708,24 @@ void WebViewHost::onNavigationFinished()
     hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
+// A same-document navigation gets no didFinishNavigation:. WebKit reports every
+// one of them as SessionStatePop (FrameLoader::loadInSameDocument), and the
+// only AnchorNavigation it sends follows that report for the same URL, so the
+// anchor report is dropped. SessionStatePush and SessionStateReplace are the
+// page's own history.pushState()/replaceState(): they update url/title and run
+// onNavigated, and settle no navigate().
+void WebViewHost::onSameDocumentNavigation(long type)
+{
+    constexpr long anchorNavigation = 0;
+    constexpr long sessionStatePop = 3;
+    if (type == anchorNavigation) return;
+    auto payload = pack2(url(), title());
+    hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
+    if (type != sessionStatePop) return;
+    if (!std::exchange(m_navPending, false)) return;
+    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
 void WebViewHost::onNavigationFailed(const WTF::String& err)
 {
     // The event fires the callback; NavFailed settles the navigate slot and

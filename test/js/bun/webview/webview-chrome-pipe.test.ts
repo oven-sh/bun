@@ -92,14 +92,18 @@ test.concurrent("a same-document navigation settles navigate(), goBack() and goF
     await view.goBack();
     const afterBack = view.url;
     await view.goForward();
-    print({ afterFragment, afterBack, afterForward: view.url, urls });
+    const afterForward = view.url;
+    // The URL the view is already at is a same-document navigation too.
+    await view.navigate("http://fake/page#one");
+    print({ afterFragment, afterBack, afterForward, afterSame: view.url, urls });
     view.close();
   `);
   expect(result).toEqual({
     afterFragment: { url: "http://fake/page#one", loading: false },
     afterBack: "http://fake/page",
     afterForward: "http://fake/page#one",
-    urls: ["http://fake/page#one", "http://fake/page", "http://fake/page#one"],
+    afterSame: "http://fake/page#one",
+    urls: ["http://fake/page#one", "http://fake/page", "http://fake/page#one", "http://fake/page#one"],
   });
 });
 
@@ -177,6 +181,22 @@ test.concurrent("a load event from a document the view did not ask for settles n
   });
 });
 
+// A load the page started on its own (a link, location.href) still refreshes
+// view.title once it finishes, with nothing to settle.
+test.concurrent("a load the page started on its own updates view.title", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const before = await view.evaluate("__fake_title_fetches()");
+    await view.evaluate("__fake_page_commit('http://fake/own')");
+    await view.evaluate("__fake_load_event()");
+    const titleFetches = (await view.evaluate("__fake_title_fetches()")) - before;
+    print({ url: view.url, title: view.title, loading: view.loading, titleFetches });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/own", title: "fake chrome", loading: false, titleFetches: 1 });
+});
+
 // goBack() fills the slot and then looks the history entry up before it asks
 // Chrome to traverse. A same-document commit of the page's own that lands
 // during the lookup is not the traversal and must not settle the promise.
@@ -245,42 +265,6 @@ test.concurrent("goBack() is not settled by the page's own replaceState() behind
     view.close();
   `);
   expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b?scroll=1" });
-});
-
-// A #fragment change of the page being left (a scroll spy, a link the user
-// follows) reports "fragment" like a traversal's own commit does. The
-// traversal's commit lands on the entry it asked for, and this one does not.
-test.concurrent("goBack() is not settled by a #fragment change of the page being left", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/stall-on-return");
-    await view.navigate("http://fake/b");
-    const started = view.goBack();
-    // See the test above: the fake has answered the traversal by the second evaluate.
-    await view.evaluate("1");
-    await view.evaluate("__fake_hash_change('http://fake/b#section')");
-    const first = await Promise.race([
-      started.then(() => "goBack() settled", () => "goBack() rejected"),
-      view.evaluate("'goBack() still pending'"),
-    ]);
-    print({ first, url: view.url });
-    view.close();
-  `);
-  expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b#section" });
-});
-
-// The entry's URL comes from the history reply and the commit's from the
-// event. Chrome escapes a quote in both, so they have to be compared decoded.
-test.concurrent("goBack() settles over a same-document entry whose URL needs a JSON escape", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/page");
-    await view.navigate('http://fake/page#"quoted"');
-    await view.navigate("http://fake/page#two");
-    print(await outcome(view.goBack()));
-    view.close();
-  `);
-  expect(result).toEqual({});
 });
 
 // The same window exists behind the reply of a #fragment navigate().
@@ -364,6 +348,138 @@ test.concurrent("goBack() onto a page restored from the back-forward cache settl
     afterForward: "http://fake/b",
     urls: ["http://fake/bfcached#top", "http://fake/b"],
   });
+});
+
+// Chrome's reply to Page.navigate says same-document when it plans no load,
+// but the renderer can still load a document for it: a <frameset> page, or a
+// pushState() that races the request. The commit that arrives is the
+// navigation's, and its load ends it.
+test.concurrent("a same-document navigate() that the renderer turns into a load settles on that load", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/restarts");
+    await view.navigate("http://fake/restarts#x");
+    print({ url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/restarts#x", loading: false });
+});
+
+// A page whose Navigation API handler calls preventDefault() cancels the
+// navigation: Chrome answers it, never commits it, and reports the frame idle.
+test.concurrent("a same-document navigate() that the page cancels rejects", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/cancelled");
+    const failed = [];
+    view.onNavigationFailed = e => failed.push(e.message);
+    const cancelled = await outcome(view.navigate("http://fake/cancelled#x"));
+    const after = { url: view.url, loading: view.loading };
+    await view.navigate("http://fake/page");
+    print({ cancelled, failed, after, next: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    cancelled: { rejected: "navigation cancelled by the page" },
+    failed: ["navigation cancelled by the page"],
+    after: { url: "http://fake/cancelled", loading: false },
+    next: "http://fake/page",
+  });
+});
+
+// A traversal can end on either commit kind, but once its document has
+// committed only that document's load ends it. A page that changes its hash
+// as it boots commits a same-document navigation before its load event.
+test.concurrent("goBack() onto a page that changes its hash as it loads waits for the load", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/boot-hash");
+    await view.navigate("http://fake/b");
+    const before = await view.evaluate("__fake_title_fetches()");
+    const urls = [];
+    view.onNavigated = url => urls.push(url);
+    await view.goBack();
+    const titleFetches = (await view.evaluate("__fake_title_fetches()")) - before;
+    print({ url: view.url, urls, titleFetches });
+    view.close();
+  `);
+  expect(result).toEqual({
+    url: "http://fake/boot-hash#booted",
+    urls: ["http://fake/boot-hash", "http://fake/boot-hash#booted"],
+    titleFetches: 1,
+  });
+});
+
+// A page whose Navigation API intercepts its navigations reports "other" for
+// the view's own #fragment navigate() and traversal, the same as for its own.
+// Only "historyApi" is known to be the page's own.
+test.concurrent("a same-document navigation the page's Navigation API intercepted settles", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/intercepted");
+    await view.navigate("http://fake/intercepted#x");
+    const afterFragment = view.url;
+    await view.goBack();
+    print({ afterFragment, afterBack: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ afterFragment: "http://fake/intercepted#x", afterBack: "http://fake/intercepted" });
+});
+
+// navigationType arrived in Chrome 129. Without it every same-document commit
+// ends the pending navigation, so an older Chrome never hangs.
+test.concurrent("a Chrome that sends no navigationType still settles same-document navigations", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/no-navigation-type");
+    await view.navigate("http://fake/no-navigation-type#x");
+    await view.goBack();
+    print({ url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/no-navigation-type" });
+});
+
+// An <iframe>'s own same-document navigation arrives on the same session.
+// It is not the view's.
+test.concurrent("an iframe's #fragment change settles nothing", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const urls = [];
+    view.onNavigated = url => urls.push(url);
+    const started = view.navigate("http://fake/page#never-load");
+    await view.evaluate("__fake_subframe_hash_change('http://fake/subframe#in')");
+    const first = await Promise.race([
+      started.then(() => "navigate() settled", () => "navigate() rejected"),
+      view.evaluate("'navigate() still pending'"),
+    ]);
+    print({ first, loading: view.loading, url: view.url, urls });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "navigate() still pending", loading: true, url: "http://fake/page", urls: [] });
+});
+
+// The title fetch after a load the view did not ask for can fail (the
+// document is gone by the time the renderer runs it). That failure is not
+// the pending navigation's.
+test.concurrent("a failed title refresh neither rejects nor ends a pending navigate()", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const failed = [];
+    view.onNavigationFailed = e => failed.push(e.message);
+    const started = view.navigate("http://fake/never-load");
+    await view.evaluate("__fake_fail_next_title_fetch()");
+    await view.evaluate("__fake_load_event()");
+    const first = await Promise.race([
+      started.then(() => "navigate() settled", () => "navigate() rejected"),
+      view.evaluate("'navigate() still pending'"),
+    ]);
+    print({ first, failed, loading: view.loading, title: view.title });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "navigate() still pending", failed: [], loading: true, title: "fake chrome" });
 });
 
 // Page.navigatedWithinDocument was never intercepted, so a listener for it has

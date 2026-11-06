@@ -63,6 +63,7 @@ let currentSessionId: string | undefined;
 const onNext = new Map<string, string>();
 // How many document.title fetches the runtime has sent: one per navigation.
 let titleFetches = 0;
+let failNextTitleFetch = false;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -79,7 +80,7 @@ Object.assign(globalThis, {
   // Page.navigatedWithinDocument with nothing before it, no new history entry.
   __fake_replace_state(url: string) {
     if (historyIndex >= 0) history[historyIndex].url = url;
-    event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "historyApi" });
+    event("Page.navigatedWithinDocument", { frameId: mainFrameId(), url, navigationType: "historyApi" });
   },
   // The page follows a #fragment link of its own, or assigns location.hash:
   // a new history entry, and a commit that reports "fragment" the way a
@@ -88,13 +89,22 @@ Object.assign(globalThis, {
     pushEntry(url);
     commitSameDocument(url);
   },
+  // An <iframe> follows a #fragment link of its own.
+  __fake_subframe_hash_change(url: string) {
+    commitSameDocument(url, "SUB");
+  },
+  // The next document.title fetch fails, the way one does when the document
+  // it was sent to is gone by the time the renderer runs it.
+  __fake_fail_next_title_fetch() {
+    failNextTitleFetch = true;
+  },
   // The page navigates itself to a new document (a link, `location.href = ...`):
   // it commits, and only __fake_load_event() finishes it.
   __fake_page_commit(url: string) {
     loads++;
     pushEntry(url);
     event("Page.frameNavigated", {
-      frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" },
+      frame: { id: mainFrameId(), loaderId: "P" + loads, url, mimeType: "text/html" },
       type: "Navigation",
     });
   },
@@ -152,6 +162,11 @@ function sendWithInvalidUtf8(message: unknown) {
 function event(method: string, params: unknown) {
   send({ method, params, sessionId: currentSessionId });
 }
+
+// The main frame's id is the target's id, as in Chrome. Session "S<n>" is
+// attached to target "T<n>".
+function mainFrameId() {
+  return "T" + currentSessionId?.slice(1);
 }
 
 let targets = 0;
@@ -169,10 +184,23 @@ const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("
 // server that accepts the connection and then says nothing looks. One with
 // "stall-on-return" loads when navigated to, but a history traversal back to
 // it starts and never commits. One with "bfcached" in it comes back whole
-// from the back-forward cache when a history traversal returns to it.
+// from the back-forward cache when a history traversal returns to it. One
+// with "intercepted" in it is a page whose Navigation API handles every
+// same-document navigation, so those commit with navigationType "other". One
+// with "cancelled" in it is such a page that calls preventDefault(): the
+// navigation is answered, never commits, and the frame goes idle. One with
+// "restarts" in it is a <frameset> page, where the renderer turns a
+// same-document navigation into a document load. One with "boot-hash" in it
+// sets location.hash as it loads. One with "no-navigation-type" in it is an
+// older Chrome that sends Page.navigatedWithinDocument without the field.
 const neverLoads = (url: string) => url.includes("never-load");
 const stallsOnReturn = (url: string) => url.includes("stall-on-return");
 const bfcached = (url: string) => url.includes("bfcached");
+const intercepted = (url: string) => url.includes("intercepted");
+const cancelled = (url: string) => url.includes("cancelled");
+const restarts = (url: string) => url.includes("restarts");
+const bootHash = (url: string) => url.includes("boot-hash");
+const noNavigationType = (url: string) => url.includes("no-navigation-type");
 
 function pushEntry(url: string) {
   history.length = historyIndex + 1;
@@ -186,13 +214,14 @@ function pushEntry(url: string) {
 // nothing follows.
 function commitDocument(url: string, type: "Navigation" | "BackForwardCacheRestore") {
   const fragment = fragmentOf(url);
-  const frame = { id: "F", loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
+  const frame = { id: mainFrameId(), loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
   event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame, type });
   if (type === "BackForwardCacheRestore") return;
   if (subframeNavigation) {
-    const subframe = { id: "SUB", parentId: "F", loaderId: "S" + loads, url: "http://fake/subframe" };
+    const subframe = { id: "SUB", parentId: mainFrameId(), loaderId: "S" + loads, url: "http://fake/subframe" };
     event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" }, type });
   }
+  if (bootHash(url)) commitSameDocument(url + "#booted");
   event("Page.loadEventFired", { timestamp: loads });
   // Send one stray event per load, with a missing or unusable sessionId.
   if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
@@ -201,10 +230,13 @@ function commitDocument(url: string, type: "Navigation" | "BackForwardCacheResto
   }
 }
 
-// A same-document navigation of the runtime's commits: a #fragment target and
-// a history traversal both report "fragment". No load event follows.
-function commitSameDocument(url: string) {
-  event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
+// A same-document navigation of the runtime's commits. A #fragment target and
+// a history traversal both report "fragment", or "other" when the page's
+// Navigation API intercepted them. No load event follows.
+function commitSameDocument(url: string, frameId = mainFrameId()) {
+  const navigationType = intercepted(url) ? "other" : "fragment";
+  if (noNavigationType(url)) return event("Page.navigatedWithinDocument", { frameId, url });
+  event("Page.navigatedWithinDocument", { frameId, url, navigationType });
 }
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
@@ -233,18 +265,23 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       const url: string = params.url;
-      if (navigateError) return reply({ frameId: "F", errorText: navigateError });
+      if (navigateError) return reply({ frameId: mainFrameId(), errorText: navigateError });
       if (malformed === "navigate-bad-utf8") {
-        return sendWithInvalidUtf8({ id, result: { frameId: "F", errorText: BAD_UTF8 }, sessionId });
+        return sendWithInvalidUtf8({ id, result: { frameId: mainFrameId(), errorText: BAD_UTF8 }, sessionId });
       }
       // A #fragment target of the current document keeps that document.
       const current = history[historyIndex]?.url;
       const sameDocument = current !== undefined && documentOf(current) === documentOf(url) && fragmentOf(url) !== "";
       if (!sameDocument) loads++;
       // The reply names a loaderId only for a navigation that loads a document.
-      reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
+      reply(sameDocument ? { frameId: mainFrameId() } : { frameId: mainFrameId(), loaderId: "L" + loads });
       if (neverLoads(url)) return;
+      if (sameDocument && cancelled(url)) return event("Page.frameStoppedLoading", { frameId: mainFrameId() });
       pushEntry(url);
+      if (sameDocument && restarts(url)) {
+        loads++;
+        return commitDocument(url, "Navigation");
+      }
       return sameDocument ? commitSameDocument(url) : commitDocument(url, "Navigation");
     }
     case "Page.getNavigationHistory":
@@ -271,6 +308,11 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       if (params.expression === "document.title") {
         titleFetches++;
         if (noTitleReply) return;
+        if (failNextTitleFetch) {
+          failNextTitleFetch = false;
+          const error = { code: -32000, message: "Cannot find context with specified id" };
+          return send({ id, error, sessionId });
+        }
         return reply({ result: { type: "string", value: "fake chrome" } });
       }
       // This is the click(selector) actionability check. It needs a DOM, so

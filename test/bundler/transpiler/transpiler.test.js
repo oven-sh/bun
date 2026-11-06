@@ -4186,14 +4186,11 @@ console.log(resolve.length)
 
   it("optional chain under a conditional in a new callee", () => {
     // The chain must stay whole: `(a.b?.()).c` is another program.
-    for (const code of [
-      "new ((a.b?.().c) ? y : z)()",
-      "new (y ? z : (a.b?.().c))()",
-      "new (((a.b?.().c) ? y : z)`x`)()",
-      "new ((y ? z : (a.b?.().c))`x`)()",
-    ]) {
-      expect(parsed(code)).toContain("a.b?.().c");
-    }
+    // The pair around it is not needed: the conditional hands the flags of `new` to its test and its last branch.
+    expectPrinted_("new ((a.b?.().c) ? y : z)()", "new ((a.b?.().c) ? y : z)");
+    expectPrinted_("new (y ? z : (a.b?.().c))()", "new (y ? z : (a.b?.().c))");
+    expectPrinted_("new (((a.b?.().c) ? y : z)`x`)()", "new ((a.b?.().c) ? y : z)`x`");
+    expectPrinted_("new ((y ? z : (a.b?.().c))`x`)()", "new (y ? z : (a.b?.().c))`x`");
   });
 
   it("optional chain that a fold leaves as a new callee or a template tag", () => {
@@ -4202,9 +4199,9 @@ console.log(resolve.length)
     expectPrinted_("new (1 ? a?.b : 0)()", "new (a?.b)");
     expectPrintedMin_("new (0, a?.b)()", "new (a?.b)");
     expectPrinted_("new (true && a()`x`)()", "new (a())`x`");
-    // The parentheses are what this pins. The receiver of such a tag is https://github.com/oven-sh/bun/issues/44578.
-    expect(parsed("(true && a?.b)`x`")).toEndWith("a?.b)`x`");
-    expect(parsed("(0, a?.b)`x`", true, false, transpilerMinifySyntax)).toEndWith("a?.b)`x`");
+    // These rows are about the parentheses. The receiver of a tag that a fold leaves is https://github.com/oven-sh/bun/issues/44578.
+    expectPrinted_("(true && a?.b)`x`", "(a?.b)`x`");
+    expectPrintedMin_("(0, a?.b)`x`", "(a?.b)`x`");
   });
 
   // The rows of esbuild's TestTemplate at e0755b4692 that have a tag or `new`.

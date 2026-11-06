@@ -1,0 +1,4 @@
+status: 0
+script: 7f32213070f3f1ee
+---
+frames of deep() and catches() that lack their caller, by the way they were reached: {'frames': 0, 'tracebacks': 0, 'exceptions': 0}

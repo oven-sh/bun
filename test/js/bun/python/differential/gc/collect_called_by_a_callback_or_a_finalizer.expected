@@ -1,0 +1,7 @@
+status: 0
+script: f739c76cca73dbbf
+---
+a callback that calls gc.collect() hears of no more than twice as much as one that does nothing: True ; start and stop in turn: True True
+nobody listens: what a finalizer drops and has collected is gone when the program goes on: True
+somebody listens: True
+after two threads have been in callbacks at the same time, in each of three threads: [True, True, True]

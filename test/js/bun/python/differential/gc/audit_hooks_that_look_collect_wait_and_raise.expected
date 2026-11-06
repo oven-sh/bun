@@ -1,0 +1,6 @@
+status: 0
+script: a9278aa556aca7d1
+---
+exceptions were handed out: True
+a hook has raised out of gc.get_referents(): True
+wrong: []

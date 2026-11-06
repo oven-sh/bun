@@ -2902,6 +2902,9 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
       `${block}\n${script}\n${template}`,
       `${template}\n${block}\n${block}\n${script}`,
     ]),
+    // An end tag that closes nothing, which is no error next to an element without an end tag.
+    '<template lang="pug">\n<template></template>\n<input />\n<!-- prettier-ignore -->\n</template>\n\n\n<style lang="scss">\na{}\n</style>\n\n\n<!-- c -->\n',
+    '<template lang="pug">\n<template></template>\n<input />\n<!-- display: block -->\n\n</template>\n<style>\na{}\n</style>\n\n\n<p>c</p>\n',
     `${template}\n${script}`.trimEnd(),
     `\n${template}\n${script}`,
     `﻿${template}\n${script}`,

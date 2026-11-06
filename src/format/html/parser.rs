@@ -131,9 +131,11 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
             }
         };
         // A comment can say how what follows it is printed. A text becomes a part of the CDATA section in front of it.
-        if (self.tree.last_child(container))
-            .is_some_and(|last| matches!(self.tree[last].kind, Kind::Comment | Kind::Cdata))
-        {
+        if (self.tree.last_child(container)).is_some_and(|last| match self.tree[last].kind {
+            Kind::Comment | Kind::Cdata => true,
+            Kind::Text => self.is_white_space_behind_comment(last),
+            _ => false,
+        }) {
             return None;
         }
         Some(Parent {
@@ -142,6 +144,19 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
             is_in_svg,
             has_children: self.tree.has_children(container),
         })
+    }
+
+    /// White space is a text by the time a run is asked for if an end tag that closes nothing follows it.
+    #[cold]
+    fn is_white_space_behind_comment(&self, text: Id) -> bool {
+        let mut last = Some(text);
+        while let Some(text) = last.filter(|&it| {
+            let node = &self.tree[it];
+            node.kind == Kind::Text && node.span.of(self.text).trim_ascii().is_empty()
+        }) {
+            last = self.tree.prev(text);
+        }
+        last.is_some_and(|last| matches!(self.tree[last].kind, Kind::Comment | Kind::Cdata))
     }
 
     fn consume_ready(&mut self, token: Token) {

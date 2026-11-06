@@ -25,6 +25,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+/// Round brackets stand around a link of an optional chain where what reads from it or calls it is no link of the chain: `(a?.b).c`, `(a?.b)()`.
+pub(in crate::lower) fn is_link_in_brackets(chain: Chain, has_parent_outside_chain: bool) -> bool {
+    chain != Chain::No && has_parent_outside_chain
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn lower_chain_base(
         &mut self,

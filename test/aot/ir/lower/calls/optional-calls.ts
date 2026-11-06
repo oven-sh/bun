@@ -41,7 +41,7 @@
 // CHECK: [[skipped]] = Undefined
 // CHECK-NEXT: Jump -> next [[join]]([[skipped]], [[skipped]])
 // CHECK: [[join]]([[function]], [[this]]):
-// CHECK-NEXT: = Call [[function]], [[this]], [[x]] calleeName="o?.m"
+// CHECK-NEXT: = Call [[function]], [[this]], [[x]] calleeName="(o?.m)"
 // CHECK-NOT: calleeKey
 
 // RUN(EXITS): lower

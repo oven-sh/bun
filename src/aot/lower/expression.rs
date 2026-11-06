@@ -26,7 +26,7 @@ use crate::ir::generated::MAX_TRACKED_INTEGER;
 use crate::ir::{BlockId, DeclaredType, ValueId};
 
 pub(in crate::lower) use self::assignment::AssignmentTarget;
-pub(in crate::lower) use self::chain::ShortCircuit;
+pub(in crate::lower) use self::chain::{ShortCircuit, is_link_in_brackets};
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct TailCast<'t> {

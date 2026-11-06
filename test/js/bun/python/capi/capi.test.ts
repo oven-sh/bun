@@ -285,7 +285,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   );
 
   test.concurrent(
-    "C that runs for another interpreter is refused, and that costs the interpreter that has the API nothing",
+    "C that runs for another interpreter is refused, and the interpreter that has the API goes on letting go",
     async () => {
       expect(await runInTwo("another_interpreter.mjs")).toEqual({
         stdout: "main: (True, True)\n" + whatIsRefusedToAnother("worker", "worker") + "main: (True, True)\n",
@@ -443,6 +443,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
         expect(await runInTwo("realm_first.mjs", String(others), ...(how ? [how] : []))).toEqual({
           stdout:
             `realm has the API: True\n${main}the realm has gone: true ${others}\n` +
+            (how === "owes" ? "calls that C has counted: 0 0 1\n" : "") +
             `JS calls C: ${servedEverything(1)}\nJS calls C: ${refusedEverything(0)}\n${main}` +
             (mainToo ? "main, the next call and the next library: 7 CDLL\n" : ""),
           stderr: "",
@@ -560,7 +561,9 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     "neither a reference nor what C raised outlives a call that ends otherwise than by its result",
     async () => {
       expect(await run("here/ends_otherwise.py", "ownership")).toEqual({
-        stdout: "KeyError 0\nKeyError 0\nKeyError 0\nKeyError (7,)\nNone\nValueError by a function of a CDLL\nTrue\n",
+        stdout:
+          "KeyError 0\nKeyError 0\nKeyError 0\nKeyError (7,)\n5 (8,)\n5 SystemError 1\n-1 (1,)\n" +
+          "None\nValueError by a function of a CDLL\nTrue\n",
         stderr: "",
         exitCode: 0,
       });

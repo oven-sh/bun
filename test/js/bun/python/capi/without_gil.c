@@ -150,3 +150,8 @@ const char *ask_about_what_is_held(void)
 
 /* For whoever has loaded this without Python. */
 int is_initialized(void) { return Py_IsInitialized(); }
+
+/* For whoever wants to see that a call has been made. */
+static int calls_counted;
+void count_a_call(void) { calls_counted++; }
+int calls_that_were_counted(void) { return calls_counted; }

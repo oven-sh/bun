@@ -40,6 +40,16 @@ def is_held_until_given_back(libraries):
     return str((held, ref() is None))
 
 
+# From the next collection on this interpreter owes a call: the callback of a weak reference whose referent nothing refers to any more. C counts it.
+def owe_a_call(libraries):
+    global owed
+    lib = ctypes.CDLL(f"{libraries}/libwithout_gil.so")
+    cycle = [Thing()]
+    cycle.append(cycle)
+    owed = weakref.ref(cycle[0], lambda _: lib.count_a_call())
+    return "owes"
+
+
 # All that ctypes can do with objects short of calling C with the GIL.
 def all_but_a_call(libraries):
     return str([

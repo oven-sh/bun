@@ -180,6 +180,29 @@ PyObject *fill_tuple_returned_beside_an_exception(PyObject *item)
         return NULL;
     return tuple_returned_beside_an_exception;
 }
+/* The same where the value of the call is that of an out parameter. */
+PyObject *return_new_tuple_and_an_out_parameter(long *out)
+{
+    *out = 5;
+    tuple_returned_beside_an_exception = PyTuple_New(1);
+    return Py_NewRef(tuple_returned_beside_an_exception);
+}
+/* Wrong C (in CPython, a use after free): it gives back the only reference there is, returns the tuple all the same, and takes a reference again. The program has got the tuple. */
+static PyObject *tuple_given_back_and_returned;
+PyObject *give_back_and_return_new_tuple(void)
+{
+    tuple_given_back_and_returned = PyTuple_New(1);
+    PyTuple_SetItem(tuple_given_back_and_returned, 0, PyLong_FromLong(1));
+    Py_DECREF(tuple_given_back_and_returned);
+    return tuple_given_back_and_returned;
+}
+int change_tuple_given_back_and_returned(void)
+{
+    Py_INCREF(tuple_given_back_and_returned);
+    int status = PyTuple_SetItem(tuple_given_back_and_returned, 0, PyLong_FromLong(2));
+    PyErr_Clear();
+    return status;
+}
 /* What is returned beside an exception nobody looks at. */
 PyObject *raise_and_return_what_is_no_object(PyObject *type)
 {

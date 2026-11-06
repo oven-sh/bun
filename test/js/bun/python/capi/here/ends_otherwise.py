@@ -28,6 +28,21 @@ try:
     lib.raise_and_return_new_tuple(KeyError)
 except KeyError:
     print("KeyError", lib.fill_tuple_returned_beside_an_exception(7))
+# The value of a call with an out parameter is that parameter's: nobody gets what the function returned.
+with_out = ctypes.PYFUNCTYPE(py_object, ctypes.POINTER(c_long))(("return_new_tuple_and_an_out_parameter", lib), ((2, "out"),))
+print(with_out(), lib.fill_tuple_returned_beside_an_exception(8))
+# Unless somebody looks at it.
+seen = []
+with_out.errcheck = lambda result, function, arguments: seen.append(result) or arguments
+print(with_out(), end=" ")
+try:
+    lib.fill_tuple_returned_beside_an_exception(9)
+except SystemError:
+    print("SystemError", len(seen))
+# And the program has got what it has got, whatever C owned when it returned.
+lib.give_back_and_return_new_tuple.restype = py_object
+got = lib.give_back_and_return_new_tuple()
+print(lib.change_tuple_given_back_and_returned(), got)
 ref = weakref.ref(thing)
 del thing
 gc.collect()

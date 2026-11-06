@@ -1,4 +1,4 @@
-// C that runs for an interpreter which the API does not serve is refused, and that costs the interpreter which it serves nothing. argv: the directory of the libraries.
+// C that runs for an interpreter which the API does not serve is refused, and the interpreter which it serves goes on letting go of what C gives back. argv: the directory of the libraries.
 import { Worker, isMainThread, workerData } from "node:worker_threads";
 import {
   all_but_a_call,

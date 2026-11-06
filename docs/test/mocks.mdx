@@ -517,7 +517,7 @@ A test file can mock a module that the preload script already mocked. With `vi.m
 
 Top-level `vi.mock()`, `vi.unmock()`, `vi.hoisted()`, `jest.mock()` and `jest.unmock()` calls are hoisted above the file's imports, as in Vitest and Jest. This way, a module is mocked before the file or anything it imports loads it.
 
-A hoisted factory can't use the file's top-level variables, because they aren't initialized yet. Declare what the factory needs with `vi.hoisted()`. A `const` or `let` that only holds strings, numbers or other primitive literals is hoisted along with the calls, as in Jest.
+A hoisted factory can't use the file's top-level variables, because they aren't initialized yet. Reading a `const` or a `let` throws a `ReferenceError`, and a `var` is `undefined`. Declare what the factory needs with `vi.hoisted()`. A `const` that only holds strings, numbers or other primitive literals is hoisted along with the calls, as in Jest.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";

@@ -924,20 +924,20 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     `,
   });
 
-  // A declaration of only primitive literals is hoisted with the mocks. babel-jest does that for the first two rows.
+  // A `const` of only primitive literals is hoisted with the mocks. babel-jest does that for the first row.
   test.each([
     [`const fake = "fake";`, `fake`, `value`, "fake"],
-    [`let fake = "fake";`, `fake`, `value`, "fake"],
     [`const mockFake = "fake";`, `mockFake`, `value`, "fake"],
     [`const mockFake = String("fake");`, `() => mockFake`, `value()`, "fake"],
     [`function fake() { return "fake"; }`, `fake()`, `value`, "fake"],
     [`export const fake = "fake";`, `fake`, `value`, "fake"],
     [
-      "const a = 1, b = -1.5, c = `c`, d = true, e = null, f = undefined; let g = -2n;",
+      "const a = 1, b = -1.5, c = `c`, d = true, e = null, f = undefined, g = -2n;",
       `[a, b, c, d, e, typeof f, String(g)]`,
       `value`,
       [1, -1.5, "c", true, null, "undefined", "-2"],
     ],
+    [`let fake = "first"; fake = "second";`, `() => fake`, `value()`, "second"],
   ])("%s", async (declaration, exported, read, expected) => {
     expect(await events(file(declaration, exported, read))).toEqual([[expected]]);
   });
@@ -952,12 +952,51 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     [`const [fake] = "fake";`, "fake"],
     [`const undefined = String("local"), fake = undefined;`, "fake"],
     [`const local = "local"; const fake = local;`, "fake"],
+    // A `let` is never hoisted: its writes would stay below the imports, and the factory would read the first value.
+    [`let fake = "fake";`, "fake"],
+    [`let fake = "first"; fake = "second";`, "fake"],
+    [`let fake = 1; fake++;`, "fake"],
+    [`let fake = "first"; [fake] = ["second"];`, "fake"],
+    [`let fake = "first"; for (fake of ["second"]) {}`, "fake"],
+    [`let fake = "first"; function set() { fake = "second"; } set();`, "fake"],
+    [`let mockFake = "first"; mockFake = "second";`, "mockFake"],
+    [`export let fake = "first"; fake = "second";`, "fake"],
   ])("stays in its place: %s", async (declaration, name) => {
     const { stderr, exitCode } = await run(file(declaration, name, `value`));
     expect(stderr).toContain(
       `ReferenceError: Cannot access '${name}' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables`,
     );
     expect(exitCode).toBe(1);
+  });
+
+  test("a let that is assigned after the call stays in its place", async () => {
+    const { stderr, exitCode } = await run({
+      "hoist.test.ts": `
+        import { value } from "./mod";
+        let fake = "first";
+        ${api}.mock("./mod", () => ({ value: fake }));
+        fake = "second";
+        test("print", () => console.log(JSON.stringify([value])));
+      `,
+    });
+    expect(stderr).toContain(
+      `ReferenceError: Cannot access 'fake' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("a factory reads the same value from a let whether or not an earlier file loaded the module", async () => {
+    const files = {
+      "1.test.ts": `import { value } from "./mod"; test("loads mod", () => { value; });`,
+      "2.test.ts": `
+        let fake = "first";
+        fake = "second";
+        ${api}.mock("./mod", () => ({ value: fake }));
+        test("print", async () => console.log(JSON.stringify([(await import("./mod")).value])));
+      `,
+    };
+    expect(await events(files, ["2.test.ts"])).toEqual([["second"]]);
+    expect(await events(files, ["1.test.ts", "2.test.ts"])).toEqual([["second"]]);
   });
 
   test("the same variable with a literal and with a call", async () => {
@@ -971,6 +1010,88 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
 
   test("a var stays in its place", async () => {
     expect(await events(file(`var fake = "fake";`, `typeof fake`, `value`))).toEqual([["undefined"]]);
+  });
+});
+
+describe.concurrent("a let with a primitive literal stays in its place", () => {
+  const fake = `let fake = "first"; fake = "second";`;
+  const error = "ReferenceError: Cannot access 'fake' before initialization.";
+  const note = "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables";
+
+  test.each([
+    [
+      "for a vi.hoisted() callback",
+      error,
+      { "hoist.test.ts": `${fake} const read = vi.hoisted(() => fake); test("print", () => console.log(read));` },
+      ["hoist.test.ts"],
+    ],
+    [
+      "in a CommonJS file",
+      error + note,
+      {
+        "hoist.test.cjs": `
+          const { value } = require("./mod.ts");
+          ${fake}
+          jest.mock("./mod.ts", () => ({ value: fake }));
+          test("print", () => console.log(value));
+        `,
+      },
+      ["hoist.test.cjs"],
+    ],
+    [
+      "in a file that a test imports",
+      error + note,
+      {
+        "setup.ts": `
+          import { value } from "./mod";
+          ${fake}
+          vi.mock("./mod", () => ({ value: fake }));
+          export const copy = value;
+        `,
+        "hoist.test.ts": `import { copy } from "./setup"; test("print", () => console.log(copy));`,
+      },
+      ["hoist.test.ts"],
+    ],
+    [
+      "in a --preload script",
+      error + note,
+      {
+        "preload.ts": `
+          import { value } from "./mod";
+          ${fake}
+          vi.mock("./mod", () => ({ value: fake }));
+          globalThis.fromPreload = value;
+        `,
+        "hoist.test.ts": `test("print", () => console.log(globalThis.fromPreload));`,
+      },
+      ["--preload", "./preload.ts", "hoist.test.ts"],
+    ],
+  ])("%s", async (_, expected, files, args) => {
+    const { stderr, exitCode } = await run(files, args);
+    expect(stderr).toContain(expected);
+    expect(exitCode).toBe(1);
+  });
+
+  test("in a Vitest file that has no hoisted call and runs its imports in turn", async () => {
+    expect(
+      await events({
+        "cycle.ts": `
+          import * as entry from "./hoist.test.ts";
+          try {
+            (globalThis.events ??= []).push(entry.fake);
+          } catch (error) {
+            (globalThis.events ??= []).push(error.message);
+          }
+        `,
+        "hoist.test.ts": `
+          import { test } from "vitest";
+          import "./cycle";
+          import "./other";
+          export ${fake}
+          ${print}
+        `,
+      }),
+    ).toEqual([["Cannot access 'fake' before initialization.", "load other"]]);
   });
 });
 

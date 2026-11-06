@@ -5299,12 +5299,12 @@ test.concurrent("jest.resetModules() keeps bindings already imported from a mock
       "dep.js": `export const x = "real"; export function f() { return "real-f"; }`,
       "user.js": `import { x, f } from "./dep.js"; export const read = () => [x, f()];`,
       "reset.test.js": `
-        import { expect, jest, test } from "bun:test";
+        import { expect, jest, test, vi } from "bun:test";
         import * as ns from "./dep.js";
         import { f, x } from "./dep.js";
         import { read } from "./user.js";
-        let calls = 0;
-        jest.mock("./dep.js", () => ({ x: "mock" + ++calls, f: jest.fn(() => "mock-f") }));
+        const state = vi.hoisted(() => ({ calls: 0 }));
+        jest.mock("./dep.js", () => ({ x: "mock" + ++state.calls, f: jest.fn(() => "mock-f") }));
         test("and calls the factory again for the next import", async () => {
           jest.resetModules();
           expect([x, f(), ns.x, Object.keys(ns), read()]).toEqual(["mock1", "mock-f", "mock1", ["x", "f"], ["mock1", "mock-f"]]);

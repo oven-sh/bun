@@ -341,7 +341,7 @@ test("mock.module", async () => {
 
 Like the rest of Bun, module mocks support both `import` and `require`.
 
-`require()` can't wait for a promise, so it doesn't call an `async` factory that uses `await`. Until an `import` of the module has called that factory, `require()` returns the original module, as in Vitest. Once the factory has settled, `require()` returns the mock. To get the mock from `require()`, import the module first.
+`require()` can't wait for a promise. Before any `import` of the module, `require()` doesn't call an `async` factory that uses `await`. It returns the original module instead, as in Vitest. To get the mock from `require()`, import the module first. The `import` calls the factory, and `require()` returns the mock once the factory's promise is fulfilled.
 
 ### Overriding Already Imported Modules
 

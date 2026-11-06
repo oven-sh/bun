@@ -1,0 +1,1196 @@
+status: 0
+script: 65e6d474112c7506
+---
+object function 0 ('plain', 'X', ['ab'], {})
+object function 0 ('plain', 'X', ['ab'], {})
+object function 0 ('plain', 'X', ['ab'], {'k': 1})
+object function 0 ('plain', 'X', [], {})
+object function 0 True
+object function 0 [('plain', 'X', ['cd'], {})]
+object function 0 function
+object function 1 ('plain', 'X', ['ab'], {})
+object function 1 ('plain', 'X', ['ab'], {})
+object function 1 ('plain', 'X', ['ab'], {'k': 1})
+object function 1 ('plain', 'X', [], {})
+object function 1 True
+object function 1 [('plain', 'X', ['cd'], {})]
+object function 1 function
+object lambda 0 ('lambda', ('ab',))
+object lambda 0 ('lambda', ('ab',))
+object lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+object lambda 0 ('lambda', ())
+object lambda 0 True
+object lambda 0 [('lambda', ('cd',))]
+object lambda 0 function
+object lambda 1 ('lambda', ('ab',))
+object lambda 1 ('lambda', ('ab',))
+object lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+object lambda 1 ('lambda', ())
+object lambda 1 True
+object lambda 1 [('lambda', ('cd',))]
+object lambda 1 function
+object len 0 2
+object len 0 2
+object len 0 ('TypeError', 'len() takes no keyword arguments')
+object len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+object len 0 True
+object len 0 [2]
+object len 0 builtin_function_or_method
+object len 1 2
+object len 1 2
+object len 1 ('TypeError', 'len() takes no keyword arguments')
+object len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+object len 1 True
+object len 1 [2]
+object len 1 builtin_function_or_method
+object staticmethod 0 ('static', ('ab',))
+object staticmethod 0 ('static', ('ab',))
+object staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+object staticmethod 0 ('static', ())
+object staticmethod 0 True
+object staticmethod 0 [('static', ('cd',))]
+object staticmethod 0 function
+object staticmethod 1 ('static', ('ab',))
+object staticmethod 1 ('static', ('ab',))
+object staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+object staticmethod 1 ('static', ())
+object staticmethod 1 True
+object staticmethod 1 [('static', ('cd',))]
+object staticmethod 1 function
+object classmethod 0 ('class', 'X', ('ab',))
+object classmethod 0 ('class', 'X', ('ab',))
+object classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+object classmethod 0 ('class', 'X', ())
+object classmethod 0 True
+object classmethod 0 [('class', 'X', ('cd',))]
+object classmethod 0 method
+object classmethod 1 ('class', 'X', ('ab',))
+object classmethod 1 ('class', 'X', ('ab',))
+object classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+object classmethod 1 ('class', 'X', ())
+object classmethod 1 True
+object classmethod 1 [('class', 'X', ('cd',))]
+object classmethod 1 method
+object bound method 0 ('a bound method', ('ab',), {})
+object bound method 0 ('a bound method', ('ab',), {})
+object bound method 0 ('a bound method', ('ab',), {'k': 1})
+object bound method 0 ('a bound method', (), {})
+object bound method 0 True
+object bound method 0 [('a bound method', ('cd',), {})]
+object bound method 0 method
+object bound method 1 ('a bound method', ('ab',), {})
+object bound method 1 ('a bound method', ('ab',), {})
+object bound method 1 ('a bound method', ('ab',), {'k': 1})
+object bound method 1 ('a bound method', (), {})
+object bound method 1 True
+object bound method 1 [('a bound method', ('cd',), {})]
+object bound method 1 method
+object partial 0 ('plain', 'str', ['X', 'ab'], {})
+object partial 0 ('plain', 'str', ['X', 'ab'], {})
+object partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+object partial 0 ('plain', 'str', ['X'], {})
+object partial 0 True
+object partial 0 [('plain', 'str', ['X', 'cd'], {})]
+object partial 0 partial
+object partial 1 ('plain', 'str', ['X', 'ab'], {})
+object partial 1 ('plain', 'str', ['X', 'ab'], {})
+object partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+object partial 1 ('plain', 'str', ['X'], {})
+object partial 1 True
+object partial 1 [('plain', 'str', ['X', 'cd'], {})]
+object partial 1 partial
+object object 0 ('an object', ('ab',), {})
+object object 0 ('an object', ('ab',), {})
+object object 0 ('an object', ('ab',), {'k': 1})
+object object 0 ('an object', (), {})
+object object 0 True
+object object 0 [('an object', ('cd',), {})]
+object object 0 Callable
+object object 1 ('an object', ('ab',), {})
+object object 1 ('an object', ('ab',), {})
+object object 1 ('an object', ('ab',), {'k': 1})
+object object 1 ('an object', (), {})
+object object 1 True
+object object 1 [('an object', ('cd',), {})]
+object object 1 Callable
+object type 0 ['a', 'b']
+object type 0 ['a', 'b']
+object type 0 ('TypeError', 'list() takes no keyword arguments')
+object type 0 []
+object type 0 True
+object type 0 [['c', 'd']]
+object type 0 type
+object type 1 ['a', 'b']
+object type 1 ['a', 'b']
+object type 1 ('TypeError', 'list() takes no keyword arguments')
+object type 1 []
+object type 1 True
+object type 1 [['c', 'd']]
+object type 1 type
+object native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 0 True
+object native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 0 method_descriptor
+object native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 1 True
+object native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+object native method 1 method_descriptor
+object not callable 0 ('TypeError', "'int' object is not callable")
+object not callable 0 ('TypeError', "'int' object is not callable")
+object not callable 0 ('TypeError', "'int' object is not callable")
+object not callable 0 ('TypeError', "'int' object is not callable")
+object not callable 0 True
+object not callable 0 ('TypeError', "'int' object is not callable")
+object not callable 0 int
+object not callable 1 ('TypeError', "'int' object is not callable")
+object not callable 1 ('TypeError', "'int' object is not callable")
+object not callable 1 ('TypeError', "'int' object is not callable")
+object not callable 1 ('TypeError', "'int' object is not callable")
+object not callable 1 True
+object not callable 1 ('TypeError', "'int' object is not callable")
+object not callable 1 int
+object None 0 ('TypeError', "'NoneType' object is not callable")
+object None 0 ('TypeError', "'NoneType' object is not callable")
+object None 0 ('TypeError', "'NoneType' object is not callable")
+object None 0 ('TypeError', "'NoneType' object is not callable")
+object None 0 True
+object None 0 ('TypeError', "'NoneType' object is not callable")
+object None 0 NoneType
+object None 1 ('TypeError', "'NoneType' object is not callable")
+object None 1 ('TypeError', "'NoneType' object is not callable")
+object None 1 ('TypeError', "'NoneType' object is not callable")
+object None 1 ('TypeError', "'NoneType' object is not callable")
+object None 1 True
+object None 1 ('TypeError', "'NoneType' object is not callable")
+object None 1 NoneType
+dict function 0 ('plain', 'X', ['ab'], {})
+dict function 0 ('plain', 'X', ['ab'], {})
+dict function 0 ('plain', 'X', ['ab'], {'k': 1})
+dict function 0 ('plain', 'X', [], {})
+dict function 0 True
+dict function 0 [('plain', 'X', ['cd'], {})]
+dict function 0 function
+dict function 1 ('plain', 'X', ['ab'], {})
+dict function 1 ('plain', 'X', ['ab'], {})
+dict function 1 ('plain', 'X', ['ab'], {'k': 1})
+dict function 1 ('plain', 'X', [], {})
+dict function 1 True
+dict function 1 [('plain', 'X', ['cd'], {})]
+dict function 1 function
+dict lambda 0 ('lambda', ('ab',))
+dict lambda 0 ('lambda', ('ab',))
+dict lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+dict lambda 0 ('lambda', ())
+dict lambda 0 True
+dict lambda 0 [('lambda', ('cd',))]
+dict lambda 0 function
+dict lambda 1 ('lambda', ('ab',))
+dict lambda 1 ('lambda', ('ab',))
+dict lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+dict lambda 1 ('lambda', ())
+dict lambda 1 True
+dict lambda 1 [('lambda', ('cd',))]
+dict lambda 1 function
+dict len 0 2
+dict len 0 2
+dict len 0 ('TypeError', 'len() takes no keyword arguments')
+dict len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+dict len 0 True
+dict len 0 [2]
+dict len 0 builtin_function_or_method
+dict len 1 2
+dict len 1 2
+dict len 1 ('TypeError', 'len() takes no keyword arguments')
+dict len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+dict len 1 True
+dict len 1 [2]
+dict len 1 builtin_function_or_method
+dict staticmethod 0 ('static', ('ab',))
+dict staticmethod 0 ('static', ('ab',))
+dict staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+dict staticmethod 0 ('static', ())
+dict staticmethod 0 True
+dict staticmethod 0 [('static', ('cd',))]
+dict staticmethod 0 function
+dict staticmethod 1 ('static', ('ab',))
+dict staticmethod 1 ('static', ('ab',))
+dict staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+dict staticmethod 1 ('static', ())
+dict staticmethod 1 True
+dict staticmethod 1 [('static', ('cd',))]
+dict staticmethod 1 function
+dict classmethod 0 ('class', 'X', ('ab',))
+dict classmethod 0 ('class', 'X', ('ab',))
+dict classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+dict classmethod 0 ('class', 'X', ())
+dict classmethod 0 True
+dict classmethod 0 [('class', 'X', ('cd',))]
+dict classmethod 0 method
+dict classmethod 1 ('class', 'X', ('ab',))
+dict classmethod 1 ('class', 'X', ('ab',))
+dict classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+dict classmethod 1 ('class', 'X', ())
+dict classmethod 1 True
+dict classmethod 1 [('class', 'X', ('cd',))]
+dict classmethod 1 method
+dict bound method 0 ('a bound method', ('ab',), {})
+dict bound method 0 ('a bound method', ('ab',), {})
+dict bound method 0 ('a bound method', ('ab',), {'k': 1})
+dict bound method 0 ('a bound method', (), {})
+dict bound method 0 True
+dict bound method 0 [('a bound method', ('cd',), {})]
+dict bound method 0 method
+dict bound method 1 ('a bound method', ('ab',), {})
+dict bound method 1 ('a bound method', ('ab',), {})
+dict bound method 1 ('a bound method', ('ab',), {'k': 1})
+dict bound method 1 ('a bound method', (), {})
+dict bound method 1 True
+dict bound method 1 [('a bound method', ('cd',), {})]
+dict bound method 1 method
+dict partial 0 ('plain', 'str', ['X', 'ab'], {})
+dict partial 0 ('plain', 'str', ['X', 'ab'], {})
+dict partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+dict partial 0 ('plain', 'str', ['X'], {})
+dict partial 0 True
+dict partial 0 [('plain', 'str', ['X', 'cd'], {})]
+dict partial 0 partial
+dict partial 1 ('plain', 'str', ['X', 'ab'], {})
+dict partial 1 ('plain', 'str', ['X', 'ab'], {})
+dict partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+dict partial 1 ('plain', 'str', ['X'], {})
+dict partial 1 True
+dict partial 1 [('plain', 'str', ['X', 'cd'], {})]
+dict partial 1 partial
+dict object 0 ('an object', ('ab',), {})
+dict object 0 ('an object', ('ab',), {})
+dict object 0 ('an object', ('ab',), {'k': 1})
+dict object 0 ('an object', (), {})
+dict object 0 True
+dict object 0 [('an object', ('cd',), {})]
+dict object 0 Callable
+dict object 1 ('an object', ('ab',), {})
+dict object 1 ('an object', ('ab',), {})
+dict object 1 ('an object', ('ab',), {'k': 1})
+dict object 1 ('an object', (), {})
+dict object 1 True
+dict object 1 [('an object', ('cd',), {})]
+dict object 1 Callable
+dict type 0 ['a', 'b']
+dict type 0 ['a', 'b']
+dict type 0 ('TypeError', 'list() takes no keyword arguments')
+dict type 0 []
+dict type 0 True
+dict type 0 [['c', 'd']]
+dict type 0 type
+dict type 1 ['a', 'b']
+dict type 1 ['a', 'b']
+dict type 1 ('TypeError', 'list() takes no keyword arguments')
+dict type 1 []
+dict type 1 True
+dict type 1 [['c', 'd']]
+dict type 1 type
+dict native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 0 True
+dict native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 0 method_descriptor
+dict native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 1 True
+dict native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+dict native method 1 method_descriptor
+dict not callable 0 ('TypeError', "'int' object is not callable")
+dict not callable 0 ('TypeError', "'int' object is not callable")
+dict not callable 0 ('TypeError', "'int' object is not callable")
+dict not callable 0 ('TypeError', "'int' object is not callable")
+dict not callable 0 True
+dict not callable 0 ('TypeError', "'int' object is not callable")
+dict not callable 0 int
+dict not callable 1 ('TypeError', "'int' object is not callable")
+dict not callable 1 ('TypeError', "'int' object is not callable")
+dict not callable 1 ('TypeError', "'int' object is not callable")
+dict not callable 1 ('TypeError', "'int' object is not callable")
+dict not callable 1 True
+dict not callable 1 ('TypeError', "'int' object is not callable")
+dict not callable 1 int
+dict None 0 ('TypeError', "'NoneType' object is not callable")
+dict None 0 ('TypeError', "'NoneType' object is not callable")
+dict None 0 ('TypeError', "'NoneType' object is not callable")
+dict None 0 ('TypeError', "'NoneType' object is not callable")
+dict None 0 True
+dict None 0 ('TypeError', "'NoneType' object is not callable")
+dict None 0 NoneType
+dict None 1 ('TypeError', "'NoneType' object is not callable")
+dict None 1 ('TypeError', "'NoneType' object is not callable")
+dict None 1 ('TypeError', "'NoneType' object is not callable")
+dict None 1 ('TypeError', "'NoneType' object is not callable")
+dict None 1 True
+dict None 1 ('TypeError', "'NoneType' object is not callable")
+dict None 1 NoneType
+int function 0 ('plain', 'X', ['ab'], {})
+int function 0 ('plain', 'X', ['ab'], {})
+int function 0 ('plain', 'X', ['ab'], {'k': 1})
+int function 0 ('plain', 'X', [], {})
+int function 0 True
+int function 0 [('plain', 'X', ['cd'], {})]
+int function 0 function
+int function 1 ('plain', 'X', ['ab'], {})
+int function 1 ('plain', 'X', ['ab'], {})
+int function 1 ('plain', 'X', ['ab'], {'k': 1})
+int function 1 ('plain', 'X', [], {})
+int function 1 True
+int function 1 [('plain', 'X', ['cd'], {})]
+int function 1 function
+int lambda 0 ('lambda', ('ab',))
+int lambda 0 ('lambda', ('ab',))
+int lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+int lambda 0 ('lambda', ())
+int lambda 0 True
+int lambda 0 [('lambda', ('cd',))]
+int lambda 0 function
+int lambda 1 ('lambda', ('ab',))
+int lambda 1 ('lambda', ('ab',))
+int lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+int lambda 1 ('lambda', ())
+int lambda 1 True
+int lambda 1 [('lambda', ('cd',))]
+int lambda 1 function
+int len 0 2
+int len 0 2
+int len 0 ('TypeError', 'len() takes no keyword arguments')
+int len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+int len 0 True
+int len 0 [2]
+int len 0 builtin_function_or_method
+int len 1 2
+int len 1 2
+int len 1 ('TypeError', 'len() takes no keyword arguments')
+int len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+int len 1 True
+int len 1 [2]
+int len 1 builtin_function_or_method
+int staticmethod 0 ('static', ('ab',))
+int staticmethod 0 ('static', ('ab',))
+int staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+int staticmethod 0 ('static', ())
+int staticmethod 0 True
+int staticmethod 0 [('static', ('cd',))]
+int staticmethod 0 function
+int staticmethod 1 ('static', ('ab',))
+int staticmethod 1 ('static', ('ab',))
+int staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+int staticmethod 1 ('static', ())
+int staticmethod 1 True
+int staticmethod 1 [('static', ('cd',))]
+int staticmethod 1 function
+int classmethod 0 ('class', 'X', ('ab',))
+int classmethod 0 ('class', 'X', ('ab',))
+int classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+int classmethod 0 ('class', 'X', ())
+int classmethod 0 True
+int classmethod 0 [('class', 'X', ('cd',))]
+int classmethod 0 method
+int classmethod 1 ('class', 'X', ('ab',))
+int classmethod 1 ('class', 'X', ('ab',))
+int classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+int classmethod 1 ('class', 'X', ())
+int classmethod 1 True
+int classmethod 1 [('class', 'X', ('cd',))]
+int classmethod 1 method
+int bound method 0 ('a bound method', ('ab',), {})
+int bound method 0 ('a bound method', ('ab',), {})
+int bound method 0 ('a bound method', ('ab',), {'k': 1})
+int bound method 0 ('a bound method', (), {})
+int bound method 0 True
+int bound method 0 [('a bound method', ('cd',), {})]
+int bound method 0 method
+int bound method 1 ('a bound method', ('ab',), {})
+int bound method 1 ('a bound method', ('ab',), {})
+int bound method 1 ('a bound method', ('ab',), {'k': 1})
+int bound method 1 ('a bound method', (), {})
+int bound method 1 True
+int bound method 1 [('a bound method', ('cd',), {})]
+int bound method 1 method
+int partial 0 ('plain', 'str', ['X', 'ab'], {})
+int partial 0 ('plain', 'str', ['X', 'ab'], {})
+int partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+int partial 0 ('plain', 'str', ['X'], {})
+int partial 0 True
+int partial 0 [('plain', 'str', ['X', 'cd'], {})]
+int partial 0 partial
+int partial 1 ('plain', 'str', ['X', 'ab'], {})
+int partial 1 ('plain', 'str', ['X', 'ab'], {})
+int partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+int partial 1 ('plain', 'str', ['X'], {})
+int partial 1 True
+int partial 1 [('plain', 'str', ['X', 'cd'], {})]
+int partial 1 partial
+int object 0 ('an object', ('ab',), {})
+int object 0 ('an object', ('ab',), {})
+int object 0 ('an object', ('ab',), {'k': 1})
+int object 0 ('an object', (), {})
+int object 0 True
+int object 0 [('an object', ('cd',), {})]
+int object 0 Callable
+int object 1 ('an object', ('ab',), {})
+int object 1 ('an object', ('ab',), {})
+int object 1 ('an object', ('ab',), {'k': 1})
+int object 1 ('an object', (), {})
+int object 1 True
+int object 1 [('an object', ('cd',), {})]
+int object 1 Callable
+int type 0 ['a', 'b']
+int type 0 ['a', 'b']
+int type 0 ('TypeError', 'list() takes no keyword arguments')
+int type 0 []
+int type 0 True
+int type 0 [['c', 'd']]
+int type 0 type
+int type 1 ['a', 'b']
+int type 1 ['a', 'b']
+int type 1 ('TypeError', 'list() takes no keyword arguments')
+int type 1 []
+int type 1 True
+int type 1 [['c', 'd']]
+int type 1 type
+int native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 0 True
+int native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 0 method_descriptor
+int native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 1 True
+int native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+int native method 1 method_descriptor
+int not callable 0 ('TypeError', "'int' object is not callable")
+int not callable 0 ('TypeError', "'int' object is not callable")
+int not callable 0 ('TypeError', "'int' object is not callable")
+int not callable 0 ('TypeError', "'int' object is not callable")
+int not callable 0 True
+int not callable 0 ('TypeError', "'int' object is not callable")
+int not callable 0 int
+int not callable 1 ('TypeError', "'int' object is not callable")
+int not callable 1 ('TypeError', "'int' object is not callable")
+int not callable 1 ('TypeError', "'int' object is not callable")
+int not callable 1 ('TypeError', "'int' object is not callable")
+int not callable 1 True
+int not callable 1 ('TypeError', "'int' object is not callable")
+int not callable 1 int
+int None 0 ('TypeError', "'NoneType' object is not callable")
+int None 0 ('TypeError', "'NoneType' object is not callable")
+int None 0 ('TypeError', "'NoneType' object is not callable")
+int None 0 ('TypeError', "'NoneType' object is not callable")
+int None 0 True
+int None 0 ('TypeError', "'NoneType' object is not callable")
+int None 0 NoneType
+int None 1 ('TypeError', "'NoneType' object is not callable")
+int None 1 ('TypeError', "'NoneType' object is not callable")
+int None 1 ('TypeError', "'NoneType' object is not callable")
+int None 1 ('TypeError', "'NoneType' object is not callable")
+int None 1 True
+int None 1 ('TypeError', "'NoneType' object is not callable")
+int None 1 NoneType
+tuple function 0 ('plain', 'X', ['ab'], {})
+tuple function 0 ('plain', 'X', ['ab'], {})
+tuple function 0 ('plain', 'X', ['ab'], {'k': 1})
+tuple function 0 ('plain', 'X', [], {})
+tuple function 0 True
+tuple function 0 [('plain', 'X', ['cd'], {})]
+tuple function 0 function
+tuple function 1 ('plain', 'X', ['ab'], {})
+tuple function 1 ('plain', 'X', ['ab'], {})
+tuple function 1 ('plain', 'X', ['ab'], {'k': 1})
+tuple function 1 ('plain', 'X', [], {})
+tuple function 1 True
+tuple function 1 [('plain', 'X', ['cd'], {})]
+tuple function 1 function
+tuple lambda 0 ('lambda', ('ab',))
+tuple lambda 0 ('lambda', ('ab',))
+tuple lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+tuple lambda 0 ('lambda', ())
+tuple lambda 0 True
+tuple lambda 0 [('lambda', ('cd',))]
+tuple lambda 0 function
+tuple lambda 1 ('lambda', ('ab',))
+tuple lambda 1 ('lambda', ('ab',))
+tuple lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+tuple lambda 1 ('lambda', ())
+tuple lambda 1 True
+tuple lambda 1 [('lambda', ('cd',))]
+tuple lambda 1 function
+tuple len 0 2
+tuple len 0 2
+tuple len 0 ('TypeError', 'len() takes no keyword arguments')
+tuple len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+tuple len 0 True
+tuple len 0 [2]
+tuple len 0 builtin_function_or_method
+tuple len 1 2
+tuple len 1 2
+tuple len 1 ('TypeError', 'len() takes no keyword arguments')
+tuple len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+tuple len 1 True
+tuple len 1 [2]
+tuple len 1 builtin_function_or_method
+tuple staticmethod 0 ('static', ('ab',))
+tuple staticmethod 0 ('static', ('ab',))
+tuple staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+tuple staticmethod 0 ('static', ())
+tuple staticmethod 0 True
+tuple staticmethod 0 [('static', ('cd',))]
+tuple staticmethod 0 function
+tuple staticmethod 1 ('static', ('ab',))
+tuple staticmethod 1 ('static', ('ab',))
+tuple staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+tuple staticmethod 1 ('static', ())
+tuple staticmethod 1 True
+tuple staticmethod 1 [('static', ('cd',))]
+tuple staticmethod 1 function
+tuple classmethod 0 ('class', 'X', ('ab',))
+tuple classmethod 0 ('class', 'X', ('ab',))
+tuple classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+tuple classmethod 0 ('class', 'X', ())
+tuple classmethod 0 True
+tuple classmethod 0 [('class', 'X', ('cd',))]
+tuple classmethod 0 method
+tuple classmethod 1 ('class', 'X', ('ab',))
+tuple classmethod 1 ('class', 'X', ('ab',))
+tuple classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+tuple classmethod 1 ('class', 'X', ())
+tuple classmethod 1 True
+tuple classmethod 1 [('class', 'X', ('cd',))]
+tuple classmethod 1 method
+tuple bound method 0 ('a bound method', ('ab',), {})
+tuple bound method 0 ('a bound method', ('ab',), {})
+tuple bound method 0 ('a bound method', ('ab',), {'k': 1})
+tuple bound method 0 ('a bound method', (), {})
+tuple bound method 0 True
+tuple bound method 0 [('a bound method', ('cd',), {})]
+tuple bound method 0 method
+tuple bound method 1 ('a bound method', ('ab',), {})
+tuple bound method 1 ('a bound method', ('ab',), {})
+tuple bound method 1 ('a bound method', ('ab',), {'k': 1})
+tuple bound method 1 ('a bound method', (), {})
+tuple bound method 1 True
+tuple bound method 1 [('a bound method', ('cd',), {})]
+tuple bound method 1 method
+tuple partial 0 ('plain', 'str', ['X', 'ab'], {})
+tuple partial 0 ('plain', 'str', ['X', 'ab'], {})
+tuple partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+tuple partial 0 ('plain', 'str', ['X'], {})
+tuple partial 0 True
+tuple partial 0 [('plain', 'str', ['X', 'cd'], {})]
+tuple partial 0 partial
+tuple partial 1 ('plain', 'str', ['X', 'ab'], {})
+tuple partial 1 ('plain', 'str', ['X', 'ab'], {})
+tuple partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+tuple partial 1 ('plain', 'str', ['X'], {})
+tuple partial 1 True
+tuple partial 1 [('plain', 'str', ['X', 'cd'], {})]
+tuple partial 1 partial
+tuple object 0 ('an object', ('ab',), {})
+tuple object 0 ('an object', ('ab',), {})
+tuple object 0 ('an object', ('ab',), {'k': 1})
+tuple object 0 ('an object', (), {})
+tuple object 0 True
+tuple object 0 [('an object', ('cd',), {})]
+tuple object 0 Callable
+tuple object 1 ('an object', ('ab',), {})
+tuple object 1 ('an object', ('ab',), {})
+tuple object 1 ('an object', ('ab',), {'k': 1})
+tuple object 1 ('an object', (), {})
+tuple object 1 True
+tuple object 1 [('an object', ('cd',), {})]
+tuple object 1 Callable
+tuple type 0 ['a', 'b']
+tuple type 0 ['a', 'b']
+tuple type 0 ('TypeError', 'list() takes no keyword arguments')
+tuple type 0 []
+tuple type 0 True
+tuple type 0 [['c', 'd']]
+tuple type 0 type
+tuple type 1 ['a', 'b']
+tuple type 1 ['a', 'b']
+tuple type 1 ('TypeError', 'list() takes no keyword arguments')
+tuple type 1 []
+tuple type 1 True
+tuple type 1 [['c', 'd']]
+tuple type 1 type
+tuple native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 0 True
+tuple native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 0 method_descriptor
+tuple native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 1 True
+tuple native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+tuple native method 1 method_descriptor
+tuple not callable 0 ('TypeError', "'int' object is not callable")
+tuple not callable 0 ('TypeError', "'int' object is not callable")
+tuple not callable 0 ('TypeError', "'int' object is not callable")
+tuple not callable 0 ('TypeError', "'int' object is not callable")
+tuple not callable 0 True
+tuple not callable 0 ('TypeError', "'int' object is not callable")
+tuple not callable 0 int
+tuple not callable 1 ('TypeError', "'int' object is not callable")
+tuple not callable 1 ('TypeError', "'int' object is not callable")
+tuple not callable 1 ('TypeError', "'int' object is not callable")
+tuple not callable 1 ('TypeError', "'int' object is not callable")
+tuple not callable 1 True
+tuple not callable 1 ('TypeError', "'int' object is not callable")
+tuple not callable 1 int
+tuple None 0 ('TypeError', "'NoneType' object is not callable")
+tuple None 0 ('TypeError', "'NoneType' object is not callable")
+tuple None 0 ('TypeError', "'NoneType' object is not callable")
+tuple None 0 ('TypeError', "'NoneType' object is not callable")
+tuple None 0 True
+tuple None 0 ('TypeError', "'NoneType' object is not callable")
+tuple None 0 NoneType
+tuple None 1 ('TypeError', "'NoneType' object is not callable")
+tuple None 1 ('TypeError', "'NoneType' object is not callable")
+tuple None 1 ('TypeError', "'NoneType' object is not callable")
+tuple None 1 ('TypeError', "'NoneType' object is not callable")
+tuple None 1 True
+tuple None 1 ('TypeError', "'NoneType' object is not callable")
+tuple None 1 NoneType
+list function 0 ('plain', 'X', ['ab'], {})
+list function 0 ('plain', 'X', ['ab'], {})
+list function 0 ('plain', 'X', ['ab'], {'k': 1})
+list function 0 ('plain', 'X', [], {})
+list function 0 True
+list function 0 [('plain', 'X', ['cd'], {})]
+list function 0 function
+list function 1 ('plain', 'X', ['ab'], {})
+list function 1 ('plain', 'X', ['ab'], {})
+list function 1 ('plain', 'X', ['ab'], {'k': 1})
+list function 1 ('plain', 'X', [], {})
+list function 1 True
+list function 1 [('plain', 'X', ['cd'], {})]
+list function 1 function
+list lambda 0 ('lambda', ('ab',))
+list lambda 0 ('lambda', ('ab',))
+list lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+list lambda 0 ('lambda', ())
+list lambda 0 True
+list lambda 0 [('lambda', ('cd',))]
+list lambda 0 function
+list lambda 1 ('lambda', ('ab',))
+list lambda 1 ('lambda', ('ab',))
+list lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+list lambda 1 ('lambda', ())
+list lambda 1 True
+list lambda 1 [('lambda', ('cd',))]
+list lambda 1 function
+list len 0 2
+list len 0 2
+list len 0 ('TypeError', 'len() takes no keyword arguments')
+list len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+list len 0 True
+list len 0 [2]
+list len 0 builtin_function_or_method
+list len 1 2
+list len 1 2
+list len 1 ('TypeError', 'len() takes no keyword arguments')
+list len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+list len 1 True
+list len 1 [2]
+list len 1 builtin_function_or_method
+list staticmethod 0 ('static', ('ab',))
+list staticmethod 0 ('static', ('ab',))
+list staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+list staticmethod 0 ('static', ())
+list staticmethod 0 True
+list staticmethod 0 [('static', ('cd',))]
+list staticmethod 0 function
+list staticmethod 1 ('static', ('ab',))
+list staticmethod 1 ('static', ('ab',))
+list staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+list staticmethod 1 ('static', ())
+list staticmethod 1 True
+list staticmethod 1 [('static', ('cd',))]
+list staticmethod 1 function
+list classmethod 0 ('class', 'X', ('ab',))
+list classmethod 0 ('class', 'X', ('ab',))
+list classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+list classmethod 0 ('class', 'X', ())
+list classmethod 0 True
+list classmethod 0 [('class', 'X', ('cd',))]
+list classmethod 0 method
+list classmethod 1 ('class', 'X', ('ab',))
+list classmethod 1 ('class', 'X', ('ab',))
+list classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+list classmethod 1 ('class', 'X', ())
+list classmethod 1 True
+list classmethod 1 [('class', 'X', ('cd',))]
+list classmethod 1 method
+list bound method 0 ('a bound method', ('ab',), {})
+list bound method 0 ('a bound method', ('ab',), {})
+list bound method 0 ('a bound method', ('ab',), {'k': 1})
+list bound method 0 ('a bound method', (), {})
+list bound method 0 True
+list bound method 0 [('a bound method', ('cd',), {})]
+list bound method 0 method
+list bound method 1 ('a bound method', ('ab',), {})
+list bound method 1 ('a bound method', ('ab',), {})
+list bound method 1 ('a bound method', ('ab',), {'k': 1})
+list bound method 1 ('a bound method', (), {})
+list bound method 1 True
+list bound method 1 [('a bound method', ('cd',), {})]
+list bound method 1 method
+list partial 0 ('plain', 'str', ['X', 'ab'], {})
+list partial 0 ('plain', 'str', ['X', 'ab'], {})
+list partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+list partial 0 ('plain', 'str', ['X'], {})
+list partial 0 True
+list partial 0 [('plain', 'str', ['X', 'cd'], {})]
+list partial 0 partial
+list partial 1 ('plain', 'str', ['X', 'ab'], {})
+list partial 1 ('plain', 'str', ['X', 'ab'], {})
+list partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+list partial 1 ('plain', 'str', ['X'], {})
+list partial 1 True
+list partial 1 [('plain', 'str', ['X', 'cd'], {})]
+list partial 1 partial
+list object 0 ('an object', ('ab',), {})
+list object 0 ('an object', ('ab',), {})
+list object 0 ('an object', ('ab',), {'k': 1})
+list object 0 ('an object', (), {})
+list object 0 True
+list object 0 [('an object', ('cd',), {})]
+list object 0 Callable
+list object 1 ('an object', ('ab',), {})
+list object 1 ('an object', ('ab',), {})
+list object 1 ('an object', ('ab',), {'k': 1})
+list object 1 ('an object', (), {})
+list object 1 True
+list object 1 [('an object', ('cd',), {})]
+list object 1 Callable
+list type 0 ['a', 'b']
+list type 0 ['a', 'b']
+list type 0 ('TypeError', 'list() takes no keyword arguments')
+list type 0 []
+list type 0 True
+list type 0 [['c', 'd']]
+list type 0 type
+list type 1 ['a', 'b']
+list type 1 ['a', 'b']
+list type 1 ('TypeError', 'list() takes no keyword arguments')
+list type 1 []
+list type 1 True
+list type 1 [['c', 'd']]
+list type 1 type
+list native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 0 True
+list native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 0 method_descriptor
+list native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 1 True
+list native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+list native method 1 method_descriptor
+list not callable 0 ('TypeError', "'int' object is not callable")
+list not callable 0 ('TypeError', "'int' object is not callable")
+list not callable 0 ('TypeError', "'int' object is not callable")
+list not callable 0 ('TypeError', "'int' object is not callable")
+list not callable 0 True
+list not callable 0 ('TypeError', "'int' object is not callable")
+list not callable 0 int
+list not callable 1 ('TypeError', "'int' object is not callable")
+list not callable 1 ('TypeError', "'int' object is not callable")
+list not callable 1 ('TypeError', "'int' object is not callable")
+list not callable 1 ('TypeError', "'int' object is not callable")
+list not callable 1 True
+list not callable 1 ('TypeError', "'int' object is not callable")
+list not callable 1 int
+list None 0 ('TypeError', "'NoneType' object is not callable")
+list None 0 ('TypeError', "'NoneType' object is not callable")
+list None 0 ('TypeError', "'NoneType' object is not callable")
+list None 0 ('TypeError', "'NoneType' object is not callable")
+list None 0 True
+list None 0 ('TypeError', "'NoneType' object is not callable")
+list None 0 NoneType
+list None 1 ('TypeError', "'NoneType' object is not callable")
+list None 1 ('TypeError', "'NoneType' object is not callable")
+list None 1 ('TypeError', "'NoneType' object is not callable")
+list None 1 ('TypeError', "'NoneType' object is not callable")
+list None 1 True
+list None 1 ('TypeError', "'NoneType' object is not callable")
+list None 1 NoneType
+str function 0 ('plain', 'X', ['ab'], {})
+str function 0 ('plain', 'X', ['ab'], {})
+str function 0 ('plain', 'X', ['ab'], {'k': 1})
+str function 0 ('plain', 'X', [], {})
+str function 0 True
+str function 0 [('plain', 'X', ['cd'], {})]
+str function 0 function
+str function 1 ('plain', 'X', ['ab'], {})
+str function 1 ('plain', 'X', ['ab'], {})
+str function 1 ('plain', 'X', ['ab'], {'k': 1})
+str function 1 ('plain', 'X', [], {})
+str function 1 True
+str function 1 [('plain', 'X', ['cd'], {})]
+str function 1 function
+str lambda 0 ('lambda', ('ab',))
+str lambda 0 ('lambda', ('ab',))
+str lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+str lambda 0 ('lambda', ())
+str lambda 0 True
+str lambda 0 [('lambda', ('cd',))]
+str lambda 0 function
+str lambda 1 ('lambda', ('ab',))
+str lambda 1 ('lambda', ('ab',))
+str lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+str lambda 1 ('lambda', ())
+str lambda 1 True
+str lambda 1 [('lambda', ('cd',))]
+str lambda 1 function
+str len 0 2
+str len 0 2
+str len 0 ('TypeError', 'len() takes no keyword arguments')
+str len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+str len 0 True
+str len 0 [2]
+str len 0 builtin_function_or_method
+str len 1 2
+str len 1 2
+str len 1 ('TypeError', 'len() takes no keyword arguments')
+str len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+str len 1 True
+str len 1 [2]
+str len 1 builtin_function_or_method
+str staticmethod 0 ('static', ('ab',))
+str staticmethod 0 ('static', ('ab',))
+str staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+str staticmethod 0 ('static', ())
+str staticmethod 0 True
+str staticmethod 0 [('static', ('cd',))]
+str staticmethod 0 function
+str staticmethod 1 ('static', ('ab',))
+str staticmethod 1 ('static', ('ab',))
+str staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+str staticmethod 1 ('static', ())
+str staticmethod 1 True
+str staticmethod 1 [('static', ('cd',))]
+str staticmethod 1 function
+str classmethod 0 ('class', 'X', ('ab',))
+str classmethod 0 ('class', 'X', ('ab',))
+str classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+str classmethod 0 ('class', 'X', ())
+str classmethod 0 True
+str classmethod 0 [('class', 'X', ('cd',))]
+str classmethod 0 method
+str classmethod 1 ('class', 'X', ('ab',))
+str classmethod 1 ('class', 'X', ('ab',))
+str classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+str classmethod 1 ('class', 'X', ())
+str classmethod 1 True
+str classmethod 1 [('class', 'X', ('cd',))]
+str classmethod 1 method
+str bound method 0 ('a bound method', ('ab',), {})
+str bound method 0 ('a bound method', ('ab',), {})
+str bound method 0 ('a bound method', ('ab',), {'k': 1})
+str bound method 0 ('a bound method', (), {})
+str bound method 0 True
+str bound method 0 [('a bound method', ('cd',), {})]
+str bound method 0 method
+str bound method 1 ('a bound method', ('ab',), {})
+str bound method 1 ('a bound method', ('ab',), {})
+str bound method 1 ('a bound method', ('ab',), {'k': 1})
+str bound method 1 ('a bound method', (), {})
+str bound method 1 True
+str bound method 1 [('a bound method', ('cd',), {})]
+str bound method 1 method
+str partial 0 ('plain', 'str', ['X', 'ab'], {})
+str partial 0 ('plain', 'str', ['X', 'ab'], {})
+str partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+str partial 0 ('plain', 'str', ['X'], {})
+str partial 0 True
+str partial 0 [('plain', 'str', ['X', 'cd'], {})]
+str partial 0 partial
+str partial 1 ('plain', 'str', ['X', 'ab'], {})
+str partial 1 ('plain', 'str', ['X', 'ab'], {})
+str partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+str partial 1 ('plain', 'str', ['X'], {})
+str partial 1 True
+str partial 1 [('plain', 'str', ['X', 'cd'], {})]
+str partial 1 partial
+str object 0 ('an object', ('ab',), {})
+str object 0 ('an object', ('ab',), {})
+str object 0 ('an object', ('ab',), {'k': 1})
+str object 0 ('an object', (), {})
+str object 0 True
+str object 0 [('an object', ('cd',), {})]
+str object 0 Callable
+str object 1 ('an object', ('ab',), {})
+str object 1 ('an object', ('ab',), {})
+str object 1 ('an object', ('ab',), {'k': 1})
+str object 1 ('an object', (), {})
+str object 1 True
+str object 1 [('an object', ('cd',), {})]
+str object 1 Callable
+str type 0 ['a', 'b']
+str type 0 ['a', 'b']
+str type 0 ('TypeError', 'list() takes no keyword arguments')
+str type 0 []
+str type 0 True
+str type 0 [['c', 'd']]
+str type 0 type
+str type 1 ['a', 'b']
+str type 1 ['a', 'b']
+str type 1 ('TypeError', 'list() takes no keyword arguments')
+str type 1 []
+str type 1 True
+str type 1 [['c', 'd']]
+str type 1 type
+str native method 0 ('TypeError', 'str.upper() takes no arguments (1 given)')
+str native method 0 ('TypeError', 'str.upper() takes no arguments (1 given)')
+str native method 0 ('TypeError', 'str.upper() takes no keyword arguments')
+str native method 0 
+str native method 0 True
+str native method 0 ('TypeError', 'str.upper() takes no arguments (1 given)')
+str native method 0 method_descriptor
+str native method 1 ('TypeError', 'str.upper() takes no arguments (1 given)')
+str native method 1 ('TypeError', 'str.upper() takes no arguments (1 given)')
+str native method 1 ('TypeError', 'str.upper() takes no keyword arguments')
+str native method 1 
+str native method 1 True
+str native method 1 ('TypeError', 'str.upper() takes no arguments (1 given)')
+str native method 1 method_descriptor
+str not callable 0 ('TypeError', "'int' object is not callable")
+str not callable 0 ('TypeError', "'int' object is not callable")
+str not callable 0 ('TypeError', "'int' object is not callable")
+str not callable 0 ('TypeError', "'int' object is not callable")
+str not callable 0 True
+str not callable 0 ('TypeError', "'int' object is not callable")
+str not callable 0 int
+str not callable 1 ('TypeError', "'int' object is not callable")
+str not callable 1 ('TypeError', "'int' object is not callable")
+str not callable 1 ('TypeError', "'int' object is not callable")
+str not callable 1 ('TypeError', "'int' object is not callable")
+str not callable 1 True
+str not callable 1 ('TypeError', "'int' object is not callable")
+str not callable 1 int
+str None 0 ('TypeError', "'NoneType' object is not callable")
+str None 0 ('TypeError', "'NoneType' object is not callable")
+str None 0 ('TypeError', "'NoneType' object is not callable")
+str None 0 ('TypeError', "'NoneType' object is not callable")
+str None 0 True
+str None 0 ('TypeError', "'NoneType' object is not callable")
+str None 0 NoneType
+str None 1 ('TypeError', "'NoneType' object is not callable")
+str None 1 ('TypeError', "'NoneType' object is not callable")
+str None 1 ('TypeError', "'NoneType' object is not callable")
+str None 1 ('TypeError', "'NoneType' object is not callable")
+str None 1 True
+str None 1 ('TypeError', "'NoneType' object is not callable")
+str None 1 NoneType
+Exception function 0 ('plain', 'X', ['ab'], {})
+Exception function 0 ('plain', 'X', ['ab'], {})
+Exception function 0 ('plain', 'X', ['ab'], {'k': 1})
+Exception function 0 ('plain', 'X', [], {})
+Exception function 0 True
+Exception function 0 [('plain', 'X', ['cd'], {})]
+Exception function 0 function
+Exception function 1 ('plain', 'X', ['ab'], {})
+Exception function 1 ('plain', 'X', ['ab'], {})
+Exception function 1 ('plain', 'X', ['ab'], {'k': 1})
+Exception function 1 ('plain', 'X', [], {})
+Exception function 1 True
+Exception function 1 [('plain', 'X', ['cd'], {})]
+Exception function 1 function
+Exception lambda 0 ('lambda', ('ab',))
+Exception lambda 0 ('lambda', ('ab',))
+Exception lambda 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+Exception lambda 0 ('lambda', ())
+Exception lambda 0 True
+Exception lambda 0 [('lambda', ('cd',))]
+Exception lambda 0 function
+Exception lambda 1 ('lambda', ('ab',))
+Exception lambda 1 ('lambda', ('ab',))
+Exception lambda 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+Exception lambda 1 ('lambda', ())
+Exception lambda 1 True
+Exception lambda 1 [('lambda', ('cd',))]
+Exception lambda 1 function
+Exception len 0 2
+Exception len 0 2
+Exception len 0 ('TypeError', 'len() takes no keyword arguments')
+Exception len 0 ('TypeError', 'len() takes exactly one argument (0 given)')
+Exception len 0 True
+Exception len 0 [2]
+Exception len 0 builtin_function_or_method
+Exception len 1 2
+Exception len 1 2
+Exception len 1 ('TypeError', 'len() takes no keyword arguments')
+Exception len 1 ('TypeError', 'len() takes exactly one argument (0 given)')
+Exception len 1 True
+Exception len 1 [2]
+Exception len 1 builtin_function_or_method
+Exception staticmethod 0 ('static', ('ab',))
+Exception staticmethod 0 ('static', ('ab',))
+Exception staticmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+Exception staticmethod 0 ('static', ())
+Exception staticmethod 0 True
+Exception staticmethod 0 [('static', ('cd',))]
+Exception staticmethod 0 function
+Exception staticmethod 1 ('static', ('ab',))
+Exception staticmethod 1 ('static', ('ab',))
+Exception staticmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+Exception staticmethod 1 ('static', ())
+Exception staticmethod 1 True
+Exception staticmethod 1 [('static', ('cd',))]
+Exception staticmethod 1 function
+Exception classmethod 0 ('class', 'X', ('ab',))
+Exception classmethod 0 ('class', 'X', ('ab',))
+Exception classmethod 0 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+Exception classmethod 0 ('class', 'X', ())
+Exception classmethod 0 True
+Exception classmethod 0 [('class', 'X', ('cd',))]
+Exception classmethod 0 method
+Exception classmethod 1 ('class', 'X', ('ab',))
+Exception classmethod 1 ('class', 'X', ('ab',))
+Exception classmethod 1 ('TypeError', "<lambda>() got an unexpected keyword argument 'k'")
+Exception classmethod 1 ('class', 'X', ())
+Exception classmethod 1 True
+Exception classmethod 1 [('class', 'X', ('cd',))]
+Exception classmethod 1 method
+Exception bound method 0 ('a bound method', ('ab',), {})
+Exception bound method 0 ('a bound method', ('ab',), {})
+Exception bound method 0 ('a bound method', ('ab',), {'k': 1})
+Exception bound method 0 ('a bound method', (), {})
+Exception bound method 0 True
+Exception bound method 0 [('a bound method', ('cd',), {})]
+Exception bound method 0 method
+Exception bound method 1 ('a bound method', ('ab',), {})
+Exception bound method 1 ('a bound method', ('ab',), {})
+Exception bound method 1 ('a bound method', ('ab',), {'k': 1})
+Exception bound method 1 ('a bound method', (), {})
+Exception bound method 1 True
+Exception bound method 1 [('a bound method', ('cd',), {})]
+Exception bound method 1 method
+Exception partial 0 ('plain', 'str', ['X', 'ab'], {})
+Exception partial 0 ('plain', 'str', ['X', 'ab'], {})
+Exception partial 0 ('plain', 'str', ['X', 'ab'], {'k': 1})
+Exception partial 0 ('plain', 'str', ['X'], {})
+Exception partial 0 True
+Exception partial 0 [('plain', 'str', ['X', 'cd'], {})]
+Exception partial 0 partial
+Exception partial 1 ('plain', 'str', ['X', 'ab'], {})
+Exception partial 1 ('plain', 'str', ['X', 'ab'], {})
+Exception partial 1 ('plain', 'str', ['X', 'ab'], {'k': 1})
+Exception partial 1 ('plain', 'str', ['X'], {})
+Exception partial 1 True
+Exception partial 1 [('plain', 'str', ['X', 'cd'], {})]
+Exception partial 1 partial
+Exception object 0 ('an object', ('ab',), {})
+Exception object 0 ('an object', ('ab',), {})
+Exception object 0 ('an object', ('ab',), {'k': 1})
+Exception object 0 ('an object', (), {})
+Exception object 0 True
+Exception object 0 [('an object', ('cd',), {})]
+Exception object 0 Callable
+Exception object 1 ('an object', ('ab',), {})
+Exception object 1 ('an object', ('ab',), {})
+Exception object 1 ('an object', ('ab',), {'k': 1})
+Exception object 1 ('an object', (), {})
+Exception object 1 True
+Exception object 1 [('an object', ('cd',), {})]
+Exception object 1 Callable
+Exception type 0 ['a', 'b']
+Exception type 0 ['a', 'b']
+Exception type 0 ('TypeError', 'list() takes no keyword arguments')
+Exception type 0 []
+Exception type 0 True
+Exception type 0 [['c', 'd']]
+Exception type 0 type
+Exception type 1 ['a', 'b']
+Exception type 1 ['a', 'b']
+Exception type 1 ('TypeError', 'list() takes no keyword arguments')
+Exception type 1 []
+Exception type 1 True
+Exception type 1 [['c', 'd']]
+Exception type 1 type
+Exception native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 0 True
+Exception native method 0 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 0 method_descriptor
+Exception native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 1 True
+Exception native method 1 ('TypeError', "descriptor 'upper' for 'str' objects doesn't apply to a 'X' object")
+Exception native method 1 method_descriptor
+Exception not callable 0 ('TypeError', "'int' object is not callable")
+Exception not callable 0 ('TypeError', "'int' object is not callable")
+Exception not callable 0 ('TypeError', "'int' object is not callable")
+Exception not callable 0 ('TypeError', "'int' object is not callable")
+Exception not callable 0 True
+Exception not callable 0 ('TypeError', "'int' object is not callable")
+Exception not callable 0 int
+Exception not callable 1 ('TypeError', "'int' object is not callable")
+Exception not callable 1 ('TypeError', "'int' object is not callable")
+Exception not callable 1 ('TypeError', "'int' object is not callable")
+Exception not callable 1 ('TypeError', "'int' object is not callable")
+Exception not callable 1 True
+Exception not callable 1 ('TypeError', "'int' object is not callable")
+Exception not callable 1 int
+Exception None 0 ('TypeError', "'NoneType' object is not callable")
+Exception None 0 ('TypeError', "'NoneType' object is not callable")
+Exception None 0 ('TypeError', "'NoneType' object is not callable")
+Exception None 0 ('TypeError', "'NoneType' object is not callable")
+Exception None 0 True
+Exception None 0 ('TypeError', "'NoneType' object is not callable")
+Exception None 0 NoneType
+Exception None 1 ('TypeError', "'NoneType' object is not callable")
+Exception None 1 ('TypeError', "'NoneType' object is not callable")
+Exception None 1 ('TypeError', "'NoneType' object is not callable")
+Exception None 1 ('TypeError', "'NoneType' object is not callable")
+Exception None 1 True
+Exception None 1 ('TypeError', "'NoneType' object is not callable")
+Exception None 1 NoneType
+--- derived, and beside a __call__ under its name
+Base ('plain', 'Base', [], {})
+Base True
+Base ('plain', 'Base', [], {})
+Base True
+Derived ('plain', 'Derived', [], {})
+Derived True
+Derived ('plain', 'Derived', [], {})
+Derived True
+Overrides Overrides
+Overrides True
+Overrides Overrides
+Overrides True
+Both by the name
+Both True
+Both by the name
+Both True

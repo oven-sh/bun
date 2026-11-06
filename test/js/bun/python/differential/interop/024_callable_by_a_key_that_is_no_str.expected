@@ -1,0 +1,16 @@
+status: 0
+oracle: none
+---
+before | typeof: object object function object | asked: 0
+before | called by JS: TypeError TypeError called TypeError | asked: true
+before | instanceof Function: false false false false | asked: 0
+callable(): true true true false | asked: true
+called by Python: called called called TypeError
+after | typeof: object object function object | asked: 0
+after | called by JS: TypeError TypeError called TypeError | asked: false
+after | instanceof Function: false false false false | asked: 0
+under the profiler: raises TypeError
+under the profiler: collects TypeError
+under the profiler: allocates TypeError
+under the profiler: only_by_key TypeError
+under the profiler: beside_a_key called

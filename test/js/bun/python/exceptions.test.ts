@@ -907,3 +907,31 @@ def down(depth):
     expect(String(code.where(context))).toBe("catches:2");
   });
 });
+
+test("what Python has caught is not reported in place of another error", async () => {
+  using dir = tempDir("python-caught", {
+    "main.ts": `
+      const { exec, dict } = require("python:builtins");
+      const py = dict();
+      exec(\`
+class Attributes:
+    def __getattr__(self, name): raise AttributeError(name)
+def catches():
+    try: raise KeyError("caught by except")
+    except KeyError: pass
+    return hasattr(Attributes(), "caught by hasattr")
+\`, py);
+      process.on("uncaughtException", error => console.log(String(error)));
+      const target = new EventTarget();
+      target.addEventListener("x", { handleEvent: 1 } as any);
+      py.get("catches")();
+      // The host has a value to report, not an exception that was thrown, and asks the engine for the last one.
+      target.dispatchEvent(new Event("x"));
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.ts"], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("TypeError: 'handleEvent' property of event listener should be callable\n");
+  expect(exitCode).toBe(0);
+});

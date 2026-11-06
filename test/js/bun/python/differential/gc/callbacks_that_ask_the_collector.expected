@@ -1,0 +1,39 @@
+status: 0
+script: 749ce6376e1d590d
+---
+the callback asks for nothing | allocation: told True | in turn True
+the callback asks for nothing | gc.collect(): ['start', 'stop']
+the callback asks for get_objects | allocation: told True | in turn True
+the callback asks for get_objects | gc.collect(): ['start', 'stop']
+the callback asks for get_referrers | allocation: told True | in turn True
+the callback asks for get_referrers | gc.collect(): ['start', 'stop']
+the callback asks for get_referents | allocation: told True | in turn True
+the callback asks for get_referents | gc.collect(): ['start', 'stop']
+the callback asks for collect | allocation: told True | in turn True
+the callback asks for collect | gc.collect(): ['start', 'stop']
+the callback asks for get_stats | allocation: told True | in turn True
+the callback asks for get_stats | gc.collect(): ['start', 'stop']
+the callback asks for garbage of its own | allocation: told True | in turn True
+the callback asks for garbage of its own | gc.collect(): ['start', 'stop']
+the callback asks for nothing | get_objects(): []
+the callback asks for nothing | get_referrers(): []
+the callback asks for nothing | get_referents(): []
+the callback asks for get_objects | get_objects(): []
+the callback asks for get_objects | get_referrers(): []
+the callback asks for get_objects | get_referents(): []
+the callback asks for get_referrers | get_objects(): []
+the callback asks for get_referrers | get_referrers(): []
+the callback asks for get_referrers | get_referents(): []
+the callback asks for get_referents | get_objects(): []
+the callback asks for get_referents | get_referrers(): []
+the callback asks for get_referents | get_referents(): []
+the callback asks for collect | get_objects(): []
+the callback asks for collect | get_referrers(): []
+the callback asks for collect | get_referents(): []
+the callback asks for get_stats | get_objects(): []
+the callback asks for get_stats | get_referrers(): []
+the callback asks for get_stats | get_referents(): []
+the callback asks for garbage of its own | get_objects(): []
+the callback asks for garbage of its own | get_referrers(): []
+the callback asks for garbage of its own | get_referents(): []
+in the statistics: [0, 0, 0]

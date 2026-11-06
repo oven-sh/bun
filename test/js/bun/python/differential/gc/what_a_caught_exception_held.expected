@@ -1,0 +1,20 @@
+status: 0
+script: f5102ec5ffc17ced
+---
+in another thread, by_except: finalized by gc.collect() while the thread runs: ['except']; frames that gc.get_objects() finds then: 0
+in another thread, by_bare_except: finalized by gc.collect() while the thread runs: ['bare except']; frames that gc.get_objects() finds then: 0
+in another thread, by_except_as: finalized by gc.collect() while the thread runs: ['except as']; frames that gc.get_objects() finds then: 0
+in another thread, by_with: finalized by gc.collect() while the thread runs: ['with']; frames that gc.get_objects() finds then: 0
+in another thread, by_hasattr: finalized by gc.collect() while the thread runs: ['hasattr']; frames that gc.get_objects() finds then: 0
+in another thread, by_getattr: finalized by gc.collect() while the thread runs: ['getattr']; frames that gc.get_objects() finds then: 0
+in another thread, by_for: finalized by gc.collect() while the thread runs: ['for']; frames that gc.get_objects() finds then: 0
+in another thread, by_generator: finalized by gc.collect() while the thread runs: ['in a generator']; frames that gc.get_objects() finds then: 0
+in this thread, by_except: finalized without gc.collect(): ['except']
+in this thread, by_bare_except: finalized without gc.collect(): ['bare except']
+in this thread, by_except_as: finalized without gc.collect(): ['except as']
+in this thread, by_with: finalized without gc.collect(): ['with']
+in this thread, by_hasattr: finalized without gc.collect(): ['hasattr']
+in this thread, by_getattr: finalized without gc.collect(): ['getattr']
+in this thread, by_for: finalized without gc.collect(): ['for']
+in this thread, by_generator: finalized without gc.collect(): ['in a generator']
+beside a thread that raises and catches all the time: frames that gc.get_objects() finds in 30 looks: 0

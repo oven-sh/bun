@@ -1,0 +1,20 @@
+status: 0
+script: f83ce7a78a891a8e
+---
+a generator that was dropped: []
+   a moment later: [] ['closed a']
+an object with __del__ that was dropped: []
+   a moment later: [] ['del b']
+the same in a cycle: ['c'] []
+   a moment later: [('c', False)] []
+   after a collection, still held: [('c', False)] []
+   dropped: ['del c']
+what hangs off a cycle: ['child of d', 'd'] []
+   dropped: ['del child of d', 'del d']
+who refers to what a dropped object held: []
+   a moment later: ['del e']
+who refers to what a cycle holds: 1 []
+   dropped: ['del f']
+[('seen from a finalizer', [])] ['del g', 'del h']
+dropped by another thread: 0
+   in the end: ['closed of another thread', 'del of another thread']

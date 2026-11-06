@@ -183,6 +183,75 @@ print(called, wakes() - before)
     expect(exitCode).toBe(0);
   });
 
+test.concurrent("in a heap snapshot for debugging, what is kept for a finalizer is a root that says so", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import gc
+from bun import jsc
+
+def reasons(snapshot):
+    roots, labels = snapshot.roots, snapshot.labels
+    return [labels[roots[i + 1]] for i in range(0, len(roots), 3)]
+
+snapshots = []
+class Waits:
+    def __del__(self):
+        # The other four are in the queue meanwhile.
+        if not snapshots:
+            snapshots.append(jsc.generateHeapSnapshotForDebugging())
+for i in range(5):
+    Waits()
+gc.collect()
+print(reasons(snapshots[0]).count("KeptForFinalizers"))
+
+class Found:
+    def __del__(self): pass
+for i in range(5):
+    Found()
+# The collection that makes the snapshot finds them.
+print(reasons(jsc.generateHeapSnapshotForDebugging()).count("KeptForFinalizers"))
+`);
+  // A root without a reason is complained of here.
+  expect(stderr).toBe("");
+  expect(stdout).toBe("4\n5\n");
+  expect(exitCode).toBe(0);
+});
+
+// The shell is there for a call of foreign code that says when it has begun.
+test.skipIf(isDebug || isASAN || isWindows)(
+  "a queue of finalizers that stands still is not marked again and again",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(`
+import ctypes, gc, os, threading
+from bun import jsc
+
+class Waits:
+    def __del__(self): pass
+class Plain: pass
+box = []
+to_shell, from_main = os.pipe()[::-1]
+to_main, from_shell = os.pipe()[::-1]
+for fd in (from_main, to_main): os.set_inheritable(fd, True)
+def maker():
+    box.append([Waits() for _ in range(300000)])
+    # Nobody can tell this thread of the calls it owes meanwhile.
+    ctypes.CDLL(None).system(b'echo >&%d; read x <&%d' % (to_main, from_main))
+thread = threading.Thread(target=maker); thread.start()
+os.read(from_shell, 1)
+box.clear()
+jsc.fullGC()      # A collection of the engine's own: the finalizers are their maker's.
+before = gc.get_stats()[2]['collections']
+for i in range(200000):
+    [Plain() for _ in range(20)]
+print(gc.get_stats()[2]['collections'] - before)
+os.write(to_shell, b'\\n'); thread.join()
+`);
+    expect(stderr).toBe("");
+    // 1. Every other collection, 22 of them, where the queue counts for nothing.
+    expect(Number(stdout)).toBeLessThan(6);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("an object is finalized before what it refers to", async () => {
   const { stdout, stderr, exitCode } = await run(`
 import gc, os, tempfile

@@ -1,0 +1,8 @@
+status: 0
+script: c8438af743345fa8
+---
+lists: three times as many took no more memory; finalizers were called: True
+bytes: three times as many took no more memory; finalizers were called: True
+finalizers that make more: three times as many took no more memory; finalizers were called: True
+chains: three times as many took no more memory; finalizers were called: True
+generators: three times as many took no more memory; finalizers were called: True

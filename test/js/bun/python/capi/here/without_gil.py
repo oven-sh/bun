@@ -78,3 +78,7 @@ else:
     own.fill_tuple_that_was_appended.argtypes = [ctypes.py_object, ctypes.c_int]
     own.fill_tuples_that_a_list_has_taken_over.restype = own.fill_tuple_that_was_appended.restype = ctypes.py_object
     print(own.fill_tuples_that_a_list_has_taken_over(2), own.fill_tuple_that_was_appended(7, True))
+    # What C has given back is still in the table, with a count of 0. That the program gets it is noted all the same.
+    lib.return_tuple_of_the_mistake.restype = ctypes.py_object
+    got = lib.return_tuple_of_the_mistake()
+    print(lib.change_tuple_of_the_mistake(), got)

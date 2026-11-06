@@ -68,6 +68,25 @@ long change_in_another_thread(PyObject *object, int what)
     return (long)(Py_REFCNT(object) - before);
 }
 
+/* A tuple to which a thread without the GIL takes references. C believes in them: it gives its own back and returns the tuple to the program with one of those. */
+static PyObject *tuple_of_the_mistake;
+PyObject *return_tuple_of_the_mistake(void)
+{
+    tuple_of_the_mistake = PyTuple_New(1);
+    PyTuple_SetItem(tuple_of_the_mistake, 0, PyLong_FromLong(1));
+    change_in_another_thread(tuple_of_the_mistake, 0);
+    Py_DECREF(tuple_of_the_mistake);
+    return tuple_of_the_mistake;
+}
+/* And takes a reference of its own again, the only one that is counted. */
+int change_tuple_of_the_mistake(void)
+{
+    Py_INCREF(tuple_of_the_mistake);
+    int status = PyTuple_SetItem(tuple_of_the_mistake, 0, PyLong_FromLong(2));
+    PyErr_Clear();
+    return status;
+}
+
 void take_here(PyObject *object, long n) { while (n--) Py_INCREF(object); }
 void give_back_here(PyObject *object, long n) { while (n--) Py_DECREF(object); }
 

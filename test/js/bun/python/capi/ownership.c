@@ -166,6 +166,20 @@ PyObject *raise_and_return(PyObject *type, PyObject *object)
     PyErr_SetNone(type);
     return Py_NewRef(object);
 }
+/* A new tuple, of which C keeps a second reference. Nobody gets it, so C may go on filling it. */
+static PyObject *tuple_returned_beside_an_exception;
+PyObject *raise_and_return_new_tuple(PyObject *type)
+{
+    tuple_returned_beside_an_exception = PyTuple_New(1);
+    PyErr_SetNone(type);
+    return Py_NewRef(tuple_returned_beside_an_exception);
+}
+PyObject *fill_tuple_returned_beside_an_exception(PyObject *item)
+{
+    if (PyTuple_SetItem(tuple_returned_beside_an_exception, 0, Py_NewRef(item)))
+        return NULL;
+    return tuple_returned_beside_an_exception;
+}
 /* What is returned beside an exception nobody looks at. */
 PyObject *raise_and_return_what_is_no_object(PyObject *type)
 {

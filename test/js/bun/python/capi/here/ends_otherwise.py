@@ -21,6 +21,13 @@ for i in range(3):
         lib.raise_and_return(KeyError, thing)
     except KeyError:
         print("KeyError", lib.count(thing) - base)
+# Nor has the program got what it has not got: a tuple that C goes on filling.
+lib.raise_and_return_new_tuple.argtypes = lib.fill_tuple_returned_beside_an_exception.argtypes = [py_object]
+lib.raise_and_return_new_tuple.restype = lib.fill_tuple_returned_beside_an_exception.restype = py_object
+try:
+    lib.raise_and_return_new_tuple(KeyError)
+except KeyError:
+    print("KeyError", lib.fill_tuple_returned_beside_an_exception(7))
 ref = weakref.ref(thing)
 del thing
 gc.collect()

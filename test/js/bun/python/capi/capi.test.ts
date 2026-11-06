@@ -148,7 +148,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     "Py_INCREF in a thread without the GIL is refused, and from then on nothing is let go of, while the counts fall as ever",
     async () => {
       expect(await run("here/without_gil.py", "without_gil", {}, "takes")).toEqual({
-        stdout: "(True, True)\n0\nTrue\n(True, False)\n[0, 3, 0, 0]\n[(0, 0), (1, 1)] [(7,)]\n",
+        stdout: "(True, True)\n0\nTrue\n(True, False)\n[0, 3, 0, 0]\n[(0, 0), (1, 1)] [(7,)]\n-1 (1,)\n",
         stderr: refusedToTake,
         exitCode: 0,
       });
@@ -190,10 +190,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     `Python: ${what} called for an interpreter that the C API does not serve (it serves the first of the process); ` +
     `${consequence}\n`;
   // The constructor of loaded.c calls functions; the reference that it takes is to an exception, and nobody counts those.
-  const refusedToEnter = refusedToAnother(
-    "a function of the C API was",
-    "it fails, and nothing changes for the interpreter that it serves",
-  );
+  const refusedToEnter = refusedToAnother("a function of the C API was", "it fails");
   const refusedBoth = refusedToEnter + refusedToAnother("Py_INCREF or Py_DECREF was", "the count stays as it was");
   // What the scripts have such an interpreter do, and what whoever comes next on that thread finds.
   const whatIsRefusedToAnother = (who: string, next: string) =>
@@ -498,7 +495,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     "neither a reference nor what C raised outlives a call that ends otherwise than by its result",
     async () => {
       expect(await run("here/ends_otherwise.py", "ownership")).toEqual({
-        stdout: "KeyError 0\nKeyError 0\nKeyError 0\nNone\nValueError by a function of a CDLL\nTrue\n",
+        stdout: "KeyError 0\nKeyError 0\nKeyError 0\nKeyError (7,)\nNone\nValueError by a function of a CDLL\nTrue\n",
         stderr: "",
         exitCode: 0,
       });
@@ -527,6 +524,14 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
       );
     }
   }
+
+  test.concurrent(
+    "a library whose destructor raises when exit() runs it",
+    async () => {
+      expect(await run("here/goes_at_exit.py", "goes")).toEqual({ stdout: "loaded\n", stderr: "", exitCode: 0 });
+    },
+    limit,
+  );
 
   test.concurrent(
     "a tuple that C changes after its hash was asked for",

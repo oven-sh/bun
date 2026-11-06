@@ -376,7 +376,6 @@ struct JsxTag {
     is_self_closing: bool,
 }
 
-/// A byte of a word in JSX: ASCII, and nothing that's read as something else than text.
 /// True for a character that isn't ASCII and that is white space to the parser or to the printer, or has no width.
 fn is_wide_space(character: Option<&[u8]>) -> bool {
     matches!(
@@ -393,6 +392,33 @@ fn is_wide_space(character: Option<&[u8]>) -> bool {
     )
 }
 
+/// True if `text`, which starts with a byte that isn't ASCII, starts with a character.
+#[inline(never)]
+fn starts_with_character(text: &[u8]) -> bool {
+    let len = match text.first() {
+        Some(0xC2..=0xDF) => 2,
+        Some(0xE0..=0xEF) => 3,
+        Some(0xF0..=0xF4) => 4,
+        _ => return false,
+    };
+    (text.get(..len)).is_some_and(|character| std::str::from_utf8(character).is_ok())
+}
+
+/// True if `text`, which ends with a byte that isn't ASCII, ends with a character.
+#[inline(never)]
+fn ends_with_character(text: &[u8]) -> bool {
+    let continued = text
+        .iter()
+        .rev()
+        .take(3)
+        .take_while(|&&byte| byte & 0xC0 == 0x80);
+    let Some(start) = text.len().checked_sub(continued.count() + 1) else {
+        return false;
+    };
+    std::str::from_utf8(&text[start..]).is_ok()
+}
+
+/// A byte of a word in JSX: ASCII, and nothing that's read as something else than text.
 fn is_jsx_word_byte(byte: u8) -> bool {
     byte.is_ascii_graphic() && !matches!(byte, b'<' | b'>' | b'{' | b'}')
 }
@@ -2016,13 +2042,18 @@ impl<'t> Reader<'t> {
                         // Between brackets they could be text in strong emphasis, where the printer looks at them again.
                         // Between white space they are text wherever they are, and white space that isn't ASCII is part
                         // of a word to the printer, which then writes the word anew.
+                        // What is no character is whatever the one who looks at it makes of it.
                         let is_space = |start: Option<usize>, len: usize| {
                             start.is_some_and(|start| is_wide_space(text.get(start..start + len)))
                         };
                         if (before(at) >= 0x80
-                            && (is_space(at.checked_sub(2), 2) || is_space(at.checked_sub(3), 3)))
+                            && (is_space(at.checked_sub(2), 2)
+                                || is_space(at.checked_sub(3), 3)
+                                || !ends_with_character(&text[from..at])))
                             || (byte(at + 2) >= 0x80
-                                && (is_space(Some(at + 2), 2) || is_space(Some(at + 2), 3)))
+                                && (is_space(Some(at + 2), 2)
+                                    || is_space(Some(at + 2), 3)
+                                    || !starts_with_character(&text[at + 2..])))
                         {
                             return None;
                         }

@@ -805,6 +805,10 @@ describe("Markdown", () => {
     const inputs = [
       "**\xffw\xc2\xa0** q**\n",
       "**a \xff** b**\n",
+      "**a \x80** b**\n",
+      "**a **\x80 b**\n",
+      "**a \xe4\xb8** b**\n",
+      "**a \xe4\xb8\xad** b**\n",
       "**a \xffhttp://b_c.d e**\n",
       "a\xff_b\n",
       "| \xff   |\n| --- |\n| b   |\n",

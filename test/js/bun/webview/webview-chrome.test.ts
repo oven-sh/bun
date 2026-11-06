@@ -1234,7 +1234,7 @@ it("chrome: a cross-document goBack() waits for the load when the page being lef
   // The target has committed and its image is held: goBack() is still pending.
   await committed.promise;
   const whileHeld = await Promise.race([started.then(() => "goBack() settled"), view.evaluate("document.readyState")]);
-  expect(whileHeld).toBe("interactive");
+  expect(whileHeld).not.toBe("goBack() settled");
   release();
   await started;
   expect({

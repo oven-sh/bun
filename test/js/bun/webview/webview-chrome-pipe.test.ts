@@ -423,6 +423,23 @@ test.concurrent("a same-document navigate() that the page cancels rejects", asyn
   });
 });
 
+// A #fragment navigate() while the document still loads: if the page cancels
+// it, the frame reports no stop of its own, so the document's load ends the
+// navigation. If the commit comes after the load, it still updates view.url.
+test.concurrent("a #fragment navigate() issued while the document loads ends with that load", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const started = view.navigate("http://fake/page#never-load");
+    // The document's own load ends: Page.loadEventFired, then the frame stops.
+    await view.evaluate("__fake_load_event()");
+    await view.evaluate("__fake_frame_stopped_loading()");
+    print(await outcome(started.then(() => ({ url: view.url, loading: view.loading }))));
+    view.close();
+  `);
+  expect(result).toEqual({ resolved: { url: "http://fake/page", loading: false } });
+});
+
 // A traversal can end on either commit kind, but once its document has
 // committed only that document's load ends it. A page that changes its hash
 // as it boots commits a same-document navigation before its load event.

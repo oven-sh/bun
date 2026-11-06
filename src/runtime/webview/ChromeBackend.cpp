@@ -667,7 +667,6 @@ static void clearNavigationBits(JSWebView* view)
     view->m_chromeSettleOnSameDocument = false;
     view->m_chromeSettleOnLoad = false;
     view->m_chromeNavigationCommitted = false;
-    view->m_chromeFrameStopIsLoadEnd = false;
     view->m_chromeTraversalUrl = WTF::String();
 }
 
@@ -1223,16 +1222,16 @@ void Transport::onFrameStoppedLoading(JSWebView* view, std::span<const char> par
 {
     if (!view->m_chromeSettleOnSameDocument || view->m_chromeSettleOnLoad || !view->m_pendingNavigate) return;
     if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
-    if (std::exchange(view->m_chromeFrameStopIsLoadEnd, false)) return;
     settleFailure(m_global, view, PendingSlot::Navigate, Method::PageNavigate, createError(m_global, "navigation cancelled by the page"_s));
 }
 
 // Page.loadEventFired ends the view's navigation once its own document has committed; a load the page started only refreshes the title.
 void Transport::onLoadEventFired(JSWebView* view)
 {
-    if (view->m_chromeSettleOnLoad && view->m_chromeNavigationCommitted && view->m_pendingNavigate)
-        return endNavigation(*this, view);
-    if (view->m_chromeSettleOnSameDocument && !view->m_chromeSettleOnLoad) view->m_chromeFrameStopIsLoadEnd = true;
+    bool ownLoad = view->m_chromeSettleOnLoad && view->m_chromeNavigationCommitted;
+    // A same-document navigate() issued while the document loaded has no stop event of its own if the page cancels it, so that load ends it, as it did before.
+    bool sameDocumentWaiting = view->m_chromeSettleOnSameDocument && !view->m_chromeSettleOnLoad;
+    if ((ownLoad || sameDocumentWaiting) && view->m_pendingNavigate) return endNavigation(*this, view);
     // The view's navigation, if any, is still loading.
     if (!view->m_pendingNavigate) view->m_loading = false;
     sendTitleFetch(view, Method::PageTitleRefresh);

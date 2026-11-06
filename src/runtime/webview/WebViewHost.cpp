@@ -4,6 +4,7 @@
 
 #include "WebViewHost.h"
 #include "ipc_protocol.h"
+#include <wtf/URL.h>
 
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -245,15 +246,8 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
     }
     m_navPending = true;
     m_navProvisional = false;
-    m_navTargetUrl = urlString;
+    m_navTargetUrl = WTF::URL(WTF::URL(), urlString);
     m_webview.loadRequest(objc::NSURLRequest::fromURL(nsurl));
-}
-
-// The document of a URL: everything before the '#'.
-static WTF::StringView documentOf(const WTF::String& url)
-{
-    auto hash = url.find('#');
-    return StringView(url).left(hash == WTF::notFound ? url.length() : hash);
 }
 
 void WebViewHost::evaluateIPC(const WTF::String& script)
@@ -726,8 +720,9 @@ void WebViewHost::onSameDocumentNavigation(long type)
     constexpr long anchorNavigation = 0;
     constexpr long sessionStatePop = 3;
     if (type == anchorNavigation) return;
+    // The same test WebKit makes for a fragment navigation, both URLs through its parser.
     bool ownNavigation = type == sessionStatePop && m_navPending && !m_navProvisional
-        && documentOf(url()) == documentOf(m_navTargetUrl);
+        && WTF::equalIgnoringFragmentIdentifier(WTF::URL(WTF::URL(), url()), m_navTargetUrl);
     reportNavigation(ownNavigation);
 }
 

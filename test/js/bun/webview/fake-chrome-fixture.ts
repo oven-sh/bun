@@ -117,6 +117,10 @@ Object.assign(globalThis, {
   __fake_load_event() {
     event("Page.loadEventFired", { timestamp: ++loads });
   },
+  // The main frame has nothing left to load.
+  __fake_frame_stopped_loading() {
+    event("Page.frameStoppedLoading", { frameId: mainFrameId() });
+  },
   // How many document.title fetches the runtime has sent so far.
   __fake_title_fetches() {
     return titleFetches;

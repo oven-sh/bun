@@ -91,8 +91,6 @@ public:
     bool m_chromeSettleOnSameDocument = false;
     bool m_chromeSettleOnLoad = false;
     bool m_chromeNavigationCommitted = false;
-    // Chrome: the document's own load ended after a same-document reply, so the next Page.frameStoppedLoading is not a cancellation.
-    bool m_chromeFrameStopIsLoadEnd = false;
     // Chrome: the URL of the entry goBack()/goForward() asked for; a same-document commit elsewhere is the page's own.
     WTF::String m_chromeTraversalUrl;
 

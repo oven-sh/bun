@@ -351,15 +351,18 @@ it("navigate() to a #fragment of the current page resolves and fires onNavigated
   await view.navigate(base + "#one");
   await view.navigate(base + "#two");
   await view.navigate(base + "#one");
-  expect(urls).toEqual([base + "#one", base + "#one", base + "#two", base + "#one"]);
+  // A URL that only the parser makes equal to the current document (no "/"
+  // before the "#") is a same-document navigation as well.
+  await view.navigate(base.slice(0, -1) + "#three");
+  expect(urls).toEqual([base + "#one", base + "#one", base + "#two", base + "#one", base + "#three"]);
 
   // A traversal between two #fragment entries reports through the same path.
   // goBack() is acknowledged at once on WebKit, so wait for the report.
   const traversed = Promise.withResolvers<string>();
   view.onNavigated = (url: string) => traversed.resolve(url);
   await view.goBack();
-  expect(await traversed.promise).toBe(base + "#two");
-  expect(await view.evaluate("location.hash")).toBe("#two");
+  expect(await traversed.promise).toBe(base + "#one");
+  expect(await view.evaluate("location.hash")).toBe("#one");
 });
 
 it("a pushState() by the page updates view.url and fires onNavigated", async () => {
@@ -383,12 +386,14 @@ it("a pushState() by the page updates view.url and fires onNavigated", async () 
 });
 
 it("a replaceState() while the document loads does not end navigate() or clear loading", async () => {
+  let releaseImage = () => {};
+  const imageHeld = new Promise<void>(resolve => (releaseImage = resolve));
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
       const path = new URL(req.url).pathname;
       if (path === "/late.gif") {
-        await Bun.sleep(300);
+        await imageHeld;
         return new Response("GIF89a", { headers: { "content-type": "image/gif" } });
       }
       return new Response(
@@ -400,10 +405,19 @@ it("a replaceState() while the document loads does not end navigate() or clear l
   const base = `http://127.0.0.1:${server.port}/`;
   await using view = new Bun.WebView({ width: 200, height: 200 });
   const seen: [string, boolean][] = [];
-  view.onNavigated = (url: string) => void seen.push([url, view.loading]);
-  await view.navigate(base + "spa");
-  // The page's own commit reports with the navigation still in flight. The
-  // load ends it, and the callback runs before the promise resolves.
+  const replaced = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => {
+    seen.push([url, view.loading]);
+    if (seen.length === 1) replaced.resolve();
+  };
+  const started = view.navigate(base + "spa");
+  // The page's own commit reports while the held image keeps the navigation
+  // in flight. The load ends it, and the callback runs before the promise resolves.
+  await replaced.promise;
+  const whileHeld = await Promise.race([started.then(() => "navigate() settled"), view.evaluate("1")]);
+  expect(whileHeld).toBe(1);
+  releaseImage();
+  await started;
   expect({ url: view.url, loading: view.loading, seen }).toEqual({
     url: base + "app/home",
     loading: false,

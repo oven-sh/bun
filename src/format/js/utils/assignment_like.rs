@@ -81,11 +81,11 @@ fn computed_key_width<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &Formatter<'a>)
     }
     let span = key.span(f.file());
     if let KeyKind::Computed(e) = key.kind() {
-        // A comment in the brackets is a separate piece.
-        return match !f.is_quiet() && has_comments(e, f) {
-            true => None,
-            false => plain_expression_width(e, f).map(|width| width + 2),
+        let comments = match f.is_quiet() {
+            true => 0,
+            false => width_of_comments_on_the_line(e, f)?,
         };
+        return plain_expression_width(e, f).map(|width| width + comments + 2);
     }
     // A template is printed with a `lineSuffixBoundary`.
     let is_template = f
@@ -93,13 +93,39 @@ fn computed_key_width<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &Formatter<'a>)
         .text_for(&span)
         .get(1..)
         .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
-    (!is_template).then(|| {
-        if !f.is_quiet() && f.comments().has_comment_in_span(span) {
-            return f.source_text().span_width(span);
+    if is_template {
+        return None;
+    }
+    if !f.is_quiet() && f.comments().has_comment_in_span(span) {
+        return Some(f.source_text().span_width(span));
+    }
+    let printed = printed_key(key, key.inner_span(f.file()), parent, f);
+    // The lines of a string are pieces with a `literalline` between them.
+    (!bun_core::strings::contains_char(&printed, b'\n'))
+        .then(|| f.string_width(&printed) as usize + 2)
+}
+
+/// The width of the comments before and after `e`, each with its blank, if all of them are text on the line of `e`:
+/// `/* a */ e /* b */`. A line comment waits for the end of the line, and a line break is no text.
+fn width_of_comments_on_the_line<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
+    let owned = comments_of_outermost_node(e, f);
+    if !owned.dangling.is_empty() {
+        return None;
+    }
+    let mut width = 0;
+    for (comments, are_leading) in [(owned.leading, true), (owned.trailing, false)] {
+        for comment in comments {
+            let is_next_to_line_break = match are_leading {
+                true => comment.has_newline_after(),
+                false => comment.has_newline_before(),
+            };
+            if comment.is_line() || comment.is_multiline_block() || is_next_to_line_break {
+                return None;
+            }
+            width += f.source_text().span_width(comment.span()) + 1;
         }
-        let printed = printed_key(key, key.inner_span(f.file()), parent, f);
-        f.string_width(&printed) as usize + 2
-    })
+    }
+    Some(width)
 }
 
 /// What [`AssignmentLike::write_left`] returns for `property` of an object, which has a key and no comments.
@@ -151,6 +177,9 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
             }
             ExprKind::String(_) => {
                 let source = f.source_text().text_for(&current);
+                if bun_core::strings::contains_char(source, b'\n') {
+                    return None;
+                }
                 let kind = StringLiteralParentKind::Expression;
                 let printed = FormatLiteralStringToken::new(source, false, kind).clean_text(f);
                 return Some(width + printed.width());

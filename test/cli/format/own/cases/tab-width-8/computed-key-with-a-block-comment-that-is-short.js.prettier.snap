@@ -1,0 +1,25 @@
+-------------------------------
+{ printWidth: 80, tabWidth: 8 }
+-------------------------------
+a = {
+        [a /*b*/]: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        [/*b*/ a]: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        [a /* bbbbbbbbbbbb */]:
+                "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        // b
+        [a]: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+};
+
+--------------------------------
+{ printWidth: 100, tabWidth: 8 }
+--------------------------------
+a = {
+        [a /*b*/]: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        [/*b*/ a]: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        [a /* bbbbbbbbbbbb */]:
+                "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        // b
+        [a]: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+};
+
+===================== End =====================

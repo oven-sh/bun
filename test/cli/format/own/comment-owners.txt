@@ -1524,6 +1524,11 @@ statements/file-with-a-directive-and-comments-without-empty-lines.js
 statements/file-with-a-directive-and-comments.js
 15 22 T Directive 0 12 -
 24 28 T Directive 0 12 -
+tab-width-8/computed-key-with-a-block-comment-that-is-short.js
+17 22 T Identifier 15 16 -
+138 143 L Identifier 144 145 -
+263 281 T Identifier 261 262 -
+399 403 L ObjectProperty 396 517 -
 tab-width-8/yield-as-a-computed-key-that-is-short.js
 765 772 L Identifier 773 774 -
 types/comment-after-the-bracket-of-a-mapped-type-without-a-type.ts

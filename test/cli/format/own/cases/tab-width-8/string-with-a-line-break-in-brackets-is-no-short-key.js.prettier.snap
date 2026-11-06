@@ -1,0 +1,22 @@
+-------------------------------
+{ printWidth: 80, tabWidth: 8 }
+-------------------------------
+a = {
+        ["\
+"]:
+                vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+                        .vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+                        .vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv,
+};
+
+--------------------------------
+{ printWidth: 100, tabWidth: 8 }
+--------------------------------
+a = {
+        ["\
+"]:
+                vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv.vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+                        .vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv,
+};
+
+===================== End =====================

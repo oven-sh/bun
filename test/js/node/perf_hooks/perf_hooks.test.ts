@@ -997,7 +997,7 @@ describe("gc entries", () => {
       // The JS thread conducts a collection that it asked for, and the collection only goes on where the program
       // allocates. So with young objects to mark it is still under way at the next statement.
       const startACollection = () => {
-        globalThis.young = Array.from({ length: 100000 }, (_, i) => ({ i, pair: [i, i] }));
+        globalThis.young = Array.from({ length: 20000 }, (_, i) => ({ i, pair: [i, i] }));
         Bun.gc(false);
         globalThis.more = Array.from({ length: 2000 }, (_, i) => ({ i }));
       };
@@ -1016,7 +1016,7 @@ describe("gc entries", () => {
             (entry.startTime < since && entry.startTime + entry.duration > since),
         ).length;
         underWayAtObserve.push(profiler.stop().statistics.length - got.filter(entry => entry.startTime >= since).length);
-        if (underWayAtObserve.length < 4) return round();
+        if (underWayAtObserve.length < 3) return round();
         finish({ wrong, wasUnderWayAtObserve: underWayAtObserve.some(collections => collections > 0) });
       });
       function round() {

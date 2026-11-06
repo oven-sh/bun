@@ -310,29 +310,6 @@ describe.concurrent("run-cjs", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A hoisted jest.mock() runs ahead of the require() of the JSX runtime, so
-  // the JSX of the test file itself uses the mock, as it does in an ES module.
-  test("commonjs test file mocking the JSX runtime under bun test", async () => {
-    using dir = tempDir("run-cjs-jsx-bun-test-mock", {
-      ...fakeReact,
-      "mocked.test.jsx": `
-        const { basename } = require("node:path");
-        jest.mock("react/jsx-dev-runtime", () => ({
-          Fragment: "fragment",
-          jsxDEV: (type, props) => ({ mocked: type, props }),
-        }));
-        test("renders with the mock", () => {
-          expect(<div title={basename("/a/b.txt")} />).toEqual({ mocked: "div", props: { title: "b.txt" } });
-        });
-      `,
-    });
-
-    const { stderr, exitCode } = await run(String(dir), ["test", "./mocked.test.jsx"]);
-    expect(stderr).toContain(" 1 pass\n");
-    expect(stderr).toContain(" 0 fail\n");
-    expect(exitCode).toBe(0);
-  });
-
   // The globals of bun:test stay `const`, as an `import` binds them.
   test("commonjs test file cannot assign to a global of bun:test", async () => {
     using dir = tempDir("run-cjs-bun-test-assign", {

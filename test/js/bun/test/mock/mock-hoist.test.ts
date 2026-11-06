@@ -852,6 +852,75 @@ describe.concurrent("modes", () => {
     ).toEqual([["hoisted 1", "hoisted 2", "body", "load side", "mocked", "object", true]]);
   });
 
+  // A CommonJS file gets its JSX runtime from a `require()` that the parser generates.
+  // That statement runs ahead of the hoisted calls, so what a hoisted call runs at once can make an element.
+  const react = {
+    "node_modules/react/package.json": `{ "name": "react" }`,
+    "node_modules/react/index.js": `exports.createElement = type => ({ type });`,
+    "node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = type => ({ type }); exports.Fragment = "fragment";`,
+    "node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = type => ({ type }); exports.Fragment = "fragment";`,
+  };
+
+  test("CommonJS: JSX in a vi.hoisted() callback", async () => {
+    expect(
+      await events(
+        {
+          ...react,
+          "hoist.test.jsx": `
+            const element = vi.hoisted(() => <b>x</b>);
+            const fragment = vi.hoisted(() => <></>);
+            const keyed = vi.hoisted(() => {
+              const props = { title: "t" };
+              return <i {...props} key="k" />;
+            });
+            (globalThis.events ??= []).push(element.type, fragment.type, keyed.type, typeof module);
+            ${print}
+          `,
+        },
+        ["hoist.test.jsx"],
+      ),
+    ).toEqual([["b", "fragment", "i", "object"]]);
+  });
+
+  // jest.mock() of a module that is loaded already calls the factory at once.
+  test.each([
+    ["a preload", ["--preload", "./preload.cjs", "hoist.test.jsx"]],
+    ["an earlier test file", ["first.test.cjs", "hoist.test.jsx"]],
+  ])("CommonJS: JSX in the factory of a mock of a module that %s loaded", async (_, args) => {
+    expect(
+      await events(
+        {
+          ...react,
+          "dep.cjs": `exports.name = "real";`,
+          "preload.cjs": `require("./dep.cjs");`,
+          "first.test.cjs": `require("./dep.cjs"); test("first", () => {});`,
+          "hoist.test.jsx": `
+            jest.mock("./dep.cjs", () => ({ name: <u>z</u> }));
+            (globalThis.events ??= []).push(require("./dep.cjs").name.type);
+            ${print}
+          `,
+        },
+        args,
+      ),
+    ).toEqual([["u"]]);
+  });
+
+  // A class that the parser moves to the head of the module stays ahead of the hoisted calls in both module kinds.
+  test("CommonJS: a vi.hoisted() callback reads a top-level class as in an ES module", async () => {
+    const source = `
+      const seen = vi.hoisted(() => typeof Box);
+      class Box {}
+      (globalThis.events ??= []).push(seen);
+      ${print}
+    `;
+    const [commonjs, esm] = await Promise.all([
+      events({ "hoist.test.cjs": source }, ["hoist.test.cjs"]),
+      events({ "hoist.test.mjs": source }, ["hoist.test.mjs"]),
+    ]);
+    expect(commonjs).toEqual([["function"]]);
+    expect(commonjs).toEqual(esm);
+  });
+
   test("`bun test` and `bun run` use separate transpiler cache entries", async () => {
     using dir = tempDir("mock-hoist-cache", {
       ...modules,

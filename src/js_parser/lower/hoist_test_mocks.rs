@@ -323,13 +323,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         MockHoistOrder::LoweredImport
     }
 
-    /// The hoisted mocks go to `before[hoisted_at..]`, the lowered imports behind everything.
     /// `ImportKind::Dynamic` on an `S::Import`'s record tells `ImportScanner` to lower it.
     #[optimize(size)]
     pub(crate) fn append_hoisted_mocks(
         &mut self,
         before: &mut BumpVec<'a, js_ast::Part>,
-        hoisted_at: usize,
         hoisted: &mut BumpVec<'a, js_ast::Part>,
         imports: &mut BumpVec<'a, js_ast::Part>,
         exports_kind: js_ast::ExportsKind,
@@ -342,9 +340,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 }
             }
         }
-        let hoisted_len = hoisted.len();
         before.append(hoisted);
-        before[hoisted_at..].rotate_right(hoisted_len);
         before.append(imports);
     }
 

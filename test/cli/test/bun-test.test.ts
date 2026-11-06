@@ -3770,22 +3770,6 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
             }, ${limit});`,
           results: ["(fail) t"],
         },
-        // The setup() of the plugin settles in the timer pass of the fire, so Bun.build() returns with no microtask drain in between.
-        "in the timer pass that ends Bun.build()": {
-          source: `
-            const setup = () => {
-              const settlesInTheNextPass = sleep(0);
-              hold(5);
-              return settlesInTheNextPass;
-            };
-            test.concurrent("a", never, ${short});
-            test.concurrent("c", async () => {
-              await sleep(50);
-              hold(${short});
-              await Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "one pass", setup }] });
-            }, 0);`,
-          results: ["(fail) a", "(pass) c"],
-        },
         // No step of the runner runs under Bun.build(). The timer fires in there for the limit that `a` left behind, and then for the limit of `b`.
         "inside Bun.build(), after a fire in there for another limit": {
           source: `

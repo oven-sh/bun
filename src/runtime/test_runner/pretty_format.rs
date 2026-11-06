@@ -4292,6 +4292,9 @@ impl Formatter<'_> {
                             self.max_width,
                         ) = outer;
                         result?;
+                    } else if let Some(argument) = NativeMatcher::of(argument) {
+                        // Jest prints `String(argument)`, which for a matcher is its `toString()`.
+                        argument.write_name(global, out)?;
                     } else {
                         out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
                     }

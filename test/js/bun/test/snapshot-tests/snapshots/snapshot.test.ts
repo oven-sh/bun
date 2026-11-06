@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 1013, jest: 601 };
+  const tests = { vitest: 1014, jest: 602 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});

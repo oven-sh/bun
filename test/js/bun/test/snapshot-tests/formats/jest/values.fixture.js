@@ -332,6 +332,15 @@ line 2`),
     expect.not.toBeBetween("a", { b: 1 }),
     expect.toBeBetween(),
   ],
+  "custom asymmetric matcher with matchers as its arguments": () => [
+    expect.toBeBetween(expect.any(Number), expect.anything()),
+    expect.toBeBetween(expect.objectContaining({ a: 1 }), expect.not.objectContaining({ a: 1 })),
+    expect.toBeBetween(expect.arrayContaining([1]), expect.not.arrayContaining([1])),
+    expect.toBeBetween(expect.stringContaining("x"), expect.not.stringContaining("x")),
+    expect.toBeBetween(expect.stringMatching(/x/), expect.not.stringMatching("x")),
+    expect.toBeBetween(expect.closeTo(1.5, 3), expect.not.closeTo(1)),
+    expect.not.toBeBetween(expect.toBeBetween(1, 5), expect.not.toBeBetween()),
+  ],
   "asymmetric matchers inside each other": () =>
     expect.objectContaining({
       list: expect.arrayContaining([expect.any(String), expect.objectContaining({ a: expect.stringMatching(/x+/) })]),

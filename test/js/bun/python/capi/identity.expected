@@ -1,0 +1,20 @@
+after ctypes was imported: True
+after a library was loaded: True
+where C has them: True
+after C was called: True
+what C has there: True True
+each its own: True
+the bits of a py_object: True
+written early: True
+in a union: True
+as C is handed it: True
+and back: True
+and back: True
+--- what goes by identity finds the same type
+True
+True
+True
+True
+True
+--- no other object is where a type is
+False True

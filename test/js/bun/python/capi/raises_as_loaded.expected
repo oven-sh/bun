@@ -1,0 +1,4 @@
+SystemError <built-in function dlopen> returned a result with an exception set
+RuntimeError('from the constructor') True True
+7 7
+7

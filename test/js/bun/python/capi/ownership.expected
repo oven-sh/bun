@@ -1,0 +1,82 @@
+the first call of all: 1
+and the second: 1 0 0
+written early: 1 1 1 0
+read back: True True True True
+written late: 1 1
+--- a count says nothing of who else refers to the object, so it never says that nobody does
+True True True True
+--- and it follows what C takes and gives back
+1
+True 1
+--- a prototype over a function of Python's, called from Python, leaves the count as it was
+True 1
+True 1
+True 1
+True the one C owns
+None
+--- what a callback returns is C's
+True
+made in a callback
+None
+--- ctypes' own functions hand over no reference
+b'' 0
+True 0
+5
+--- _ctypes.Py_INCREF and Py_DECREF count as C does
+1
+2
+1
+True
+None
+--- C fills a tuple that it has made and that it alone has
+SystemError: bad argument to internal function (1, 2, 3)
+SystemError: bad argument to internal function (1, 2, 2)
+SystemError: bad argument to internal function
+SystemError: bad argument to internal function
+(5,) True
+SystemError: bad argument to internal function (5,)
+--- lists
+[] [0.5, 1.5, 2.5] 100000 99999.5
+SystemError: bad argument to internal function
+MemoryError: 
+--- a class of exceptions that makes something else
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not int
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not int
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not int
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not int
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not int
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not list
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not list
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not list
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not list
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not list
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not str
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not str
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not str
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not str
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not str
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not NoneType
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not NoneType
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not NoneType
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not NoneType
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not NoneType
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not object
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not object
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not object
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not object
+  TypeError: calling <class '__main__.Weird'> should have returned an instance of BaseException, not object
+  KeyError: 'another exception'
+  KeyError: 'another exception'
+  KeyError: 'another exception'
+  KeyError: 'another exception'
+  KeyError: 'another exception'
+  SystemExit: 3
+  SystemExit: 3
+  SystemExit: 3
+  SystemExit: 3
+  SystemExit: 3
+LookupError: in __init__ ('x',) | LookupError: in __init__ ('text',) | LookupError: in __init__ ()
+SystemError: _PyErr_SetObject: exception 5 is not a BaseException subclass | SystemError: _PyErr_SetObject: exception <class 'int'> is not a BaseException subclass
+--- what C raised is raised, whatever it returned, and by the call that raised it
+KeyError:  | True
+done

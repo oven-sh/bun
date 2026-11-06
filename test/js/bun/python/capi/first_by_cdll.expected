@@ -1,0 +1,13 @@
+1
+--- a call that does not get as far as C fails as it does anywhere
+ArgumentError: too many arguments (2000), maximum is 1024
+ArgumentError: argument 1: TypeError: Don't know how to convert parameter 1
+--- what a callback returns is C's, whoever called C and however
+True
+3
+[1, 2, 3]
+None
+--- and is the caller's when C hands it on
+True True 0
+True True 0
+True True 0

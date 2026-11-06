@@ -7,6 +7,8 @@ C sources, the scripts that use what they are compiled to, and what CPython 3.15
 - `NAME.expected`: what CPython printed, with `NAME.c` compiled **against CPython's own headers** (`-DPy_TARGET_ABI3T=0x030f0000`).
 - `include/`: the header that `NAME.c` is compiled with **here**. It is written for these tests, declares what Bun implements so far, and has none of CPython's
   text. In abi3t a header is declarations and a few macros: C sees the layout of no object.
+- `here/`: scripts for what has no counterpart in CPython, where it is undefined or the end of the process: the API called without the GIL, or when its interpreter has
+  ended; several interpreters in one process. What they are to print is in `capi.test.ts`, written by hand.
 
 `capi.test.ts` compiles each source with the machine's compiler (`$CC`, `cc`, `clang`, `gcc`), as `test/js/bun/ffi` does, and runs each script several times: as it comes,
 and with options of JavaScriptCore that make the collector come at other times or make a cell that was freed too early show. It needs no CPython.

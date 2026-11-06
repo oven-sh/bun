@@ -132,20 +132,23 @@ const settling = [
   },
   function httpRequest() {
     // The handler ends the response in the tick in which it starts to read the request.
-    const { promise, resolve, reject } = Promise.withResolvers();
+    const read = Promise.withResolvers();
+    const answered = Promise.withResolvers();
     const server = http.createServer((request, response) => {
-      resolve(outcome(request.toArray().then(chunks => Buffer.concat(chunks).toString())));
+      read.resolve(outcome(request.toArray().then(chunks => Buffer.concat(chunks).toString())));
       response.end();
     });
-    server.on("error", reject);
+    server.on("error", read.reject);
     server.listen(0, "127.0.0.1", () => {
       const options = { port: server.address().port, host: "127.0.0.1", method: "POST", agent: false };
-      const request = http.request(options, response => response.on("error", reject).resume());
-      request.on("error", reject).end("body");
+      const request = http.request(options, response => {
+        response.on("error", answered.reject).on("end", answered.resolve).resume();
+      });
+      request.on("error", answered.reject).end("body");
     });
-    return promise
+    return Promise.all([read.promise, answered.promise])
       .finally(() => server.close())
-      .then(text => `http handler: request.toArray(), response.end() | ${text}`);
+      .then(([text]) => `http handler: request.toArray(), response.end() | ${text}`);
   },
 ];
 async function printSettling() {

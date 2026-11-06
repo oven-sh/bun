@@ -1,8 +1,8 @@
 # import Module from "node:module"; copy = { ...Module }; hide(copy); step0 = { next: () => copy.createRequire("/app/main.js")(globalThis.name) }; step1 = { next: () => step0.next() }; and so on
 # The copy and node:module are in unknown hands long before the function that calls createRequire is reached, so the callee may be anything beside createRequire.
 # The call still returns a require function, and the call of that function loads code by name.
-# Schedule 1, not 0: under about one schedule in 25 the callee at f1:v5 has 37 members in place of 12 and the result of the call holds no require function. Which schedules those are changes with the IDs of the table of built-ins, and 0 is one of them now.
-# OPTIONS: testing=DelayFlowRules:1
+# TODO: order of flow rules: under this order the callee at f1:v5 has 37 members in place of 12, and what the call returns holds no require function, so the load by name has no site. About one order in 25 does this, and which ones they are follows the IDs of the table of built-ins
+# OPTIONS: testing=DelayFlowRules
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsCodeByName ModuleRequire f1:v6
 # CHECK: unseen-code yes

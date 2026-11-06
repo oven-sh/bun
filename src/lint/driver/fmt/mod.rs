@@ -300,6 +300,8 @@ struct How<'h> {
     is_flow: bool,
     resolved: &'h Resolved,
     verifies: bool,
+    /// What the quick way has made of the text. It's what is written, so it's what is verified.
+    printed: Option<&'h [u8]>,
     /// Interns the names in a file with syntax errors. They're freed when the run ends.
     atoms: &'h dyn Intern,
     /// Allocations shared by all files, freed when the run ends.
@@ -627,6 +629,7 @@ fn parse_code(
         is_flow: false,
         resolved,
         verifies: false,
+        printed: None,
         atoms,
         memory,
     };
@@ -643,6 +646,7 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
         is_flow: false,
         resolved: &plain,
         verifies: false,
+        printed: None,
         atoms: &atoms,
         memory: &names[0],
     };
@@ -916,7 +920,7 @@ fn format(
         (atoms, memory),
         scratch,
         match verifies {
-            true => Way::LongAndVerified,
+            true => Way::Verified,
             false => Way::QuickFirst,
         },
     )
@@ -929,8 +933,8 @@ enum Way {
     QuickFirst,
     /// The quick way has refused already.
     Long,
-    /// The output is parsed and compared with the text.
-    LongAndVerified,
+    /// The same as `QuickFirst`. What is printed, whichever way, is parsed and compared with the text.
+    Verified,
 }
 
 /// True if the text is Flow, and if it may have types in comments, which are code then.
@@ -982,14 +986,16 @@ fn format_script(
     way: Way,
 ) -> Result<Formatted, Failure> {
     let options = &resolved.options;
-    let verifies = way == Way::LongAndVerified;
+    let verifies = way == Way::Verified;
     let text = match bun_format::pragma::before_parsing(text, options) {
         BeforeParsing::LeaveUnchanged => return Ok((text.to_vec(), options.cursor_offset)),
         BeforeParsing::Format(text) => text,
     };
-    if way == Way::QuickFirst {
+    let mut printed = None;
+    if way != Way::Long {
         let mut out = scratch.buffer_for(text.len());
         match format_script_quickly(path, name, &text, options, scratch, &mut out) {
+            true if verifies => printed = Some(out),
             true => {
                 if resolved.omits_final_newline {
                     without_final_newline(&mut out);
@@ -1008,6 +1014,7 @@ fn format_script(
                 is_flow,
                 resolved,
                 verifies: false,
+                printed: None,
                 atoms,
                 memory,
             };
@@ -1026,6 +1033,7 @@ fn format_script(
             is_flow,
             resolved,
             verifies,
+            printed: printed.as_deref(),
             atoms,
             memory,
         };
@@ -1072,13 +1080,16 @@ fn print<'a>(
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
         with_file(how, part, |file, _, _| then(file))
     };
-    let cursor = match bun_format::range::format_with_cursor(
-        file,
-        options,
-        &mut scratch.js,
-        &mut out,
-        parse,
-    ) {
+    let formatted = match how.printed {
+        Some(printed) => {
+            out.extend_from_slice(printed);
+            Ok(None)
+        }
+        None => {
+            bun_format::range::format_with_cursor(file, options, &mut scratch.js, &mut out, parse)
+        }
+    };
+    let cursor = match formatted {
         Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => {
             return Err(Failure::Syntax(syntax_error(
@@ -2184,7 +2195,9 @@ impl Run<'_> {
                     };
                     let names = (&atoms as &dyn Intern, &memory);
                     let path = &work[at].1.path;
-                    let formatted = format(path, text, resolved, names, &mut worker.scratch, false);
+                    let verifies = options.debug_check;
+                    let formatted =
+                        format(path, text, resolved, names, &mut worker.scratch, verifies);
                     if let Ok((formatted, _)) = std::hint::black_box(formatted) {
                         worker.scratch.spare = formatted;
                     }

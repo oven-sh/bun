@@ -572,7 +572,7 @@ To see Prettier's document for a snippet: `prettier --parser babel --debug-print
 - **TOML layout**: without an oxfmt config, arrays and inline tables get Bun's own layout. The header of `toml/printer.rs` lists the rules. The TOML snippets in `docs/lint/rules` follow it (`src/codegen/lint-rule-options.ts`), and `test/cli/lint/rule-docs.test.ts` checks that. Tests: `test/cli/format/toml-layout.test.ts`.
 - **Generated files**: without a Prettier or oxfmt config, minified code and lock files are skipped unless they're named on the command line (`files::is_generated`).
 - **`.gitignore`**: without a Prettier or oxfmt config, every `.gitignore` counts, from the root of the repository down, as for Git and for `bun lint` (`Ignored::git_ignores_in`). Outside of a repository, from the working directory down. With a Prettier config it's only the one in the working directory, because that's all Prettier reads.
-- **`--debug-check`** is Prettier's flag: nothing is written, every file that passes is named, and one whose formatted text says something else is an error. Without it nothing is compared.
+- **`--debug-check`** is Prettier's flag: nothing is written, every file that passes is named, and one whose formatted text says something else is an error. Without it nothing is compared. What is compared is what a run without the flag writes: a script is shown to the quick way first, and what that prints is parsed (`Way::Verified` in `src/lint/driver/fmt/mod.rs`).
 - **Adding a feature** that another tool's config file turns on? Give it a flag and a key, and test it in `test/cli/format/bunfig.test.ts`.
 
 ## `sortTailwindcss`

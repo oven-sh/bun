@@ -170,6 +170,41 @@ describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
   });
 });
 
+describe.skipIf(!hasFlag)("--debug-check is about what is written", () => {
+  test("the quick way is asked first", async () => {
+    using dir = tempDir("format-short-cuts", { "a.ts": "const  a = {b:1}\n" });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", ...plainly, "--debug-check", "--bench=1", "a.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("the quick way: 1 scripts, ");
+    expect(exitCode).toBe(0);
+  });
+
+  // The quick way has printed another program for each of these, and the long way the same one.
+  test.concurrent.each([
+    ["a.js", "// @flow\nx = a ? (b) : c % checks;\nfunction f() {}\n"],
+    ["a.ts", "type A = { [await(x).y]: B };\n"],
+    ["a.js.flow", "function f<const /* keep me */ T>(a: T) {}\n"],
+  ])("%s %j passes only if the short cut prints what the long way prints", async (name, text) => {
+    const [short, long] = await formatBothWays({ [name]: text }, plainly);
+    expect(long.exitCode).toBe(0);
+    using dir = tempDir("format-short-cuts", { [name]: text });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", ...plainly, "--debug-check", name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await proc.exited).toBe(short.files[name] === long.files[name] ? 0 : 2);
+  });
+});
+
 describe("YAML", () => {
   // An item with a block scalar in it doesn't go the long way by itself, whichever `#` starts the comment behind the header.
   const headersBehindQuotes = [

@@ -82,6 +82,80 @@ R = {'try except in try finally': '''def f(a, b, d):
                  if a])
         finally:
             LOG.append('finally')
+''', 'while in try finally': '''def f(a, b, d):
+    try:
+        while c(1):
+            return (
+                b if a else
+                d)
+    finally:
+        LOG.append('finally')
+''', 'while in while with an else in try finally': '''def f(a, b, d):
+    try:
+        while c(1):
+            while c(1):
+                return (
+                    b if a else
+                    d)
+            else:
+                LOG.append('else')
+    finally:
+        LOG.append('finally')
+''', 'while in try except in try finally': '''def f(a, b, d):
+    try:
+        try:
+            while c(1):
+                return (
+                    b if a else
+                    d)
+        except E:
+            LOG.append('caught'); return 'handled'
+    finally:
+        LOG.append('finally')
+''', 'while in a with in try finally': '''def f(a, b, d):
+    try:
+        with W():
+            while c(1):
+                return (
+                    b if a else
+                    d)
+    finally:
+        LOG.append('finally')
+''', 'try except in a handler in try finally': '''def f(a, b, d):
+    try:
+        try:
+            raise E
+        except E:
+            try:
+                return (
+                    b if a else
+                    d)
+            except E:
+                LOG.append('caught'); return 'handled'
+    finally:
+        LOG.append('finally')
+''', 'try except in a loop in try finally': '''def f(a, b, d):
+    try:
+        for i in gen():
+            try:
+                return (
+                    b if a else
+                    d)
+            except E:
+                LOG.append('caught'); return 'handled'
+    finally:
+        LOG.append('finally')
+''', 'try except in a with in try finally': '''def f(a, b, d):
+    try:
+        with W():
+            try:
+                return (
+                    b if a else
+                    d)
+            except E:
+                LOG.append('caught'); return 'handled'
+    finally:
+        LOG.append('finally')
 ''', 'no ways meet': '''def f(a, b, d):
     try:
         try:

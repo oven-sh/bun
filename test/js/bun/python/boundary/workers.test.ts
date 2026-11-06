@@ -101,35 +101,94 @@ describe.concurrent("workers", () => {
     },
   );
 
-  test.each(["in a finalizer, with more to come", "two threads collect, and finalizers make more to finalize"])(
-    "terminate() of a worker whose Python is %s",
-    async what => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-work-fixture.ts"), what],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
-      expect(exitCode).toBe(0);
-    },
-  );
+  test.each([
+    "in a finalizer, with more to come",
+    "in sys.unraisablehook",
+    "in an audit hook for sys.unraisablehook",
+    "two threads collect, and finalizers make more to finalize",
+    "in sys.unraisablehook, for what a thread raised",
+    "in sys.unraisablehook, for what one of gc.callbacks raised",
+    "in sys.unraisablehook, for what warning of a coroutine raised",
+    "in sys.stderr.write(), for what a finalizer raised in a thread",
+    "in sys.stderr.write(), for what sys.unraisablehook raised",
+    "in sys.stderr.write(), for gc.DEBUG_STATS",
+    "in the finalizer of a stream, which asks whether it is closed",
+    "in the finalizer of a stream, which sets an attribute",
+    "in the finalizer of a stream, and then waits for a lock",
+    "in the finalizer of a stream, and then sleeps",
+    "in the finalizer of a stream, and then returns to a loop in JavaScript",
+    "in the __repr__ of what is named in a report",
+    "in sys.unraisablehook, for a stream that cannot be written before a system call",
+    "in the finally of a generator, while an exception leaves its loop",
+    "in the finally of a generator, while an exception leaves its loop in a thread",
+    "in sys.excepthook, for a KeyboardInterrupt",
+    "in from_param() of an argument for C",
+    "in _as_parameter_ of an argument for C",
+    "in a function that C calls",
+    "in the codec of a source",
+    "in __index__ of what a handler of expat returns",
+    "in an audit hook, for what the initializer of a module imports",
+    "in __index__ of how much a file that nothing else refers to is to read",
+    "in a trace function that is told of an exception",
+    "in a trace function that is told of the return of a frame that an exception leaves",
+    "in a profile function that is told of the return of a frame that an exception leaves",
+    "in toString() of what JavaScript has thrown, of which a trace function is to be told",
+    "in a callback of sys.monitoring for RAISE",
+    "in a callback of sys.monitoring for PY_UNWIND",
+    "in a callback of sys.monitoring for EXCEPTION_HANDLED",
+    "in toString() of what JavaScript has thrown, which leaves a generator",
+    "in toString() of what JavaScript has thrown, which leaves a coroutine",
+    "in toString() of what JavaScript has thrown, which leaves an asynchronous generator",
+    "in a getter of the error that JavaScript has thrown, which leaves a generator",
+    "in a getter of the error that JavaScript throws into a generator",
+    "catching what JavaScript throws, over and over",
+    "in the finally of a generator that only enumerate() has, while an exception leaves the loop",
+    "in the finally of a generator that `in` has left half way, and then in a loop",
+    "in the finally of a generator that islice() lets go of, and then in a loop",
+    "about to call what is not an object to JavaScript",
+  ])("terminate() of a worker whose Python is %s", async what => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-work-fixture.ts"), what],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
-  test.each(["atexit", "threading", "finalizer", "flush"])(
-    "terminate() while the interpreter of the worker is shutting down: %s",
-    async where => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-exit-fixture.ts"), where],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: "closed\n", stderr: "" });
-      expect(exitCode).toBe(0);
-    },
-  );
+  test("terminate() of workers in which Python is starting", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-start-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    "atexit",
+    "threading",
+    "finalizer",
+    "flush",
+    "atexit, which raises",
+    "threading, which raises",
+    "flush, which raises",
+  ])("terminate() while the interpreter of the worker is shutting down: %s", async where => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-exit-fixture.ts"), where],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "closed\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("structuredClone()", () => {

@@ -791,6 +791,7 @@ test("lazy import", async () => {
 
 - Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
 - `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
+- `timeout` and `interval` go up to `2147483647` ms, the same limit as `setTimeout()`. Bun uses 1 ms for a larger value, for `Infinity`, for `NaN`, and for a `timeout` below 1. With `timeout: Infinity`, `vi.waitFor()` and `vi.waitUntil()` call the callback once and don't retry.
 
 ### Differences from Vitest
 

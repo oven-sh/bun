@@ -54,7 +54,7 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
     pos.byte_position -= amount;
 }
 
-ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
+ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc, bool isAsyncFrame)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
     // Expression info has offsets only. The provider derives the line and the column from the divot.
@@ -65,6 +65,11 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,
     };
+
+    // The index of a suspended async function is the last byte of the instruction that it
+    // returned from: it finds the expression info, but no instruction begins there.
+    if (isAsyncFrame)
+        return pos;
 
     auto inst = code->instructionAt(bc);
 

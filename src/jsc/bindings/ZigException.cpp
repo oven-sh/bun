@@ -168,7 +168,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         return;
     }
 
-    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
+    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex(), stackFrame.isAsyncFrame());
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;

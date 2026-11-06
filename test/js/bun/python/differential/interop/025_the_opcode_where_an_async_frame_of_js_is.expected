@@ -1,0 +1,5 @@
+status: 0
+oracle: none
+---
+few variables: 60 functions; with the frame: printed 60, as text 60, by call sites 60
+many variables: 4 functions; with the frame: printed 4, as text 4, by call sites 4

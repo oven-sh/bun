@@ -1321,6 +1321,32 @@ test("Error.captureStackTrace with caller argument preserves async frames", asyn
   expect(err.stack).toContain("at async outerAsync");
 });
 
+test.concurrent("a suspended async function is in the stack trace whichever register holds what it awaits", async () => {
+  // The bytecode index of such a frame points into the number of that register, where no instruction begins.
+  // In a process of its own: for some registers it aborted.
+  const src = `
+    async function inner() { await 1; throw new Error("x"); }
+    globalThis.inner = inner;
+    const counts = [...Array(60).keys(), 4700, 4900, 5200, 5500];
+    const source = count => "async function outer() { var " + Array.from({ length: count + 1 }, (_, i) => "v" + i) + "; await inner(); }";
+    const hasFrame = text => / at (async )?outer \\(/.test(text);
+    let printed = 0, asText = 0;
+    for (const outer of (0, eval)("[" + counts.map(source) + "]")) {
+      await outer().catch(error => { printed += hasFrame(Bun.inspect(error)); });
+      await outer().catch(error => { asText += hasFrame(error.stack); });
+    }
+    console.log(counts.length, printed, asText);`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "64 64 64", signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.captureStackTrace with caller not in stack clears async frames too", async () => {
   function notInStack() {}
 

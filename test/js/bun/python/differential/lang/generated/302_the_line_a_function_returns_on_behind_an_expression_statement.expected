@@ -1,0 +1,1684 @@
+status: 0
+script: 6c0fb1b7acc62e46
+source: cd104361acbe2a7d
+---
+function | a and c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a or c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if a else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(a) and c(b) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(a) or c(b) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a and b and c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a or b or c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a and b or c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (a or b) and c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (a and c(1)) if b else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if b else (a or c(2)) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a and (c(1) if b else c(2)) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if True else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if False else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | True and c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | False or c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | True or c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | False and c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(a) and True | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(a) or False | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a and True and c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if not True else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if 1 else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if __debug__ else c(2) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | not (a and c(1)) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (a and c(1),) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | [c(1) if a else c(2)] | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(c(1) if a else c(2)) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | 0 < c(a) < 2 | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | 0 < 1 < c(a) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | 0 < c(a) < 2 < c(b) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | None if a else None | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a and None | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | 1 if a else 2 | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a or b | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | x if (x := a) else c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a | def | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+behind a statement | a and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if a else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(a) and c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(a) or c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a and b and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a or b or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a and b or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | (a or b) and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | (a and c(1)) if b else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if b else (a or c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a and (c(1) if b else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if False else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | False or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | True or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | False and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(a) and True | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(a) or False | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a and True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if not True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if 1 else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) if __debug__ else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | not (a and c(1)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | (a and c(1),) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | [c(1) if a else c(2)] | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(c(1) if a else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | 0 < c(a) < 2 | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | 0 < 1 < c(a) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | None if a else None | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a and None | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | 1 if a else 2 | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a or b | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | x if (x := a) else c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+behind a statement | a | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | a and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if a else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(a) and c(b) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(a) or c(b) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a and b and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a or b or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a and b or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (a or b) and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (a and c(1)) if b else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if b else (a or c(2)) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a and (c(1) if b else c(2)) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if True else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if False else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | False or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | True or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | False and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(a) and True | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(a) or False | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a and True and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if not True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | c(1) if 1 else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if __debug__ else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | not (a and c(1)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | (a and c(1),) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | [c(1) if a else c(2)] | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | c(c(1) if a else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | 0 < c(a) < 2 | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | 0 < 1 < c(a) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | None if a else None | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a and None | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | 1 if a else 2 | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a or b | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | x if (x := a) else c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | a | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if a else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(a) and c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(a) or c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and b and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a or b or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and b or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (a or b) and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (a and c(1)) if b else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if b else (a or c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and (c(1) if b else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if False else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | False or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | True or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | False and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(a) and True | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(a) or False | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if not True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if 1 else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if __debug__ else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | not (a and c(1)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (a and c(1),) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | [c(1) if a else c(2)] | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(c(1) if a else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | 0 < c(a) < 2 | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | 0 < 1 < c(a) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | None if a else None | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and None | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | 1 if a else 2 | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a or b | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | x if (x := a) else c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: else | a and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if a else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(a) and c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(a) or c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a and b and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a or b or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a and b or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (a or b) and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (a and c(1)) if b else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if b else (a or c(2)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a and (c(1) if b else c(2)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if True else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if False else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | False or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | True or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | False and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(a) and True | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(a) or False | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a and True and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if not True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | c(1) if 1 else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if __debug__ else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | not (a and c(1)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | (a and c(1),) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | [c(1) if a else c(2)] | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | c(c(1) if a else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | 0 < c(a) < 2 | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | 0 < 1 < c(a) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | 0 < c(a) < 2 < c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | None if a else None | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a and None | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | 1 if a else 2 | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a or b | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | x if (x := a) else c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | a | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+elif | a and c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a or c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if a else c(2) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(a) and c(b) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(a) or c(b) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a and b and c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a or b or c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a and b or c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | (a or b) and c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | (a and c(1)) if b else c(2) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if b else (a or c(2)) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a and (c(1) if b else c(2)) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if True else c(2) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if False else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | True and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | False or c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | True or c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | False and c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(a) and True | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(a) or False | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a and True and c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if not True else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | c(1) if 1 else c(2) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) if __debug__ else c(2) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | not (a and c(1)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | (a and c(1),) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | [c(1) if a else c(2)] | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | c(c(1) if a else c(2)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | 0 < c(a) < 2 | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | 0 < 1 < c(a) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | 0 < c(a) < 2 < c(b) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | None if a else None | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a and None | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | 1 if a else 2 | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | a or b | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | x if (x := a) else c(1) | def | C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L5 RNone
+elif | c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif | a | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a or c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if a else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(a) and c(b) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(a) or c(b) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a and b and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a or b or c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a and b or c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | (a or b) and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | (a and c(1)) if b else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if b else (a or c(2)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a and (c(1) if b else c(2)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if True else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if False else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | True and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | False or c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | True or c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | False and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(a) and True | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(a) or False | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a and True and c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if not True else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if 1 else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) if __debug__ else c(2) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | not (a and c(1)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | (a and c(1),) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | [c(1) if a else c(2)] | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(c(1) if a else c(2)) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | 0 < c(a) < 2 | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | 0 < 1 < c(a) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | 0 < c(a) < 2 < c(b) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | None if a else None | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a and None | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | 1 if a else 2 | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a or b | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | x if (x := a) else c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | c(1) | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+elif, else: elif | a | def | C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L5 R5
+if in if | a and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if a else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(a) and c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(a) or c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a and b and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a or b or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a and b or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | (a or b) and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if True else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if False else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | False or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | True or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | False and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(a) and True | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(a) or False | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a and True and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if not True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | c(1) if 1 else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | not (a and c(1)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | (a and c(1),) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | [c(1) if a else c(2)] | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | 0 < c(a) < 2 | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | 0 < 1 < c(a) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | None if a else None | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a and None | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | 1 if a else 2 | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | a or b | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | x if (x := a) else c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if | c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if | a | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | a and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if a else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(a) and c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(a) or c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a and b and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a or b or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a and b or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | (a or b) and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if True else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if False else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | False or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | True or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | False and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(a) and True | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(a) or False | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a and True and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if not True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | c(1) if 1 else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | not (a and c(1)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | (a and c(1),) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | [c(1) if a else c(2)] | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | 0 < c(a) < 2 | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | 0 < 1 < c(a) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | None if a else None | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a and None | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | 1 if a else 2 | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | a or b | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | x if (x := a) else c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in if, else | c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in if, else | a | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if True | a and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if a else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(a) and c(b) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(a) or c(b) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a and b and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a or b or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a and b or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | (a or b) and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | (a and c(1)) if b else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if b else (a or c(2)) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a and (c(1) if b else c(2)) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if True else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if False else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | False or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | True or c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | False and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(a) and True | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(a) or False | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a and True and c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if not True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | c(1) if 1 else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) if __debug__ else c(2) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | not (a and c(1)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | (a and c(1),) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | [c(1) if a else c(2)] | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | c(c(1) if a else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | 0 < c(a) < 2 | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | 0 < 1 < c(a) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | None if a else None | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a and None | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | 1 if a else 2 | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | a or b | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | x if (x := a) else c(1) | def | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if True | c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if True | a | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else in else | a and c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a or c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if a else c(2) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(a) and c(b) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(a) or c(b) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a and b and c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a or b or c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a and b or c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | (a or b) and c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | (a and c(1)) if b else c(2) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if b else (a or c(2)) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a and (c(1) if b else c(2)) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if True else c(2) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if False else c(2) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | True and c(1) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | False or c(1) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | True or c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | False and c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(a) and True | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(a) or False | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a and True and c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if not True else c(2) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | c(1) if 1 else c(2) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) if __debug__ else c(2) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | not (a and c(1)) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | (a and c(1),) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | [c(1) if a else c(2)] | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | c(c(1) if a else c(2)) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | 0 < c(a) < 2 | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | 0 < 1 < c(a) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | 0 < c(a) < 2 < c(b) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | None if a else None | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a and None | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | 1 if a else 2 | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | a or b | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | x if (x := a) else c(1) | def | C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone ; C1 L2 L5 L8 RNone
+if, else in else | c(1) | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+if, else in else | a | def | C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8 ; C1 L2 L5 L8 R8
+for, else | a and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if a else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(a) and c(b) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(a) or c(b) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a and b and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a or b or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a and b or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (a or b) and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (a and c(1)) if b else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if b else (a or c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a and (c(1) if b else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if False else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | False or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | True or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | False and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(a) and True | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(a) or False | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a and True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if not True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if 1 else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if __debug__ else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | not (a and c(1)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (a and c(1),) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | [c(1) if a else c(2)] | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(c(1) if a else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | 0 < c(a) < 2 | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | 0 < 1 < c(a) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | None if a else None | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a and None | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | 1 if a else 2 | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a or b | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | x if (x := a) else c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | a and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if a else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(a) and c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(a) or c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a and b and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a or b or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a and b or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (a or b) and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (a and c(1)) if b else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if b else (a or c(2)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a and (c(1) if b else c(2)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if True else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if False else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | False or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | True or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | False and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(a) and True | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(a) or False | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a and True and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if not True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | c(1) if 1 else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if __debug__ else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | not (a and c(1)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | (a and c(1),) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | [c(1) if a else c(2)] | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | c(c(1) if a else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | 0 < c(a) < 2 | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | 0 < 1 < c(a) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | None if a else None | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a and None | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | 1 if a else 2 | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a or b | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | x if (x := a) else c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | a | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if a else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(a) and c(b) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(a) or c(b) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a and b and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a or b or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a and b or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | (a or b) and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | (a and c(1)) if b else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if b else (a or c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a and (c(1) if b else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if False else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | False or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | True or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | False and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(a) and True | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(a) or False | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a and True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if not True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if 1 else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) if __debug__ else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | not (a and c(1)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | (a and c(1),) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | [c(1) if a else c(2)] | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(c(1) if a else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | 0 < c(a) < 2 | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | 0 < 1 < c(a) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | None if a else None | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a and None | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | 1 if a else 2 | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a or b | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | x if (x := a) else c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while, else | a | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | a and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if a else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(a) and c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(a) or c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a and b and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a or b or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a and b or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | (a or b) and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | (a and c(1)) if b else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if b else (a or c(2)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a and (c(1) if b else c(2)) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if True else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if False else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | True and c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | False or c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | True or c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | False and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(a) and True | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(a) or False | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a and True and c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if not True else c(2) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | c(1) if 1 else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) if __debug__ else c(2) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | not (a and c(1)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | (a and c(1),) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | [c(1) if a else c(2)] | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | c(c(1) if a else c(2)) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | 0 < c(a) < 2 | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | 0 < 1 < c(a) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | None if a else None | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a and None | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | 1 if a else 2 | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | a or b | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | x if (x := a) else c(1) | def | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+while with break, else | c(1) | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+while with break, else | a | def | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else in if | a and c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a or c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if a else c(2) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(a) and c(b) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(a) or c(b) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a and b and c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a or b or c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a and b or c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | (a or b) and c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | (a and c(1)) if b else c(2) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if b else (a or c(2)) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a and (c(1) if b else c(2)) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if True else c(2) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if False else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | True and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | False or c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | True or c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | False and c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(a) and True | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(a) or False | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a and True and c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if not True else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | c(1) if 1 else c(2) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) if __debug__ else c(2) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | not (a and c(1)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | (a and c(1),) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | [c(1) if a else c(2)] | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | c(c(1) if a else c(2)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | 0 < c(a) < 2 | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | 0 < 1 < c(a) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | None if a else None | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a and None | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | 1 if a else 2 | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | a or b | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | x if (x := a) else c(1) | def | C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone ; C1 L2 L3 L6 RNone
+for, else in if | c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if | a | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a or c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if a else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(a) and c(b) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(a) or c(b) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a and b and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a or b or c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a and b or c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | (a or b) and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | (a and c(1)) if b else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if b else (a or c(2)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a and (c(1) if b else c(2)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if True else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if False else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | True and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | False or c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | True or c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | False and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(a) and True | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(a) or False | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a and True and c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if not True else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if 1 else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) if __debug__ else c(2) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | not (a and c(1)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | (a and c(1),) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | [c(1) if a else c(2)] | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(c(1) if a else c(2)) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | 0 < c(a) < 2 | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | 0 < 1 < c(a) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | None if a else None | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a and None | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | 1 if a else 2 | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a or b | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | x if (x := a) else c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | c(1) | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+for, else in if, else | a | def | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6
+try | a and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if a else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(a) and c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(a) or c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a and b and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a or b or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a and b or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (a or b) and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (a and c(1)) if b else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if b else (a or c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a and (c(1) if b else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if False else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | False or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | True or c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | False and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(a) and True | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(a) or False | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a and True and c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if not True else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if 1 else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if __debug__ else c(2) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | not (a and c(1)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (a and c(1),) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | [c(1) if a else c(2)] | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(c(1) if a else c(2)) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | 0 < c(a) < 2 | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | 0 < 1 < c(a) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | None if a else None | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a and None | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | 1 if a else 2 | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a or b | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | x if (x := a) else c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a | def | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+except | a and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if a else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(a) and c(b) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(a) or c(b) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a and b and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a or b or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a and b or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | (a or b) and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | (a and c(1)) if b else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if b else (a or c(2)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a and (c(1) if b else c(2)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if True else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if False else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | True and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | False or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | True or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | False and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(a) and True | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(a) or False | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a and True and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if not True else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if 1 else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) if __debug__ else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | not (a and c(1)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | (a and c(1),) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | [c(1) if a else c(2)] | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(c(1) if a else c(2)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | 0 < c(a) < 2 | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | 0 < 1 < c(a) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | None if a else None | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a and None | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | 1 if a else 2 | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a or b | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | x if (x := a) else c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except | a | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if a else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(a) and c(b) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(a) or c(b) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and b and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a or b or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and b or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (a or b) and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (a and c(1)) if b else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if b else (a or c(2)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and (c(1) if b else c(2)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if True else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if False else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | True and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | False or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | True or c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | False and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(a) and True | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(a) or False | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and True and c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if not True else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if 1 else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if __debug__ else c(2) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | not (a and c(1)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (a and c(1),) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | [c(1) if a else c(2)] | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(c(1) if a else c(2)) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | 0 < c(a) < 2 | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | 0 < 1 < c(a) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | None if a else None | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and None | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | 1 if a else 2 | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a or b | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | x if (x := a) else c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a | def | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+try, else | a and c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a or c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if a else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(a) and c(b) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(a) or c(b) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a and b and c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a or b or c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a and b or c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | (a or b) and c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | (a and c(1)) if b else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if b else (a or c(2)) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a and (c(1) if b else c(2)) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if True else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if False else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | True and c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | False or c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | True or c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | False and c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(a) and True | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(a) or False | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a and True and c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if not True else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if 1 else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) if __debug__ else c(2) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | not (a and c(1)) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | (a and c(1),) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | [c(1) if a else c(2)] | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(c(1) if a else c(2)) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | 0 < c(a) < 2 | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | 0 < 1 < c(a) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | None if a else None | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a and None | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | 1 if a else 2 | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a or b | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | x if (x := a) else c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | c(1) | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+try, else | a | def | C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L7 R7
+finally | a and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if a else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(a) and c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(a) or c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a and b and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a or b or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a and b or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (a or b) and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if True else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if False else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | True and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | False or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | True or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | False and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(a) and True | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(a) or False | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a and True and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if not True else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if 1 else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | not (a and c(1)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (a and c(1),) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | [c(1) if a else c(2)] | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | 0 < c(a) < 2 | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | 0 < 1 < c(a) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | None if a else None | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a and None | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | 1 if a else 2 | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a or b | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | x if (x := a) else c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if a else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(a) and c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(a) or c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a and b and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a or b or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a and b or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | (a or b) and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if True else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if False else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | True and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | False or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | True or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | False and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(a) and True | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(a) or False | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a and True and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if not True else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if 1 else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | not (a and c(1)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | (a and c(1),) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | [c(1) if a else c(2)] | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | 0 < c(a) < 2 | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | 0 < 1 < c(a) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | None if a else None | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a and None | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | 1 if a else 2 | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a or b | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | x if (x := a) else c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally, a return waits | a | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if a else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(a) and c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(a) or c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a and b and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a or b or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a and b or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | (a or b) and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if True else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if False else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | True and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | False or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | True or c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | False and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(a) and True | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(a) or False | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a and True and c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if not True else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if 1 else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | not (a and c(1)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | (a and c(1),) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | [c(1) if a else c(2)] | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | 0 < c(a) < 2 | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | 0 < 1 < c(a) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | None if a else None | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a and None | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | 1 if a else 2 | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a or b | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | x if (x := a) else c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | c(1) | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+try, finally | a | def | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+if in try | a and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if a else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(a) and c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(a) or c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a and b and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a or b or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a and b or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | (a or b) and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if True else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if False else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | False or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | True or c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | False and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(a) and True | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(a) or False | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a and True and c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if not True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | c(1) if 1 else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | not (a and c(1)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | (a and c(1),) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | [c(1) if a else c(2)] | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | 0 < c(a) < 2 | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | 0 < 1 < c(a) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | None if a else None | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a and None | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | 1 if a else 2 | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | a or b | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | x if (x := a) else c(1) | def | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if in try | c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in try | a | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if in except | a and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if a else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(a) and c(b) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(a) or c(b) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a and b and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a or b or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a and b or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | (a or b) and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | (a and c(1)) if b else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if b else (a or c(2)) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a and (c(1) if b else c(2)) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if True else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if False else c(2) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | True and c(1) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | False or c(1) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | True or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | False and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(a) and True | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(a) or False | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a and True and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if not True else c(2) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | c(1) if 1 else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) if __debug__ else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | not (a and c(1)) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | (a and c(1),) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | [c(1) if a else c(2)] | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | c(c(1) if a else c(2)) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | 0 < c(a) < 2 | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | 0 < 1 < c(a) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | None if a else None | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a and None | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | 1 if a else 2 | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | a or b | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | x if (x := a) else c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except | c(1) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except | a | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | a and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if a else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(a) and c(b) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(a) or c(b) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a and b and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a or b or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a and b or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | (a or b) and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | (a and c(1)) if b else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if b else (a or c(2)) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a and (c(1) if b else c(2)) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if True else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if False else c(2) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | True and c(1) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | False or c(1) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | True or c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | False and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(a) and True | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(a) or False | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a and True and c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if not True else c(2) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | c(1) if 1 else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) if __debug__ else c(2) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | not (a and c(1)) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | (a and c(1),) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | [c(1) if a else c(2)] | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | c(c(1) if a else c(2)) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | 0 < c(a) < 2 | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | 0 < 1 < c(a) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | None if a else None | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a and None | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | 1 if a else 2 | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | a or b | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | x if (x := a) else c(1) | def | C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone ; C1 L2 L3 E3 L4 L5 L6 RNone
+if in except as | c(1) | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+if in except as | a | def | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+else in except | a and c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a or c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if a else c(2) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(a) and c(b) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(a) or c(b) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a and b and c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a or b or c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a and b or c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | (a or b) and c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | (a and c(1)) if b else c(2) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if b else (a or c(2)) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a and (c(1) if b else c(2)) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if True else c(2) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if False else c(2) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | True and c(1) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | False or c(1) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | True or c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | False and c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(a) and True | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(a) or False | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a and True and c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if not True else c(2) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | c(1) if 1 else c(2) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) if __debug__ else c(2) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | not (a and c(1)) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | (a and c(1),) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | [c(1) if a else c(2)] | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | c(c(1) if a else c(2)) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | 0 < c(a) < 2 | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | 0 < 1 < c(a) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | None if a else None | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a and None | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | 1 if a else 2 | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | a or b | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | x if (x := a) else c(1) | def | C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone ; C1 L2 L3 E3 L4 L5 L8 RNone
+else in except | c(1) | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+else in except | a | def | C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8 ; C1 L2 L3 E3 L4 L5 L8 R8
+if in finally | a and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(a) and c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(a) or c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a and b and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a or b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a and b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (a or b) and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | True or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | False and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(a) and True | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(a) or False | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a and True and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | None if a else None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a and None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | 1 if a else 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a or b | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | a and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(a) and c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(a) or c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a and b and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a or b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a and b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | (a or b) and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | True or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | False and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(a) and True | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(a) or False | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a and True and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | None if a else None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a and None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | 1 if a else 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | a or b | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally, a return waits | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally, a return waits | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+except* | a and c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a or c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if a else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(a) and c(b) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(a) or c(b) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a and b and c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a or b or c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a and b or c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | (a or b) and c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | (a and c(1)) if b else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if b else (a or c(2)) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a and (c(1) if b else c(2)) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if True else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if False else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | True and c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | False or c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | True or c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | False and c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(a) and True | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(a) or False | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a and True and c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if not True else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if 1 else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) if __debug__ else c(2) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | not (a and c(1)) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | (a and c(1),) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | [c(1) if a else c(2)] | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(c(1) if a else c(2)) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | 0 < c(a) < 2 | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | 0 < 1 < c(a) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | None if a else None | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a and None | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | 1 if a else 2 | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a or b | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | x if (x := a) else c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | c(1) | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+except* | a | def | C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone ; C1 L2 L3 E3 L4 L5 RNone
+with | a and c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a or c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if a else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(a) and c(b) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(a) or c(b) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a and b and c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a or b or c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a and b or c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (a or b) and c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (a and c(1)) if b else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if b else (a or c(2)) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a and (c(1) if b else c(2)) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if True else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if False else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | True and c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | False or c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | True or c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | False and c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(a) and True | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(a) or False | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a and True and c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if not True else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if 1 else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if __debug__ else c(2) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | not (a and c(1)) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (a and c(1),) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | [c(1) if a else c(2)] | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(c(1) if a else c(2)) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | 0 < c(a) < 2 | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | 0 < 1 < c(a) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | None if a else None | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a and None | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | 1 if a else 2 | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a or b | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | x if (x := a) else c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a | def | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+if in with | a and c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a or c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if a else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(a) and c(b) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(a) or c(b) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a and b and c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a or b or c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a and b or c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | (a or b) and c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if True else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if False else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | True and c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | False or c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | True or c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | False and c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(a) and True | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(a) or False | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a and True and c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if not True else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if 1 else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | not (a and c(1)) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | (a and c(1),) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | [c(1) if a else c(2)] | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | 0 < c(a) < 2 | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | 0 < 1 < c(a) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | None if a else None | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a and None | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | 1 if a else 2 | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a or b | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | x if (x := a) else c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | c(1) | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+if in with | a | def | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+case | a and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if a else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(a) and c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(a) or c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a and b and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a or b or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a and b or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (a or b) and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if False else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | False or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | True or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | False and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(a) and True | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(a) or False | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a and True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if not True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if 1 else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | not (a and c(1)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (a and c(1),) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | [c(1) if a else c(2)] | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | 0 < c(a) < 2 | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | 0 < 1 < c(a) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | None if a else None | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a and None | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | 1 if a else 2 | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a or b | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | x if (x := a) else c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if a else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(a) and c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(a) or c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a and b and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a or b or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a and b or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | (a or b) and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if False else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | False or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | True or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | False and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(a) and True | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(a) or False | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a and True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if not True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if 1 else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | not (a and c(1)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | (a and c(1),) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | [c(1) if a else c(2)] | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | 0 < c(a) < 2 | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | 0 < 1 < c(a) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | None if a else None | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a and None | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | 1 if a else 2 | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a or b | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | x if (x := a) else c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+first case | a | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+default | a and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(a) and c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(a) or c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a and b and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a or b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a and b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (a or b) and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | True or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | False and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(a) and True | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(a) or False | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a and True and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | None if a else None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a and None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | 1 if a else 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a or b | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+only default | a and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if a else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(a) and c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(a) or c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a and b and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a or b or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a and b or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | (a or b) and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if False else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | False or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | True or c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | False and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(a) and True | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(a) or False | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a and True and c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if not True else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if 1 else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | not (a and c(1)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | (a and c(1),) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | [c(1) if a else c(2)] | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | 0 < c(a) < 2 | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | 0 < 1 < c(a) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | None if a else None | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a and None | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | 1 if a else 2 | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a or b | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | x if (x := a) else c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | c(1) | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+only default | a | def | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+default with a guard | a and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(a) and c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(a) or c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a and b and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a or b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a and b or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (a or b) and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | True or c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | False and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(a) and True | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(a) or False | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a and True and c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | None if a else None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a and None | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | 1 if a else 2 | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a or b | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(a) and c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(a) or c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a and b and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a or b or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a and b or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | (a or b) and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | True or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | False and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(a) and True | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(a) or False | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a and True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | None if a else None | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a and None | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | 1 if a else 2 | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a or b | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(a) and c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(a) or c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a and b and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a or b or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a and b or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | (a or b) and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | True or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | False and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(a) and True | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(a) or False | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a and True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | None if a else None | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a and None | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | 1 if a else 2 | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a or b | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+last case with a guard | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if a else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(a) and c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(a) or c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a and b and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a or b or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a and b or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | (a or b) and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | (a and c(1)) if b else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if b else (a or c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a and (c(1) if b else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if False else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | False or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | True or c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | False and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(a) and True | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(a) or False | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a and True and c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if not True else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if 1 else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) if __debug__ else c(2) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | not (a and c(1)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | (a and c(1),) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | [c(1) if a else c(2)] | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(c(1) if a else c(2)) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | 0 < c(a) < 2 | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | 0 < 1 < c(a) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | None if a else None | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a and None | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | 1 if a else 2 | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a or b | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | x if (x := a) else c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | c(1) | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+capture | a | def | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in case | a and c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a or c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if a else c(2) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(a) and c(b) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(a) or c(b) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a and b and c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a or b or c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a and b or c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | (a or b) and c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | (c(1) if b else c(2)) if a else c(3) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if a else (c(2) if b else c(3)) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | (a and c(1)) if b else c(2) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if b else (a or c(2)) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a and (c(1) if b else c(2)) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if True else c(2) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if False else c(2) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | True and c(1) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | False or c(1) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | True or c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | False and c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(a) and True | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(a) or False | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a and True and c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if not True else c(2) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | c(1) if 1 else c(2) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) if __debug__ else c(2) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | not (a and c(1)) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | (a and c(1),) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | [c(1) if a else c(2)] | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | c(c(1) if a else c(2)) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | 0 < c(a) < 2 | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | 0 < 1 < c(a) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | 0 < c(a) < 2 < c(b) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | None if a else None | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a and None | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | 1 if a else 2 | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | a or b | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | x if (x := a) else c(1) | def | C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 L5 RNone
+if in case | c(1) | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+if in case | a | def | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5

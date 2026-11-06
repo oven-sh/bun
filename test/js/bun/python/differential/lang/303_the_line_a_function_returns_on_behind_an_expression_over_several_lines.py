@@ -1,0 +1,74 @@
+# The line a function returns on behind an expression statement that has several ways through it: statements over several lines.
+#
+# In CPython what drops the value of an expression statement is of no line, and neither is the end of the function. Where nothing but a jump is in between, each way through the expression
+# has a copy of them, of its own line. Where the statement is the last of an `if` or of an `else`, the end of that statement is in between: they are of no line at all, and
+# f_lineno is None when the function returns.
+import sys
+def indent(t, n=4): return '\n'.join(' ' * n + l for l in t.split('\n'))
+class E(Exception): pass
+class M:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+def c(v): return v
+FORMS = [
+    '(a and\nc(1))', '(a or\nc(1))', '(a and\nb and\nc(1))', '(a or\nb or\nc(1))', '(c(1) if a else\nc(2))', '(c(1)\nif a else c(2))', '(c(1)\nif a\nelse c(2))', '(\na and c(1))',
+    '(a and c(1)\n)', '((c(1) if b else\nc(2)) if a else\nc(3))', '(c(1) if a else\n(c(2) if b else\nc(3)))', '((a and\nc(1)) if b else\nc(2))', '(c(1) if b else\n(a or\nc(2)))',
+    '(a and\n(c(1) if b else\nc(2)))', '((a or\nb) and\nc(1))', '(a and\nb or\nc(1))', '(c(1) if True else\nc(2))', '(c(1) if False else\nc(2))', '(True and\nc(1))',
+    '(False or\nFalse or\nc(1))', '(True or\nc(1))', '(c(a) and\nTrue)', '(not\n(a and\nc(1)))', '(a and\nc(\n1))', '(a and c(1),\n0)[0]', '(lambda:\na and c(1))()',
+]
+PLACES = {
+    'function': 'S', 'behind a statement': 'x = 1\nS',
+    'if': 'if c(1):\n    S', 'if, else: if': 'if c(1):\n    S\nelse:\n    x = 1', 'if, else: else': 'if c(0):\n    x = 1\nelse:\n    S', 'elif': 'if c(0):\n    x = 1\nelif c(1):\n    S',
+    'elif, else: elif': 'if c(0):\n    x = 1\nelif c(1):\n    S\nelse:\n    x = 2', 'if in if': 'if c(1):\n    if c(1):\n        S', 'if in if, else': 'if c(1):\n    if c(1):\n        S\nelse:\n    x = 1',
+    'if True': 'if True:\n    S', 'if, else in else': 'if c(0):\n    x = 1\nelse:\n    if c(0):\n        x = 2\n    else:\n        S',
+    'for, else': 'for i in ():\n    x = 1\nelse:\n    S', 'for with break, else': 'for i in ():\n    break\nelse:\n    S', 'while, else': 'while c(0):\n    x = 1\nelse:\n    S',
+    'while with break, else': 'while c(0):\n    break\nelse:\n    S', 'for, else in if': 'if c(1):\n    for i in ():\n        x = 1\n    else:\n        S',
+    'for, else in if, else': 'if c(1):\n    for i in ():\n        x = 1\n    else:\n        S\nelse:\n    x = 2',
+    'try': 'try:\n    S\nexcept E:\n    x = 1', 'except': 'try:\n    raise E\nexcept E:\n    S', 'except as': 'try:\n    raise E\nexcept E as e:\n    S', 'try, else': 'try:\n    x = 1\nexcept E:\n    x = 2\nelse:\n    S',
+    'finally': 'try:\n    x = 1\nfinally:\n    S', 'finally, a return waits': 'try:\n    return 1\nfinally:\n    S', 'try, finally': 'try:\n    S\nfinally:\n    x = 1',
+    'if in try': 'try:\n    if c(1):\n        S\nexcept E:\n    x = 1', 'if in except': 'try:\n    raise E\nexcept E:\n    if c(1):\n        S', 'if in except as': 'try:\n    raise E\nexcept E as e:\n    if c(1):\n        S',
+    'else in except': 'try:\n    raise E\nexcept E:\n    if c(0):\n        x = 1\n    else:\n        S', 'if in finally': 'try:\n    x = 1\nfinally:\n    if c(1):\n        S',
+    'if in finally, a return waits': 'try:\n    return 1\nfinally:\n    if c(1):\n        S', 'except*': 'try:\n    raise ExceptionGroup("g", [E()])\nexcept* E:\n    S',
+    'with': 'with M():\n    S', 'if in with': 'with M():\n    if c(1):\n        S',
+    'case': 'match 1:\n    case 1:\n        S', 'first case': 'match 1:\n    case 1:\n        S\n    case 2:\n        x = 1', 'default': 'match 1:\n    case 0:\n        x = 1\n    case _:\n        S',
+    'only default': 'match 1:\n    case _:\n        S', 'default with a guard': 'match 1:\n    case 0:\n        x = 1\n    case _ if c(1):\n        S', 'last case': 'match 1:\n    case 0:\n        x = 1\n    case 1:\n        S',
+    'last case with a guard': 'match 1:\n    case 0:\n        x = 1\n    case 1 if c(1):\n        S', 'capture': 'match 1:\n    case 0:\n        x = 1\n    case v:\n        S',
+    'if in case': 'match 1:\n    case 1:\n        if c(1):\n            S',
+}
+HEADS = {'def': 'def f(a, b):', 'generator': 'def f(a, b):\n    yield 0', 'coroutine': 'async def f(a, b):'}
+def put(place, form):
+    out = []
+    for l in place.split('\n'):
+        if l.strip() == 'S': out.append(indent(form, len(l) - 1))
+        else: out.append(l)
+    return '\n'.join(out)
+def events(run):
+    ev = []
+    def tr(frame, event, arg):
+        if frame.f_code.co_filename != 'p': return None
+        ev.append(event[0].upper() + str(frame.f_lineno)); return tr
+    sys.settrace(tr)
+    try: run()
+    except E: ev.append('E')
+    finally: sys.settrace(None)
+    return ' '.join(ev)
+def drive(f, a, b):
+    r = f(a, b)
+    if hasattr(r, 'send'):
+        try:
+            while True: r.send(None)
+        except StopIteration: pass
+WHICH = ['def']
+def rows():
+    for pn, place in PLACES.items():
+        for form in FORMS:
+            body = put(place, form); name = '%s | %s' % (pn, form.replace('\n', ' / '))
+            for hn in WHICH:
+                ns = {'c': c, 'E': E, 'M': M}
+                if hn in HEADS:
+                    exec(compile(HEADS[hn] + '\n' + indent(body) + '\n', 'p', 'exec'), ns)
+                    yield '%s | %s | %s' % (name, hn, ' ; '.join(events(lambda: drive(ns['f'], a, b)) for a in (0, 1) for b in (0, 1)))
+                elif 'return' not in body:
+                    code = compile(('class K:\n' + indent(body) if hn == 'class' else body) + '\n', 'p', 'exec')
+                    yield '%s | %s | %s' % (name, hn, ' ; '.join(events(lambda: exec(code, dict(ns, a=a, b=b))) for a in (0, 1) for b in (0, 1)))
+print('\n'.join(rows()))

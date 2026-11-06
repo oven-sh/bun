@@ -1,0 +1,900 @@
+status: 0
+script: a1a11c14b515cc60
+source: 0cc933e5d479292b
+---
+function | a and c(1) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | a and c(1) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a and c(1) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | a and c(1) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | c(1) if a else c(2) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | c(1) if a else c(2) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | a or b or c(1) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | a or b or c(1) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | a or b or c(1) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | a or b or c(1) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | (a and c(1)) if b else c(2) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | (a and c(1)) if b else c(2) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | c(1) if True else c(2) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | c(1) if True else c(2) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | True or c(1) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | True or c(1) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | True or c(1) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | True or c(1) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | not (a and c(1)) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | not (a and c(1)) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | not (a and c(1)) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | not (a and c(1)) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | 0 < c(a) < 2 | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | 0 < c(a) < 2 | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | c(1) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | c(1) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | c(1) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | c(1) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | (a and / c(1)) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+function | (a and / c(1)) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+function | (a and / c(1)) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+function | (a and / c(1)) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+function | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L3 L5 R5 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | (a or / b or / c(1)) | coroutine | C1 L2 L3 L2 L4 R4 ; C1 L2 L3 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L2 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | (a or / b or / c(1)) | module | C0 L1 L2 L1 L3 R3 ; C0 L1 L2 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+function | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 R2 ; C1 L2 R2
+function | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | (c(1) if a else / c(2)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 R1 ; C0 L1 R1
+function | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L4 R4 ; C1 L2 R2 C2 L4 R4 ; C1 L2 R2 C2 L4 L3 R3 ; C1 L2 R2 C2 L4 L3 R3
+function | (c(1) / if a else c(2)) | coroutine | C1 L3 R3 ; C1 L3 R3 ; C1 L3 L2 R2 ; C1 L3 L2 R2
+function | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L3 R3 R1 ; C0 L1 C1 L1 L3 R3 R1 ; C0 L1 C1 L1 L3 L2 R2 R1 ; C0 L1 C1 L1 L3 L2 R2 R1
+function | (c(1) / if a else c(2)) | module | C0 L2 R2 ; C0 L2 R2 ; C0 L2 L1 R1 ; C0 L2 L1 R1
+function | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L4 L5 R5 ; C1 L2 R2 C2 L4 L3 R3 ; C1 L2 R2 C2 L4 L5 R5 ; C1 L2 R2 C2 L4 L3 L4 R4
+function | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L3 L4 R4 ; C1 L3 L2 R2 ; C1 L3 L4 R4 ; C1 L3 L2 L3 R3
+function | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L3 L4 R4 R1 ; C0 L1 C1 L1 L3 L2 R2 R1 ; C0 L1 C1 L1 L3 L4 R4 R1 ; C0 L1 C1 L1 L3 L2 L3 R3 R1
+function | ((a and / c(1)) if b else / c(2)) | module | C0 L2 L3 R3 ; C0 L2 L1 R1 ; C0 L2 L3 R3 ; C0 L2 L1 L2 R2
+function | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 R4
+function | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 L3 L4 R4 ; C1 L2 L3 R3
+function | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+function | (a and / (c(1) if b else / c(2))) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 L2 L3 R3 ; C0 L1 L2 R2
+function | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3 ; C1 L2 R2 C2 L3 R3
+function | (c(1) if True else / c(2)) | coroutine | C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2 ; C1 L2 R2
+function | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1 ; C0 L1 C1 L1 L2 R2 R1
+function | (c(1) if True else / c(2)) | module | C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1 ; C0 L1 R1
+if | a and c(1) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | a and c(1) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a and c(1) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | a and c(1) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | c(1) if a else c(2) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | c(1) if a else c(2) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | a or b or c(1) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | a or b or c(1) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | (a and c(1)) if b else c(2) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | c(1) if True else c(2) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | c(1) if True else c(2) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | True or c(1) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | True or c(1) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | True or c(1) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | True or c(1) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if | not (a and c(1)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if | not (a and c(1)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | 0 < c(a) < 2 | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | 0 < c(a) < 2 | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if | c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if | c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if | c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 L5 RNone ; C1 L2 R2 C2 L3 L4 L5 RNone
+if | (a and / c(1)) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone
+if | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 L4 RNone R1 ; C0 L1 C1 L1 L2 L3 L4 RNone R1
+if | (a and / c(1)) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 L3 RNone ; C0 L1 L2 L3 RNone
+if | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 L4 L6 RNone ; C1 L2 R2 C2 L3 L4 L5 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | (a or / b or / c(1)) | coroutine | C1 L2 L3 L4 L3 L5 RNone ; C1 L2 L3 L4 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L4 L3 L5 RNone R1 ; C0 L1 C1 L1 L2 L3 L4 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | (a or / b or / c(1)) | module | C0 L1 L2 L3 L2 L4 RNone ; C0 L1 L2 L3 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L5 RNone ; C1 L2 R2 C2 L3 L4 L5 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L4 RNone ; C1 L2 L3 L4 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L4 RNone R1 ; C0 L1 C1 L1 L2 L3 L4 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | (c(1) if a else / c(2)) | module | C0 L1 L2 L3 RNone ; C0 L1 L2 L3 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L5 RNone ; C1 L2 R2 C2 L3 L5 RNone ; C1 L2 R2 C2 L3 L5 L4 RNone ; C1 L2 R2 C2 L3 L5 L4 RNone
+if | (c(1) / if a else c(2)) | coroutine | C1 L2 L4 RNone ; C1 L2 L4 RNone ; C1 L2 L4 L3 RNone ; C1 L2 L4 L3 RNone
+if | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L4 RNone R1 ; C0 L1 C1 L1 L2 L4 RNone R1 ; C0 L1 C1 L1 L2 L4 L3 RNone R1 ; C0 L1 C1 L1 L2 L4 L3 RNone R1
+if | (c(1) / if a else c(2)) | module | C0 L1 L3 RNone ; C0 L1 L3 RNone ; C0 L1 L3 L2 RNone ; C0 L1 L3 L2 RNone
+if | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L5 L6 RNone ; C1 L2 R2 C2 L3 L5 L4 RNone ; C1 L2 R2 C2 L3 L5 L6 RNone ; C1 L2 R2 C2 L3 L5 L4 L5 RNone
+if | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L4 L5 RNone ; C1 L2 L4 L3 RNone ; C1 L2 L4 L5 RNone ; C1 L2 L4 L3 L4 RNone
+if | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L4 L5 RNone R1 ; C0 L1 C1 L1 L2 L4 L3 RNone R1 ; C0 L1 C1 L1 L2 L4 L5 RNone R1 ; C0 L1 C1 L1 L2 L4 L3 L4 RNone R1
+if | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L3 L4 RNone ; C0 L1 L3 L2 RNone ; C0 L1 L3 L4 RNone ; C0 L1 L3 L2 L3 RNone
+if | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 L5 L6 RNone ; C1 L2 R2 C2 L3 L4 L5 RNone
+if | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 L4 L5 RNone ; C1 L2 L3 L4 RNone
+if | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 L4 L5 RNone R1 ; C0 L1 C1 L1 L2 L3 L4 RNone R1
+if | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 L3 L4 RNone ; C0 L1 L2 L3 RNone
+if | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone ; C1 L2 R2 C2 L3 L4 RNone
+if | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone ; C1 L2 L3 RNone
+if | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1 ; C0 L1 C1 L1 L2 L3 RNone R1
+if | (c(1) if True else / c(2)) | module | C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone ; C0 L1 L2 RNone
+if, else: if | a and c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | a and c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a and c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | a and c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | c(1) if a else c(2) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | c(1) if a else c(2) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | a or b or c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | a or b or c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | (a and c(1)) if b else c(2) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | c(1) if True else c(2) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | c(1) if True else c(2) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | True or c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | True or c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | True or c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | True or c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | not (a and c(1)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | not (a and c(1)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | 0 < c(a) < 2 | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | 0 < c(a) < 2 | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+if, else: if | (a and / c(1)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+if, else: if | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+if, else: if | (a and / c(1)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+if, else: if | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | (a or / b or / c(1)) | coroutine | C1 L2 L3 L4 L3 L5 R5 ; C1 L2 L3 L4 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L4 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | (a or / b or / c(1)) | module | C0 L1 L2 L3 L2 L4 R4 ; C0 L1 L2 L3 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | (c(1) if a else / c(2)) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: if | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L5 R5 ; C1 L2 R2 C2 L3 L5 R5 ; C1 L2 R2 C2 L3 L5 L4 R4 ; C1 L2 R2 C2 L3 L5 L4 R4
+if, else: if | (c(1) / if a else c(2)) | coroutine | C1 L2 L4 R4 ; C1 L2 L4 R4 ; C1 L2 L4 L3 R3 ; C1 L2 L4 L3 R3
+if, else: if | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L4 R4 R1 ; C0 L1 C1 L1 L2 L4 R4 R1 ; C0 L1 C1 L1 L2 L4 L3 R3 R1 ; C0 L1 C1 L1 L2 L4 L3 R3 R1
+if, else: if | (c(1) / if a else c(2)) | module | C0 L1 L3 R3 ; C0 L1 L3 R3 ; C0 L1 L3 L2 R2 ; C0 L1 L3 L2 R2
+if, else: if | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L5 L6 R6 ; C1 L2 R2 C2 L3 L5 L4 R4 ; C1 L2 R2 C2 L3 L5 L6 R6 ; C1 L2 R2 C2 L3 L5 L4 L5 R5
+if, else: if | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L4 L5 R5 ; C1 L2 L4 L3 R3 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L3 L4 R4
+if, else: if | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L4 L3 R3 R1 ; C0 L1 C1 L1 L2 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L4 L3 L4 R4 R1
+if, else: if | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L3 L4 R4 ; C0 L1 L3 L2 R2 ; C0 L1 L3 L4 R4 ; C0 L1 L3 L2 L3 R3
+if, else: if | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 R5
+if, else: if | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 R4
+if, else: if | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+if, else: if | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 L3 L4 R4 ; C0 L1 L2 L3 R3
+if, else: if | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+if, else: if | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+if, else: if | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+if, else: if | (c(1) if True else / c(2)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+if, else: else | a and c(1) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | a and c(1) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a and c(1) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | a and c(1) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | c(1) if a else c(2) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | c(1) if a else c(2) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | a or b or c(1) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | a or b or c(1) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | a or b or c(1) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | a or b or c(1) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | (a and c(1)) if b else c(2) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | (a and c(1)) if b else c(2) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | c(1) if True else c(2) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | c(1) if True else c(2) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | True or c(1) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | True or c(1) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | True or c(1) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | True or c(1) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+if, else: else | not (a and c(1)) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | not (a and c(1)) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+if, else: else | not (a and c(1)) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+if, else: else | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | 0 < c(a) < 2 | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | 0 < c(a) < 2 | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | c(1) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+if, else: else | c(1) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+if, else: else | c(1) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+if, else: else | c(1) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+if, else: else | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone
+if, else: else | (a and / c(1)) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 L6 RNone ; C1 L2 L5 L6 RNone
+if, else: else | (a and / c(1)) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1
+if, else: else | (a and / c(1)) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 L5 RNone ; C0 L1 L4 L5 RNone
+if, else: else | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L6 L7 L6 L8 RNone ; C1 L2 R2 C2 L3 L6 L7 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | (a or / b or / c(1)) | coroutine | C1 L2 L5 L6 L5 L7 RNone ; C1 L2 L5 L6 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L5 L6 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | (a or / b or / c(1)) | module | C0 L1 L4 L5 L4 L6 RNone ; C0 L1 L4 L5 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L6 L7 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | (c(1) if a else / c(2)) | coroutine | C1 L2 L5 L6 RNone ; C1 L2 L5 L6 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | (c(1) if a else / c(2)) | module | C0 L1 L4 L5 RNone ; C0 L1 L4 L5 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+if, else: else | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L7 RNone ; C1 L2 R2 C2 L3 L7 RNone ; C1 L2 R2 C2 L3 L7 L6 RNone ; C1 L2 R2 C2 L3 L7 L6 RNone
+if, else: else | (c(1) / if a else c(2)) | coroutine | C1 L2 L6 RNone ; C1 L2 L6 RNone ; C1 L2 L6 L5 RNone ; C1 L2 L6 L5 RNone
+if, else: else | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L6 RNone R1 ; C0 L1 C1 L1 L2 L6 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 RNone R1
+if, else: else | (c(1) / if a else c(2)) | module | C0 L1 L5 RNone ; C0 L1 L5 RNone ; C0 L1 L5 L4 RNone ; C0 L1 L5 L4 RNone
+if, else: else | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L7 L8 RNone ; C1 L2 R2 C2 L3 L7 L6 RNone ; C1 L2 R2 C2 L3 L7 L8 RNone ; C1 L2 R2 C2 L3 L7 L6 L7 RNone
+if, else: else | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L6 L7 RNone ; C1 L2 L6 L5 RNone ; C1 L2 L6 L7 RNone ; C1 L2 L6 L5 L6 RNone
+if, else: else | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 RNone R1 ; C0 L1 C1 L1 L2 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 L6 RNone R1
+if, else: else | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L5 L6 RNone ; C0 L1 L5 L4 RNone ; C0 L1 L5 L6 RNone ; C0 L1 L5 L4 L5 RNone
+if, else: else | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone
+if, else: else | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 L6 L7 RNone ; C1 L2 L5 L6 RNone
+if, else: else | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1
+if, else: else | (a and / (c(1) if b else / c(2))) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 L5 L6 RNone ; C0 L1 L4 L5 RNone
+if, else: else | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+if, else: else | (c(1) if True else / c(2)) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+if, else: else | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+if, else: else | (c(1) if True else / c(2)) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for, else | a and c(1) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | a and c(1) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a and c(1) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | a and c(1) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | c(1) if a else c(2) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | c(1) if a else c(2) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | a or b or c(1) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | a or b or c(1) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | a or b or c(1) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | a or b or c(1) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | (a and c(1)) if b else c(2) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | (a and c(1)) if b else c(2) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | c(1) if True else c(2) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | c(1) if True else c(2) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | True or c(1) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | True or c(1) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | True or c(1) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | True or c(1) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | not (a and c(1)) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | not (a and c(1)) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | not (a and c(1)) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | 0 < c(a) < 2 | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | 0 < c(a) < 2 | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | c(1) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | c(1) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | c(1) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | c(1) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 L7 R7 ; C1 L2 R2 C2 L3 L6 L7 R7
+for, else | (a and / c(1)) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 L6 R6 ; C1 L2 L5 L6 R6
+for, else | (a and / c(1)) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L5 L6 R6 R1
+for, else | (a and / c(1)) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 L5 R5 ; C0 L1 L4 L5 R5
+for, else | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L6 L7 L6 L8 R8 ; C1 L2 R2 C2 L3 L6 L7 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | (a or / b or / c(1)) | coroutine | C1 L2 L5 L6 L5 L7 R7 ; C1 L2 L5 L6 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L5 L6 L5 L7 R7 R1 ; C0 L1 C1 L1 L2 L5 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | (a or / b or / c(1)) | module | C0 L1 L4 L5 L4 L6 R6 ; C0 L1 L4 L5 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L6 L7 R7 ; C1 L2 R2 C2 L3 L6 L7 R7 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | (c(1) if a else / c(2)) | coroutine | C1 L2 L5 L6 R6 ; C1 L2 L5 L6 R6 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | (c(1) if a else / c(2)) | module | C0 L1 L4 L5 R5 ; C0 L1 L4 L5 R5 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for, else | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L7 R7 ; C1 L2 R2 C2 L3 L7 R7 ; C1 L2 R2 C2 L3 L7 L6 R6 ; C1 L2 R2 C2 L3 L7 L6 R6
+for, else | (c(1) / if a else c(2)) | coroutine | C1 L2 L6 R6 ; C1 L2 L6 R6 ; C1 L2 L6 L5 R5 ; C1 L2 L6 L5 R5
+for, else | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L6 R6 R1 ; C0 L1 C1 L1 L2 L6 R6 R1 ; C0 L1 C1 L1 L2 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L6 L5 R5 R1
+for, else | (c(1) / if a else c(2)) | module | C0 L1 L5 R5 ; C0 L1 L5 R5 ; C0 L1 L5 L4 R4 ; C0 L1 L5 L4 R4
+for, else | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L7 L8 R8 ; C1 L2 R2 C2 L3 L7 L6 R6 ; C1 L2 R2 C2 L3 L7 L8 R8 ; C1 L2 R2 C2 L3 L7 L6 L7 R7
+for, else | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L6 L7 R7 ; C1 L2 L6 L5 R5 ; C1 L2 L6 L7 R7 ; C1 L2 L6 L5 L6 R6
+for, else | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L6 L5 L6 R6 R1
+for, else | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L5 L6 R6 ; C0 L1 L5 L4 R4 ; C0 L1 L5 L6 R6 ; C0 L1 L5 L4 L5 R5
+for, else | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 L7 L8 R8 ; C1 L2 R2 C2 L3 L6 L7 R7
+for, else | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 L6 L7 R7 ; C1 L2 L5 L6 R6
+for, else | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L5 L6 R6 R1
+for, else | (a and / (c(1) if b else / c(2))) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 L5 L6 R6 ; C0 L1 L4 L5 R5
+for, else | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for, else | (c(1) if True else / c(2)) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for, else | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for, else | (c(1) if True else / c(2)) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for with break, else | a and c(1) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | a and c(1) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a and c(1) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | a and c(1) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | c(1) if a else c(2) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | c(1) if a else c(2) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | a or b or c(1) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | a or b or c(1) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | a or b or c(1) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | a or b or c(1) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | (a and c(1)) if b else c(2) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | (a and c(1)) if b else c(2) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | c(1) if True else c(2) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | c(1) if True else c(2) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | True or c(1) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | True or c(1) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | True or c(1) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | True or c(1) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for with break, else | not (a and c(1)) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | not (a and c(1)) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for with break, else | not (a and c(1)) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for with break, else | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | 0 < c(a) < 2 | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | 0 < c(a) < 2 | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | c(1) | generator | C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6 ; C1 L2 R2 C2 L3 L6 R6
+for with break, else | c(1) | coroutine | C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5 ; C1 L2 L5 R5
+for with break, else | c(1) | class | C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1 ; C0 L1 C1 L1 L2 L5 R5 R1
+for with break, else | c(1) | module | C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4 ; C0 L1 L4 R4
+for with break, else | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone
+for with break, else | (a and / c(1)) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 L6 RNone ; C1 L2 L5 L6 RNone
+for with break, else | (a and / c(1)) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1
+for with break, else | (a and / c(1)) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 L5 RNone ; C0 L1 L4 L5 RNone
+for with break, else | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L6 L7 L6 L8 RNone ; C1 L2 R2 C2 L3 L6 L7 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | (a or / b or / c(1)) | coroutine | C1 L2 L5 L6 L5 L7 RNone ; C1 L2 L5 L6 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L5 L6 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | (a or / b or / c(1)) | module | C0 L1 L4 L5 L4 L6 RNone ; C0 L1 L4 L5 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L6 L7 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | (c(1) if a else / c(2)) | coroutine | C1 L2 L5 L6 RNone ; C1 L2 L5 L6 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | (c(1) if a else / c(2)) | module | C0 L1 L4 L5 RNone ; C0 L1 L4 L5 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+for with break, else | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L7 RNone ; C1 L2 R2 C2 L3 L7 RNone ; C1 L2 R2 C2 L3 L7 L6 RNone ; C1 L2 R2 C2 L3 L7 L6 RNone
+for with break, else | (c(1) / if a else c(2)) | coroutine | C1 L2 L6 RNone ; C1 L2 L6 RNone ; C1 L2 L6 L5 RNone ; C1 L2 L6 L5 RNone
+for with break, else | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L6 RNone R1 ; C0 L1 C1 L1 L2 L6 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 RNone R1
+for with break, else | (c(1) / if a else c(2)) | module | C0 L1 L5 RNone ; C0 L1 L5 RNone ; C0 L1 L5 L4 RNone ; C0 L1 L5 L4 RNone
+for with break, else | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L7 L8 RNone ; C1 L2 R2 C2 L3 L7 L6 RNone ; C1 L2 R2 C2 L3 L7 L8 RNone ; C1 L2 R2 C2 L3 L7 L6 L7 RNone
+for with break, else | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L6 L7 RNone ; C1 L2 L6 L5 RNone ; C1 L2 L6 L7 RNone ; C1 L2 L6 L5 L6 RNone
+for with break, else | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 RNone R1 ; C0 L1 C1 L1 L2 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L6 L5 L6 RNone R1
+for with break, else | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L5 L6 RNone ; C0 L1 L5 L4 RNone ; C0 L1 L5 L6 RNone ; C0 L1 L5 L4 L5 RNone
+for with break, else | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L6 L7 RNone
+for with break, else | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 L6 L7 RNone ; C1 L2 L5 L6 RNone
+for with break, else | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L5 L6 RNone R1
+for with break, else | (a and / (c(1) if b else / c(2))) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 L5 L6 RNone ; C0 L1 L4 L5 RNone
+for with break, else | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone ; C1 L2 R2 C2 L3 L6 RNone
+for with break, else | (c(1) if True else / c(2)) | coroutine | C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone ; C1 L2 L5 RNone
+for with break, else | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1 ; C0 L1 C1 L1 L2 L5 RNone R1
+for with break, else | (c(1) if True else / c(2)) | module | C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone ; C0 L1 L4 RNone
+try | a and c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | a and c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a and c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | a and c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | c(1) if a else c(2) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | c(1) if a else c(2) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | a or b or c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | a or b or c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | (a and c(1)) if b else c(2) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | c(1) if True else c(2) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | c(1) if True else c(2) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | True or c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | True or c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | True or c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | True or c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | not (a and c(1)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | not (a and c(1)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | 0 < c(a) < 2 | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | 0 < c(a) < 2 | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | c(1) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | c(1) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | c(1) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | c(1) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+try | (a and / c(1)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+try | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+try | (a and / c(1)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+try | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | (a or / b or / c(1)) | coroutine | C1 L2 L3 L4 L3 L5 R5 ; C1 L2 L3 L4 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L4 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | (a or / b or / c(1)) | module | C0 L1 L2 L3 L2 L4 R4 ; C0 L1 L2 L3 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | (c(1) if a else / c(2)) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+try | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L5 R5 ; C1 L2 R2 C2 L3 L5 R5 ; C1 L2 R2 C2 L3 L5 L4 R4 ; C1 L2 R2 C2 L3 L5 L4 R4
+try | (c(1) / if a else c(2)) | coroutine | C1 L2 L4 R4 ; C1 L2 L4 R4 ; C1 L2 L4 L3 R3 ; C1 L2 L4 L3 R3
+try | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L4 R4 R1 ; C0 L1 C1 L1 L2 L4 R4 R1 ; C0 L1 C1 L1 L2 L4 L3 R3 R1 ; C0 L1 C1 L1 L2 L4 L3 R3 R1
+try | (c(1) / if a else c(2)) | module | C0 L1 L3 R3 ; C0 L1 L3 R3 ; C0 L1 L3 L2 R2 ; C0 L1 L3 L2 R2
+try | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L5 L6 R6 ; C1 L2 R2 C2 L3 L5 L4 R4 ; C1 L2 R2 C2 L3 L5 L6 R6 ; C1 L2 R2 C2 L3 L5 L4 L5 R5
+try | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L4 L5 R5 ; C1 L2 L4 L3 R3 ; C1 L2 L4 L5 R5 ; C1 L2 L4 L3 L4 R4
+try | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L4 L3 R3 R1 ; C0 L1 C1 L1 L2 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L4 L3 L4 R4 R1
+try | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L3 L4 R4 ; C0 L1 L3 L2 R2 ; C0 L1 L3 L4 R4 ; C0 L1 L3 L2 L3 R3
+try | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 R5
+try | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 R4
+try | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+try | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 L3 L4 R4 ; C0 L1 L2 L3 R3
+try | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4 ; C1 L2 R2 C2 L3 L4 R4
+try | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3 ; C1 L2 L3 R3
+try | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1 ; C0 L1 C1 L1 L2 L3 R3 R1
+try | (c(1) if True else / c(2)) | module | C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2 ; C0 L1 L2 R2
+except as | a and c(1) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | a and c(1) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a and c(1) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | a and c(1) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | c(1) if a else c(2) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | c(1) if a else c(2) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | a or b or c(1) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | a or b or c(1) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | (a and c(1)) if b else c(2) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | c(1) if True else c(2) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | c(1) if True else c(2) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | True or c(1) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | True or c(1) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | True or c(1) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | True or c(1) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | not (a and c(1)) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | not (a and c(1)) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | 0 < c(a) < 2 | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | 0 < c(a) < 2 | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | c(1) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | c(1) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | c(1) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | c(1) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 R7
+except as | (a and / c(1)) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6
+except as | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 R6 R1
+except as | (a and / c(1)) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 L5 R5 ; C0 L1 L2 E2 L3 L4 L5 R5
+except as | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 L6 L8 R8 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | (a or / b or / c(1)) | coroutine | C1 L2 L3 E3 L4 L5 L6 L5 L7 R7 ; C1 L2 L3 E3 L4 L5 L6 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 L5 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | (a or / b or / c(1)) | module | C0 L1 L2 E2 L3 L4 L5 L4 L6 R6 ; C0 L1 L2 E2 L3 L4 L5 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 L6 R6 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | (c(1) if a else / c(2)) | module | C0 L1 L2 E2 L3 L4 L5 R5 ; C0 L1 L2 E2 L3 L4 L5 R5 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+except as | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L7 R7 ; C1 L2 R2 C2 L3 L4 E4 L5 L7 R7 ; C1 L2 R2 C2 L3 L4 E4 L5 L7 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L7 L6 R6
+except as | (c(1) / if a else c(2)) | coroutine | C1 L2 L3 E3 L4 L6 R6 ; C1 L2 L3 E3 L4 L6 R6 ; C1 L2 L3 E3 L4 L6 L5 R5 ; C1 L2 L3 E3 L4 L6 L5 R5
+except as | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L6 L5 R5 R1
+except as | (c(1) / if a else c(2)) | module | C0 L1 L2 E2 L3 L5 R5 ; C0 L1 L2 E2 L3 L5 R5 ; C0 L1 L2 E2 L3 L5 L4 R4 ; C0 L1 L2 E2 L3 L5 L4 R4
+except as | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L7 L8 R8 ; C1 L2 R2 C2 L3 L4 E4 L5 L7 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L7 L8 R8 ; C1 L2 R2 C2 L3 L4 E4 L5 L7 L6 L7 R7
+except as | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L3 E3 L4 L6 L7 R7 ; C1 L2 L3 E3 L4 L6 L5 R5 ; C1 L2 L3 E3 L4 L6 L7 R7 ; C1 L2 L3 E3 L4 L6 L5 L6 R6
+except as | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L6 L5 L6 R6 R1
+except as | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L2 E2 L3 L5 L6 R6 ; C0 L1 L2 E2 L3 L5 L4 R4 ; C0 L1 L2 E2 L3 L5 L6 R6 ; C0 L1 L2 E2 L3 L5 L4 L5 R5
+except as | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 L8 R8 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 L7 R7
+except as | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 L6 L7 R7 ; C1 L2 L3 E3 L4 L5 L6 R6
+except as | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 L6 R6 R1
+except as | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 L5 L6 R6 ; C0 L1 L2 E2 L3 L4 L5 R5
+except as | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 E4 L5 L6 R6
+except as | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5 ; C1 L2 L3 E3 L4 L5 R5
+except as | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 E3 L4 L5 R5 R1
+except as | (c(1) if True else / c(2)) | module | C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4 ; C0 L1 L2 E2 L3 L4 R4
+finally | a and c(1) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | a and c(1) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a and c(1) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | a and c(1) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | c(1) if a else c(2) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | c(1) if a else c(2) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | a or b or c(1) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | a or b or c(1) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | (a and c(1)) if b else c(2) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | c(1) if True else c(2) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | c(1) if True else c(2) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | True or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | True or c(1) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | True or c(1) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | True or c(1) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | not (a and c(1)) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | not (a and c(1)) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | 0 < c(a) < 2 | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | 0 < c(a) < 2 | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | c(1) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | c(1) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | c(1) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | c(1) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+finally | (a and / c(1)) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+finally | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+finally | (a and / c(1)) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+finally | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L6 L8 R8 ; C1 L2 R2 C2 L3 L4 L6 L7 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | (a or / b or / c(1)) | coroutine | C1 L2 L3 L5 L6 L5 L7 R7 ; C1 L2 L3 L5 L6 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L5 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | (a or / b or / c(1)) | module | C0 L1 L2 L4 L5 L4 L6 R6 ; C0 L1 L2 L4 L5 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | (c(1) if a else / c(2)) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+finally | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L4 L7 R7 ; C1 L2 R2 C2 L3 L4 L7 R7 ; C1 L2 R2 C2 L3 L4 L7 L6 R6 ; C1 L2 R2 C2 L3 L4 L7 L6 R6
+finally | (c(1) / if a else c(2)) | coroutine | C1 L2 L3 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L6 L5 R5 ; C1 L2 L3 L6 L5 R5
+finally | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L3 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L6 L5 R5 R1
+finally | (c(1) / if a else c(2)) | module | C0 L1 L2 L5 R5 ; C0 L1 L2 L5 R5 ; C0 L1 L2 L5 L4 R4 ; C0 L1 L2 L5 L4 R4
+finally | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L7 L8 R8 ; C1 L2 R2 C2 L3 L4 L7 L6 R6 ; C1 L2 R2 C2 L3 L4 L7 L8 R8 ; C1 L2 R2 C2 L3 L4 L7 L6 L7 R7
+finally | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L3 L6 L7 R7 ; C1 L2 L3 L6 L5 R5 ; C1 L2 L3 L6 L7 R7 ; C1 L2 L3 L6 L5 L6 R6
+finally | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L3 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 L6 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 L6 L5 L6 R6 R1
+finally | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L2 L5 L6 R6 ; C0 L1 L2 L5 L4 R4 ; C0 L1 L2 L5 L6 R6 ; C0 L1 L2 L5 L4 L5 R5
+finally | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 L7 L8 R8 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+finally | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 L6 L7 R7 ; C1 L2 L3 L5 L6 R6
+finally | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 R7 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+finally | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 L5 L6 R6 ; C0 L1 L2 L4 L5 R5
+finally | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6
+finally | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5
+finally | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1
+finally | (c(1) if True else / c(2)) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4
+if in finally | a and c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | a and c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a and c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | a and c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | c(1) if a else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | c(1) if a else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | a or b or c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | a or b or c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | (a and c(1)) if b else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | c(1) if True else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | c(1) if True else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | True or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | True or c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | True or c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | True or c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+if in finally | not (a and c(1)) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+if in finally | not (a and c(1)) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+if in finally | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | 0 < c(a) < 2 | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | 0 < c(a) < 2 | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+if in finally | c(1) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+if in finally | c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+if in finally | c(1) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+if in finally | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone
+if in finally | (a and / c(1)) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 L7 RNone
+if in finally | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1
+if in finally | (a and / c(1)) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 L6 RNone
+if in finally | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L8 L7 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | (a or / b or / c(1)) | coroutine | C1 L2 L3 L5 L6 L7 L6 L8 RNone ; C1 L2 L3 L5 L6 L7 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L7 L6 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | (a or / b or / c(1)) | module | C0 L1 L2 L4 L5 L6 L5 L7 RNone ; C0 L1 L2 L4 L5 L6 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | (c(1) if a else / c(2)) | module | C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+if in finally | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone
+if in finally | (c(1) / if a else c(2)) | coroutine | C1 L2 L3 L5 L7 RNone ; C1 L2 L3 L5 L7 RNone ; C1 L2 L3 L5 L7 L6 RNone ; C1 L2 L3 L5 L7 L6 RNone
+if in finally | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1
+if in finally | (c(1) / if a else c(2)) | module | C0 L1 L2 L4 L6 RNone ; C0 L1 L2 L4 L6 RNone ; C0 L1 L2 L4 L6 L5 RNone ; C0 L1 L2 L4 L6 L5 RNone
+if in finally | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 L8 RNone
+if in finally | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L3 L5 L7 L8 RNone ; C1 L2 L3 L5 L7 L6 RNone ; C1 L2 L3 L5 L7 L8 RNone ; C1 L2 L3 L5 L7 L6 L7 RNone
+if in finally | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 L7 RNone R1
+if in finally | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L2 L4 L6 L7 RNone ; C0 L1 L2 L4 L6 L5 RNone ; C0 L1 L2 L4 L6 L7 RNone ; C0 L1 L2 L4 L6 L5 L6 RNone
+if in finally | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone
+if in finally | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 L7 L8 RNone ; C1 L2 L3 L5 L6 L7 RNone
+if in finally | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1
+if in finally | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 L6 L7 RNone ; C0 L1 L2 L4 L5 L6 RNone
+if in finally | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+if in finally | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+if in finally | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+if in finally | (c(1) if True else / c(2)) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+with | a and c(1) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | a and c(1) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a and c(1) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | a and c(1) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | c(1) if a else c(2) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | c(1) if a else c(2) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | a or b or c(1) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | a or b or c(1) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | (a and c(1)) if b else c(2) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | c(1) if True else c(2) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | c(1) if True else c(2) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | True or c(1) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | True or c(1) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | True or c(1) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | True or c(1) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | not (a and c(1)) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | not (a and c(1)) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | 0 < c(a) < 2 | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | 0 < c(a) < 2 | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | c(1) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | c(1) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | c(1) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | c(1) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 L3 R3
+with | (a and / c(1)) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2
+with | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 L2 R2 R1
+with | (a and / c(1)) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L3 L1 R1 ; C0 L1 L2 L3 L1 R1
+with | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 L4 L6 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | (a or / b or / c(1)) | coroutine | C1 L2 L3 L4 L3 L5 L2 R2 ; C1 L2 L3 L4 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L4 L3 L5 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | (a or / b or / c(1)) | module | C0 L1 L2 L3 L2 L4 L1 R1 ; C0 L1 L2 L3 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L5 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L4 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | (c(1) if a else / c(2)) | module | C0 L1 L2 L3 L1 R1 ; C0 L1 L2 L3 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+with | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L5 L3 R3 ; C1 L2 R2 C2 L3 L5 L3 R3 ; C1 L2 R2 C2 L3 L5 L4 L3 R3 ; C1 L2 R2 C2 L3 L5 L4 L3 R3
+with | (c(1) / if a else c(2)) | coroutine | C1 L2 L4 L2 R2 ; C1 L2 L4 L2 R2 ; C1 L2 L4 L3 L2 R2 ; C1 L2 L4 L3 L2 R2
+with | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L4 L2 R2 R1 ; C0 L1 C1 L1 L2 L4 L2 R2 R1 ; C0 L1 C1 L1 L2 L4 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L4 L3 L2 R2 R1
+with | (c(1) / if a else c(2)) | module | C0 L1 L3 L1 R1 ; C0 L1 L3 L1 R1 ; C0 L1 L3 L2 L1 R1 ; C0 L1 L3 L2 L1 R1
+with | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L5 L6 L3 R3 ; C1 L2 R2 C2 L3 L5 L4 L3 R3 ; C1 L2 R2 C2 L3 L5 L6 L3 R3 ; C1 L2 R2 C2 L3 L5 L4 L5 L3 R3
+with | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L4 L5 L2 R2 ; C1 L2 L4 L3 L2 R2 ; C1 L2 L4 L5 L2 R2 ; C1 L2 L4 L3 L4 L2 R2
+with | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L4 L5 L2 R2 R1 ; C0 L1 C1 L1 L2 L4 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L4 L5 L2 R2 R1 ; C0 L1 C1 L1 L2 L4 L3 L4 L2 R2 R1
+with | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L3 L4 L1 R1 ; C0 L1 L3 L2 L1 R1 ; C0 L1 L3 L4 L1 R1 ; C0 L1 L3 L2 L3 L1 R1
+with | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 L6 L3 R3 ; C1 L2 R2 C2 L3 L4 L5 L3 R3
+with | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L4 L5 L2 R2 ; C1 L2 L3 L4 L2 R2
+with | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L4 L2 R2 R1
+with | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L3 L4 L1 R1 ; C0 L1 L2 L3 L1 R1
+with | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3 ; C1 L2 R2 C2 L3 L4 L3 R3
+with | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2 ; C1 L2 L3 L2 R2
+with | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1 ; C0 L1 C1 L1 L2 L3 L2 R2 R1
+with | (c(1) if True else / c(2)) | module | C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1 ; C0 L1 L2 L1 R1
+case | a and c(1) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | a and c(1) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a and c(1) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | a and c(1) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | c(1) if a else c(2) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | c(1) if a else c(2) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | a or b or c(1) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | a or b or c(1) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | (a and c(1)) if b else c(2) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | c(1) if True else c(2) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | c(1) if True else c(2) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | True or c(1) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | True or c(1) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | True or c(1) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | True or c(1) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | not (a and c(1)) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | not (a and c(1)) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | 0 < c(a) < 2 | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | 0 < c(a) < 2 | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | c(1) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | c(1) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | c(1) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | c(1) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 L6 R6
+case | (a and / c(1)) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5
+case | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 R5 R1
+case | (a and / c(1)) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 L4 R4 ; C0 L1 L2 L3 L4 R4
+case | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L5 L6 L5 L7 R7 ; C1 L2 R2 C2 L3 L4 L5 L6 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | (a or / b or / c(1)) | coroutine | C1 L2 L3 L4 L5 L4 L6 R6 ; C1 L2 L3 L4 L5 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L4 L5 L4 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | (a or / b or / c(1)) | module | C0 L1 L2 L3 L4 L3 L5 R5 ; C0 L1 L2 L3 L4 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 L6 R6 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 L5 R5 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | (c(1) if a else / c(2)) | module | C0 L1 L2 L3 L4 R4 ; C0 L1 L2 L3 L4 R4 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+case | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 R6 ; C1 L2 R2 C2 L3 L4 L6 L5 R5 ; C1 L2 R2 C2 L3 L4 L6 L5 R5
+case | (c(1) / if a else c(2)) | coroutine | C1 L2 L3 L5 R5 ; C1 L2 L3 L5 R5 ; C1 L2 L3 L5 L4 R4 ; C1 L2 L3 L5 L4 R4
+case | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 R5 R1 ; C0 L1 C1 L1 L2 L3 L5 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L5 L4 R4 R1
+case | (c(1) / if a else c(2)) | module | C0 L1 L2 L4 R4 ; C0 L1 L2 L4 R4 ; C0 L1 L2 L4 L3 R3 ; C0 L1 L2 L4 L3 R3
+case | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L5 R5 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L5 L6 R6
+case | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L4 R4 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L4 L5 R5
+case | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L4 L5 R5 R1
+case | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L3 R3 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L3 L4 R4
+case | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L5 L6 R6
+case | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 L5 L6 R6 ; C1 L2 L3 L4 L5 R5
+case | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L4 L5 R5 R1
+case | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 L4 L5 R5 ; C0 L1 L2 L3 L4 R4
+case | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5 ; C1 L2 R2 C2 L3 L4 L5 R5
+case | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4 ; C1 L2 L3 L4 R4
+case | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1 ; C0 L1 C1 L1 L2 L3 L4 R4 R1
+case | (c(1) if True else / c(2)) | module | C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3 ; C0 L1 L2 L3 R3
+default | a and c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | a and c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a and c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | a and c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | c(1) if a else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | c(1) if a else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | a or b or c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | a or b or c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | (a and c(1)) if b else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | c(1) if True else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | c(1) if True else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | True or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | True or c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | True or c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | True or c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+default | not (a and c(1)) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+default | not (a and c(1)) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+default | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | 0 < c(a) < 2 | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | 0 < c(a) < 2 | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+default | c(1) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default | c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+default | c(1) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+default | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone
+default | (a and / c(1)) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 L7 RNone
+default | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1
+default | (a and / c(1)) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 L6 RNone
+default | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L8 L7 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | (a or / b or / c(1)) | coroutine | C1 L2 L3 L5 L6 L7 L6 L8 RNone ; C1 L2 L3 L5 L6 L7 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L7 L6 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | (a or / b or / c(1)) | module | C0 L1 L2 L4 L5 L6 L5 L7 RNone ; C0 L1 L2 L4 L5 L6 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | (c(1) if a else / c(2)) | module | C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone
+default | (c(1) / if a else c(2)) | coroutine | C1 L2 L3 L5 L7 RNone ; C1 L2 L3 L5 L7 RNone ; C1 L2 L3 L5 L7 L6 RNone ; C1 L2 L3 L5 L7 L6 RNone
+default | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1
+default | (c(1) / if a else c(2)) | module | C0 L1 L2 L4 L6 RNone ; C0 L1 L2 L4 L6 RNone ; C0 L1 L2 L4 L6 L5 RNone ; C0 L1 L2 L4 L6 L5 RNone
+default | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 L8 RNone
+default | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L3 L5 L7 L8 RNone ; C1 L2 L3 L5 L7 L6 RNone ; C1 L2 L3 L5 L7 L8 RNone ; C1 L2 L3 L5 L7 L6 L7 RNone
+default | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 L7 RNone R1
+default | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L2 L4 L6 L7 RNone ; C0 L1 L2 L4 L6 L5 RNone ; C0 L1 L2 L4 L6 L7 RNone ; C0 L1 L2 L4 L6 L5 L6 RNone
+default | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone
+default | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 L7 L8 RNone ; C1 L2 L3 L5 L6 L7 RNone
+default | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1
+default | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 L6 L7 RNone ; C0 L1 L2 L4 L5 L6 RNone
+default | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default | (c(1) if True else / c(2)) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | a and c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | a and c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a and c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | a and c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | c(1) if a else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | c(1) if a else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if a else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | c(1) if a else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | a or b or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | a or b or c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | a or b or c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | a or b or c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | (a and c(1)) if b else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | (a and c(1)) if b else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (a and c(1)) if b else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | (a and c(1)) if b else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | c(1) if True else c(2) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | c(1) if True else c(2) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | c(1) if True else c(2) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | c(1) if True else c(2) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | True or c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | True or c(1) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | True or c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | True or c(1) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | not (a and c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+default with a guard | not (a and c(1)) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | not (a and c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+default with a guard | not (a and c(1)) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+default with a guard | 0 < c(a) < 2 | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | 0 < c(a) < 2 | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | 0 < c(a) < 2 | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | 0 < c(a) < 2 | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | c(1) | generator | C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7 ; C1 L2 R2 C2 L3 L4 L6 L7 R7
+default with a guard | c(1) | coroutine | C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6 ; C1 L2 L3 L5 L6 R6
+default with a guard | c(1) | class | C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1 ; C0 L1 C1 L1 L2 L3 L5 L6 R6 R1
+default with a guard | c(1) | module | C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5 ; C0 L1 L2 L4 L5 R5
+default with a guard | (a and / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone
+default with a guard | (a and / c(1)) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 L7 RNone
+default with a guard | (a and / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1
+default with a guard | (a and / c(1)) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 L6 RNone
+default with a guard | (a or / b or / c(1)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L8 L7 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | (a or / b or / c(1)) | coroutine | C1 L2 L3 L5 L6 L7 L6 L8 RNone ; C1 L2 L3 L5 L6 L7 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (a or / b or / c(1)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L7 L6 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | (a or / b or / c(1)) | module | C0 L1 L2 L4 L5 L6 L5 L7 RNone ; C0 L1 L2 L4 L5 L6 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | (c(1) if a else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | (c(1) if a else / c(2)) | coroutine | C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 L7 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (c(1) if a else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | (c(1) if a else / c(2)) | module | C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 L6 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone
+default with a guard | (c(1) / if a else c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone
+default with a guard | (c(1) / if a else c(2)) | coroutine | C1 L2 L3 L5 L7 RNone ; C1 L2 L3 L5 L7 RNone ; C1 L2 L3 L5 L7 L6 RNone ; C1 L2 L3 L5 L7 L6 RNone
+default with a guard | (c(1) / if a else c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1
+default with a guard | (c(1) / if a else c(2)) | module | C0 L1 L2 L4 L6 RNone ; C0 L1 L2 L4 L6 RNone ; C0 L1 L2 L4 L6 L5 RNone ; C0 L1 L2 L4 L6 L5 RNone
+default with a guard | ((a and / c(1)) if b else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L8 L7 L8 RNone
+default with a guard | ((a and / c(1)) if b else / c(2)) | coroutine | C1 L2 L3 L5 L7 L8 RNone ; C1 L2 L3 L5 L7 L6 RNone ; C1 L2 L3 L5 L7 L8 RNone ; C1 L2 L3 L5 L7 L6 L7 RNone
+default with a guard | ((a and / c(1)) if b else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L7 L6 L7 RNone R1
+default with a guard | ((a and / c(1)) if b else / c(2)) | module | C0 L1 L2 L4 L6 L7 RNone ; C0 L1 L2 L4 L6 L5 RNone ; C0 L1 L2 L4 L6 L7 RNone ; C0 L1 L2 L4 L6 L5 L6 RNone
+default with a guard | (a and / (c(1) if b else / c(2))) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 L9 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 L8 RNone
+default with a guard | (a and / (c(1) if b else / c(2))) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 L7 L8 RNone ; C1 L2 L3 L5 L6 L7 RNone
+default with a guard | (a and / (c(1) if b else / c(2))) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 L8 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 L7 RNone R1
+default with a guard | (a and / (c(1) if b else / c(2))) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 L6 L7 RNone ; C0 L1 L2 L4 L5 L6 RNone
+default with a guard | (c(1) if True else / c(2)) | generator | C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone ; C1 L2 R2 C2 L3 L4 L6 L7 RNone
+default with a guard | (c(1) if True else / c(2)) | coroutine | C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone ; C1 L2 L3 L5 L6 RNone
+default with a guard | (c(1) if True else / c(2)) | class | C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1 ; C0 L1 C1 L1 L2 L3 L5 L6 RNone R1
+default with a guard | (c(1) if True else / c(2)) | module | C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone ; C0 L1 L2 L4 L5 RNone

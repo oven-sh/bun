@@ -1,0 +1,56 @@
+status: 0
+script: 9a283c58fb5697b6
+source: cd4b06cd1ca14f11
+---
+f.__name__ [f=function] => plain
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => assigned
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => before_try
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => in_try
+log [f=function] => ['finally', 'KeyboardInterrupt']
+f.__name__ [f=function] => call_in_body
+log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => named
+log [f=function] => ['body', None, 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => empty_body
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => no_call_in_body
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => loop_in_body
+log [f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => while_in_body
+log [f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => two
+log [f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => nested
+log [f=function] => ['outer KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => swallowed
+log [f=function] => ['body', 'exit KeyboardInterrupt', 'after']
+f.__name__ [f=function] => in_loop
+log [f=function] => ['body', 1, 'exit 1 KeyboardInterrupt', 'body', 2, 'exit 2 KeyboardInterrupt', 'after']
+f.__name__ [f=function] => returns
+log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => enter_in_python
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => in_generator
+log [f=function] => ['item', 'exit GeneratorExit', 'KeyboardInterrupt']
+f.__name__ [f=function] => in_coroutine
+log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => in_handler
+log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => in_finally
+log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => second_of_two
+log [f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => second_nested
+log [f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => async_with
+log [f=function] => ['body', 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => async_with_named
+log [f=function] => ['body', None, 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [f=function] => async_with_empty
+log [f=function] => ['KeyboardInterrupt']
+f.__name__ [f=function] => async_second_of_two
+log [f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']

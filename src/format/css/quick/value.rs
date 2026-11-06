@@ -9,11 +9,13 @@
 //! way.
 
 use super::super::Parser as Syntax;
+use super::super::selector_parser::has_comment;
 use super::layout::Page;
 use super::{
     BLANK, DASH, DIGIT, HIGHEST_BITS, INDENTATION, LOWER, PLAIN, Shape, UNDERSCORE, UPPER, byte,
     class, in_classes, is_asked_for_by_name, may_end_with_white_space, skip, skip_long,
 };
+use bun_core::strings;
 
 /// Parentheses that are nested deeper than this are refused. It also bounds how deep `layout.rs` calls itself.
 const MAX_DEPTH: usize = 32;
@@ -79,6 +81,8 @@ pub(super) enum Owner {
     /// Its strings and numbers are printed as they're written.
     CustomProperty,
     AtRule,
+    /// `.name(words)` of Less, which is an at-rule to the parser and a selector to the printer. For `read_simple_value`.
+    MixinCall,
 }
 
 /// The buffers, and what's known about the value that was read last.
@@ -304,6 +308,36 @@ fn is_special_call(name: &[u8], syntax: Syntax) -> bool {
             && name[name.len() - 6..].eq_ignore_ascii_case(b"extend"))
 }
 
+/// In a selector the digits of a color are numbers, so that `#31b0e0` loses its `e0`. `color` starts behind the `#`.
+fn has_exponent(color: &[u8]) -> bool {
+    // A number, its unit, the next number. After a letter at the start, all that follows is one word.
+    let mut at = 0;
+    loop {
+        let digits_end = skip(color, at, DIGIT);
+        if digits_end == at {
+            return false;
+        }
+        if byte(color, digits_end) == b'e' && byte(color, digits_end + 1).is_ascii_digit() {
+            return true;
+        }
+        at = skip(color, digits_end, LOWER);
+    }
+}
+
+/// The call of a mixin of Less, `.name(words)`, is a selector to the printer. False if that shows in `call`, which has
+/// been read as a value: its colors, and what the parser of selectors takes for a comment, with which it's printed as it's
+/// written.
+pub(super) fn is_mixin_call_printed_like_value(call: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(hash) = strings::index_of_char_pos(call, b'#', from) {
+        from = hash + 1;
+        if has_exponent(&call[from..]) {
+            return false;
+        }
+    }
+    !has_comment(call)
+}
+
 /// `a/b` outside of all parentheses, from its `/`. Returns its end.
 fn end_of_name_behind_slash(css: &[u8], slash: usize, syntax: Syntax) -> Option<usize> {
     let name = slash + 1;
@@ -437,7 +471,9 @@ fn read_simple_value(
         match byte(css, first) {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' if starts_with_url(css, first) => {
                 let paren = first + 3;
-                if sign > 0 || owner == Owner::AtRule || css.get(first..paren + 1) != Some(b"url(")
+                if sign > 0
+                    || matches!(owner, Owner::AtRule | Owner::MixinCall)
+                    || css.get(first..paren + 1) != Some(b"url(")
                 {
                     return None;
                 }
@@ -537,7 +573,8 @@ fn read_simple_value(
             b'#' if syntax == Syntax::Scss && byte(css, p + 1) == b'{' => {}
             b'#' => {
                 p = skip_long(css, p + 1, LOWER | DIGIT);
-                if p == first + 1 {
+                if p == first + 1 || (owner == Owner::MixinCall && has_exponent(&css[first + 1..p]))
+                {
                     return None;
                 }
             }
@@ -561,7 +598,11 @@ fn read_simple_value(
                 let string = read_string(css, p)?;
                 let keeps_quotes =
                     it == quote || owner == Owner::CustomProperty || string.has_inner_quotes;
-                if !keeps_quotes || (!string.is_plain && follows_blank) {
+                // (Behind an empty string, the parser of selectors takes what's in a string for a comment.)
+                if !keeps_quotes
+                    || (!string.is_plain && follows_blank)
+                    || (owner == Owner::MixinCall && string.end == p + 2)
+                {
                     return None;
                 }
                 is_ascii &= string.is_ascii;
@@ -574,7 +615,9 @@ fn read_simple_value(
                     return None;
                 }
                 let string = read_string(css, p + 1).filter(|it| it.is_ascii)?;
-                if !(it == quote || owner == Owner::CustomProperty || string.has_inner_quotes) {
+                if !(it == quote || owner == Owner::CustomProperty || string.has_inner_quotes)
+                    || (owner == Owner::MixinCall && string.end == p + 3)
+                {
                     return None;
                 }
                 has_unclear_term = true;
@@ -877,7 +920,7 @@ pub(super) fn end_of_simple_statement(
             b';' => Some((end + 1, Shape::Word, false)),
             b'(' => {
                 let simple =
-                    read_simple_value(css, start + 1, syntax, quote, Owner::AtRule, false)?;
+                    read_simple_value(css, start + 1, syntax, quote, Owner::MixinCall, false)?;
                 match css[simple.end] {
                     _ if !simple.is_call || simple.has_groups || !simple.is_ascii => None,
                     b';' => Some((simple.end + 1, Shape::Word, false)),

@@ -1668,6 +1668,7 @@ impl<'a> Parser<'a> {
                     || open.link as usize + 1 != values.records.len()
             })
             || css[values.end - 1] != b')'
+            || !value::is_mixin_call_printed_like_value(&css[start..values.end])
         {
             return false;
         }

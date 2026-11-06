@@ -1313,6 +1313,10 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "empty-string-and-slashes-in-selectors.css":
       'a[alt=""], a[href^="http://"] {\n  e: f;\n}\na[alt=""],\na[href^="http://"] {\n  e: f;\n}\na[href^="http://"],\na[alt=""] {\n  e: f;\n}\n' +
       'a[alt=""] b[c="/*"] {\n  e: f;\n}\na[alt="/"],\na[c="/d/e"] {\n  e: f;\n}\na[href^="http://"] {\n  e: f;\n}\n',
+    "empty-string-and-slashes-in-the-call-of-a-mixin.less":
+      '.m(\'\', \'http://x\');\n.a {\n  .m("", "http://x");\n  .m("", "/*");\n  .m("http://x", "");\n  .m("http://x");\n  .m("") {\n  }\n}\n',
+    "exponent-in-a-color-in-the-call-of-a-mixin.less":
+      ".a {\n  .m(#31b0e0);\n  .m( #31b0e0 );\n  .m(#1e3);\n  .m(#1e03, #00e0ff);\n  .m(#e0e0e0, #a1e0, #3ae0, #000, #12ab34);\n  .m(#0e0) {\n  }\n  b: #31b0e0;\n}\n",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

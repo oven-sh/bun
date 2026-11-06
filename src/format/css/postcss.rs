@@ -192,6 +192,11 @@ impl<'a> Tokenizer<'a> {
         self.returned.push(token);
     }
 
+    /// For a text that's read again without short cuts, so that nobody sees why.
+    pub(super) fn reject_short_cut(&self) -> Rejected {
+        self.rejection.note(Message::UnexpectedEnd, self.pos as u32)
+    }
+
     /// Returns the offset of the next unescaped `byte`, a quote or a `)`, after `from`.
     fn find_unescaped(&self, byte: u8, from: usize) -> Option<usize> {
         let mut next = from;

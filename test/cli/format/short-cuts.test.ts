@@ -1331,6 +1331,11 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       'a {\n  content: "extend(b)";\n  content: "EXTEND(b)" c;\n  content: "extend (b)";\n  @d: "extend(b)";\n}\n',
     "dollar-and-dots-in-a-string.scss":
       '@include a("$b ...");\n@include a("$b  ...", $c...);\n@include a("$b", "...");\n@return "$b ...";\na {\n  c: "$b ...";\n  c: "$";\n}\n',
+    "url-that-no-parenthesis-has-taken.css":
+      "a{b:url}\n@media (min-width: 1px) {\n  c {\n    d: e;\n  }\n}\nf {\n  g: url h;\n  i: j;\n  k: ((l));\n  m: (n);\n  o: p;\n}\n",
+    "url-that-no-parenthesis-has-taken.less":
+      "// the url\n@media (min-width: 1px) {\n  c {\n    d: (e);\n  }\n}\n// the url of\n.a {\n  b: c;\n  .m((d));\n}\n@media (f: g) {\n  .h {\n    i: j;\n  }\n}\n",
+    "url-that-no-parenthesis-has-taken.scss": "$a: url;\n$b: ((c: d));\n@include e((f));\n// url\n$g: (h: i);\n",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",
@@ -1383,6 +1388,15 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       expect(await memoryInMegabytes("a.css", text, ["--tab-width=4294967295"])).toBeLessThan(2000);
     },
   );
+
+  test("a `url` in a comment of Less leaves the short cuts on", async () => {
+    const rules = Array.from(
+      { length: isDebug ? 5_000 : 50_000 },
+      (_, index) => `.a${index} {\n  color: red;\n  margin: 0 auto;\n  padding: 1px 2px 3px ${index}px;\n}\n`,
+    );
+    // 0.16 in a release build, and 0.84 when all that follows the comment went the long way.
+    expect(await cpuTimeOfShortCuts("a.less", `// the url of the font\n${rules.join("")}`)).toBeLessThan(0.6);
+  });
 });
 
 /** Formats `files` with `options`, with and without short cuts, and returns what differs. */

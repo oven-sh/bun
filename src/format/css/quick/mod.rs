@@ -631,18 +631,24 @@ impl<'a> Parser<'a> {
     ///
     /// - `returned`: has to be empty.
     /// - `shift`: 0, or all offsets are off.
-    /// - `buffer`: all that counts is whether the word that a `(` takes from it is `url`. So there must be no `url` in
-    ///   it, and no statement is taken that would leave one there.
+    /// - `buffer`: all that counts is whether the word that a `(` takes from it is `url`. No statement is taken that
+    ///   would leave one there. While one is there, from a comment of Less for example, the tokens of what's taken are
+    ///   read after all.
     /// - `last_bad_paren`: has to be before the statement. What's taken has balanced parentheses, so the one it would
     ///   leave is before the next statement.
     pub(super) fn read_known_statements(&mut self) -> Result<(), Rejected> {
-        let css = self.css;
-        if !self.tokenizer.returned.is_empty()
-            || self.tokenizer.shift != 0
-            || self.tokenizer.urls_in_buffer != 0
-        {
+        if !self.tokenizer.returned.is_empty() || self.tokenizer.shift != 0 {
             return Ok(());
         }
+        if self.tokenizer.urls_in_buffer != 0 {
+            return self.read_known_statements_and_their_tokens();
+        }
+        self.read_statements()
+    }
+
+    /// The loop of `read_known_statements`.
+    fn read_statements(&mut self) -> Result<(), Rejected> {
+        let css = self.css;
         loop {
             let start = self.tokenizer.pos;
             // The indentation of blocks in blocks grows with the square of their number. A style sheet that's rejected in
@@ -698,6 +704,25 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
+    }
+
+    /// `read_known_statements` with a `url` in the tokenizer's buffer: the tokenizer reads what was taken too, so that the
+    /// words above each `url` are the ones that the long way leaves there. If a `(` takes one of them, nothing from there
+    /// on is what it seemed to be, and the style sheet goes the long way.
+    #[cold]
+    fn read_known_statements_and_their_tokens(&mut self) -> Result<(), Rejected> {
+        let (start, urls_in_buffer) = (self.tokenizer.pos, self.tokenizer.urls_in_buffer);
+        let mut is_same = self.read_statements().is_ok();
+        let end = std::mem::replace(&mut self.tokenizer.pos, start);
+        while is_same && self.tokenizer.pos < end {
+            is_same = matches!(self.tokenizer.next_token(false), Ok(Some(_)))
+                && self.tokenizer.urls_in_buffer >= urls_in_buffer;
+        }
+        if is_same && self.tokenizer.pos == end && self.tokenizer.urls_in_buffer == urls_in_buffer {
+            return Ok(());
+        }
+        self.quick.is_refused = true;
+        Err(self.tokenizer.reject_short_cut())
     }
 
     // ───────────────────────────── runs ─────────────────────────────

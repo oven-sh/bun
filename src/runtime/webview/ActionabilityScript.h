@@ -10,11 +10,13 @@ namespace Bun {
 //
 // Equal boxes do not always mean that the element is still:
 // - Before the first frame nothing is sampled. That look and the next one can share a frame.
-// - The second look counts when its frame stamp is 8 ms later, half a 60 Hz frame. After a long task two callbacks
-//   get one frame. A stamp that stands still (a paused animation clock) counts after 100 ms.
+// - The second look counts when its frame time is at least 8 ms later, half a 60 Hz frame. After a long task the
+//   browser runs two frames with almost one time, and no animation moves between them. A time that stands still (a
+//   paused animation clock) counts after 100 ms.
 // - An animation that has yet to start holds its element at the first keyframe. Those found at the second look, on
-//   the element or an ancestor, are waited for, and then one more frame. The search is not repeated for that box, so
-//   a page that begins an animation in every frame cannot hold a still element until the timeout.
+//   the element or an ancestor, are waited for, for 8 frames at most, and then one more frame. The search is not
+//   repeated for that box. So a page that begins an animation in every frame, or whose animation never starts,
+//   cannot hold a still element until the timeout.
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
 let last, framed, ts;
@@ -29,9 +31,9 @@ for (;;) {
       else if (!(ts - last.ts < 8) || performance.now() - (last.stuck ??= performance.now()) >= 100) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) {
-          last.starting ??= document.getAnimations().filter(a => a.pending && a.timeline?.currentTime != null && a.effect?.target?.contains?.(el));
+          if (!last.starting) last.starting = document.getAnimations().filter(a => a.pending && a.timeline?.currentTime != null && a.effect?.target?.contains?.(el)), last.more = 8;
           if (!last.starting.length) return [cx, cy];
-          if (!last.starting.some(a => a.pending)) last = { ...seen, starting: [] };
+          if (!last.starting.some(a => a.pending) || !last.more--) last = { ...seen, starting: [] };
         }
       }
     } else last = undefined;

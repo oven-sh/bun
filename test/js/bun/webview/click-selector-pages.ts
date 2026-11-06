@@ -1,7 +1,7 @@
 // Pages for the tests of click(selector) in webview-chrome.test.ts and webview.test.ts: what makes an element stable.
 //
 // click() looks for its element with document.querySelector: once when it is called, then once in every frame. A page
-// that replaces that function acts at exact looks, so no case depends on how soon a frame comes.
+// that replaces that function acts at exact looks and can count them, so no case depends on how soon a frame comes.
 
 export const slideLeft = "from { left: 0; } to { left: 100px; }";
 const slideTransform = "from { transform: translateX(0); } to { transform: translateX(100px); }";
@@ -48,11 +48,9 @@ const movesByFrame = (frames: string) => `
     };
   </script>`;
 
-const still = `<button id=b onclick="window.__hit=1">b</button>`;
-
-/** A still button on a page that counts the looks. Every frame carries `time`. */
-const countsLooks = (time: string, head = "") => `
-  ${head}${still}
+/** A still button on a page that counts the looks. Every frame carries `time`. `rest` is the rest of the page. */
+const countsLooks = (time: string, rest = "") => `
+  <button id=b onclick="window.__hit=1">b</button>
   <script>
     window.__looks = 0;
     const { querySelector } = document;
@@ -63,10 +61,25 @@ const countsLooks = (time: string, head = "") => `
     const nextFrame = requestAnimationFrame;
     let frame = 0;
     window.requestAnimationFrame = callback => nextFrame(() => callback(${time}));
-  </script>`;
-const clickAndLooks = `window.__hit + " click, " + __looks + " looks"`;
+  </script>
+  ${rest}`;
 // 16 ms more in every frame, so that a busy machine cannot make two frames look like one.
 const clock = "++frame * 16";
+const clickAndLooks = `window.__hit + " click, " + __looks + " looks"`;
+// One look before the first frame, one that takes the box, one that finds it equal.
+const still = "1 click, 3 looks";
+
+// A pause or a play takes effect in the next frame. An animation that gets one in every frame is pending in every
+// frame and never starts.
+const pendingInEveryFrame = (target: string) => `
+  <script>
+    const animation = ${target}.animate([{ opacity: 0.9 }, { opacity: 1 }], 1000);
+    let frames = 0;
+    (function again() {
+      frames++ % 2 ? animation.play() : animation.pause();
+      requestAnimationFrame(again);
+    })();
+  </script>`;
 
 export interface ClickSelectorPage {
   name: string;
@@ -97,45 +110,37 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     want: "100",
   })),
   {
-    // A pause or a play takes effect in the next frame, so this animation is pending in every frame and never starts.
     name: "does not wait for an animation of another element",
-    page: `${still}<i id=other></i>
-      <script>
-        const animation = other.animate([{ opacity: 0 }, { opacity: 1 }], 1000);
-        let frames = 0;
-        (function again() {
-          frames++ % 2 ? animation.play() : animation.pause();
-          requestAnimationFrame(again);
-        })();
-      </script>`,
+    page: countsLooks(clock, `<i id=other></i>${pendingInEveryFrame("other")}`),
     selector: "#b",
-    timeout: 2000,
-    report: "String(window.__hit)",
-    want: "1",
+    report: clickAndLooks,
+    want: still,
   },
   {
     // Nothing overflows, so the timeline is not active and the animation is pending for as long as the page is.
     name: "does not wait for an animation on a timeline that is not active",
-    page: `${still}
-      <style>
+    page: countsLooks(
+      clock,
+      `<style>
         @keyframes fade { from { opacity: 0.5; } to { opacity: 1; } }
         body { animation: fade linear; animation-timeline: scroll(); }
       </style>`,
+    ),
     selector: "#b",
-    timeout: 2000,
-    report: "String(window.__hit)",
-    want: "1",
+    report: clickAndLooks,
+    want: still,
   },
   {
     name: "does not wait for an animation without a timeline",
-    page: `${still}
-      <script>
+    page: countsLooks(
+      clock,
+      `<script>
         new Animation(new KeyframeEffect(document.body, [{ opacity: 0.5 }, { opacity: 1 }], 1000), null).play();
       </script>`,
+    ),
     selector: "#b",
-    timeout: 2000,
-    report: "String(window.__hit)",
-    want: "1",
+    report: clickAndLooks,
+    want: still,
   },
   {
     // The first callback that click() asks for runs in the frame that asked: nothing has moved by then. The second
@@ -168,9 +173,12 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     want: "100",
   },
   {
-    // A transition of body has yet to start at every look. click() waits for those that it found, not for later ones.
-    name: "clicks below an ancestor that begins a transition in every frame",
-    page: `<style>body { transition: background-color 1s linear; }</style>${still}
+    // A transition of body has yet to start at every look. click() waits until the one that it found is gone, and for
+    // one more frame. It does not look for the later ones.
+    name: "waits for the animations that it found, not for later ones",
+    page: countsLooks(
+      clock,
+      `<style>body { transition: background-color 1s linear; }</style>
       <script>
         let hue = 0;
         (function again() {
@@ -178,10 +186,18 @@ export const clickSelectorPages: ClickSelectorPage[] = [
           requestAnimationFrame(again);
         })();
       </script>`,
+    ),
     selector: "#b",
-    timeout: 2000,
-    report: "String(window.__hit)",
-    want: "1",
+    report: clickAndLooks,
+    want: "1 click, 5 looks",
+  },
+  {
+    // The three looks of a still element, the eight frames that click() waits for what it found, and one more frame.
+    name: "waits eight frames for an animation that never starts",
+    page: countsLooks(clock, pendingInEveryFrame("document.body")),
+    selector: "#b",
+    report: clickAndLooks,
+    want: "1 click, 12 looks",
   },
   {
     name: "clicks when every frame carries the same time",
@@ -196,7 +212,7 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     page: countsLooks(clock),
     selector: "#b",
     report: clickAndLooks,
-    want: "1 click, 3 looks",
+    want: still,
   },
   {
     name: "looks three times at a still element below an animation that runs",
@@ -210,14 +226,13 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     selector: "#b",
     settle: "Promise.all(document.getAnimations().map(animation => animation.ready)).then(() => 1)",
     report: clickAndLooks,
-    want: "1 click, 3 looks",
+    want: still,
   },
   {
     name: "looks three times at a still element when frames carry no time",
     page: countsLooks("undefined"),
     selector: "#b",
-    timeout: 2000,
     report: clickAndLooks,
-    want: "1 click, 3 looks",
+    want: still,
   },
 ];

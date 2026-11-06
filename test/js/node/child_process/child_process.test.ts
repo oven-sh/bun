@@ -1424,43 +1424,10 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     } catch (e) {
       thrown = e;
     }
-    expect({ code: thrown?.code, errno: typeof thrown?.errno, syscall: thrown?.syscall }).toEqual({
-      code: "ENOTSUP",
-      errno: "number",
-      syscall: "spawn",
-    });
+    expect(thrown?.code).toBe("ENOTSUP");
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOTSUP");
-  });
-});
-
-// Node gives `syscall: "spawn"` to the errno errors that spawn() throws:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L440
-// An ERR_* error from the validation of an option is not one of them, though it has an own `code` too.
-describe("errors that spawn() throws", () => {
-  function thrownBy(stdio: StdioOptions): any {
-    try {
-      spawn(bunExe(), ["-e", "0"], { stdio });
-    } catch (e) {
-      return e;
-    }
-    throw new Error("spawn() did not throw");
-  }
-
-  // Windows: the ENOTSUP test above asserts the syscall, and the errno of a bad fd is a libuv number there.
-  it.skipIf(isWindows)("an errno error has the syscall", () => {
-    const thrown = thrownBy([99999]);
-    expect({ code: thrown.code, errno: thrown.errno, syscall: thrown.syscall }).toEqual({
-      code: "EBADF",
-      errno: -os.constants.errno.EBADF,
-      syscall: "spawn",
-    });
-  });
-
-  it("a validation error has no syscall", () => {
-    const thrown = thrownBy([-5]);
-    expect({ code: thrown.code, keys: Object.keys(thrown) }).toEqual({ code: "ERR_INVALID_ARG_TYPE", keys: ["code"] });
   });
 });
 

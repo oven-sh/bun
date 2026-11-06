@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+try {
+} catch ({
+  // comment
+}) {}
+try {
+} catch ({/* comment */}) {}
+try {
+} catch ({
+  a, // comment
+}) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+try {
+} catch ({
+  // comment
+}) {}
+try {
+} catch ({/* comment */}) {}
+try {
+} catch ({
+  a, // comment
+}) {}
+
+===================== End =====================

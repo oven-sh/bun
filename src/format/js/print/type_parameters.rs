@@ -228,7 +228,7 @@ impl<'a> FormatTypeArguments<'a> {
             && params.first().is_some_and(|first| {
                 should_hug_single_type(first, f) && !has_comment_that_unhugs(first, f)
             })
-            && !is_arrow_function_variable_type_argument(self);
+            && !is_arrow_function_variable_type_argument(self, f);
 
         // TypeScript doesn't allow a `,` after the last type argument. Flow does, and types in a JavaScript file are
         // Flow's.
@@ -283,8 +283,16 @@ fn should_hug_single_type<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
         || (ty.tag() == TypeTag::JSDoc && f.file().is_flow())
 }
 
+/// `const { a }: A<B> = () => {};`: for oxfmt a pattern is a variable like a name.
+fn pattern_counts_as_arrow_function_variable(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `const foo: A<B, C> = () => {};`
-fn is_arrow_function_variable_type_argument(arguments: FormatTypeArguments<'_>) -> bool {
+fn is_arrow_function_variable_type_argument(
+    arguments: FormatTypeArguments<'_>,
+    f: &Formatter<'_>,
+) -> bool {
     let params = arguments.params;
     if params.len() == 1 && params.first().is_some_and(is_object_like_type) {
         return false;
@@ -300,7 +308,8 @@ fn is_arrow_function_variable_type_argument(arguments: FormatTypeArguments<'_>) 
         && matches!(
             grand_parent.parent(),
             AstNodes::VariableDeclarator(declarator)
-                if declarator.pat().tag() == PatTag::Ident
+                if (declarator.pat().tag() == PatTag::Ident
+                    || pattern_counts_as_arrow_function_variable(f))
                     && declarator.init().is_some_and(|init| init.arrow_function().is_some())
         )
 }

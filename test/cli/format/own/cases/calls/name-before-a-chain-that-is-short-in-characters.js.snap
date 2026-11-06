@@ -1,0 +1,49 @@
+------------------
+{ printWidth: 80 }
+------------------
+éé
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .cccccccccccccccccccccccccccccccccccccc();
+文
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .ccccccccccccccccccccccccccccccccccccccc();
+文文文
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .ccccccccccccccccccccccccccccccccc();
+𠀀
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .ccccccccccccccccccccccccccccccccccccccc();
+𠀀a
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .cccccccccccccccccccccccccccccccccccccc();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+éé
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .cccccccccccccccccccccccccccccccccccccc();
+文
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .ccccccccccccccccccccccccccccccccccccccc();
+文文文
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .ccccccccccccccccccccccccccccccccc();
+𠀀
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .ccccccccccccccccccccccccccccccccccccccc();
+𠀀a
+  .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+  .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb()
+  .cccccccccccccccccccccccccccccccccccccc();
+
+===================== End =====================

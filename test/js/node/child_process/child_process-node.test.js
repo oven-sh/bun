@@ -210,7 +210,8 @@ describe("errors that spawn() throws", () => {
     });
   });
 
-  it("a validation error has no syscall", () => {
+  // Bun.spawn() refuses a negative fd inside the try of ChildProcess.spawn(), where the syscall is stamped. Node makes it a pipe, and what Node refuses too is refused before that try.
+  it("an ERR_* error that Bun.spawn() throws has no syscall", () => {
     const thrown = thrownBy({ stdio: [-5] });
     expect({ code: thrown.code, keys: Object.keys(thrown) }).toEqual({ code: "ERR_INVALID_ARG_TYPE", keys: ["code"] });
   });

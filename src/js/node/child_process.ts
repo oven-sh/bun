@@ -1540,7 +1540,7 @@ class ChildProcess extends EventEmitter {
       }
     } catch (ex) {
       const exCode =
-        ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
+        ex != null && typeof ex === "object" && ObjectHasOwn(ex, "code") ? (ex as SystemError).code : undefined;
       if (
         // node sends these errors on the next tick rather than throwing
         exCode === "EACCES" ||
@@ -1564,7 +1564,7 @@ class ChildProcess extends EventEmitter {
         }
       } else {
         // Only an errno error is an ErrnoException(err, "spawn") in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L440. An ERR_* validation error has an own `code` too.
-        if (exCode !== undefined && Object.hasOwn(ex as SystemError, "errno")) {
+        if (exCode !== undefined && ObjectHasOwn(ex as SystemError, "errno")) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
           (ex as SystemError).syscall = "spawn";

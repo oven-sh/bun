@@ -1428,7 +1428,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name = p.load_name_from_ref(data.name.ref_);
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
-        p.cur_scope().label_ref = ref_;
+        p.report_label_if_duplicate(name, data.name.loc);
+        p.cur_scope().label = js_ast::scope::ScopeLabel::new(ref_, data.name.loc);
         match data.stmt.data {
             StmtData::SFor(_)
             | StmtData::SForIn(_)

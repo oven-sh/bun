@@ -199,6 +199,19 @@ const TEXTS_UNDER_WHICH_AN_EVALUATOR_HANGS: &[&str] = &[
     "f(`${a}constructor${b}`);",
     "f(['a', 'constructor', 'b'].join('.'));",
     "const words = ['constructor', 'length'];",
+    "({ constructor: 1 });",
+    "f({ 'constructor': a });",
+    "f({ constructor() {} });",
+    "f(function constructor() {});",
+    "function constructor() {}",
+    "f(class constructor {});",
+    "class constructor {}",
+    "class A { static constructor() {} }",
+    "const constructor = () => {};",
+    "function g(constructor = () => {}) {}",
+    "constructor = function () {};",
+    "switch (a) { case 'constructor': }",
+    "enum Part { constructor }",
 ];
 
 #[test]
@@ -213,12 +226,59 @@ fn a_text_that_a_program_spells_and_under_which_an_evaluator_hangs_is_a_name_rea
             assert_eq!(*case.resolved.uses(), RuntimeUses::default(), "{source}");
         });
     }
-    for source in ["f('flatMap');", "f('then');", "({ constructor: 1 });"] {
+    for source in ["f('flatMap');", "f('then');", "({ eval: 1 });"] {
         with_case(PROGRAM, source, |case| {
             let expected = uses_of_text_that_only_may_hand_values_to_natives();
             assert_eq!(*case.resolved.uses(), expected, "{source}");
         });
     }
+}
+
+#[test]
+fn the_constructor_of_a_class_spells_no_name_under_which_an_evaluator_hangs() {
+    for source in [
+        "class A { constructor() {} }",
+        "f(class { 'constructor'() {} });",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            let asks = &case.resolved.uses().asks;
+            assert!(asks.members_read.is_empty(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn one_name_under_which_text_is_evaluated_off_the_global_object_brings_code_of_the_language() {
+    use crate::builtins::runtime_uses::is_name_of_language_member_with_code;
+    let flags_of = |id: BuiltinId| table::entry(id).flags;
+    let mut names: Vec<&[u8]> = Vec::new();
+    for id in BuiltinId::ALL {
+        let entry = table::entry(id);
+        let is_global = |holder| flags_of(holder).contains(table::BuiltinFlags::IS_GLOBAL_OBJECT);
+        if flags_of(table::canonical_id(id)).contains(table::BuiltinFlags::EVALUATES_TEXT)
+            && entry.holder.is_some_and(|holder| !is_global(holder))
+            && is_name_of_language_member_with_code(entry.name)
+        {
+            names.push(table::text_of_name(entry.name));
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names, [b"constructor".as_slice()]);
+}
+
+#[test]
+fn one_text_under_which_an_evaluator_hangs_brings_code_of_the_language() {
+    use crate::builtins::runtime_uses::{
+        is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
+    };
+    let names = BuiltinId::ALL.into_iter().map(|id| table::entry(id).name);
+    let names = names.filter(|&name| is_name_under_which_evaluator_hangs(name));
+    let names = names.filter(|&name| is_name_of_language_member_with_code(name));
+    let mut names: Vec<&[u8]> = names.map(table::text_of_name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names, [b"constructor".as_slice()]);
 }
 
 #[test]

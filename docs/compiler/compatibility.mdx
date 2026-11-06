@@ -101,6 +101,8 @@ bun compile ./strings.ts && ./strings
 
 `eval`, `new Function` and `node:vm` work, also when your code gets to them by a computed name, like `globalThis[name](code)`. The build can't see that code and the executable has no JIT, so Bun interprets it.
 
+A computed name finds them when the build finds that name in your code: as a string (`"eval"`, also in `case "eval":`), as a key of an object or an enum whose keys your code lists or looks up with a computed key (`name in { eval: 1 }`), or as the name of a function whose `.name` your code reads. The same goes for `"constructor"` in `fn[name](code)`. The build doesn't find a name that only a regular expression matches, the name of a static member of a class, or a name that your code assembles at run time with `slice()`, `startsWith()` or `String.fromCharCode()`. There the call throws an `EvalError`, so call `eval` or `new Function` directly.
+
 Code from a string can call `import()`, but the build can't see which file it names. `eval("import(path)")` finds your entry points. It finds another compiled file only if your own code has an `import()` or a `require()` with a computed path too, and throws `Cannot load` otherwise. `bun test --aot` refuses it as the executable does, and lists it at the end of the run. Import the file by a constant path and hand the module to that code.
 
 A namespace object hands out the exports that the build saw somebody read from it. If code the build didn't follow gets hold of the object some other way, for example a run-time plugin whose `onResolve` answers for an `--external` package with the path of a compiled file, reading any other export throws the same `Cannot load`. `in`, `Object.keys()` and `for...in` list every export as usual.

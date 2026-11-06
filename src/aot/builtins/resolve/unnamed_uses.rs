@@ -13,9 +13,10 @@ use bun_sema::bind::{
 };
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatId, PatKind, PropKey, StmtKind, UnOp,
-    VarDeclId, VarKind,
+    self, BinOp, ExprId, ExprKind, Flags, FnKind, MemberKey, MemberKind, PatId, PatKind, PropKey,
+    StmtKind, UnOp, VarDeclId, VarKind,
 };
+use bun_sema::hir_from_data::DataValue;
 use core::ops::Range;
 
 pub(super) const MOST_VARIABLES_FOLLOWED: u32 = 4;
@@ -33,6 +34,7 @@ pub(super) struct SyntaxOutsideExpressions {
     dynamic_scopes: Vec<u32>,
     object_patterns: Vec<(u32, PatId)>,
     written_targets: Vec<(u32, ExprId)>,
+    names_that_spell_constructor: Vec<u32>,
 }
 
 fn within<'l, T>(list: &'l [(u32, T)], range: &Range<u32>) -> &'l [(u32, T)] {
@@ -60,7 +62,29 @@ impl SyntaxOutsideExpressions {
             };
             syntax.marks.push((hir[declaration.pat].pos, asked));
         }
+        let spells_constructor = PropKey::Name(known::constructor);
+        let properties = hir.props.iter();
+        let properties = properties.filter(|property| property.key == spells_constructor);
+        (syntax.names_that_spell_constructor).extend(properties.map(|property| property.start));
+        let members = hir.enum_members.iter();
+        let members = members.filter(|member| member.name == known::constructor);
+        (syntax.names_that_spell_constructor).extend(members.map(|member| member.pos));
+        for class in hir.classes.iter() {
+            if class.name == known::constructor {
+                syntax.names_that_spell_constructor.push(class.start);
+            }
+            let members = class.members.iter().filter(|&member| {
+                hir.runtime_member_kind(member) != MemberKind::Constructor
+                    && hir[member].key == spells_constructor
+            });
+            (syntax.names_that_spell_constructor).extend(members.map(|member| hir[member].start));
+        }
         for function in hir.fns.iter() {
+            if function.name == known::constructor
+                && matches!(function.kind, FnKind::Decl | FnKind::Expr)
+            {
+                syntax.names_that_spell_constructor.push(function.start);
+            }
             let mut asked = SyntaxWithHelpers::empty();
             if function.flags.contains(Flags::ASYNC) {
                 asked |= SyntaxWithHelpers::PROMISE;
@@ -100,11 +124,15 @@ impl SyntaxOutsideExpressions {
                     (syntax.marks).push((pattern.pos, SyntaxWithHelpers::ITERATION))
                 }
                 PatKind::Object(_) => syntax.object_patterns.push((pattern.pos, id)),
+                PatKind::Ident(name) if name == known::constructor => {
+                    syntax.names_that_spell_constructor.push(pattern.pos);
+                }
                 _ => {}
             }
         }
         syntax.marks.sort_unstable_by_key(|mark| mark.0);
         syntax.dynamic_scopes.sort_unstable();
+        syntax.names_that_spell_constructor.sort_unstable();
         syntax
             .object_patterns
             .sort_unstable_by_key(|pattern| pattern.0);
@@ -134,6 +162,7 @@ fn for_each_text_spelled_at(
 ) {
     match input.hir[expr].kind {
         ExprKind::JsxText(text) => note(text),
+        ExprKind::Ident(name) if name == known::constructor => note(name),
         ExprKind::Template { .. } => {
             for part in input.hir.template_parts(expr) {
                 if let Some(cooked) = part.cooked {
@@ -149,8 +178,30 @@ fn for_each_text_spelled_at(
     {
         note(text);
     }
-    if let Decision::Constant(Constant::String(text)) = input.decisions.decision(expr) {
-        note(text);
+    match input.decisions.decision(expr) {
+        Decision::Constant(Constant::String(text)) => note(text),
+        Decision::Data(data) => for_each_text_spelled_in_data(data, &mut note),
+        Decision::DeferredData => note(known::constructor),
+        _ => {}
+    }
+}
+
+fn for_each_text_spelled_in_data(data: &DataValue<'_>, note: &mut dyn FnMut(Atom)) {
+    let mut waiting = vec![data];
+    while let Some(value) = waiting.pop() {
+        match *value {
+            DataValue::String(text) => note(text),
+            DataValue::Array(items) => waiting.extend(items),
+            DataValue::Object(entries) => {
+                for (key, value) in entries {
+                    if *key == known::constructor {
+                        note(*key);
+                    }
+                    waiting.push(value);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -517,6 +568,13 @@ impl Resolver<'_, '_> {
         let has_dynamic_scope =
             (syntax.dynamic_scopes.get(first)).is_some_and(|&it| it < range.end);
         self.output.reads_by_unknown_key |= has_dynamic_scope;
+        let names = &syntax.names_that_spell_constructor;
+        let first = names.partition_point(|&it| it < range.start);
+        if self.input.dialect == SourceDialect::Program
+            && names.get(first).is_some_and(|&it| it < range.end)
+        {
+            self.note_text_under_which_evaluator_hangs(known::constructor);
+        }
         for &(_, target) in within(&syntax.written_targets, range) {
             self.written_patterns.push(target);
         }

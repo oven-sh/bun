@@ -256,6 +256,17 @@ test("values that console.log prints differently", () => {
       -0,
     ]
   `);
+  expect([
+    Object.assign(new Date(0), { toJSON: () => "x".repeat(34) }),
+    Object.assign(new Date(0), { toJSON: () => "x".repeat(35) }),
+    Object.defineProperty(new Set([1]), "size", { value: "1" }),
+  ]).toMatchInlineSnapshot(`
+    [
+      xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,
+      ,
+        Set {},
+    ]
+  `);
   expect({
     get getter() {
       return 1;

@@ -1734,13 +1734,13 @@ it("a native object that refers to itself more than once", () => {
   expect(Bun.inspect(decoder)).toStartWith("TextDecoder {\n  first: [Circular],\n  second: [Circular],\n");
 });
 
-it("a Map or Set whose size is not a number", () => {
-  const set = new Set([1]);
-  Object.defineProperty(set, "size", { value: Symbol("size") });
-  expect(Bun.inspect(set)).toBe("Set {}");
-  const map = new Map([[1, 2]]);
-  Object.defineProperty(map, "size", { value: Symbol("size") });
-  expect(Bun.inspect(map)).toBe("Map {}");
+it("a Set whose size is a string", () => {
+  class StringSize extends Set {
+    get size() {
+      return String(super.size);
+    }
+  }
+  expect(Bun.inspect(new StringSize([1, 2]))).toBe("Set(2) {\n  1,\n  2,\n}");
 });
 
 it("a Map key that throws while it is printed", () => {

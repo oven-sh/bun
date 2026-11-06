@@ -1,5 +1,5 @@
 //! A port of pretty-format, for the snapshots of suites written for Jest and Vitest, and snapshot serializers.
-//! Bun's own snapshot format is `bun_jsc::console_object::Formatter::pretty_format`.
+//! Bun's own snapshot format is `bun_jsc::console_object::Formatter::is_snapshot`.
 
 use core::ffi::c_void;
 
@@ -586,8 +586,8 @@ impl bun_io::Write for ExpectedText<'_> {
 
 impl JestPrettyFormat {
     /// Prints Bun's own snapshot format.
-    pub(crate) fn bun_formatter(global: &JSGlobalObject) -> console_object::Formatter<'_> {
-        let mut formatter = console_object::Formatter::new_pretty_format(global);
+    fn bun_formatter(global: &JSGlobalObject) -> console_object::Formatter<'_> {
+        let mut formatter = console_object::Formatter::new_snapshot(global);
         formatter.snapshot.printer = Some(Self::print_in_bun_snapshot);
         formatter
     }
@@ -603,12 +603,27 @@ impl JestPrettyFormat {
     fn print_in_bun_snapshot(
         formatter: &mut console_object::Formatter<'_>,
         writer: &mut dyn bun_io::Write,
-        tag: console_object::Tag,
+        tag: &mut console_object::TagPayload,
         value: JSValue,
     ) -> JsResult<bool> {
-        use console_object::Tag;
+        use console_object::TagPayload as Tag;
+        let global = formatter.global_this;
+        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
+        if !tag.is_primitive() && formatter.snapshot.output_length.is_some_and(|length| length.get() > 1_000_000) {
+            let _ = writer.write_all(if matches!(tag, Tag::Array) { b"[Array]" } else { b"[Object]" });
+            return Ok(true);
+        }
+        if matches!(tag, Tag::JSX)
+            && value.get_own_truthy(global, "$$typeof")? == Some(JSValue::symbol_for(global, b"react.transitional.element"))
+        {
+            // Older versions printed it as a plain object, along with the fiber in its `_owner`.
+            match formatter.snapshot.like_older_bun {
+                Some(_) => *tag = Tag::Object,
+                None => formatter.snapshot.same_as_older_bun = false,
+            }
+        }
         if formatter.snapshot.serializers.is_some() {
-            let mut serializing = Formatter::new(formatter.global_this, SnapshotFormat::Bun);
+            let mut serializing = Formatter::new(global, SnapshotFormat::Bun);
             serializing.indent = formatter.indent;
             serializing.serializers = formatter.snapshot.serializers;
             serializing.config = formatter.snapshot.config;

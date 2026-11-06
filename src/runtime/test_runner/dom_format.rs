@@ -145,7 +145,7 @@ trait Host {
 
 impl Host for console_object::Formatter<'_> {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32, _depth: u32) -> JsResult<()> {
-        if self.pretty_format {
+        if self.is_snapshot {
             let outer = (core::mem::replace(&mut self.indent, indent), core::mem::replace(&mut self.quote_strings, true));
             let result = self.format_value::<false>(value, out);
             (self.indent, self.quote_strings) = outer;
@@ -160,7 +160,7 @@ impl Host for console_object::Formatter<'_> {
     }
 
     fn check_length(&mut self, printed: usize, copied: usize) -> JsResult<()> {
-        if !self.pretty_format {
+        if !self.is_snapshot {
             return Ok(());
         }
         pretty_format::check_length(self.global_this, printed)?;

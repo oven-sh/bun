@@ -2062,7 +2062,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         return rethrow_pending(global, result.is_err());
     }
     // Snapshots print these with the generic object printer.
-    if !formatter.pretty_format {
+    if !formatter.is_snapshot {
         if let Some(s3client) = value.as_class_ref::<S3Client>() {
             let mut w = AsFmt::new(writer_);
             let result = s3client.write_format::<_, _, C>(formatter, &mut w);

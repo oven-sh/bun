@@ -149,9 +149,11 @@ new Promise(resolve => {
   resolve(1);
 });
 
-import.meta.hot.on("bun:bun:beforeFullReloadBut also allows anything", () => {
-  //
-});
+if (import.meta.hot) {
+  import.meta.hot.on("bun:bun:beforeFullReloadBut also allows anything", () => {
+    //
+  });
+}
 
 new Map();
 new Set();
@@ -405,8 +407,10 @@ Bun.serve({
   },
 });
 
-import.meta.hot.accept();
-import.meta.hot.data;
+if (import.meta.hot) {
+  import.meta.hot.accept();
+  import.meta.hot.data;
+}
 
 fetch("", {
   tls: {

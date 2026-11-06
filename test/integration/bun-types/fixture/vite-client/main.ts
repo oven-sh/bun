@@ -18,5 +18,12 @@ import.meta.glob("./pages/*.MD", { caseSensitive: false });
 // @ts-expect-error there is no such option
 import.meta.glob("./pages/*.md", { nope: true });
 
+expectType<ImportMeta["hot"]>().is<ViteHotContext | undefined>();
+if (import.meta.hot) {
+  import.meta.hot.accept();
+  import.meta.hot.invalidate("reason");
+  import.meta.hot.send("my:event", { ok: true });
+}
+
 expectType(import.meta.dir).is<string>();
 expectType(Bun.version).is<string>();

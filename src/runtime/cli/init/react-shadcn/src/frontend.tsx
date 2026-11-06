@@ -18,4 +18,4 @@ const app = (
 
 // https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data
 type HotData = { root?: Root };
-((import.meta.hot.data as HotData).root ??= createRoot(elem)).render(app);
+((import.meta.hot!.data as HotData).root ??= createRoot(elem)).render(app);

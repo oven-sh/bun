@@ -9,22 +9,18 @@ Hot Module Replacement (HMR) updates modules in a running application without a 
 
 ## `import.meta.hot` API Reference
 
-Bun implements a client-side HMR API modeled after [Vite's `import.meta.hot` API](https://vite.dev/guide/api-hmr). You can check for it with `if (import.meta.hot)`, which tree-shakes it in production.
+Bun implements a client-side HMR API modeled after [Vite's `import.meta.hot` API](https://vite.dev/guide/api-hmr). The dev server defines `import.meta.hot`. Everywhere else, such as production builds, `bun run` and `bun test`, it is `undefined`. Check for it with `if (import.meta.hot)`. Bun removes the guarded block in production builds.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 if (import.meta.hot) {
-  // HMR APIs are available.
+  // This entire block is removed in production.
+  import.meta.hot.dispose(() => {
+    console.log("dispose");
+  });
 }
 ```
 
-This check is often unnecessary, since Bun dead-code-eliminates calls to all of the HMR APIs in production builds.
-
-```ts title="index.ts" icon="/icons/typescript.svg"
-// This entire function call is removed in production.
-import.meta.hot.dispose(() => {
-  console.log("dispose");
-});
-```
+The types declare `import.meta.hot` as optional, so under `strict` TypeScript an unguarded call is an error. When a line must also run in production, such as reading `import.meta.hot.data`, use a non-null assertion: `import.meta.hot!.data`. Bun inlines `data` as `{}` in production.
 
 <Warning>
 For this dead-code elimination to work, Bun forces these APIs to be called without indirection. That means the following do not work:
@@ -42,11 +38,19 @@ console.log(meta.hot.data);
 // INVALID: Passing to a function
 doSomething(import.meta.hot.dispose);
 
+// INVALID: Optional chaining
+import.meta.hot?.accept();
+
 // OK: The full phrase "import.meta.hot.<API>" must be called directly:
-import.meta.hot.accept();
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}
+
+// OK: Bun strips the TypeScript non-null assertion, so the call is direct:
+import.meta.hot!.accept();
 
 // OK: `data` can be passed to functions:
-doSomething(import.meta.hot.data);
+doSomething(import.meta.hot!.data);
 ```
 
 </Warning>
@@ -67,7 +71,7 @@ The HMR API is still a work in progress. Some features are missing. To disable H
 | `hot.off()`        | ✅     | Remove an event listener from `on`.                                   |
 | `hot.send()`       | ❌     |                                                                       |
 | `hot.prune()`      | 🚧     | Callback is currently never called.                                   |
-| `hot.decline()`    | ✅     | No-op to match Vite's `import.meta.hot`.                              |
+| `hot.decline()`    | ✅     | No-op to match Vite's `import.meta.hot`. Optional in the types.       |
 
 ## import.meta.hot.accept()
 
@@ -79,7 +83,9 @@ import { getCount } from "./foo.ts";
 
 console.log("count is ", getCount());
 
-import.meta.hot.accept();
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}
 
 export function getNegativeCount() {
   return -getCount();
@@ -103,12 +109,14 @@ When passed a callback, `import.meta.hot.accept` works as it does in Vite. Inste
 ```ts title="index.ts" icon="/icons/typescript.svg"
 export const count = 0;
 
-import.meta.hot.accept(newModule => {
-  if (newModule) {
-    // newModule is undefined when SyntaxError happened
-    console.log("updated: count is now ", newModule.count);
-  }
-});
+if (import.meta.hot) {
+  import.meta.hot.accept(newModule => {
+    if (newModule) {
+      // newModule is undefined when SyntaxError happened
+      console.log("updated: count is now ", newModule.count);
+    }
+  });
+}
 ```
 
 <Tip>Prefer `import.meta.hot.accept()` without an argument; it usually makes your code clearer.</Tip>
@@ -118,11 +126,13 @@ import.meta.hot.accept(newModule => {
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import { count } from "./foo";
 
-import.meta.hot.accept("./foo", newModule => {
-  if (!newModule) return;
+if (import.meta.hot) {
+  import.meta.hot.accept("./foo", newModule => {
+    if (!newModule) return;
 
-  console.log("updated: count is now ", count);
-});
+    console.log("updated: count is now ", count);
+  });
+}
 ```
 
 Indicates that a dependency's module can be accepted. When the dependency is updated, Bun calls the callback with the new module.
@@ -130,10 +140,12 @@ Indicates that a dependency's module can be accepted. When the dependency is upd
 ### With multiple dependencies
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import.meta.hot.accept(["./foo", "./bar"], newModules => {
-  // newModules holds the updated module at its index and
-  // undefined for the other dependencies
-});
+if (import.meta.hot) {
+  import.meta.hot.accept(["./foo", "./bar"], newModules => {
+    // newModules holds the updated module at its index and
+    // undefined for the other dependencies
+  });
+}
 ```
 
 This variant accepts an array of dependencies. The callback receives an array with the updated module at its index and `undefined` for the other dependencies.
@@ -146,11 +158,11 @@ This variant accepts an array of dependencies. The callback receives an array wi
 import { createRoot } from "react-dom/client";
 import { App } from "./app";
 
-const root = (import.meta.hot.data.root ??= createRoot(elem));
+const root = (import.meta.hot!.data.root ??= createRoot(elem));
 root.render(<App />); // re-use an existing root
 ```
 
-In production, Bun inlines `data` as `{}`, so you cannot use it as a state holder.
+In production, Bun inlines `data` as `{}`, so you cannot use it as a state holder. The non-null assertion keeps this line valid under `strict` TypeScript, where `import.meta.hot` is optional.
 
 <Tip>
   We recommend this pattern for stateful modules because Bun can minify `{}.prop ??= value` into `value` in production.
@@ -166,9 +178,11 @@ Attaches an on-dispose callback. Bun calls it:
 ```ts title="index.ts" icon="/icons/typescript.svg"
 const sideEffect = setupSideEffect();
 
-import.meta.hot.dispose(() => {
-  sideEffect.cleanup();
-});
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    sideEffect.cleanup();
+  });
+}
 ```
 
 <Warning>Bun does not call this callback on route navigation or when the browser tab closes.</Warning>
@@ -185,12 +199,14 @@ Use it to clean up resources that were created when the module was loaded. Unlik
 import { something } from "./something";
 
 // Initialize or re-use a WebSocket connection
-export const ws = (import.meta.hot.data.ws ??= new WebSocket(location.origin));
+export const ws = (import.meta.hot!.data.ws ??= new WebSocket(location.origin));
 
 // If the module's import is removed, clean up the WebSocket connection.
-import.meta.hot.prune(() => {
-  ws.close();
-});
+if (import.meta.hot) {
+  import.meta.hot.prune(() => {
+    ws.close();
+  });
+}
 ```
 
 <Info>
@@ -203,9 +219,11 @@ import.meta.hot.prune(() => {
 Use `on()` and `off()` to listen for events from the HMR runtime. Event names carry a prefix so that plugins do not conflict with each other.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import.meta.hot.on("bun:beforeUpdate", () => {
-  console.log("before a hot update");
-});
+if (import.meta.hot) {
+  import.meta.hot.on("bun:beforeUpdate", () => {
+    console.log("before a hot update");
+  });
+}
 ```
 
 When a file is replaced, Bun automatically removes all of its event listeners.

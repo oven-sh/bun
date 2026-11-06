@@ -3126,6 +3126,14 @@ pub(crate) fn to_number(global: &JSGlobalObject, value: JSValue) -> JsResult<f64
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__toNumber(global, value))
 }
 
+/// `value instanceof Error` as `inheritsErrorPrototype` in SnapshotFormat.cpp answers it, which says where Jest answers otherwise. Over 1,000 Proxies in the chain is a RangeError.
+pub(crate) fn inherits_error_prototype(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__inheritsErrorPrototype(global: &JSGlobalObject, value: JSValue) -> bool;
+    }
+    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__inheritsErrorPrototype(global, value))
+}
+
 /// `Array.isArray(value)`, which sees through a Proxy.
 fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     unsafe extern "C" {

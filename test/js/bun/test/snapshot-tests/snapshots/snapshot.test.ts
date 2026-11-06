@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 971, jest: 601 };
+  const tests = { vitest: 971, jest: 623 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -2659,6 +2659,27 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
     const message = "expect(received).toThrowErrorMatchingInlineSnapshot(expected)";
     expect(log).toEqual([`${message} 1`, `${message} 101`]);
+    expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("a failed require() is an Error as a cause, and an inline snapshot keeps its message whatever a cause's getPrototypeOf trap throws", async () => {
+    const { log, stderr, exitCode } = await logOf({
+      "a.test.js": `
+          ${firstLine}
+          const thrower = cause => () => { throw new Error("outer", { cause }); };
+          test("t", () => {
+            let unresolved;
+            try { require("./missing.js"); } catch (error) { unresolved = Object.defineProperty(error, "message", { value: "inner" }); }
+            expect(thrower(unresolved)).toThrowErrorMatchingSnapshot();
+
+            let asked = 0;
+            const throws = new Proxy({}, { getPrototypeOf() { asked++; throw new RangeError("from the trap"); } });
+            console.log(firstLine(() => expect(thrower(throws)).toThrowErrorMatchingInlineSnapshot(\`"other"\`)), asked);
+          });
+        `,
+      "__snapshots__/a.test.js.snap": headers.jest + '\nexports[`t 1`] = `\n"outer\nCause: inner"\n`;\n',
+    });
+    expect(log).toEqual(["expect(received).toThrowErrorMatchingInlineSnapshot(expected) 1"]);
     expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 });

@@ -994,6 +994,7 @@ impl Expect {
     }
 
     /// Mirrors `_toThrowErrorMatchingSnapshot` in jest-snapshot.
+    /// Its `cause instanceof Error` is the snapshot printer's, `inherits_error_prototype`.
     #[cold]
     #[optimize(size)]
     fn message_with_causes(global_this: &JSGlobalObject, thrown: JSValue) -> JsResult<JSValue> {
@@ -1010,9 +1011,9 @@ impl Expect {
         let mut seen = [thrown; MAX_CAUSES + 1];
         let mut count = 1;
         while !seen[..count].contains(&cause) && count <= MAX_CAUSES {
-            let line = if cause.is_any_error() {
+            let line = if cause.is_any_error() || (cause.is_object() && super::pretty_format::inherits_error_prototype(global_this, cause)?) {
                 cause.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)
-            } else if cause.is_string() {
+            } else if cause.is_string_literal() {
                 cause
             } else {
                 break;

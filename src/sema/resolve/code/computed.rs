@@ -247,25 +247,32 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         {
             return Err(ComputedUnknown::ConfigPaths);
         }
-        let names_folder = strings::split(written_directory, b"/")
-            .any(|segment| !segment.is_empty() && !is_dot_segment(segment));
         let is_root_of_disk = strings::without_trailing_slash(&root).len() <= root_length(&root);
-        if is_root_of_disk || !names_folder && !self.lies_in_own_package(&root) {
+        if is_root_of_disk || !names_folder(written_directory) && !self.lies_in_own_package(&root) {
             return Err(ComputedUnknown::NoConstantPrefix);
         }
-        self.start_names_nothing = self.names_nothing(&root, name_prefix);
+        self.stays_out_of_other_packages = true;
+        let names_nothing = self.names_nothing(&root, written_directory, name_prefix);
+        self.start_names_nothing = names_nothing;
         let outcome = self.try_empty_middle();
         self.start_names_nothing = false;
-        outcome?;
-        self.stays_out_of_other_packages = true;
-        let outcome =
-            self.walk_directory(&root, written_directory, name_prefix, SpecifierForm::Path);
+        let form = SpecifierForm::Path;
+        let outcome = outcome.and_then(|()| {
+            self.walk_directory(&root, written_directory, name_prefix, form, names_nothing)
+        });
         self.stays_out_of_other_packages = false;
         outcome
     }
 
-    fn names_nothing(&self, root: &[u8], name_prefix: &[u8]) -> bool {
-        name_prefix.is_empty() && is_inside(self.directory, strings::without_trailing_slash(root))
+    fn names_nothing(&self, root: &[u8], written: &[u8], name_prefix: &[u8]) -> bool {
+        let folder_of_text = match self.request.site.folder {
+            [] => self.directory,
+            folder => strings::without_trailing_slash(folder),
+        };
+        self.stays_out_of_other_packages
+            && name_prefix.is_empty()
+            && (bun_paths::is_absolute(written) || !names_folder(written))
+            && is_inside(folder_of_text, strings::without_trailing_slash(root))
     }
 
     fn lies_in_own_package(&self, root: &[u8]) -> bool {
@@ -478,7 +485,8 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         let (subdirectory, name_prefix) = split_after_last_slash(remaining);
         let root = join_unrooted(directory, subdirectory);
         let written_root = [written, subdirectory].concat();
-        self.walk_directory(&root, &written_root, name_prefix, form)
+        let names_nothing = self.names_nothing(&root, subdirectory, name_prefix);
+        self.walk_directory(&root, &written_root, name_prefix, form, names_nothing)
     }
 
     fn walk_directory(
@@ -487,9 +495,10 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         written_root: &[u8],
         name_prefix: &[u8],
         form: SpecifierForm,
+        names_nothing: bool,
     ) -> Result<(), ComputedUnknown> {
         let entries = self.list_entries(root, name_prefix)?;
-        self.start_names_nothing = self.names_nothing(root, name_prefix);
+        self.start_names_nothing = names_nothing;
         let outcome = entries.into_iter().try_for_each(|entry| match entry {
             WalkedEntry::File(relative) => {
                 self.try_file(&[written_root, relative.as_slice()].concat(), form)
@@ -552,6 +561,15 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             for name in files {
                 if is_root && !name.starts_with(name_prefix) && !has_matching_spelling(&name) {
                     continue;
+                }
+                let may_be_named = || {
+                    let spellings = specifier_spellings(&name, extensions);
+                    let mut spellings = spellings.iter();
+                    spellings.any(|it| matches_pattern(it, name_prefix, self.request.suffix))
+                };
+                if is_root && name_prefix.starts_with(b".") && may_be_named() {
+                    let path = inside(&directory, &name);
+                    (resolver.code_host()).note_file_left_out(&self.request, &path, false);
                 }
                 if !has_extension(&name) || name.starts_with(b".") {
                     continue;
@@ -634,9 +652,16 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 if self.start_names_nothing
                     && !ends_in_extension(self.request.suffix)
                     && file.host_module.is_none()
-                    && (self.resolver.code_host()).is_data_file(file.path, request.kind) =>
+                    && (self.resolver.code_host()).is_data_file(
+                        file.path,
+                        request.kind,
+                        self.request.site.type_attribute,
+                    ) =>
             {
                 self.tried.remove(text);
+                let needs_extension = !self.extensions.iter().any(|it| file.path.ends_with(it));
+                let host = self.resolver.code_host();
+                host.note_file_left_out(&self.request, file.path, needs_extension);
                 return Ok(());
             }
             CodeResolution::File(file) => ComputedCandidate::File(file),
@@ -673,6 +698,10 @@ fn is_path(specifier: &[u8]) -> bool {
     bun_paths::is_absolute(specifier)
         || specifier.starts_with(b"./")
         || specifier.starts_with(b"../")
+}
+
+fn names_folder(written: &[u8]) -> bool {
+    strings::split(written, b"/").any(|segment| !segment.is_empty() && !is_dot_segment(segment))
 }
 
 fn ends_in_extension(written_end: &[u8]) -> bool {

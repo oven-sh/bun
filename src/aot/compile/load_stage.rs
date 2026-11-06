@@ -3,7 +3,7 @@ use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, O
 use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, InternalError, LoadMessages, ProgramView};
+use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, Span};
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
@@ -31,6 +31,8 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::hir::{ExprId, ExprKind};
+use bun_sema::import_sites::ImportSpecifier;
+use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
@@ -80,6 +82,70 @@ fn start_asset_readers<'scope>(
     });
 }
 
+fn warn_of_files_left_out_by_patterns(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    const NAMES_SPELLED: usize = 5;
+    const CURES: [&[u8]; 2] = [
+        b"Write the extension (`./${lang}.json`) or `with: { type: \"json\" }` to embed them",
+        b"A path that isn't a constant never finds a file whose name begins with a dot. Import it by a constant path",
+    ];
+    let left_out = host.files_left_out_by_patterns();
+    let files = view.files();
+    let compiled = files.compiled_files().iter();
+    for &file in compiled.filter(|_| !left_out.is_empty()) {
+        let (analysis, atoms) = (files.analysis(file), files.atoms());
+        let folder = host.directory_of(files.file_name(file));
+        let left_out_by = |written: &ImportSpecifier| {
+            let ImportSpecifier::Pattern { prefix, suffix } = *written else {
+                return &left_out[..0];
+            };
+            let written_at = [&folder[..], atoms.bytes(prefix), atoms.bytes(suffix)];
+            let start = left_out.partition_point(|it| it.written_at() < written_at);
+            let length = left_out[start..].partition_point(|it| it.written_at() == written_at);
+            &left_out[start..start + length]
+        };
+        for site in analysis
+            .import_sites
+            .iter()
+            .filter(|site| site.kind.loads_module())
+        {
+            let written = analysis.alternatives_of(&site.specifier).iter();
+            let mut of_site: Vec<(bool, &[u8])> = written
+                .flat_map(left_out_by)
+                .filter(|it| files.by_path.get(&it.path[..]).is_none())
+                .map(|it| (it.needs_extension, &it.path[..]))
+                .collect();
+            of_site.sort_unstable();
+            of_site.dedup();
+            let (with_dot, data): (Vec<&[u8]>, Vec<&[u8]>) = (of_site.into_iter())
+                .map(|(_, path)| path)
+                .partition(|path| bun_paths::basename(path).starts_with(b"."));
+            for (paths, cure) in [data, with_dot].into_iter().zip(CURES) {
+                if paths.is_empty() {
+                    continue;
+                }
+                let spelled = paths.iter().take(NAMES_SPELLED);
+                let spelled: Vec<Box<[u8]>> = spelled.map(|it| host.display_path_of(it)).collect();
+                let mut list = spelled.join(&b", "[..]);
+                if paths.len() > spelled.len() {
+                    let more = format!(" and {} more", paths.len() - spelled.len());
+                    list.extend_from_slice(more.as_bytes());
+                }
+                let node = NodeData::Expr(site.specifier_node);
+                let span = Span::of_node(files.hir(file), file, node);
+                let code = Code::FilesLeftOutByPattern;
+                diagnostics.add(
+                    Some(view),
+                    Diagnostic::new(code, Some(span), &[&list, cure]),
+                );
+            }
+        }
+    }
+}
+
 fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<'_>) {
     let paths = host.background_reads();
     let count = paths.len().min(MAX_ASSET_READERS);
@@ -104,6 +170,33 @@ fn find_starts_that_led_to_files(
         }
     }
     places
+}
+
+fn find_node_workers_that_led_to_no_file(
+    files: &Files<'_>,
+    contents: &ProgramContents,
+) -> Vec<Diagnostic> {
+    let mut said = Vec::new();
+    for &file in files.compiled_files() {
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        for start in &source.contents.node_workers_out_of_sight {
+            let mut found = contents.found_entry_points.iter();
+            let led_to_file = matches!(start.at, NodeData::Expr(at)
+                if found.any(|found| found.starts.contains(&(file, at.0))));
+            if led_to_file {
+                continue;
+            }
+            let code = match start.is_told_to_evaluate {
+                true => Code::WorkerTextNotCompiled,
+                false => Code::WorkerStartedFromUnknownValue,
+            };
+            let span = Span::of_node(&files.module(file).hir, file, start.at);
+            said.push(Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    said
 }
 
 fn code_of_workers(contents: &ProgramContents) -> CodeOfWorkers {
@@ -529,6 +622,18 @@ impl<'a> Build<'a> {
         let sources = self.freeze_projects(shared, programs, &roots, frozen_application)?;
         self.stop_if_errors(Stage::Load)?;
         steps.end("freeze the library, paths across the projects");
+        let view = ProgramView {
+            loaded: application,
+            sources: &sources.application,
+        };
+        if !options.load.runs_tests {
+            for diagnostic in find_node_workers_that_led_to_no_file(files, &contents) {
+                self.diagnostics.add(Some(view), diagnostic);
+            }
+        }
+        if !options.aot.checks_only && !options.aot.runs_in_place {
+            warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
+        }
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);
             self.started_workers.named_at =
@@ -1017,6 +1122,24 @@ mod tests {
             });
             assert_eq!(found, code, "{text}");
         }
+    }
+
+    #[test]
+    fn only_an_executable_is_told_where_the_load_loses_sight_of_a_worker_of_node() {
+        use crate::diagnostics::Diagnostics;
+        fn describe(build: &mut Build<'_>, _: &LoadedBuild<'_, '_>) -> String {
+            let mut log = Log::init();
+            let said = std::mem::replace(&mut build.diagnostics, Diagnostics::new());
+            said.write_to(&mut log);
+            describe_messages(&log)
+        }
+        let text = r#"import { Worker } from "node:worker_threads"; export const start = (path: string) => new Worker(path);"#;
+        let files = [("main.ts", text)];
+        let sentence = "which file this Worker starts from";
+        let said = with_loaded_build(&files, &default_settings(), describe);
+        assert!(said.contains(sentence), "{said}");
+        let said = with_loaded_test_run(&files, &default_settings(), describe);
+        assert!(!said.contains(sentence), "{said}");
     }
 
     #[test]

@@ -4,9 +4,9 @@ This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of th
 
 4 wrong answers in 3 files stand under a mark. They are no goals, and are not counted among them.
 
-234 goals in 132 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 49 on other things.
+235 goals in 133 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 50 on other things.
 
-73 of them are a yes or a no. Of the others 38 are held to what is reached today by a case beside them, 2 could be, 2 cannot grow worse, 68 are counted at every run and compared between runs, 51 move with the platform and with every change, and 0 say no measured number.
+74 of them are a yes or a no. Of the others 38 are held to what is reached today by a case beside them, 2 could be, 2 cannot grow worse, 68 are counted at every run and compared between runs, 51 move with the platform and with every change, and 0 say no measured number.
 
 57 cases in 18 files are declared `todo` and never run.
 
@@ -34,6 +34,7 @@ what does. What is not run, or not judged, stands in tables of its own further d
 
 | file | case | measured | bound | what keeps the number from growing worse |
 |---|---|---|---|---|
+| test/aot/a-computed-import-embeds-the-data-files-that-its-written-name-asks-for.test.ts | a start that names a-folder-given-to-create-require, where code may come from disk: what is in the executable is found | no | yes | no number: the goal is a yes or a no |
 | test/aot/a-file-of-the-product-finds-no-spy-that-the-build-has-not-seen.test.ts | a test run compiles what the executable compiles > though a call through a namespace object reaches an export that nobody knows: 4 of the executable's 9 rows differ, none may | 4 | 0 | the case beside it: a test run compiles what the executable compiles > though a call through a namespace object reaches an export that nobody knows but for the start of each file and the function that makes the call |
 | test/aot/a-file-that-hands-its-module-object-on-is-compiled-as-in-the-executable.test.ts | a test run compiles the files and functions of the executable though a file hands on > its module object: the test run holds 16 forms of the functions of the product, the executable 8 | 16 | 8 | the case beside it: a test run compiles the files and functions of the executable though a file hands on > its module object: what the two builds hold today |
 | test/aot/a-package-whose-folder-lay-nearer-on-the-disk-of-the-build.test.ts | a closed executable: so it is where the disk does not hold the sources: 1 of 1 is refused, none may | 1 | 0 | nothing need: it counts all that there are |

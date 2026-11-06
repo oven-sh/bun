@@ -121,7 +121,7 @@ impl LoadOrder {
             entry_points.push(state.index_of[&context.canonical_key(entry_point.key)]);
         }
         loads.push(entry_points);
-        order.follow_statements(files, &loads);
+        let run_by_statements = order.follow_statements(files);
 
         let mut in_order_left: Vec<u32> = Vec::with_capacity(loads.len());
         let mut loaders: Vec<Vec<u32>> = vec![Vec::new(); loads.len()];
@@ -159,10 +159,11 @@ impl LoadOrder {
             }
         }
         order.loaders = loaders;
+        order.follow_loads_amid_statements(&loads, run_by_statements);
         order
     }
 
-    fn follow_statements(&mut self, files: &[WalkedFile<'_, '_>], loads: &[Vec<u32>]) {
+    fn follow_statements(&mut self, files: &[WalkedFile<'_, '_>]) -> Vec<u32> {
         let mut may_be_mocked = vec![false; files.len()];
         let mut is_any_file_mocked = false;
         for file in files {
@@ -200,14 +201,29 @@ impl LoadOrder {
                 }
             });
         }
+        to_visit
+    }
+
+    fn follow_loads_amid_statements(&mut self, loads: &[Vec<u32>], mut to_visit: Vec<u32>) {
         let any_file = self.any_file();
         while let Some(file) = to_visit.pop() {
             if file != any_file
                 && !std::mem::replace(&mut self.runs_amid_statements[file as usize], true)
             {
-                to_visit.extend(&loads[file as usize]);
+                let loaded = loads[file as usize].iter().copied();
+                to_visit.extend(loaded.filter(|&target| !self.stands_above(target, file)));
             }
         }
+    }
+
+    fn stands_above(&self, upper: u32, mut file: u32) -> bool {
+        while file != self.host() && self.above[file as usize] != NOT_LOADED {
+            file = self.above[file as usize];
+            if file == upper {
+                return true;
+            }
+        }
+        false
     }
 
     fn is_imported_in_front(&self, file: u32, loader: u32) -> bool {

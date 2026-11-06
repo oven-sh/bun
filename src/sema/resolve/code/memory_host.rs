@@ -406,6 +406,7 @@ pub(crate) fn resolve_computed_with(
         directory: dirname::<Posix>(importer),
         kind: pattern.kind,
         form: CodeImportForm::Static,
+        site: Default::default(),
     });
     let (unknown, candidates) = match answer {
         ComputedResolution::Candidates { candidates, .. } => (None, candidates),

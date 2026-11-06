@@ -341,16 +341,30 @@ fn macro_statement_is_erased_without_request() {
         with_attributes(&[(known::r#type, known::r#macro)], |hir, attributes| {
             for kind in STATEMENT_KINDS {
                 let site = site_of(kind, specifier, attributes);
-                let resolution =
-                    resolve_site(context, IMPORTER, hir, &site, &[], NamesKnown::ToTranspiler);
+                let resolution = resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &site,
+                    &[],
+                    NamesKnown::ToTranspiler,
+                    Default::default(),
+                );
                 let erased = SiteResolution::Constant(CodeResolution::Erased);
                 assert_eq!(resolution, erased, "{kind:?}");
             }
             assert_eq!(host.code_request_count(), 0);
 
             let call = site_of(ImportSiteKind::ImportCall(ExprId(0)), specifier, attributes);
-            let resolution =
-                resolve_site(context, IMPORTER, hir, &call, &[], NamesKnown::ToTranspiler);
+            let resolution = resolve_site(
+                context,
+                IMPORTER,
+                hir,
+                &call,
+                &[],
+                NamesKnown::ToTranspiler,
+                Default::default(),
+            );
             assert_eq!(
                 resolution,
                 SiteResolution::Constant(CodeResolution::File(FILE))
@@ -383,7 +397,8 @@ fn host_value_site_is_external_without_request() {
                     hir,
                     &host_value,
                     &[],
-                    NamesKnown::ToTranspiler
+                    NamesKnown::ToTranspiler,
+                    Default::default()
                 ),
                 expected
             );
@@ -397,7 +412,8 @@ fn host_value_site_is_external_without_request() {
                     hir,
                     &written,
                     &[],
-                    NamesKnown::ToTranspiler
+                    NamesKnown::ToTranspiler,
+                    Default::default()
                 ),
                 expected
             );
@@ -428,7 +444,15 @@ fn folded_path_into_external_package() {
                     specifier_node,
                     ..site_of(kind, specifier, ExprId::NONE)
                 };
-                resolve_site(context, IMPORTER, hir, &site, &[], names)
+                resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &site,
+                    &[],
+                    names,
+                    Default::default(),
+                )
             };
             let left_to_host = SiteResolution::Constant(CodeResolution::External {
                 specifier: PATH,
@@ -489,13 +513,27 @@ fn specifier_is_resolved_from_directory_of_importer() {
             candidates: &[plugin],
             spellings: &spellings,
         };
-        let found = resolve_pattern(context, nested, b"./plugins/", b"", import);
+        let found = resolve_pattern(
+            context,
+            nested,
+            b"./plugins/",
+            b"",
+            import,
+            Default::default(),
+        );
         assert_eq!(found, expected);
         let nothing = ComputedResolution::Candidates {
             candidates: &[],
             spellings: &[],
         };
-        let found = resolve_pattern(context, IMPORTER, b"./plugins/", b"", import);
+        let found = resolve_pattern(
+            context,
+            IMPORTER,
+            b"./plugins/",
+            b"",
+            import,
+            Default::default(),
+        );
         assert_eq!(found, nothing);
     });
 }

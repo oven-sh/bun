@@ -1507,6 +1507,7 @@
     "aot/a-file-that-many-ways-lead-to-is-asked-once-whether-it-may-leave.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
     "aot/a-require-at-every-step-of-an-import-call-of-a-graph-left-to-the-loader.test.ts",
+    "aot/a-store-between-two-reads-of-one-list-is-seen-by-the-second-read.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
     "aot/files-above-the-entry-point-start-workers-from-code.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts"

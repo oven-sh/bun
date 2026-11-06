@@ -195,6 +195,7 @@ fn host_module_source_is_file_candidate() {
             directory: b"/p",
             kind: Import,
             form: CodeImportForm::Static,
+            site: Default::default(),
         });
         let file = CodeFile {
             path: b"/bun/fs.ts",

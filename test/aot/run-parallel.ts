@@ -938,10 +938,12 @@ function unmetBounds(file: string, counted: Map<string, number>, bounds: Bound[]
 
 // Counted, a linear program reads 3.9 to 5.2. By the clock, on a machine with twice as much to do as it has processors, up to 6.9; a square 14 to 16 either way.
 const mostThatIsLinear = countsInstructions ? 6 : 9;
+// No linear program has read more than this. What reads more is measured again, and the least of three runs at each size is judged.
+const mostThatIsLinearAtOnce = countsInstructions ? 6 : 6.9;
 const leastMsOfSmallestRun = 50;
 /**
  * How what the executable takes grows with its data. A run that does not end as the program ends fails it.
- * Other work on the machine can only make a run longer, and no such noise makes a square look linear: what is within the bound at once is through.
+ * Other work on the machine can only make a run longer. A longer run at the middle size makes a square look linear: 54 | 429 | 3170 ms read 7.31.
  */
 async function measureGrowth(
   { growth, exitCode }: Program,
@@ -979,7 +981,7 @@ async function measureGrowth(
   }
   const least = sizes.map(() => Infinity);
   let grows = Infinity;
-  for (let round = 0; round < 3 && !(grows <= mostThatIsLinear); round++) {
+  for (let round = 0; round < 3 && !(grows <= mostThatIsLinearAtOnce); round++) {
     for (const [index, size] of sizes.entries()) {
       const { output, taken } = await take(size);
       if (Number.isNaN(taken))

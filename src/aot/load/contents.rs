@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::node::NodeData;
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 
@@ -43,6 +44,12 @@ pub(crate) struct FileContents {
     pub names_worker_constructor: bool,
     pub hands_worker_constructor_on: bool,
     pub starts_worker_out_of_sight: bool,
+    pub node_workers_out_of_sight: Vec<NodeWorkerOutOfSight>,
+}
+
+pub(crate) struct NodeWorkerOutOfSight {
+    pub at: NodeData,
+    pub is_told_to_evaluate: bool,
 }
 
 pub struct FixedBuiltins {

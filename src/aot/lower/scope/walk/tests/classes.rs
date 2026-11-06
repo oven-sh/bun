@@ -182,6 +182,23 @@ fn initializers_use_class_slots() {
 }
 
 #[test]
+fn key_of_decorated_abstract_field_is_used_where_the_field_is_defined() {
+    let source = "export function g(d: any, k: string) { \
+        abstract class C { @d abstract [k]: number; } return C; }";
+    let configuration = r#"{"compilerOptions":{"experimentalDecorators":true}}"#;
+    let objects_use_key = |files: &[(&str, &str)]| {
+        with_walk(files, |hir, bound, walk| {
+            let key = ScopeSlot::Class(ClassSlot::ComputedKey(members(hir)[0]));
+            let slot = (bound.class_scope[CLASS.idx()], key);
+            slots_used_by(walk, instance_initializer(walk)).contains(&slot)
+        })
+    };
+    assert!(objects_use_key(&[("main.ts", source)]));
+    let legacy = [("main.ts", source), ("tsconfig.json", configuration)];
+    assert!(!objects_use_key(&legacy));
+}
+
+#[test]
 fn static_members_follow_inner_name() {
     let source = "export function g() { class C { static a = () => C; static { C; } } return C; }";
     with_walk(&[("main.mjs", source)], |hir, bound, walk| {

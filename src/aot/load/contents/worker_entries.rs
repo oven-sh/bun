@@ -24,6 +24,7 @@ use bun_sema::resolve::{
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 
+use super::NodeWorkerOutOfSight;
 use super::entry_points::is_relative_path;
 use super::load_names::{is_made_of_texts, is_part_of_longer_text, is_written_as_value};
 use super::scan::ContentsScan;
@@ -532,6 +533,28 @@ impl ContentsScan<'_, '_> {
         self.found.hands_worker_constructor_on |= !self.is_constructed_or_only_tested(expression);
     }
 
+    fn find_node_of_site(&self, kind: ImportSiteKind) -> NodeData {
+        let hir = self.request.hir;
+        match kind {
+            ImportSiteKind::Import(import) => NodeData::Stmt(hir[import].stmt),
+            ImportSiteKind::ExportFrom(export) => NodeData::Stmt(hir[export].stmt),
+            ImportSiteKind::ExportStar(statement) => NodeData::Stmt(statement),
+            ImportSiteKind::ImportEquals(import) => NodeData::Stmt(hir[import].stmt),
+            _ => kind.call().map_or(NodeData::None, NodeData::Expr),
+        }
+    }
+
+    fn note_node_worker_handed_on(&mut self, at: NodeData) {
+        self.found.names_worker_constructor = true;
+        self.found.hands_worker_constructor_on = true;
+        self.found
+            .node_workers_out_of_sight
+            .push(NodeWorkerOutOfSight {
+                at,
+                is_told_to_evaluate: false,
+            });
+    }
+
     pub(super) fn look_at_loads_of_worker_threads(&mut self) {
         let &FinishedFile {
             hir,
@@ -543,8 +566,9 @@ impl ContentsScan<'_, '_> {
         let Some(threads) = worker_builtins().threads else {
             return;
         };
-        let mut binds_worker_threads = false;
-        let mut escapes = false;
+        let mut bound_at = None;
+        let mut escapes_at = None;
+        let mut is_loaded_by_uncertain_name = false;
         for (site, &resolution) in analysis.import_sites.iter().zip(resolutions) {
             if !may_load(resolution, threads) {
                 continue;
@@ -557,15 +581,18 @@ impl ContentsScan<'_, '_> {
                 | ImportSiteKind::GetBuiltinModule(_)
                     if is_certain =>
                 {
-                    binds_worker_threads = true;
+                    bound_at.get_or_insert(self.find_node_of_site(site.kind));
                 }
                 ImportSiteKind::ExportFrom(export) if is_certain => {
-                    escapes |= hir[export].items.iter().any(|item| {
+                    let escapes = hir[export].items.iter().any(|item| {
                         let item = &hir[item];
                         let leads_to_constructor =
                             item.local == known::default || self.is_name_of_worker(item.local);
                         !item.type_only && leads_to_constructor
                     });
+                    if escapes {
+                        escapes_at.get_or_insert(self.find_node_of_site(site.kind));
+                    }
                 }
                 ImportSiteKind::RequireResolve(_)
                 | ImportSiteKind::ImportMetaResolve(_)
@@ -581,31 +608,37 @@ impl ContentsScan<'_, '_> {
                 | ImportSiteKind::ImportEquals(_)
                 | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::ImportByTestRunner(_)
-                | ImportSiteKind::RequireByTestRunner(_) => escapes = true,
+                | ImportSiteKind::RequireByTestRunner(_)
+                    if is_certain =>
+                {
+                    escapes_at.get_or_insert(self.find_node_of_site(site.kind));
+                }
+                _ => is_loaded_by_uncertain_name = true,
             }
         }
-        if binds_worker_threads && !escapes {
+        if let (Some(bound_at), None) = (bound_at, escapes_at) {
             let exported = (0..hir.export_specs.len() as u32)
                 .map(|specifier| bound.exported_binding(ExportSpecId(specifier)));
             let unspelled = analysis.bindings_read_without_expression(hir, bound);
             let mut direct_evals = bound.runtime.eval_scopes().iter();
-            escapes = direct_evals.any(|&(call, _)| !analysis.decisions.is_dead_expr(call))
+            let escapes = direct_evals.any(|&(call, _)| !analysis.decisions.is_dead_expr(call))
                 || exported.chain(unspelled).any(|binding| {
                     matches!(binding, Binding::Symbol(symbol)
                         if self.holds_worker_threads(symbol) || self.holds_node_worker(symbol))
                 });
+            escapes_at = escapes.then_some(bound_at);
         }
-        if escapes {
+        if is_loaded_by_uncertain_name {
             self.found.names_worker_constructor = true;
             self.found.hands_worker_constructor_on = true;
         }
-        if !binds_worker_threads {
+        if let Some(at) = escapes_at {
+            return self.note_node_worker_handed_on(at);
+        }
+        if bound_at.is_none() {
             return;
         }
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
-            if self.found.hands_worker_constructor_on {
-                return;
-            }
             let may_name_part = matches!(
                 hir[expression].kind,
                 ExprKind::Ident(_)
@@ -619,13 +652,18 @@ impl ContentsScan<'_, '_> {
             {
                 continue;
             }
-            if self.is_node_worker(expression) {
-                self.look_at_name_of_worker_constructor(expression);
-            } else if self.names_worker_threads(expression)
-                && !self.reads_only_named_members(expression)
-            {
-                self.found.names_worker_constructor = true;
-                self.found.hands_worker_constructor_on = true;
+            let is_handed_on = match self.is_node_worker(expression) {
+                true => {
+                    self.found.names_worker_constructor = true;
+                    !self.is_constructed_or_only_tested(expression)
+                }
+                false => {
+                    self.names_worker_threads(expression)
+                        && !self.reads_only_named_members(expression)
+                }
+            };
+            if is_handed_on {
+                return self.note_node_worker_handed_on(NodeData::Expr(expression));
             }
         }
     }
@@ -706,7 +744,22 @@ impl ContentsScan<'_, '_> {
             self.add_preloads(construction, options);
         }
         let (name, form) = self.find_name_given_to_worker(argument);
-        self.add_code_given_to_worker(argument, options, &name);
+        let is_text_put_together = self.add_code_given_to_worker(argument, options, &name);
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let builtin = self.find_builtin_that_may_be_named(callee);
+        let is_of_web = builtin.is_some_and(|builtin| {
+            Some(table::canonical_id(builtin)) == worker_builtins().constructor
+        });
+        let is_told_to_evaluate = options.is_some_and(|it| self.is_told_to_evaluate(it));
+        let may_be_out_of_sight = is_told_to_evaluate || self.may_be_out_of_sight(&name);
+        if !is_of_web && may_be_out_of_sight && !is_text_put_together {
+            self.found
+                .node_workers_out_of_sight
+                .push(NodeWorkerOutOfSight {
+                    at: NodeData::Expr(construction),
+                    is_told_to_evaluate,
+                });
+        }
         if self.is_inline_worker_source(&name) {
             self.found.starts_worker_out_of_sight = true;
             return;

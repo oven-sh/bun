@@ -1,6 +1,6 @@
 use super::{
-    CodeFailure, CodeImportKind, CodeRequest, ExternalKind, Host, ParseOptions, SiteResolution,
-    TranspileSettings, find_file_plainly,
+    CodeFailure, CodeImportKind, CodeRequest, ComputedCodeRequest, ExternalKind, Host,
+    ParseOptions, SiteResolution, TranspileSettings, find_file_plainly,
 };
 use crate::atom::Interner;
 use crate::bind::Bound;
@@ -51,8 +51,21 @@ pub trait CodeHost: Host {
         false
     }
 
-    fn is_data_file(&self, _path: &[u8], _kind: CodeImportKind) -> bool {
+    fn is_data_file(
+        &self,
+        _path: &[u8],
+        _kind: CodeImportKind,
+        _type_attribute: Option<&[u8]>,
+    ) -> bool {
         false
+    }
+
+    fn note_file_left_out(
+        &self,
+        _request: &ComputedCodeRequest<'_>,
+        _path: &[u8],
+        _needs_extension: bool,
+    ) {
     }
 
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {

@@ -126,7 +126,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => continue,
             }
             let is_declared = match entry.source {
-                ClassMemberSource::Member(node) if class::is_declaration_only(hir[node]) => {
+                ClassMemberSource::Member(node) if class::is_declaration_only(hir, node) => {
                     continue;
                 }
                 ClassMemberSource::Member(_) | ClassMemberSource::ParameterProperty(_) => true,
@@ -655,7 +655,7 @@ fn instance_accessor_members(
         let node = hir[member];
         class::is_auto_accessor(hir, member)
             && !node.flags.contains(Flags::STATIC)
-            && !class::is_declaration_only(node)
+            && !class::is_declaration_only(hir, member)
     })
 }
 

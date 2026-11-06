@@ -38,8 +38,12 @@ pub(in crate::lower) fn has_decorators(hir: &hir::File<'_>, modifiers: Span<Modi
     decorators_of(hir, modifiers).next().is_some()
 }
 
-pub(in crate::lower) fn is_declaration_only(node: Member) -> bool {
+pub(in crate::lower) fn is_declaration_only(hir: &hir::File<'_>, member: MemberId) -> bool {
+    let node = hir[member];
+    let is_legacy = hir.has_typescript_semantics() && hir.legacy_decorators;
+    let is_private = matches!(node.key, PropKey::Private(_));
     node.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
+        && (is_legacy || is_private || !hir::has_runtime_member(hir, member))
 }
 
 pub(in crate::lower) fn is_auto_accessor(hir: &hir::File<'_>, member: MemberId) -> bool {
@@ -55,7 +59,7 @@ pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: 
     let node = hir[member];
     node.kind == MemberKind::Property
         && node.flags.contains(Flags::STATIC)
-        && !is_declaration_only(node)
+        && !is_declaration_only(hir, member)
         && (node.flags.contains(Flags::ACCESSOR)
             || matches!(hir.runtime_member_key(member), PropKey::Private(_)))
 }
@@ -74,7 +78,7 @@ pub(in crate::lower) fn brand_is_of_methods(
             let node = hir[member];
             is_auto_accessor(hir, member)
                 && !node.flags.contains(Flags::STATIC)
-                && !is_declaration_only(node)
+                && !is_declaration_only(hir, member)
         })
 }
 
@@ -92,7 +96,7 @@ pub(in crate::lower) fn has_instance_brand(
             let node = hir[member];
             is_auto_accessor(hir, member)
                 && !node.flags.contains(Flags::STATIC)
-                && !is_declaration_only(node)
+                && !is_declaration_only(hir, member)
         })
 }
 
@@ -153,7 +157,7 @@ fn has_computed_field_key(hir: &hir::File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     node.kind == MemberKind::Property
         && !node.flags.contains(Flags::ACCESSOR)
-        && !is_declaration_only(node)
+        && !is_declaration_only(hir, member)
         && matches!(hir.runtime_member_key(member), PropKey::Computed(_))
 }
 
@@ -273,7 +277,7 @@ fn plan_elements(
         let node = hir[member];
         match node.kind {
             MemberKind::StaticBlock => plan.static_elements.push(ClassElement::StaticBlock(member)),
-            MemberKind::Property if is_declaration_only(node) => {}
+            MemberKind::Property if is_declaration_only(hir, member) => {}
             MemberKind::Property if node.flags.contains(Flags::STATIC) => {
                 push_defined_field(hir, lists, &mut plan.static_elements, member);
             }

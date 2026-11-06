@@ -1096,8 +1096,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 return entry_points.iter_mut().for_each(|it| it.starts.clear());
             };
             let starts = source.contents.worker_starts.iter();
-            let is_asked =
-                |start: &&WorkerStart| starts_out_of_sight || start.place != PlaceOfName::Elsewhere;
+            let is_asked = |start: &&WorkerStart| match start.place {
+                PlaceOfName::Constructor => true,
+                PlaceOfName::Preload => false,
+                PlaceOfName::Elsewhere => starts_out_of_sight,
+            };
             for start in starts.filter(is_asked) {
                 let own_key;
                 let named = Mention::of_start(files, file, start).map(|mention| mention.named);

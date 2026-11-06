@@ -177,6 +177,7 @@ fn one_of_a_few_paths_into_package_left_outside() {
         directory: b"/p",
         kind: Import,
         form: CodeImportForm::Dynamic,
+        site: Default::default(),
     };
     let paths: [(&[u8], Option<&[u8]>); 2] = [
         (b"./a.ts", None),
@@ -206,6 +207,7 @@ fn start_of_path_into_package_left_outside() {
                 directory: b"/p",
                 kind: Import,
                 form: CodeImportForm::Dynamic,
+                site: Default::default(),
             };
             let ComputedResolution::Candidates { candidates, .. } =
                 resolver.resolve_computed_code(&request)

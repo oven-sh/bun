@@ -81,6 +81,13 @@ pub struct ComputedCodeRequest<'a> {
     pub directory: &'a [u8],
     pub kind: CodeImportKind,
     pub form: CodeImportForm,
+    pub site: SiteOfComputedLoad<'a>,
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct SiteOfComputedLoad<'a> {
+    pub folder: &'a [u8],
+    pub type_attribute: Option<&'a [u8]>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

@@ -8,7 +8,8 @@ use crate::import_sites::{
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
     ComputedCandidate, ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind,
-    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteResolution, join,
+    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteOfComputedLoad, SiteResolution,
+    join,
 };
 
 pub(super) fn resolve_code_imports<'s, 'r>(
@@ -22,6 +23,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
     let sites = analyzed.analysis.import_sites;
     let mut resolutions = Vec::with_capacity(sites.len());
     let mut targets = Vec::new();
+    let folder_of_text = context.host.directory_of(key.path);
     for (index, site) in sites.iter().enumerate() {
         let key = match analyzed.analysis.path_to_resolve_from(index) {
             Some(ResolvedFrom::File(path)) => LoadKey {
@@ -47,7 +49,11 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             true => NamesKnown::ToTranspiler,
             false => NamesKnown::ToLoader,
         };
-        let resolution = resolve_site(context, key, hir, site, alternatives, names);
+        let written = SiteOfComputedLoad {
+            folder: &folder_of_text,
+            type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+        };
+        let resolution = resolve_site(context, key, hir, site, alternatives, names, written);
         let arms = match site.specifier {
             ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
             _ => SmallVec::new(),
@@ -212,6 +218,7 @@ fn resolve_site<'r>(
     site: &ImportSite,
     alternatives: &[ImportSpecifier],
     names: NamesKnown,
+    written: SiteOfComputedLoad<'_>,
 ) -> SiteResolution<'r> {
     let is_unknown = |name: &[u8]| {
         names == NamesKnown::ToLoader && context.host.is_name_for_transpiler_alone(name)
@@ -230,7 +237,7 @@ fn resolve_site<'r>(
         ImportSpecifier::Constant(specifier) => atoms.bytes(specifier),
         ImportSpecifier::Pattern { prefix, suffix } => {
             let (prefix, suffix) = (atoms.bytes(prefix), atoms.bytes(suffix));
-            let resolution = resolve_pattern(context, key, prefix, suffix, kind);
+            let resolution = resolve_pattern(context, key, prefix, suffix, kind, written);
             return SiteResolution::Computed(resolution);
         }
         ImportSpecifier::OneOf(_) => {
@@ -250,11 +257,12 @@ fn resolve_site<'r>(
                 directory: &directory_of_request(context, key, kind.1),
                 kind: kind.0,
                 form: kind.1,
+                site: written,
             };
             return SiteResolution::Computed(resolver.resolve_alternative_code(&request, &texts));
         }
         ImportSpecifier::Unknown => {
-            let resolution = resolve_pattern(context, key, b"", b"", kind);
+            let resolution = resolve_pattern(context, key, b"", b"", kind, written);
             return SiteResolution::Computed(ComputedResolution::All {
                 cause: ComputedUnknown::NoPattern,
                 host_modules: candidates_of(resolution),
@@ -510,6 +518,7 @@ fn resolve_pattern<'r>(
     prefix: &[u8],
     suffix: &[u8],
     (kind, form): (CodeImportKind, CodeImportForm),
+    site: SiteOfComputedLoad<'_>,
 ) -> ComputedResolution<'r> {
     context
         .resolver
@@ -520,6 +529,7 @@ fn resolve_pattern<'r>(
             directory: &directory_of_request(context, key, form),
             kind,
             form,
+            site,
         })
 }
 

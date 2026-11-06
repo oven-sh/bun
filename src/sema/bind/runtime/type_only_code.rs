@@ -1,18 +1,18 @@
 use super::bits::{has_bit, insert_bit};
-use crate::bind::{BoundBuilder, MemberOwner, ScopeId, ScopeKind};
+use crate::bind::{BoundBuilder, FnOwner, MemberOwner, ScopeId, ScopeKind};
 use crate::fold::{TreeNode, push_children};
 use crate::hir::*;
 
 pub(super) struct TypeOnlyCode {
     scopes: Vec<u64>,
-    member_keys: Vec<u64>,
+    code_of_dropped_members: Vec<u64>,
 }
 
 impl TypeOnlyCode {
     pub(super) fn new(hir: &File<'_>, bound: &BoundBuilder) -> TypeOnlyCode {
         TypeOnlyCode {
             scopes: compute_type_scopes(hir, bound),
-            member_keys: compute_type_only_member_keys(hir, bound),
+            code_of_dropped_members: compute_code_of_dropped_members(hir, bound),
         }
     }
 
@@ -23,7 +23,7 @@ impl TypeOnlyCode {
 
     #[inline]
     pub(super) fn has_expr(&self, e: ExprId, scope: ScopeId) -> bool {
-        self.has_scope(scope) || has_bit(&self.member_keys, e.idx())
+        self.has_scope(scope) || has_bit(&self.code_of_dropped_members, e.idx())
     }
 }
 
@@ -52,28 +52,42 @@ fn compute_type_scopes(hir: &File<'_>, bound: &BoundBuilder) -> Vec<u64> {
     type_scopes
 }
 
-fn compute_type_only_member_keys(hir: &File<'_>, bound: &BoundBuilder) -> Vec<u64> {
-    let mut keys = Vec::new();
+fn compute_code_of_dropped_members(hir: &File<'_>, bound: &BoundBuilder) -> Vec<u64> {
     let mut stack = Vec::new();
     for (index, member) in hir.members.iter().enumerate() {
-        let PropKey::Computed(key) = member.key else {
-            continue;
-        };
-        if has_evaluated_key(hir, bound.member_owner[index], MemberId(index as u32)) {
-            continue;
-        }
-        stack.push(TreeNode::Expr(key));
-        while let Some(node) = stack.pop() {
-            let is_new = match node {
-                TreeNode::Expr(e) => insert_bit(&mut keys, e.idx()),
-                _ => true,
-            };
-            if is_new {
-                push_children(hir, node, &mut stack);
-            }
+        if let PropKey::Computed(key) = member.key
+            && !has_evaluated_key(hir, bound.member_owner[index], MemberId(index as u32))
+        {
+            stack.push(TreeNode::Expr(key));
         }
     }
-    keys
+    for &(owner, decorator) in hir.decorators.iter() {
+        let member = match owner {
+            DecoratorOwner::Class(_) => continue,
+            DecoratorOwner::Member(member) => member,
+            DecoratorOwner::Param(parameter) => {
+                let function = bound.fns.get(bound.param_fn[parameter.idx()].idx());
+                match function.map(|function| function.owner) {
+                    Some(FnOwner::Member(member)) => member,
+                    _ => continue,
+                }
+            }
+        };
+        if !has_runtime_member(hir, member) {
+            stack.push(TreeNode::Expr(decorator));
+        }
+    }
+    let mut code = Vec::new();
+    while let Some(node) = stack.pop() {
+        let is_new = match node {
+            TreeNode::Expr(e) => insert_bit(&mut code, e.idx()),
+            _ => true,
+        };
+        if is_new {
+            push_children(hir, node, &mut stack);
+        }
+    }
+    code
 }
 
 fn has_evaluated_key(hir: &File<'_>, owner: MemberOwner, member: MemberId) -> bool {

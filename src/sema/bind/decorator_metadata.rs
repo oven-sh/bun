@@ -199,16 +199,9 @@ pub(super) fn has_decorators(hir: &File<'_>, modifiers: Span<ModifierId>) -> boo
 
 pub(super) fn is_decoratable_member(hir: &File<'_>, member: MemberId) -> bool {
     let node = hir[member];
-    if matches!(node.key, PropKey::Private(_)) {
-        return false;
-    }
-    match node.kind {
-        MemberKind::Property => has_runtime_member(hir, member),
-        MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
-            node.func.is_some() && has_body(&hir[node.func])
-        }
-        _ => false,
-    }
+    !matches!(node.key, PropKey::Private(_))
+        && node.kind != MemberKind::StaticBlock
+        && has_runtime_member(hir, member)
 }
 
 pub(super) fn has_parameter_decorator(hir: &File<'_>, member: MemberId) -> bool {

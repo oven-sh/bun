@@ -84,20 +84,20 @@ impl ContentsScan<'_, '_> {
         argument: ExprId,
         options: Option<ExprId>,
         name: &ImportSpecifier,
-    ) {
+    ) -> bool {
         let count = |found: &FileContents| {
             let (urls, texts) = (&found.urls_with_code, &found.texts_behind_object_urls);
             (urls.len(), texts.len())
         };
         let start = count(&self.found);
-        self.add_code_made_of_known_paths(argument, options, name);
+        let mut is_put_together = self.add_code_made_of_known_paths(argument, options, name);
         let end = count(&self.found);
         let Err(levels_that_mount_may_have) = (self.input.find_path_at_run_time)(None) else {
-            return;
+            return is_put_together;
         };
         for levels in levels_that_mount_may_have {
             self.levels_above_root = Some(levels);
-            self.add_code_made_of_known_paths(argument, options, name);
+            is_put_together |= self.add_code_made_of_known_paths(argument, options, name);
             let found = &mut self.found;
             let urls = found.urls_with_code.split_off(end.0).into_iter();
             let urls = urls.filter(|url| !found.urls_with_code[start.0..].contains(url));
@@ -109,6 +109,7 @@ impl ContentsScan<'_, '_> {
             found.code_by_levels_above_root.extend(texts);
         }
         self.levels_above_root = None;
+        is_put_together
     }
 
     fn add_code_made_of_known_paths(
@@ -116,7 +117,7 @@ impl ContentsScan<'_, '_> {
         argument: ExprId,
         options: Option<ExprId>,
         name: &ImportSpecifier,
-    ) {
+    ) -> bool {
         let &FinishedFile {
             analysis, atoms, ..
         } = self.request;
@@ -129,6 +130,7 @@ impl ContentsScan<'_, '_> {
                 _ => None,
             })
             .collect();
+        let mut is_put_together = true;
         if !is_constant {
             for value in self.find_values_given(argument) {
                 let behind_object_url = match is_evaluated {
@@ -140,6 +142,8 @@ impl ContentsScan<'_, '_> {
                     self.found.texts_behind_object_urls.extend(held);
                 } else if let Some(text) = self.find_text(value, &mut Vec::new()) {
                     texts.push(atoms.intern(&text));
+                } else {
+                    is_put_together = false;
                 }
             }
         }
@@ -150,9 +154,10 @@ impl ContentsScan<'_, '_> {
                 self.found.urls_with_code.push(text);
             }
         }
+        is_put_together
     }
 
-    fn is_told_to_evaluate(&self, options: ExprId) -> bool {
+    pub(super) fn is_told_to_evaluate(&self, options: ExprId) -> bool {
         let &FinishedFile {
             hir,
             analysis,
@@ -202,10 +207,14 @@ impl ContentsScan<'_, '_> {
                     ..
                 } => pending.push(right),
                 ExprKind::Await(awaited) => pending.push(awaited),
-                ExprKind::Ident(_) => match self.find_symbol_read(expression) {
-                    Some(symbol) => pending.extend(self.find_values_held(expression, symbol)),
-                    None => values.push(expression),
-                },
+                ExprKind::Ident(_) => {
+                    let symbol = self.find_symbol_read(expression);
+                    let held = symbol.map(|symbol| self.find_values_held(expression, symbol));
+                    match held {
+                        Some(held) if !held.is_empty() => pending.extend(held),
+                        Some(_) | None => values.push(expression),
+                    }
+                }
                 _ => values.push(expression),
             }
         }

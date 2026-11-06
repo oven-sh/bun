@@ -387,6 +387,7 @@ pub(crate) fn resolve_computed_specifier(
         directory: &directory,
         kind,
         form: CodeImportForm::Static,
+        site: Default::default(),
     });
     Ok(Some(json_text(&computed_resolution_json(
         &host, resolution,

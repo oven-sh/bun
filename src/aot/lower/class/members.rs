@@ -200,7 +200,7 @@ fn define_member(
     let key = hir.runtime_member_key(member);
     let is_private = matches!(key, PropKey::Private(_));
     match hir.runtime_member_kind(member) {
-        MemberKind::Property if is_declaration_only(node) => {}
+        MemberKind::Property if is_declaration_only(hir, member) => {}
         MemberKind::Property if node.flags.contains(Flags::ACCESSOR) => {
             if !is_private {
                 lowering.define_accessor_pair(head, member, name, next_method_index);

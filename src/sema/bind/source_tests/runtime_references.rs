@@ -70,6 +70,41 @@ const DECORATED_MEMBER_KEY_IMPORTS: &[(&str, bool)] = &[
     ),
 ];
 
+const MEMBER_DECORATOR_IMPORTS: &[(&str, bool)] = &[
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract m(): void; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract get x(): number; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract accessor x: number; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; class A { @d(() => d) m(): void; m() {} }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { abstract m(@d x: number): void; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; class A { constructor(@d x: number); constructor(x: any) {} }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract x: number; }"#,
+        false,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract m(): void; @d n() {} }"#,
+        false,
+    ),
+];
+
 fn block_symbol(s: &Analyzed<'_>, name: &str) -> SymbolId {
     let name = s.workspace.atom(name);
     let scopes = s.bound.scopes.iter();
@@ -393,8 +428,9 @@ fn direct_eval_through_type_assertions() {
 }
 
 #[test]
-fn decorated_declaration_only_member_keys() {
-    for &(text, expected) in DECORATED_MEMBER_KEY_IMPORTS {
+fn keys_and_decorators_of_declaration_only_members() {
+    let cases = DECORATED_MEMBER_KEY_IMPORTS.iter();
+    for &(text, expected) in cases.chain(MEMBER_DECORATOR_IMPORTS) {
         analyzed("a.ts", text, |s| {
             let import = s.bound.declared_symbol(Decl::ImportSpec(ImportSpecId(0)));
             let is_unused = s.analysis.unused_import_symbols.contains(&import);

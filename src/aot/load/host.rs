@@ -19,12 +19,13 @@ use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
     CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
-    EarlyTransformRequest, ExternalKind, FileSearch, FileStamp, FinishedFile, FoundCode, Host,
-    HostPayload, HostResolution, LoaderRequest, MacroRequest, ModuleDetection, ParsedCode,
-    ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join, to_path, to_path_in,
+    ComputedCodeRequest, EarlyTransformRequest, ExternalKind, FileSearch, FileStamp, FinishedFile,
+    FoundCode, Host, HostPayload, HostResolution, LoaderRequest, MacroRequest, ModuleDetection,
+    ParsedCode, ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join, to_path,
+    to_path_in,
 };
 use bun_sema::session::{Arena, Session};
-use bun_sema::util::{FxHashMap, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
 use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
@@ -58,7 +59,8 @@ use crate::load::loaders::{
 use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
 use crate::load::module_paths::{
-    compute_program_path, compute_relative_path, count_folders, count_levels_above,
+    compute_display_path, compute_program_path, compute_relative_path, count_folders,
+    count_levels_above,
 };
 use crate::load::modules_with_queries::{
     ModulesWithQueries, find_worker_constructor, has_vite_suffix,
@@ -143,6 +145,21 @@ pub(crate) struct LoadHostInput<'a> {
     pub platform: Platforms,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FileLeftOutByPattern {
+    pub folder_of_text: Vec<u8>,
+    pub start: Vec<u8>,
+    pub end: Vec<u8>,
+    pub needs_extension: bool,
+    pub path: Vec<u8>,
+}
+
+impl FileLeftOutByPattern {
+    pub(crate) fn written_at(&self) -> [&[u8]; 3] {
+        [&self.folder_of_text, &self.start, &self.end]
+    }
+}
+
 pub(crate) struct LoadHost<'a> {
     disk: &'a Disk,
     input: LoadHostInput<'a>,
@@ -152,6 +169,7 @@ pub(crate) struct LoadHost<'a> {
     entry_point_paths: Vec<Vec<u8>>,
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
+    files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
     may_store_path_of_main_module: AtomicBool,
@@ -355,6 +373,7 @@ impl<'a> LoadHost<'a> {
             other_products: (options.aot.other_products.iter())
                 .map(|path| from_native(path))
                 .collect(),
+            files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             may_store_path_of_main_module: AtomicBool::new(false),
@@ -377,6 +396,17 @@ impl<'a> LoadHost<'a> {
             reads_in_background_after_load: true,
             ..self
         }
+    }
+
+    pub(crate) fn files_left_out_by_patterns(&self) -> Vec<FileLeftOutByPattern> {
+        let files = self.files_left_out_by_patterns.lock();
+        let mut files: Vec<FileLeftOutByPattern> = files.iter().cloned().collect();
+        files.shared_sort_unstable();
+        files
+    }
+
+    pub(crate) fn display_path_of(&self, path: &[u8]) -> Box<[u8]> {
+        compute_display_path(&self.input.options.load.project_root, &to_native(path))
     }
 
     pub(crate) fn background_reads(&self) -> Vec<Vec<u8>> {
@@ -475,7 +505,7 @@ impl<'a> LoadHost<'a> {
 
     pub(crate) fn note_way_named(&self, way: &[u8]) {
         let folders = count_folders(&self.input.options.paths.root_directory);
-        let highest = count_highest_level_on_way(way).min(folders);
+        let highest = count_highest_level_on_way(way).min(folders + 1);
         (self.highest_level_named).fetch_max(highest, Ordering::Relaxed);
     }
 
@@ -494,11 +524,11 @@ impl<'a> LoadHost<'a> {
     }
 
     fn find_code_file_named_as_in_executable(&self, request: &CodeRequest<'_>) -> Option<Vec<u8>> {
-        let path = self.find_file_named_as_in_executable(request.importer, request.specifier)?;
-        let path = from_native(&path);
+        let on_disk = self.find_file_named_as_in_executable(request.importer, request.specifier)?;
+        let path = from_native(&on_disk);
         let search = FileSearch {
             directory: request.directory,
-            specifier: &path,
+            specifier: &on_disk,
             kind: request.kind,
             prefers_module_field: self.input.options.code.prefers_module_field,
         };
@@ -1096,10 +1126,35 @@ impl CodeHost for LoadHost<'_> {
         !self.input.options.load.externals.is_empty() || self.input.provider.has_resolve_plugins()
     }
 
-    fn is_data_file(&self, path: &[u8], kind: CodeImportKind) -> bool {
+    fn is_data_file(
+        &self,
+        path: &[u8],
+        kind: CodeImportKind,
+        type_attribute: Option<&[u8]>,
+    ) -> bool {
         let loader = self.plugin_loader(path);
         let loader = loader.unwrap_or_else(|| self.default_loader_for(path, kind, true));
-        !is_host_path(path) && !self.is_read_by_plugin(path) && gives_data(loader)
+        !is_host_path(path)
+            && !self.is_read_by_plugin(path)
+            && gives_data(loader)
+            && type_attribute.and_then(Loader::from_string) != Some(loader)
+    }
+
+    fn note_file_left_out(
+        &self,
+        request: &ComputedCodeRequest<'_>,
+        path: &[u8],
+        needs_extension: bool,
+    ) {
+        self.files_left_out_by_patterns
+            .lock()
+            .insert(FileLeftOutByPattern {
+                folder_of_text: request.site.folder.to_vec(),
+                start: request.prefix.to_vec(),
+                end: request.suffix.to_vec(),
+                needs_extension,
+                path: path.to_vec(),
+            });
     }
 
     fn create_file_of_database(&self, specifier: &[u8]) -> Option<Vec<u8>> {

@@ -31,6 +31,16 @@ const programs = {
   "the-folder-above": programOf(`require("./src/above.cjs")(name)`),
   "an-alias-of-the-own-folder": programOf(`require("./src/by-alias.cjs")(name)`),
   "nothing-but-an-end": programOf(`require("./" + name + ".json")`),
+  "nothing-but-a-type": programOf(`import("./" + name, { with: { type: "json" } })`),
+  "a-folder-given-to-create-require": programOf(
+    `require("node:module").createRequire(__dirname + "/locales/")("./" + name)`,
+  ),
+  "its-own-folder-through-two-dots": programOf(`require("./locales/index.cjs")(name)`),
+  "a-scope-of-packages": programOf(`require("@acme/app")(name)`),
+  "nothing-beside-many": programOf(`require("./" + name)`),
+  "nothing-beside-a-file-imported-by-name": programOf(`(require("./table.json"), require("./" + name))`),
+  "the-start-of-a-name-with-a-dot": programOf(`require("./.hidden." + name)`),
+  "the-start-of-a-name-with-a-dot-and-an-end": programOf(`require("./.hidden." + name + ".cjs")`),
 };
 type Program = keyof typeof programs;
 
@@ -46,6 +56,7 @@ const data = [
   "locales/guide.md",
   "locales/notes.txt",
   "locales/page.html",
+  "node_modules/@acme/tables/data.json",
   "node_modules/tables/data/en.json",
   "notes.txt",
   "page.html",
@@ -66,6 +77,10 @@ const filesOf = (owner: string) => ({
     name: "tables",
     exports: { "./langs/*": "./data/*.json" },
   }),
+  [`${owner}/node_modules/@acme/tables/package.json`]: JSON.stringify({ name: "@acme/tables", main: "data.json" }),
+  [`${owner}/node_modules/@acme/app/package.json`]: JSON.stringify({ name: "@acme/app", main: "index.js" }),
+  [`${owner}/node_modules/@acme/app/index.js`]: `module.exports = name => require("@acme/" + name);\n`,
+  [`${owner}/.hidden.cjs`]: `exports.said = "made-up mark of ${owner}: .hidden.cjs";\n`,
 });
 
 const projectOf = (program: string, text: string) => ({
@@ -77,6 +92,15 @@ const projectOf = (program: string, text: string) => ({
     "tool/src/by-alias.cjs": `module.exports = name => require("@/" + name);\n`,
     "tool/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
   }),
+  ...(program === "its-own-folder-through-two-dots" && {
+    "tool/locales/index.cjs": `module.exports = name => require("../locales/" + name);\n`,
+  }),
+  ...(program === "the-start-of-a-name-with-a-dot-and-an-end" && {
+    "tool/.hidden.first.cjs": "",
+    "tool/.hidden.first.json": "{}",
+  }),
+  ...(program === "nothing-beside-many" &&
+    Object.fromEntries(["a", "b", "c", "d", "e", "f"].map(name => [`tool/many/${name}.json`, "{}"]))),
   "empty/nothing.txt": "",
 });
 const dir = tempDir(
@@ -115,6 +139,20 @@ async function answersIn(program: Program, folder: string, command: string[]) {
 const plainAnswer = (program: Program, name: string) =>
   answersIn(program, "tool", [bunExe(), join(directory, program, "tool/main.cjs"), name]);
 
+// Where code may come from disk, a require() made for a folder without code of the program is taken for one of a file from disk, which finds no file of the executable.
+const formsThatAnswer = (program: Program) =>
+  program === "a-folder-given-to-create-require" ? (["closed"] as const) : (["closed", "withCodeFromDisk"] as const);
+test.failing(
+  "a start that names a-folder-given-to-create-require, where code may come from disk: what is in the executable is found",
+  async () => {
+    const { executable } = await build("a-folder-given-to-create-require", "withCodeFromDisk");
+    expect(await answersIn("a-folder-given-to-create-require", "empty", [executable, "en"])).toBe(
+      "made-up mark of tool: locales/en.json",
+    );
+  },
+  600_000,
+);
+
 test.each([
   [
     "a-folder",
@@ -124,10 +162,21 @@ test.each([
   ["a-pattern-of-exports", ["en"], ["node_modules/tables/data/en.json"]],
   ["the-start-of-the-name-of-a-file", ["en", "en.json"], ["lang-en.json"]],
   ["nothing-but-an-end", ["table", "locales/en"], ["lang-en.json", "locales/en.json", "table.json"]],
+  ["nothing-but-a-type", ["table.json", "locales/en.json"], ["lang-en.json", "locales/en.json", "table.json"]],
+  [
+    "its-own-folder-through-two-dots",
+    ["en", "en.json"],
+    ["locales/deploy.sh", "locales/en.json", "locales/guide.md", "locales/notes.txt", "locales/page.html"],
+  ],
+  [
+    "a-folder-given-to-create-require",
+    ["en", "en.json"],
+    ["locales/deploy.sh", "locales/en.json", "locales/guide.md", "locales/notes.txt", "locales/page.html"],
+  ],
 ] as const)(
   "a start that names %s: what the path may name is in the executable, and the build says so",
   async (program, names, held) => {
-    for (const form of ["closed", "withCodeFromDisk"] as const) {
+    for (const form of formsThatAnswer(program)) {
       const { executable, said } = await build(program, form);
       expect({ form, held: dataHeldBy(executable) }).toEqual({ form, held: [...held] });
       expect(said).toContain(`TS100088: `);
@@ -178,6 +227,54 @@ test.each([
   },
   600_000,
 );
+
+test("a start that names a scope of packages, written in one of them: the data file that is the main file of another", async () => {
+  const plain = await plainAnswer("a-scope-of-packages", "tables");
+  expect(plain).toBe("made-up mark of tool: node_modules/@acme/tables/data.json");
+  for (const form of ["closed", "withCodeFromDisk"] as const) {
+    const { executable } = await build("a-scope-of-packages", form);
+    expect({ form, held: dataHeldBy(executable) }).toEqual({ form, held: ["node_modules/@acme/tables/data.json"] });
+    for (const folder of ["tool", "stranger", "empty"])
+      expect(await answersIn("a-scope-of-packages", folder, [executable, "tables"])).toBe(plain);
+  }
+}, 600_000);
+
+test.each([
+  [
+    "nothing",
+    "lang-en.json, locales/en.json, table.json, deploy.sh, guide.md and 9 more, which",
+    "Write the extension",
+  ],
+  [
+    "nothing-beside-many",
+    "lang-en.json, locales/en.json, many/a.json, many/b.json, many/c.json and 15 more, which",
+    "Write the extension",
+  ],
+  [
+    "nothing-beside-a-file-imported-by-name",
+    "lang-en.json, locales/en.json, deploy.sh, guide.md, id.pem and 8 more, which",
+    "Write the extension",
+  ],
+  ["the-start-of-a-name-with-a-dot", ".hidden.cjs, which", "begins with a dot"],
+  ["the-start-of-a-name-with-a-dot-and-an-end", ".hidden.first.cjs, which", "begins with a dot"],
+] as const)(
+  "a start that names %s: the build warns of what it leaves out",
+  async (program, names, cure) => {
+    const { said } = await build(program);
+    const warning = said.split("\n").find(line => line.includes("TS100089: "));
+    expect(warning).toContain("The executable doesn't embed " + names);
+    expect(warning).toContain(cure);
+  },
+  600_000,
+);
+
+test("a file whose name begins with a dot is not found, though the written start spells the dot", async () => {
+  const program = "the-start-of-a-name-with-a-dot";
+  expect(await plainAnswer(program, "cjs")).toBe("made-up mark of tool: .hidden.cjs");
+  const { executable } = await build(program);
+  for (const folder of ["tool", "stranger", "empty"])
+    expect(await answersIn(program, folder, [executable, "cjs"])).toBe("threw MODULE_NOT_FOUND");
+}, 600_000);
 
 test("the refusal says what to write instead", async () => {
   const { executable } = await build("nothing");

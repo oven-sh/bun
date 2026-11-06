@@ -381,6 +381,7 @@ pub fn resolve_names_known_in_part(
         directory,
         kind: CodeImportKind::EntryPoint,
         form: CodeImportForm::Static,
+        site: Default::default(),
     };
     let ComputedResolution::Candidates { candidates, .. } =
         resolver.resolve_alternative_code(&request, names)

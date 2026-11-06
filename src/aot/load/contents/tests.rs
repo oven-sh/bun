@@ -817,6 +817,31 @@ fn worker_constructor_used_as_a_value_is_handed_on() {
 }
 
 #[test]
+fn place_where_the_load_loses_sight_of_a_worker_of_node_is_noted() {
+    let rows: [(&str, &[bool]); 9] = [
+        (r#"new Worker("./w.ts");"#, &[]),
+        ("new Worker(process.argv[2]);", &[false]),
+        ("new Worker(process.argv[2], { eval: true });", &[true]),
+        (r#"new Worker("postMessage(1)", { eval: true });"#, &[]),
+        ("console.log(typeof Worker);", &[]),
+        ("console.log(Worker);", &[false]),
+        ("export class Mine extends Worker {}", &[false]),
+        ("export { Worker };", &[false]),
+        ("new globalThis.Worker(process.argv[2]);", &[]),
+    ];
+    for (text, expected) in rows {
+        let main = format!(r#"import {{ Worker }} from "node:worker_threads"; {text}"#);
+        let project = executable(&[("main.ts", &main), ("w.ts", WORKER)]);
+        load(&project, |loaded| {
+            let contents = contents_of(files_of(loaded), "main.ts");
+            let places = contents.node_workers_out_of_sight.iter();
+            let noted: Vec<bool> = places.map(|place| place.is_told_to_evaluate).collect();
+            assert_eq!(noted, expected, "{text}");
+        });
+    }
+}
+
+#[test]
 fn construction_under_the_name_of_the_constructor_is_a_start_where_the_file_hands_the_module_on() {
     let rows: [(&str, &[&str]); 4] = [
         (

@@ -9,7 +9,7 @@ use bun_sema::hir::FileKind;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::HostModuleId;
-use bun_sema::resolve::{CodeOptions, ParseOptions, TranspileSettings};
+use bun_sema::resolve::{CodeOptions, ParseOptions, TranspileSettings, find_file_plainly};
 use bun_sema::session::Session;
 
 use super::*;
@@ -54,6 +54,7 @@ const BUNDLED_COMMONJS_TEXT: &str = "// @bun @bun-cjs\n\
 #[derive(Default)]
 struct ScriptedProvider {
     calls: Guarded<Vec<String>>,
+    looked_for: Guarded<Vec<Vec<u8>>>,
     name_checks: AtomicUsize,
 }
 
@@ -89,6 +90,11 @@ impl SourceProvider for ScriptedProvider {
             },
             _ => Resolution::NotHandled,
         })
+    }
+
+    fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
+        self.looked_for.lock().push(search.specifier.to_vec());
+        find_file_plainly(host, search)
     }
 
     fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
@@ -414,6 +420,21 @@ fn resolve_code_takes_first_claim() {
         assert_eq!(fixture.resolve(b"./nothing", MAIN), unclaimed);
         assert_eq!(fixture.take_calls().len(), 6);
     });
+}
+
+#[cfg(unix)]
+#[test]
+fn file_named_as_in_the_executable_is_looked_for_under_its_native_path() {
+    with_host_under(
+        AotOptions::default(),
+        b"/C:/project",
+        Vec::new(),
+        |fixture| {
+            fixture.resolve(b"file:///$bunfs/root/job.mjs", b"/\0/C:/project/main.ts");
+            let looked_for = fixture.provider.looked_for.lock();
+            assert_eq!(*looked_for, [b"/C:/project/job.mjs".to_vec()]);
+        },
+    );
 }
 
 #[test]

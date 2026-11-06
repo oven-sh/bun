@@ -17,7 +17,7 @@
 //   copies  one holder | the same source one folder higher too, both imported by the entry point | the second is reached only through the code of a Worker in a file that only the first's code leads to
 //   kind    how the code is handed to the Worker. It is no sixth side of the family: the three kinds take turns over the others
 import { expect } from "bun:test";
-import { readFileSync, symlinkSync } from "fs";
+import { readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, withoutDebugInformation } from "./harness/commands";
@@ -182,6 +182,36 @@ export ${listen}export const start = () => listen(new Worker(path.join(import.me
       const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
       expect((await spawned([bunExe(), "main.mjs"], app, bunEnv)).stdout).toBe("another job | job\n");
       expect((await spawned([join(app, "program")], app, env)).stdout).toBe("another job | job\n");
+    },
+  );
+
+  // A `..` at the root of the disk leads nowhere, so a climb may count more of them than there are folders. Where a name climbs so high the folders of the executable go as deep as those
+  // that the build follows the code in. They went one less deep, and two `..` too many left them: the file was found at one depth and not at the other, and the build stopped at an internal error.
+  test.skipIf(isWindows)(
+    "the code names a file by a climb past the root of the disk that comes back down",
+    async () => {
+      using project = tempDir("aot-workers-from-code-above", {
+        "app/src/main.mjs": `import { start } from "../holder.mjs";\nconsole.log(await start());\n`,
+        "job.mjs": `export const said = "job";\n`,
+      });
+      const root = realpathSync(String(project));
+      const climb = Array(join(root, "app").split("/").length + 1).fill("..");
+      const names = [
+        `path.join(import.meta.dirname, ${climb.map(it => `"${it}"`).join(", ")}, "${root.slice(1)}", "job.mjs")`,
+        `new URL("${climb.join("/")}${root}/job.mjs", import.meta.url)`,
+      ];
+      writeFileSync(
+        join(root, "app/holder.mjs"),
+        `import path from "node:path";
+${listen}const code = 'Promise.all([import("' + ${names[0]} + '"), import("' + ${names[1]} + '")]).then(both => postMessage(both.map(it => it.said).join()), error => postMessage("threw " + error.name))';
+export const start = () => listen(${kinds["data: URL"][1]});\n`,
+      );
+      const app = join(root, "app/src");
+      const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", "program"];
+      built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv)));
+      const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
+      expect((await spawned([bunExe(), "main.mjs"], app, bunEnv)).stdout).toBe("job,job\n");
+      expect((await spawned([join(app, "program")], app, env)).stdout).toBe("job,job\n");
     },
   );
 

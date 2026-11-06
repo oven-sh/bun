@@ -42,6 +42,7 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `TS100079: ... any file ... may load again`     | Move that line out of the test run, or run its test file on its own               |
 | `TS100080: ... and doesn't ask it`              | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
 | `TS100088: ... These aren't code`               | [None needed](/compiler/compatibility#dynamic-imports)                            |
+| `TS100089: The executable doesn't embed ...`    | [Write the extension](/compiler/compatibility#dynamic-imports)                    |
 | `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
 | `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
 | `can't run code compiled by this Bun`           | Pass a `bun` of the same revision                                                 |

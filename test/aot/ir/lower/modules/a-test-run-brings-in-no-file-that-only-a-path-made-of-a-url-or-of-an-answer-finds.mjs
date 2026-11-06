@@ -1,9 +1,5 @@
-// `const root = fileURLToPath(new URL("..", import.meta.url)); require(path.join(root, name))`: nothing reads a file when an executable runs, so it holds every file that the name may find.
+// `const root = fileURLToPath(new URL("..", import.meta.url)); require(path.join(root, name))`.
 // The same for the folder of what a resolver answers with: `path.dirname(require.resolve("./parts/first.cjs"))`.
-// RUN(ROOT): link
-// ROOT: module {{*}}path="{{*}}/beside-the-tests.cjs"
-// RUN(PARTS): link
-// PARTS: module {{*}}path="{{*}}/parts/second.cjs"
 // A test run has a loader, which reads whatever the name says: no file need be in the program. The root of a tree with an unknown rest behind it names every file of the project,
 // and what the run removes below that root would be every file of the program: neither is followed there.
 // RUN(TESTS): link

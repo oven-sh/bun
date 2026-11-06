@@ -575,6 +575,70 @@ fn file_flags_are_read_per_file() {
 }
 
 #[test]
+fn file_imported_in_front_of_a_ring_back_to_its_importer_is_read_as_an_es_module() {
+    let quiet = ("quiet.cjs", "console.log(1);");
+    let in_front = "import './quiet.cjs'; import './asker.cjs'; import './pages.mjs';";
+    let behind = "import './asker.cjs'; import './quiet.cjs'; import './pages.mjs';";
+    let asks_for_pages = ("asker.cjs", "require('./pages.mjs');");
+    let back_to_main = ("pages.mjs", "import './main.mjs';");
+    let rows: [(&[(&str, &str)], ModuleKind); 6] = [
+        (
+            &[("main.mjs", in_front), quiet, asks_for_pages, back_to_main],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[
+                ("main.mjs", in_front),
+                quiet,
+                asks_for_pages,
+                ("pages.mjs", "import './between.mjs';"),
+                ("between.mjs", "import './main.mjs';"),
+            ],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[
+                ("main.mjs", "import './quiet.cjs'; import './asker.cjs';"),
+                quiet,
+                ("asker.cjs", "require('./main.mjs');"),
+            ],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[
+                ("main.mjs", in_front),
+                quiet,
+                asks_for_pages,
+                ("pages.mjs", ""),
+            ],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[("main.mjs", behind), quiet, asks_for_pages, back_to_main],
+            ModuleKind::CommonJs,
+        ),
+        (
+            &[
+                ("main.mjs", "import './asker.cjs'; import './pages.mjs';"),
+                quiet,
+                asks_for_pages,
+                ("pages.mjs", "import './quiet.cjs'; import './main.mjs';"),
+            ],
+            ModuleKind::CommonJs,
+        ),
+    ];
+    for (files, expected) in rows {
+        with_graph(files, |graph, input| {
+            assert_eq!(
+                graph.kind(file_named(input, "quiet.cjs")),
+                expected,
+                "{files:?}"
+            );
+        });
+    }
+}
+
+#[test]
 fn mocked_library_modules_are_listed_once_in_order() {
     let (fs, path) = (RuntimeModule::NodeFs, RuntimeModule::NodePath);
     let (first, second) = (fs.min(path), fs.max(path));

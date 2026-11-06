@@ -146,6 +146,9 @@ public:
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
+        // The mocks of modules that a load in flight had asked for when they were mocked, oldest first. The modules of that load are
+        // linked to such a module, so its mock patches it: an ES module once the loader has run its body, another once it has loaded.
+        Vector<JSC::Strong<JSC::JSObject>> moduleMocksWaitingForModule = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
 
@@ -179,6 +182,7 @@ public:
             modulesAskedFor.clear();
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
+            moduleMocksWaitingForModule.clear();
             loadedByImportActual.clear();
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
@@ -295,5 +299,9 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
+// The loader is about to run the body of an ES module. Patches the modules that mocks waited for and that have loaded, except ES modules.
+void patchModulesThatHaveLoaded(Zig::GlobalObject*);
+// The loader has run the body of an ES module, to the end or to its first await. Patches the module if a mock waited for that.
+void patchModuleWhoseBodyHasRun(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

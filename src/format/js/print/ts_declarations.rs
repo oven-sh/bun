@@ -21,7 +21,9 @@ use crate::js::format::{
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
 use crate::js::utils::statement_body::write_space_before_body;
-use crate::js::utils::typescript::{should_hug_type, without_lone_operator};
+use crate::js::utils::typescript::{
+    has_type_argument_list, should_hug_type, without_lone_operator,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -371,7 +373,7 @@ fn type_alias_layout<'a>(
 ) -> AssignmentLikeLayout {
     let is_generic = |ty: TypeNode<'a>| match ty.kind() {
         TypeKind::Fn(func) => func.kind() == FnKind::FunctionType && !func.type_params().is_empty(),
-        TypeKind::Ref { args, .. } => !args.is_empty(),
+        TypeKind::Ref { args, .. } => has_type_argument_list(ty, args),
         _ => false,
     };
     let leading_comments = match f.is_quiet() {

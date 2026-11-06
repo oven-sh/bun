@@ -12,6 +12,7 @@ use super::suppressed::FormatSuppressedNode;
 use super::typecast::{
     comments_of_outermost_node, has_comments, has_leading_own_line_comment, is_cast_target,
 };
+use super::typescript::has_type_argument_list;
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
@@ -286,7 +287,7 @@ fn name_or_literal_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option
         | TypeKind::BigIntLit { .. }
         | TypeKind::BoolLit(_) => true,
         TypeKind::StringLit(_) => !f.source_text().text_for(&ty.span()).starts_with(b"`"),
-        TypeKind::Ref { args, .. } => args.is_empty(),
+        TypeKind::Ref { args, .. } => !has_type_argument_list(ty, args),
         _ => false,
     };
     is_name_or_literal.then(|| f.source_text().span_width(ty.span()))

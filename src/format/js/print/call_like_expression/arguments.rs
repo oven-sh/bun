@@ -17,6 +17,7 @@ use crate::js::utils::typecast::{
     cast_parentheses, comments_of_expression, comments_of_outermost_node, has_comments,
     has_comments_that_count, is_cast_target, is_cast_target_that_hides_its_kind,
 };
+use crate::js::utils::typescript::has_type_argument_list;
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -576,7 +577,7 @@ fn is_simple_ts_type(ty: TypeNode<'_>) -> bool {
         | TypeKind::BigIntLit { .. }
         | TypeKind::BoolLit(_)
         | TypeKind::Template(_) => true,
-        TypeKind::Ref { args, .. } => args.is_empty(),
+        TypeKind::Ref { args, .. } => !has_type_argument_list(extracted_generic_type, args),
         _ => false,
     }
 }

@@ -1,5 +1,16 @@
 use crate::prelude::*;
 
+/// True if `ty`, a name with the type arguments `args`, has a list of them for Prettier, be it empty: Flow's `A<>`.
+#[inline]
+pub(crate) fn has_type_argument_list<'a>(ty: TypeNode<'a>, args: List<'a, TypeNode<'a>>) -> bool {
+    !args.is_empty() || has_empty_type_argument_list(ty)
+}
+
+#[inline(never)]
+fn has_empty_type_argument_list(ty: TypeNode<'_>) -> bool {
+    ty.text().ends_with(b">")
+}
+
 /// A keyword, a literal, or a name without type arguments.
 pub(crate) fn is_simple_type(ty: TypeNode<'_>) -> bool {
     match ty.kind() {
@@ -9,7 +20,7 @@ pub(crate) fn is_simple_type(ty: TypeNode<'_>) -> bool {
         | TypeKind::NumberLit(_)
         | TypeKind::BigIntLit { .. }
         | TypeKind::BoolLit(_) => true,
-        TypeKind::Ref { args, .. } => args.is_empty(),
+        TypeKind::Ref { args, .. } => !has_type_argument_list(ty, args),
         _ => false,
     }
 }

@@ -1,56 +1,164 @@
 status: 0
-script: 9a283c58fb5697b6
-source: cd4b06cd1ca14f11
+script: 20c106883d8d1d4b
+source: 30524a4e6cb023cd
 ---
-f.__name__ [f=function] => plain
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => assigned
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => before_try
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => in_try
-log [f=function] => ['finally', 'KeyboardInterrupt']
-f.__name__ [f=function] => call_in_body
-log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => named
-log [f=function] => ['body', None, 'exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => empty_body
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => no_call_in_body
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => loop_in_body
-log [f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => while_in_body
-log [f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => two
-log [f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => nested
-log [f=function] => ['outer KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => swallowed
-log [f=function] => ['body', 'exit KeyboardInterrupt', 'after']
-f.__name__ [f=function] => in_loop
-log [f=function] => ['body', 1, 'exit 1 KeyboardInterrupt', 'body', 2, 'exit 2 KeyboardInterrupt', 'after']
-f.__name__ [f=function] => returns
-log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => enter_in_python
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => in_generator
-log [f=function] => ['item', 'exit GeneratorExit', 'KeyboardInterrupt']
-f.__name__ [f=function] => in_coroutine
-log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => in_handler
-log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => in_finally
-log [f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => second_of_two
-log [f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => second_nested
-log [f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => async_with
-log [f=function] => ['body', 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => async_with_named
-log [f=function] => ['body', None, 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
-f.__name__ [f=function] => async_with_empty
-log [f=function] => ['KeyboardInterrupt']
-f.__name__ [f=function] => async_second_of_two
-log [f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
+base.__name__ [base=CalledAsItIs] => CalledAsItIs
+f.__name__ [base=CalledAsItIs, f=function] => plain
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => assigned
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => before_try
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => in_try
+log [base=CalledAsItIs, f=function] => ['finally', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => call_in_body
+log [base=CalledAsItIs, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => named
+log [base=CalledAsItIs, f=function] => ['body', None, 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => empty_body
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => no_call_in_body
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => loop_in_body
+log [base=CalledAsItIs, f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => while_in_body
+log [base=CalledAsItIs, f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => two
+log [base=CalledAsItIs, f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => nested
+log [base=CalledAsItIs, f=function] => ['outer KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => swallowed
+log [base=CalledAsItIs, f=function] => ['body', 'exit KeyboardInterrupt', 'after']
+f.__name__ [base=CalledAsItIs, f=function] => in_loop
+log [base=CalledAsItIs, f=function] => ['body', 1, 'exit 1 KeyboardInterrupt', 'body', 2, 'exit 2 KeyboardInterrupt', 'after']
+f.__name__ [base=CalledAsItIs, f=function] => returns
+log [base=CalledAsItIs, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => enter_in_python
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => in_generator
+log [base=CalledAsItIs, f=function] => ['item', 'exit GeneratorExit', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => in_coroutine
+log [base=CalledAsItIs, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => in_handler
+log [base=CalledAsItIs, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => in_finally
+log [base=CalledAsItIs, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => second_of_two
+log [base=CalledAsItIs, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => second_nested
+log [base=CalledAsItIs, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => async_with
+log [base=CalledAsItIs, f=function] => ['body', 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => async_with_named
+log [base=CalledAsItIs, f=function] => ['body', None, 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => async_with_empty
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => async_second_of_two
+log [base=CalledAsItIs, f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
+base.__name__ [base=CalledWithTheObject] => CalledWithTheObject
+f.__name__ [base=CalledWithTheObject, f=function] => plain
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => assigned
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => before_try
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => in_try
+log [base=CalledWithTheObject, f=function] => ['finally', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => call_in_body
+log [base=CalledWithTheObject, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => named
+log [base=CalledWithTheObject, f=function] => ['body', None, 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => empty_body
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => no_call_in_body
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => loop_in_body
+log [base=CalledWithTheObject, f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => while_in_body
+log [base=CalledWithTheObject, f=function] => ['exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => two
+log [base=CalledWithTheObject, f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => nested
+log [base=CalledWithTheObject, f=function] => ['outer KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => swallowed
+log [base=CalledWithTheObject, f=function] => ['body', 'exit KeyboardInterrupt', 'after']
+f.__name__ [base=CalledWithTheObject, f=function] => in_loop
+log [base=CalledWithTheObject, f=function] => ['body', 1, 'exit 1 KeyboardInterrupt', 'body', 2, 'exit 2 KeyboardInterrupt', 'after']
+f.__name__ [base=CalledWithTheObject, f=function] => returns
+log [base=CalledWithTheObject, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => enter_in_python
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => in_generator
+log [base=CalledWithTheObject, f=function] => ['item', 'exit GeneratorExit', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => in_coroutine
+log [base=CalledWithTheObject, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => in_handler
+log [base=CalledWithTheObject, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => in_finally
+log [base=CalledWithTheObject, f=function] => ['body', 'exit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => second_of_two
+log [base=CalledWithTheObject, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => second_nested
+log [base=CalledWithTheObject, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => async_with
+log [base=CalledWithTheObject, f=function] => ['body', 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => async_with_named
+log [base=CalledWithTheObject, f=function] => ['body', None, 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => async_with_empty
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => async_second_of_two
+log [base=CalledWithTheObject, f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => a_lock
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => a_lock_named
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => two_locks
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => nested_locks
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => lock_and_manager
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => manager_and_lock
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => lock_in_generator
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => lock_in_coroutine
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=lock, f=function] => lock
+f.__name__ [make=lock, f=function] => lock_in_handler
+'left held' if left_held else 'never left held' [make=lock, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => a_lock
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => a_lock_named
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => two_locks
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => nested_locks
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => lock_and_manager
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => manager_and_lock
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => lock_in_generator
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => lock_in_coroutine
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held
+make().__class__.__name__ [make=function, f=function] => RLock
+f.__name__ [make=function, f=function] => lock_in_handler
+'left held' if left_held else 'never left held' [make=function, f=function] => never left held

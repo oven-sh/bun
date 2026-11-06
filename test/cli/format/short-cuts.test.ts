@@ -6022,6 +6022,10 @@ describe("what the quick way for scripts is asked about, and what is done around
       // Two doc comments that are one, and two blanks at the end of a line.
       ["a.ts", "", "/*\n * a\n *//**\n * b  \n * c\n */\nx;\n"],
       ["a.ts", "", "/**\n * a  \n * b\n *//*\n * c  \n * d\n */\nx;\n"],
+      // A key that is spelled with an escape, where all keys get quotes if one needs them.
+      ["a.js", "--quote-props=consistent", 'class A { "\\x63onstructor"() {}\n b = 2;\n "c" = 3 }\n'],
+      ["a.js", "--quote-props=consistent", 'x = { "\\x61": 1, b: 2, "c": 3 };\n'],
+      ["a.js", "--quote-props=consistent", 'x = { "\\\\.css$": 1, b: 2, "c": 3 };\n'],
       // An object type without members in a key is more than a text, so the key isn't a short one.
       ["a.ts", "--tab-width=8", `x = {\n  [a as {}]: ${"a".repeat(75)},\n};\n`],
       // The start tag of an element that starts a line in the source and none in the output.

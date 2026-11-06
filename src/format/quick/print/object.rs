@@ -12,7 +12,7 @@ use crate::print::statics::{
     RBRACKET, SPACE, SQUOTE, STRING, SYMBOL,
 };
 use crate::print::util::IS_FUNCTION_LIKE;
-use crate::{Quick, R, Words, why};
+use crate::{Quick, R, Words, rare, why};
 
 pub(crate) struct PrintObject {
     pub(crate) siblings_parent: i32,
@@ -178,6 +178,25 @@ impl Quick {
         return self.n.at(parent + 4);
     }
 
+    /// Can the value of the string `key`, which has a backslash in it, be a name or a number? Yes unless there is something in it that is part of neither:
+    /// what is no letter, digit, `_`, `$` or `.`, or an escape for one character that is not spelled as a number.
+    #[cold]
+    fn may_spell_a_name(&self, key: i32) -> bool {
+        let mut rest = self.t.sub(self.n.at(key + 1) + 1, self.n.at(key + 2) - 1);
+        loop {
+            rest = match rest {
+                [] => return true,
+                [b'\\', b'x' | b'u' | b'0'..=b'7' | b'\n', rest @ ..] => rest,
+                [b'{' | b'}', rest @ ..] => rest,
+                [
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$' | b'.' | 0x80..,
+                    rest @ ..,
+                ] => rest,
+                _ => return false,
+            };
+        }
+    }
+
     pub(crate) fn has_siblings_require_quoted(&mut self, member: i32) -> R<bool> {
         let parent = self.n.at(member + 3);
         if parent == self.print_object.siblings_parent {
@@ -197,9 +216,12 @@ impl Quick {
                 {
                     break 'c1;
                 }
-                if (self.n.at(self.n.at(sibling + 4)) & 0xff) == k::StringLiteral
-                    && !self.is_key_safe_to_unquote(sibling)?
-                {
+                let key = self.n.at(self.n.at(sibling + 4));
+                if (key & 0xff) == k::StringLiteral && !self.is_key_safe_to_unquote(sibling)? {
+                    // The long way goes by the value of a key that is spelled with an escape, Prettier by its text.
+                    if (key & F_ESCAPE) != 0 && self.may_spell_a_name(self.n.at(sibling + 4)) {
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
+                    }
                     result = true;
                     break 'l0;
                 }

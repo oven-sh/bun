@@ -114,7 +114,7 @@ pub struct ImportRule {
     pub conditions: ImportConditions,
 
     /// This is default initialized to 2^32 - 1 when parsing.
-    /// If we are bundling, this will be set to the index of the corresponding ImportRecord
+    /// If the parser has an import record list, this will be set to the index of the ImportRecord
     /// created for this import rule.
     pub import_record_idx: u32,
 

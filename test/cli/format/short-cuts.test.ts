@@ -6022,6 +6022,9 @@ describe("what the quick way for scripts is asked about, and what is done around
       // Two doc comments that are one, and two blanks at the end of a line.
       ["a.ts", "", "/*\n * a\n *//**\n * b  \n * c\n */\nx;\n"],
       ["a.ts", "", "/**\n * a  \n * b\n *//*\n * c  \n * d\n */\nx;\n"],
+      // Flow: a comment before a return type that gets parentheses.
+      ["a.js", "", "// @flow\nconst j = (x: mixed): /* c */ { [string]: () => void } => ({});\n"],
+      ["a.js", "", "// @flow\nconst j = (x: mixed): // c\n{ p: string => string } => ({});\n"],
       // A key that is spelled with an escape, where all keys get quotes if one needs them.
       ["a.js", "--quote-props=consistent", 'class A { "\\x63onstructor"() {}\n b = 2;\n "c" = 3 }\n'],
       ["a.js", "--quote-props=consistent", 'x = { "\\x61": 1, b: 2, "c": 3 };\n'],

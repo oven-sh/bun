@@ -250,6 +250,10 @@ impl Quick {
         }
         let type_ = self.n.at(n + 4);
         if self.mode.is_flow && self.needs_parens_as_return_type_of_arrow(type_)? {
+            // (its comments go in front of the parentheses)
+            if self.has_comment(type_) {
+                return Err(self.rare(rare::COMMENT));
+            }
             self.text(LPAREN);
             self.print(type_)?;
             self.text(RPAREN);

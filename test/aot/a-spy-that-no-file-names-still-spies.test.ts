@@ -139,8 +139,8 @@ test("no spy", () => {
   console.error("SEEN " + JSON.stringify([read(), callee(lib)]));
 });
 `;
-// To a callee that the build knows, in the project of every way: the build leaves its exports closed. One that opened
-// them would let a way pass that it did not follow.
+// To a callee that the build knows, in a project of several ways: the build leaves its exports closed. One that opened
+// them would let a way pass that it did not follow. A project of one way holds nothing else that a build could open.
 const nobodySpies = noSpy(`object => Object.keys(object)`);
 // To a callee nobody knows, beside the words alone: the build opens its exports once the words have taken the spy out
 // of its sight.
@@ -190,10 +190,12 @@ const runs = new Map<string, ReturnType<typeof ranBoth>>();
 /** The project of the ways with these words runs once, for all the tests that ask. */
 const ranProject = (words: string) =>
   runs.getOrInsertComputed(words, () => {
-    const folders: Parameters<typeof ranBoth>[0] = { "nobody-spies": filesOf(nobodySpies, 0) };
-    for (const name of projects.get(words)!) folders[folderOf(name)] = filesOf(testFile(ways[name]), beginOf(name));
+    const names = projects.get(words)!;
+    const folders: Parameters<typeof ranBoth>[0] = names.length > 1 ? { "nobody-spies": filesOf(nobodySpies, 0) } : {};
+    for (const name of names) folders[folderOf(name)] = filesOf(testFile(ways[name]), beginOf(name));
     return ranBoth(folders);
   });
+const counted = (count: number, what: string) => `${count} ${what}${count === 1 ? "" : "s"}`;
 
 // These come before the tests of the ways: each starts the runs of one project. The ways of a project all wait for the
 // same build, and as many of them as may run at once would keep the next project from starting.
@@ -201,12 +203,13 @@ test.concurrent.each([...projects])(
   "the build of the ways with %s opens what they spy on and nothing else",
   async (words, names) => {
     const { plain, compiled } = await ranProject(words);
-    const files = names.length + 1;
-    const besideWays = (ran: typeof plain) => ({ ...ran, said: ran.said["nobody-spies"] });
+    const isShared = names.length > 1;
+    const files = names.length + (isShared ? 1 : 0);
+    const besideWays = (ran: typeof plain) => ({ ...ran, said: ran.said["nobody-spies"] as string[] | undefined });
     expect(besideWays(plain)).toEqual({
       stdout: "bun test <version> (<revision>)",
-      said: [`SEEN [[3,6],["sumOf","total"]]`, "(pass) no spy"],
-      ended: [` ${files} pass`, " 0 fail", `Ran ${files} tests across ${files} files.`],
+      said: isShared ? [`SEEN [[3,6],["sumOf","total"]]`, "(pass) no spy"] : undefined,
+      ended: [` ${files} pass`, " 0 fail", `Ran ${counted(files, "test")} across ${counted(files, "file")}.`],
       opened: undefined,
       exitCode: 0,
     });

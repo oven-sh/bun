@@ -538,6 +538,7 @@ impl Child {
 
     fn on_write(_: *mut Child, _: usize, _: WriteStatus) {}
 
+    #[cfg(windows)]
     fn on_ready(_: *mut Child) {}
 
     fn on_close(_: *mut Child) {}

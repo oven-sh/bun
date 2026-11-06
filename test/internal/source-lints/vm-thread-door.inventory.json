@@ -30,14 +30,6 @@
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/jsc/TopExceptionScope.rs": {
-    "unsafe impl Send": [
-      "SourceLocation"
-    ],
-    "unsafe impl Sync": [
-      "SourceLocation"
-    ]
-  },
   "src/jsc/VirtualMachine.rs": {
     "unsafe impl Send": [
       "Shared"
@@ -60,8 +52,7 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "OwnedByThread",
-      "ThreadStart"
+      "OwnedByThread"
     ]
   },
   "src/jsc/webcore_types.rs": {
@@ -130,6 +121,11 @@
       "SharedWatcher"
     ]
   },
+  "src/runtime/crypto/PBKDF2.rs": {
+    "unsafe impl Send": [
+      "Digest"
+    ]
+  },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
@@ -146,16 +142,12 @@
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
       "napi_async_work"
-    ],
-    "unsafe impl Sync": [
-      "napi_node_version"
     ]
   },
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "CoreFoundation",
-      "FSEventsLoop"
+      "CoreFoundation"
     ],
     "unsafe impl Sync": [
       "CoreFoundation",
@@ -197,9 +189,6 @@
   },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
-    "unsafe impl Send": [
-      "PathWatcherManager"
-    ],
     "unsafe impl Sync": [
       "PathWatcherManager"
     ]
@@ -222,9 +211,7 @@
   },
   "src/runtime/webcore/CompressionStreamCoder.rs": {
     "unsafe impl Send": [
-      "AsyncInput",
-      "CompressionAsyncCtx",
-      "CompressionStreamCoder"
+      "CompressionAsyncCtx"
     ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {
@@ -255,10 +242,5 @@
   },
   "src/runtime/webcore/s3/simple_request.rs": {
     "HTTPThread::schedule": 1
-  },
-  "src/sql_jsc/jsc.rs": {
-    "unsafe impl Send": [
-      "SSLConfig"
-    ]
   }
 }

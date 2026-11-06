@@ -81,17 +81,23 @@ impl Quick {
     pub(crate) fn flow_parse_type(&mut self) -> R<i32> {
         self.stack()?;
         let start = self.lexer.tok_start;
+        // What is behind an `extends` is a union, which is read without this function. Whatever type starts in there can be conditional
+        // again: `A extends () => infer B extends C ? D : E`, and no `?` follows.
+        let outer = self.parse_flow.flow_no_conditional_types;
+        self.parse_flow.flow_no_conditional_types = 0;
         let type_ = self.flow_parse_union()?;
-        if self.parse_flow.flow_no_conditional_types == 0 && self.lexer.tok == tk::Extends {
+        self.parse_flow.flow_no_conditional_types = outer;
+        if self.lexer.tok == tk::Extends {
             self.not_in_babel()?;
             self.next()?;
             self.parse_flow.flow_no_conditional_types = 1;
             let extends_type = self.flow_parse_union()?;
-            self.parse_flow.flow_no_conditional_types = 0;
+            self.parse_flow.flow_no_conditional_types = outer;
+            // (`(a): A extends B ? C : D => e`: `D => e` is a type)
             self.expect(tk::Question)?;
-            let true_type = self.flow_parse_type()?;
+            let true_type = self.flow_parse_type_fresh()?;
             self.expect(tk::Colon)?;
-            let false_type = self.flow_parse_type()?;
+            let false_type = self.flow_parse_type_fresh()?;
             return Ok(self.node4(
                 k::ConditionalType,
                 start,
@@ -194,7 +200,9 @@ impl Quick {
 
     pub(crate) fn flow_parse_type_or_guard(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
-        if self.lexer.tok == tk::Name || self.lexer.tok == tk::This {
+        if (self.lexer.tok == tk::Name && self.lexer.tok_kw != kw::Enum)
+            || self.lexer.tok == tk::This
+        {
             let mut kind: i32 = 0;
             let m = self.mark();
             let w = self.word();
@@ -220,6 +228,9 @@ impl Quick {
                 }
             }
             if self.lexer.tok == tk::Name || self.lexer.tok == tk::This {
+                if self.lexer.tok_kw == kw::Enum {
+                    return Err(self.unexpected());
+                }
                 let name = self.identifier()?;
                 // (on the next line: a guard for some parsers, a name for others)
                 if self.word() == w::Is && self.lexer.tok_nl != 0 {
@@ -237,6 +248,10 @@ impl Quick {
                         name,
                         type_,
                     ));
+                }
+                // (`implies a` and no `is`: the long way has read a guard)
+                if kind == TP_IMPLIES {
+                    return Err(self.text_refuse());
                 }
                 if kind == TP_ASSERTS {
                     self.unmark(m);
@@ -286,6 +301,9 @@ impl Quick {
             if w == w::Infer && self.peek()? == tk::Name {
                 self.not_in_babel()?;
                 self.next()?;
+                if self.lexer.tok_kw == kw::Enum {
+                    return Err(self.unexpected());
+                }
                 let name_start = self.lexer.tok_start;
                 let name = self.identifier()?;
                 let mut bound: i32 = 0;
@@ -1092,11 +1110,11 @@ impl Quick {
         let list_mark = self.arena.ls_pos;
         loop {
             let start = self.lexer.tok_start;
-            if self.lexer.tok != tk::Name {
+            if self.lexer.tok != tk::Name || self.lexer.tok_kw == kw::Enum {
                 return Err(self.unexpected());
             }
-            // (the long way writes `boolean`)
-            if self.word() == w::Bool {
+            // (the long way writes `boolean`, and does not take `implements` for a name)
+            if self.word() == w::Bool || self.word() == w::Implements {
                 return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
             let id = self.flow_parse_qualified(0)?;
@@ -2101,8 +2119,8 @@ impl Quick {
             {
                 declaration = self.flow_parse_declared(self.lexer.tok_start, 0)?;
             } else {
-                // (the long way expects a declaration behind `interface`)
-                if self.word() == w::Interface {
+                // (the long way expects a declaration behind `interface` and `enum`)
+                if self.word() == w::Interface || self.is_kw(kw::Enum) {
                     return Err(self.text_refuse());
                 }
                 declaration = self.flow_parse_type_fresh()?;

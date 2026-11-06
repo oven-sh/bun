@@ -1721,9 +1721,7 @@ impl Quick {
             head |= modifier;
             self.next()?;
         }
-        if is_ts {
-            self.ts_check_word_before_member()?;
-        }
+        self.ts_check_word_before_member()?;
         if self.lexer.tok == tk::Mul {
             self.next()?;
             head |= F_GENERATOR;

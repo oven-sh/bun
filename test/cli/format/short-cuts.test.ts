@@ -6692,6 +6692,12 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "function* f() { x = a ? yield (b) : c => d }\n",
     "function* f() { x = a ? yield* (b) : c => {} }\n",
     "function* f() { x = a ? y = yield (b = 1) : c => d => e }\n",
+    // `implements` as the name of a class
+    "class implements extends B {\n  a = 1;\n}\n",
+    // words that TypeScript's parser takes for modifiers of the next line
+    "class A {\n  default\n  @a b = 1;\n}\n",
+    "class X {\n  accessor static\n  b\n}\n",
+    "class X {\n  accessor get\n  b\n}\n",
   ]);
   expectRejected("a.js.flow, what only Flow has", "a.js.flow", [
     // two expressions behind `%checks`
@@ -6787,6 +6793,21 @@ describe("JavaScript and Flow that the long way rejects", () => {
     'x = <a b=\n\n"aa\\@bb" c="d" />;\n',
     // a line break in front of the `=>` behind a return type
     "a ? ((b): c\n => d) : e;\n",
+    // `extends` and `implements` where a type or a name goes on
+    "class A {\n  a: B\n  extends = 1;\n}\n",
+    "class A implements implements {}\n",
+    "class A implements implements {\n  a: T;\n}\n",
+    "function f(): enum is T {}\n",
+    "type A = B extends () => infer R extends C ? D : E;\n",
+    "type A = B extends C => infer R extends C ? D : E;\n",
+    "x = (a): T extends U ? V : W => b;\n",
+    "class A implements enum {}\n",
+    "declare export default enum;\n",
+    "function f(a): implies enum is T {}\n",
+    "function f(a): asserts enum {}\n",
+    "type A = infer enum;\n",
+    "for (let a: (a: T) => implies of b);\n",
+    "class A extends B<<T>() => void>\n{}\n",
   ]);
   expectRejected(
     "a.js with @flow, what only Flow has",
@@ -6882,6 +6903,10 @@ describe("programs that are read as written", () => {
         "declare namespace N { 'a'; b }\n",
         // a cast as a decorator
         "@(a: c) class D {}\n",
+        // what is read across the end of a line, or dropped
+        "x;\na < keyof \nb > (c);\ny;\n",
+        "(...a?) => 1;\n",
+        "(a, ...b ? ,) => 1\n",
       ],
       [[], ["--print-width=10"]],
     ));

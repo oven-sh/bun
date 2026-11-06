@@ -2215,7 +2215,7 @@ impl Quick {
     /// TypeScript, Flow: `?` and `: type` behind the name or pattern `n`, which has room for them.
     pub(crate) fn parse_binding_suffix(&mut self, n: i32) -> R<()> {
         if self.lexer.tok == tk::Question {
-            if (self.n.at(n) & 0xff) == k::RestElement && self.parse.typed == TYPED_TS {
+            if (self.n.at(n) & 0xff) == k::RestElement {
                 return Err(self.text_refuse());
             }
             self.n.put(n, self.n.at(n) | F_OPTIONAL);
@@ -3773,10 +3773,15 @@ impl Quick {
             if self.lexer.tok == tk::BracketL {
                 flags |= F_COMPUTED;
             }
-            let is_export = self.lexer.tok == tk::Export;
+            // TypeScript's parser, which reads every file first, takes these for modifiers of what follows, on whatever line; and so
+            // it does behind `accessor`, where they are names to the others
+            let is_modifier = self.lexer.tok == tk::Export
+                || self.lexer.tok == tk::Default
+                || ((flags & F_ACCESSOR) != 0
+                    && self.lexer.tok == tk::Name
+                    && matches!(self.lexer.tok_kw, kw::Static | kw::Get | kw::Set));
             key = self.parse_property_name()?;
-            // TypeScript's parser, which reads every file first, takes `export` for a modifier of what follows, on whatever line
-            if is_export && !self.word_was_key() {
+            if is_modifier && !self.word_was_key() {
                 return Err(self.text_refuse());
             }
         }
@@ -4904,7 +4909,11 @@ impl Quick {
                         );
                     } else if self.parse.typed == TYPED_FLOW && !no_calls {
                         // In Flow type arguments are those of a call or a superclass. (What else the parsers take, they do not print alike.)
-                        if is_record_constructor != 0 {
+                        // (`class A extends B<<T>() => C>`, the end of the line, `{`: two operators for the long way)
+                        if is_record_constructor != 0
+                            || (self.lexer.tok_nl != 0
+                                && self.t.at(self.n.at(type_arguments + 1) + 1) == 60)
+                        {
                             return Err(self.text_refuse());
                         }
                         return Ok(self.node2(

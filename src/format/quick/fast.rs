@@ -3359,16 +3359,17 @@ impl Quick {
             return self.no(refusal::End);
         }
         // No semicolon. The statement ends here if what comes next cannot go on with it.
-        if self.fast.saw_less != 0 && self.fast.ts {
+        if self.fast.saw_less != 0 && self.fast.has_types {
             // `a < keyof`, and `b > (c)` on the next line: type arguments
             return self.no(refusal::NoSemicolon);
         }
         let n = self.next_char_index(s);
         let d = self.t.at(n);
         if (CC.at(d) & ID_START) != 0 {
-            // in, instanceof; `is` behind a type; `with` behind an import
+            // in, instanceof; `is` behind a type; `with` behind an import; in Flow `extends` behind a type
             if (d == 105 && matches!(self.t.at(n + 1), 110 | 115))
                 || (d == 119 && self.t.at(n + 1) == 105)
+                || (d == 101 && self.fast.flow && self.word_is(n, b"extends"))
             {
                 return self.no(refusal::NoSemicolon);
             }
@@ -4244,7 +4245,7 @@ impl Quick {
         {
             return self.no(refusal::Start);
         }
-        if self.fast.ts && (self.is_declaration_word(q, e - q) || self.word_is(q, b"implements")) {
+        if (self.fast.ts && self.is_declaration_word(q, e - q)) || self.word_is(q, b"implements") {
             return self.no(refusal::Start);
         }
         q = e;

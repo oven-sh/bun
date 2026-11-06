@@ -2088,15 +2088,14 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `printEmbedFrontMatter`
     fn print_front_matter(&mut self, node: &Node) -> Doc<'a> {
-        let raw = &self.original[..node.end as usize];
-        let Some(front_matter) = super::front_matter::parse(self.original) else {
+        let raw = self.source(node);
+        let Some(front_matter) = super::front_matter::parse(raw) else {
             return Doc::from(raw);
         };
-        let language =
-            &self.original[front_matter.explicit_language.0..front_matter.explicit_language.1];
+        let language = &raw[front_matter.explicit_language.0..front_matter.explicit_language.1];
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = &self.original[front_matter.value.0..front_matter.value.1];
+        let value = &raw[front_matter.value.0..front_matter.value.1];
         let value = super::front_matter::trim_end_to_last_line(
             bun_core::strings::trim_js_whitespace_start(value),
         );

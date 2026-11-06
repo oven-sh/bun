@@ -4253,6 +4253,43 @@ describe.concurrent("bun fmt", () => {
     expect(forOxfmt.exitCode).toBe(0);
   });
 
+  describe("MDX front matter behind lines of spaces and tabs", () => {
+    // Prettier's MDX parser looks for front matter at the first line that has something on it. Its Markdown parser
+    // looks at the start of the file only. Each row has the text and what Prettier 3.9.9 prints for it as MDX.
+    const texts: [before: string, after: string][] = [
+      ["\n---\ntitle:   x\n---\n\n# Hi\n", "---\ntitle: x\n---\n\n# Hi\n"],
+      ["  \n\t\n---\n\nfoo\n\n---\n", "---\nfoo\n---\n"],
+      ["\n+++\na   =  1\n+++\n\nBody\n", "+++\na   =  1\n+++\n\nBody\n"],
+      ["\n---\ntitle: x\n---text\n\nBody\n", "---\ntitle: x\n---\n\ntext\n\nBody\n"],
+    ];
+    const files = Object.fromEntries(texts.map(([before], i) => [`${i}.mdx`, before]));
+    const written = Object.fromEntries(texts.map(([, after], i) => [`${i}.mdx`, after]));
+
+    test.each([
+      ["no config", {}],
+      [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
+    ])("is front matter with %s", async (_, config: Record<string, string>) => {
+      const result = await format({ ...config, ...files }, [], { reads: Object.keys(files) });
+      expect(result.files).toEqual(written);
+      expect(result.exitCode).toBe(0);
+      expect(await different({ ...config, ...written }, [])).toEqual([]);
+    });
+
+    test("is a rule and a heading in Markdown", async () => {
+      // As in Prettier 3.9.9, whose second run then reads front matter.
+      const result = await format({ "a.md": texts[0][0] }, [], { reads: ["a.md"] });
+      expect(result.files).toEqual({ "a.md": "---\n\ntitle: x\n---\n\n# Hi\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("known issue: --insert-pragma writes the pragma before it, which makes it a rule and a heading", async () => {
+      // Prettier 3.9.9 prints the same.
+      const result = await format({ "a.mdx": texts[0][0] }, ["--insert-pragma"], { reads: ["a.mdx"] });
+      expect(result.files).toEqual({ "a.mdx": "<!-- @format -->\n\n---\n\n## title: x\n\n# Hi\n" });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   test("skips unsupported languages and reports an error at the end, or a warning with --allow-unsupported", async () => {
     const left = { "a.astro": "<p   >a</p>\n", "b.astro": "<p   >b</p>\n" };
     const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', ...left, "c.js": ugly };

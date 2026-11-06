@@ -578,9 +578,6 @@ fn with_document<R>(
     mut format_block: Option<&mut FormatBlock<'_>>,
     then: impl FnOnce(doc::Doc<'_>) -> R,
 ) -> Result<R, FormatError> {
-    let blanked = parse::blank_front_matter(text);
-    let original = text;
-    let text = blanked.as_deref().unwrap_or(text);
     let syntax = if mode.is_mdx {
         parse::Syntax::Mdx
     } else if options.flavor.is_oxfmt() {
@@ -588,6 +585,9 @@ fn with_document<R>(
     } else {
         parse::Syntax::Markdown
     };
+    let blanked = parse::blank_front_matter(text, syntax);
+    let original = text;
+    let text = blanked.as_deref().unwrap_or(text);
     let root = parse::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,

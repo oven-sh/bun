@@ -45,15 +45,39 @@ pub(crate) enum Syntax {
     },
 }
 
+/// The start and the end of the front matter of `text`, if it has any. It starts with the text. In MDX it can also
+/// follow lines of spaces and tabs: remark-parse 8 offers every block to Prettier's front matter tokenizer until one
+/// has made a node, and such a line makes none.
+fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
+    let mut start = 0;
+    if syntax == Syntax::Mdx {
+        loop {
+            let blank_len = text[start..]
+                .iter()
+                .take_while(|byte| is_space(**byte))
+                .count();
+            if text.get(start + blank_len) != Some(&b'\n') {
+                break;
+            }
+            start += blank_len + 1;
+        }
+    }
+    let end = start + super::front_matter::parse(&text[start..])?.end;
+    Some((start, end))
+}
+
 /// Prettier parses a text with spaces in place of the front matter. That only makes a difference if something follows
 /// the front matter on its last line. In that case this returns the text with the spaces.
-pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
-    let end = super::front_matter::parse(text)?.end;
+pub(crate) fn blank_front_matter(text: &[u8], syntax: Syntax) -> Option<Vec<u8>> {
+    let (start, end) = front_matter_of(text, syntax)?;
     if matches!(text.get(end), None | Some(b'\n')) {
         return None;
     }
     let mut blanked = text.to_vec();
-    for byte in blanked[..end].iter_mut().filter(|byte| **byte != b'\n') {
+    for byte in blanked[start..end]
+        .iter_mut()
+        .filter(|byte| **byte != b'\n')
+    {
         *byte = b' ';
     }
     Some(blanked)
@@ -67,17 +91,13 @@ pub(crate) fn parse(
     syntax: Syntax,
     tree: &mut Tree,
 ) -> Option<NodeId> {
-    let Some(front_matter) = super::front_matter::parse(original) else {
+    let Some((start, end)) = front_matter_of(original, syntax) else {
         return parse_lines(text, tree, syntax, 0);
     };
-    let is_blanked = !matches!(original.get(front_matter.end), None | Some(b'\n'));
-    let first_line = if is_blanked {
-        front_matter.end - 3
-    } else {
-        front_matter.end + 1
-    };
+    let is_blanked = !matches!(original.get(end), None | Some(b'\n'));
+    let first_line = if is_blanked { end - 3 } else { end + 1 };
     let root = parse_lines(text, tree, syntax, first_line)?;
-    let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
+    let node = tree.add(Kind::FrontMatter, start as u32, end as u32);
     tree.prepend(root, node);
     Some(root)
 }

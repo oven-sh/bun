@@ -74,7 +74,15 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "symbols" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "symbols"
+  | "hardening"
+  | "debug info"
+  | "size"
+  | "reproducibility";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -131,6 +139,7 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "must keep its symbol table and (compressed) debug sections. A missing piece usually",
     "means a strip/objcopy step or a -g flag change applied to the wrong artifact.",
   ],
+  reproducibility: ["Link the shim with /Brepro and /DEBUG:NONE to avoid a path-dependent PDB GUID."],
 };
 
 interface CheckResult {
@@ -643,6 +652,15 @@ function verifyPE(spec: VerifySpec): void {
       violations.push(`subsystem version ${ver}, expected ${expect.minOSVersion}`);
     const props = [...chars, `subsystem ${ver}`];
     report("hardening", `${props.length} hardening properties`, violations, props);
+  }
+
+  if (expect.pe?.reproducible) {
+    const text = run(readobj, ["--coff-debug-directory", exe]);
+    const types = blocks(text, "DebugEntry").map(entry => field(entry, "Type")?.split(" ", 1)[0]);
+    const violations: string[] = [];
+    if (!types.includes("Repro")) violations.push("missing Repro debug entry");
+    if (types.includes("CodeView")) violations.push("unexpected CodeView debug entry");
+    report("reproducibility", "reproducible PE metadata", violations);
   }
 }
 

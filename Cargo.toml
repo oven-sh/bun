@@ -194,7 +194,7 @@ strip = "none"
 # `panic_immediate_abort` so panic-with-args compiles to a bare trap (no
 # `core::fmt::Arguments` materialised). `panic = "abort"` + `lto` +
 # `codegen-units = 1` let LLVM see the whole program; `opt-level = "z"`
-# favours size; `strip = "symbols"` discards the .pdb-equivalent. Always
+# favours size; `strip = "symbols"` drops symbols. Always
 # release regardless of bun's own profile: a debug bun should still write
 # release shims.
 [profile.shim]

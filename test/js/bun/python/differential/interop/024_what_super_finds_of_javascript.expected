@@ -1,0 +1,34 @@
+status: 0
+oracle: none
+---
+plain: 'base:5' | the same under every tool
+strict: 'base:5' | the same under every tool
+arrow: 'arrow:the instance' | the same under every tool
+bound: 'bound to this:5' | the same under every tool
+bound_with_argument: 'bound to this:first' | the same under every tool
+taken_from_an_object: 'holder:5' | the same under every tool
+rest: 'base:1' | the same under every tool
+native: 5 | the same under every tool
+throws: JSTypeError: TypeError: thrown 5 | the same under every tool
+proxy: 'undefined:5' | the same under every tool
+static: 'undefined:5' | the same under every tool
+class_: 'Derived:5' | the same under every tool
+class_of_js: 5 in an object | the same under every tool
+prop: 'undefined:5' | the same under every tool
+two_plain: 'base:5' | the same under every tool
+two_strict: 'base:5' | the same under every tool
+two_arrow: 'arrow:the instance' | the same under every tool
+two_bound: 'bound to this:5' | the same under every tool
+two_bound_with_argument: 'bound to this:first' | the same under every tool
+two_taken_from_an_object: 'holder:5' | the same under every tool
+two_rest: 'base:1' | the same under every tool
+two_native: 5 | the same under every tool
+two_throws: JSTypeError: TypeError: thrown 5 | the same under every tool
+two_proxy: 'undefined:5' | the same under every tool
+two_static: 'undefined:5' | the same under every tool
+two_class_: 'Derived:5' | the same under every tool
+two_class_of_js: 5 in an object | the same under every tool
+two_prop: 'undefined:5' | the same under every tool
+a method of a class of JavaScript: 'Dog, Animal Rex !' | the same under every tool
+the same, super with arguments: 'Animal Rex !' | the same under every tool
+a getter of a class of JavaScript: 'REX!' | the same under every tool

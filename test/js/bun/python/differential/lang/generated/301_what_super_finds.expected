@@ -1,0 +1,382 @@
+status: 0
+script: f3e6b941af5a4a2f
+source: ee0699e50450985c
+---
+function: ('plain', 'Derived', 'ab')
+    setprofile: the same | call plain, return plain
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL plain(Derived), CALL super(MISSING), C_RETURN super(MISSING), CALL plain(Derived)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL plain(Derived)
+    cProfile: the same
+    afterwards: the same
+lambda_: ('lambda', 'Derived', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(Derived), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(Derived)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(Derived)
+    cProfile: the same
+    afterwards: the same
+static: ('static', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(str), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+static_builtin: 2
+    setprofile: the same | c_call len, c_return len
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str), CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str)
+    cProfile: the same
+    afterwards: the same
+class_: ('class', 'Derived', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(type), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(type)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(type)
+    cProfile: the same
+    afterwards: the same
+class_builtin: TypeError: repr() takes exactly one argument (2 given)
+    setprofile: the same | c_call repr, c_exception repr
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL repr(type), C_RAISE repr(type), CALL super(MISSING), C_RETURN super(MISSING), CALL repr(type), C_RAISE repr(type)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL repr(type), C_RAISE repr(type)
+    cProfile: the same
+    afterwards: the same
+prop: ('property', 'Derived', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>, call Base.<lambda>.<locals>.<lambda>, return Base.<lambda>.<locals>.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>.<locals>.<lambda>(str), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>.<locals>.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>.<locals>.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+callable_: ('Callable', 1, 'ab')
+    setprofile: the same | call Callable.__call__, return Callable.__call__
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Callable(str), C_RETURN Callable(str), CALL super(MISSING), C_RETURN super(MISSING), CALL Callable(str), C_RETURN Callable(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Callable(str), C_RETURN Callable(str)
+    cProfile: the same
+    afterwards: the same
+partial: TypeError: plain() takes 2 positional arguments but 3 were given
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL partial(Derived), C_RAISE partial(Derived), CALL super(MISSING), C_RETURN super(MISSING), CALL partial(Derived), C_RAISE partial(Derived)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL partial(Derived), C_RAISE partial(Derived)
+    cProfile: the same
+    afterwards: the same
+partialmethod: ('plain', 'Derived', 'ab')
+    setprofile: the same | call partialmethod.__get__, return partialmethod.__get__, call plain, return plain
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL partial(str), C_RETURN partial(str), CALL super(MISSING), C_RETURN super(MISSING), CALL partial(str), C_RETURN partial(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL partial(str), C_RETURN partial(str)
+    cProfile: the same
+    afterwards: the same
+builtin: 2
+    setprofile: the same | c_call len, c_return len
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str), CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str)
+    cProfile: the same
+    afterwards: the same
+builtin_method_of_an_object: 0
+    setprofile: the same | c_call list.count, c_return list.count
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.count(str), C_RETURN list.count(str), CALL super(MISSING), C_RETURN super(MISSING), CALL list.count(str), C_RETURN list.count(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.count(str), C_RETURN list.count(str)
+    cProfile: the same
+    afterwards: the same
+bound: ('Other.method', 'Other', 'ab')
+    setprofile: the same | call Other.method, return Other.method
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Other.method(Other), CALL super(MISSING), C_RETURN super(MISSING), CALL Other.method(Other)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Other.method(Other)
+    cProfile: the same
+    afterwards: the same
+getter: ('Getter', 'Derived', 'Derived', 'ab')
+    setprofile: the same | call Getter.__get__, return Getter.__get__, call Getter.__get__.<locals>.<lambda>, return Getter.__get__.<locals>.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Getter.__get__.<locals>.<lambda>(str), CALL super(MISSING), C_RETURN super(MISSING), CALL Getter.__get__.<locals>.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Getter.__get__.<locals>.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+getter_of_builtin: 2
+    setprofile: the same | call GetterOfValue.__get__, return GetterOfValue.__get__, c_call len, c_return len
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str), CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL len(str), C_RETURN len(str)
+    cProfile: the same
+    afterwards: the same
+nondata: ('plain', 'Derived', 'ab')
+    setprofile: the same | call NonData.__get__, return NonData.__get__, call plain, return plain
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL partial(str), C_RETURN partial(str), CALL super(MISSING), C_RETURN super(MISSING), CALL partial(str), C_RETURN partial(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL partial(str), C_RETURN partial(str)
+    cProfile: the same
+    afterwards: the same
+type_: ('a', 'b')
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL tuple(str), C_RETURN tuple(str), CALL super(MISSING), C_RETURN super(MISSING), CALL tuple(str), C_RETURN tuple(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL tuple(str), C_RETURN tuple(str)
+    cProfile: the same
+    afterwards: the same
+class_of_python: TypeError: Other() takes no arguments
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Other(str), C_RAISE Other(str), CALL super(MISSING), C_RETURN super(MISSING), CALL Other(str), C_RAISE Other(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Other(str), C_RAISE Other(str)
+    cProfile: the same
+    afterwards: the same
+generator_: [('generator', 'Derived', 'ab')]
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL generator(Derived), CALL super(MISSING), C_RETURN super(MISSING), CALL generator(Derived)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL generator(Derived)
+    cProfile: the same
+    afterwards: the same
+method_descriptor: 0
+    setprofile: the same | c_call Derived.count, c_return Derived.count
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.count(str), C_RETURN Derived.count(str), CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.count(str), C_RETURN Derived.count(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.count(str), C_RETURN Derived.count(str)
+    cProfile: the same
+    afterwards: the same
+slot_wrapper: False
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__contains__(str), C_RETURN list.__contains__(str), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__contains__(str), C_RETURN list.__contains__(str)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__contains__(str), C_RETURN list.__contains__(str)
+    cProfile: the same
+    afterwards: the same
+method_of_another_type: TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Derived' object
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL super(MISSING), C_RETURN super(MISSING)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING)
+    cProfile: the same
+    afterwards: the same
+cached: ('cached', 'ab')
+    setprofile: the same | 
+    monitoring: the same | 
+    monitoring, DISABLE: the same | 
+    cProfile: the same
+    afterwards: the same
+wrapped: ('wrapped', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL plain(Derived), CALL super(MISSING), C_RETURN super(MISSING), CALL plain(Derived)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL plain(Derived)
+    cProfile: the same
+    afterwards: the same
+raises: ValueError: ab
+    setprofile: the same | call Base.raises, return Base.raises
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.raises(Derived), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.raises(Derived)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.raises(Derived)
+    cProfile: the same
+    afterwards: the same
+two_function: ('plain', 'Derived', 'ab')
+    setprofile: the same | call plain, return plain
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL plain(Derived), CALL super(type), C_RETURN super(type), CALL plain(Derived)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL plain(Derived)
+    cProfile: the same
+    afterwards: the same
+two_lambda_: ('lambda', 'Derived', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>(Derived), CALL super(type), C_RETURN super(type), CALL Base.<lambda>(Derived)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>(Derived)
+    cProfile: the same
+    afterwards: the same
+two_static: ('static', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>(str), CALL super(type), C_RETURN super(type), CALL Base.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+two_static_builtin: 2
+    setprofile: the same | c_call len, c_return len
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str), CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str)
+    cProfile: the same
+    afterwards: the same
+two_class_: ('class', 'Derived', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>(type), CALL super(type), C_RETURN super(type), CALL Base.<lambda>(type)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>(type)
+    cProfile: the same
+    afterwards: the same
+two_class_builtin: TypeError: repr() takes exactly one argument (2 given)
+    setprofile: the same | c_call repr, c_exception repr
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL repr(type), C_RAISE repr(type), CALL super(type), C_RETURN super(type), CALL repr(type), C_RAISE repr(type)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL repr(type), C_RAISE repr(type)
+    cProfile: the same
+    afterwards: the same
+two_prop: ('property', 'Derived', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>, call Base.<lambda>.<locals>.<lambda>, return Base.<lambda>.<locals>.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>.<locals>.<lambda>(str), CALL super(type), C_RETURN super(type), CALL Base.<lambda>.<locals>.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>.<locals>.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+two_callable_: ('Callable', 1, 'ab')
+    setprofile: the same | call Callable.__call__, return Callable.__call__
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Callable(str), C_RETURN Callable(str), CALL super(type), C_RETURN super(type), CALL Callable(str), C_RETURN Callable(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Callable(str), C_RETURN Callable(str)
+    cProfile: the same
+    afterwards: the same
+two_partial: TypeError: plain() takes 2 positional arguments but 3 were given
+    setprofile: the same | 
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL partial(Derived), C_RAISE partial(Derived), CALL super(type), C_RETURN super(type), CALL partial(Derived), C_RAISE partial(Derived)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL partial(Derived), C_RAISE partial(Derived)
+    cProfile: the same
+    afterwards: the same
+two_partialmethod: ('plain', 'Derived', 'ab')
+    setprofile: the same | call partialmethod.__get__, return partialmethod.__get__, call plain, return plain
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL partial(str), C_RETURN partial(str), CALL super(type), C_RETURN super(type), CALL partial(str), C_RETURN partial(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL partial(str), C_RETURN partial(str)
+    cProfile: the same
+    afterwards: the same
+two_builtin: 2
+    setprofile: the same | c_call len, c_return len
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str), CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str)
+    cProfile: the same
+    afterwards: the same
+two_builtin_method_of_an_object: 0
+    setprofile: the same | c_call list.count, c_return list.count
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL list.count(str), C_RETURN list.count(str), CALL super(type), C_RETURN super(type), CALL list.count(str), C_RETURN list.count(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL list.count(str), C_RETURN list.count(str)
+    cProfile: the same
+    afterwards: the same
+two_bound: ('Other.method', 'Other', 'ab')
+    setprofile: the same | call Other.method, return Other.method
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Other.method(Other), CALL super(type), C_RETURN super(type), CALL Other.method(Other)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Other.method(Other)
+    cProfile: the same
+    afterwards: the same
+two_getter: ('Getter', 'Derived', 'Derived', 'ab')
+    setprofile: the same | call Getter.__get__, return Getter.__get__, call Getter.__get__.<locals>.<lambda>, return Getter.__get__.<locals>.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Getter.__get__.<locals>.<lambda>(str), CALL super(type), C_RETURN super(type), CALL Getter.__get__.<locals>.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Getter.__get__.<locals>.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+two_getter_of_builtin: 2
+    setprofile: the same | call GetterOfValue.__get__, return GetterOfValue.__get__, c_call len, c_return len
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str), CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL len(str), C_RETURN len(str)
+    cProfile: the same
+    afterwards: the same
+two_nondata: ('plain', 'Derived', 'ab')
+    setprofile: the same | call NonData.__get__, return NonData.__get__, call plain, return plain
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL partial(str), C_RETURN partial(str), CALL super(type), C_RETURN super(type), CALL partial(str), C_RETURN partial(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL partial(str), C_RETURN partial(str)
+    cProfile: the same
+    afterwards: the same
+two_type_: ('a', 'b')
+    setprofile: the same | 
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL tuple(str), C_RETURN tuple(str), CALL super(type), C_RETURN super(type), CALL tuple(str), C_RETURN tuple(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL tuple(str), C_RETURN tuple(str)
+    cProfile: the same
+    afterwards: the same
+two_class_of_python: TypeError: Other() takes no arguments
+    setprofile: the same | 
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Other(str), C_RAISE Other(str), CALL super(type), C_RETURN super(type), CALL Other(str), C_RAISE Other(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Other(str), C_RAISE Other(str)
+    cProfile: the same
+    afterwards: the same
+two_generator_: [('generator', 'Derived', 'ab')]
+    setprofile: the same | 
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL generator(Derived), CALL super(type), C_RETURN super(type), CALL generator(Derived)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL generator(Derived)
+    cProfile: the same
+    afterwards: the same
+two_method_descriptor: 0
+    setprofile: the same | c_call Derived.count, c_return Derived.count
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Derived.count(str), C_RETURN Derived.count(str), CALL super(type), C_RETURN super(type), CALL Derived.count(str), C_RETURN Derived.count(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Derived.count(str), C_RETURN Derived.count(str)
+    cProfile: the same
+    afterwards: the same
+two_slot_wrapper: False
+    setprofile: the same | 
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL list.__contains__(str), C_RETURN list.__contains__(str), CALL super(type), C_RETURN super(type), CALL list.__contains__(str), C_RETURN list.__contains__(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL list.__contains__(str), C_RETURN list.__contains__(str)
+    cProfile: the same
+    afterwards: the same
+two_method_of_another_type: TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Derived' object
+    setprofile: the same | 
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL super(type), C_RETURN super(type)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type)
+    cProfile: the same
+    afterwards: the same
+two_cached: ('cached', 'ab')
+    setprofile: the same | call cached_property.__get__, return cached_property.__get__, call Base.<lambda>.<locals>.<lambda>, return Base.<lambda>.<locals>.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>.<locals>.<lambda>(str), CALL super(type), C_RETURN super(type), CALL Base.<lambda>.<locals>.<lambda>(str)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Base.<lambda>.<locals>.<lambda>(str)
+    cProfile: the same
+    afterwards: the same
+two_wrapped: ('wrapped', 'ab')
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL plain(Derived), CALL super(type), C_RETURN super(type), CALL plain(Derived)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL plain(Derived)
+    cProfile: the same
+    afterwards: the same
+two_raises: ValueError: ab
+    setprofile: the same | call Base.raises, return Base.raises
+    monitoring: the same | CALL super(type), C_RETURN super(type), CALL Base.raises(Derived), CALL super(type), C_RETURN super(type), CALL Base.raises(Derived)
+    monitoring, DISABLE: the same | CALL super(type), C_RETURN super(type), CALL Base.raises(Derived)
+    cProfile: the same
+    afterwards: the same
+count: 2
+    setprofile: the same | c_call Derived.count, c_return Derived.count
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.count(int), C_RETURN Derived.count(int), CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.count(int), C_RETURN Derived.count(int)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.count(int), C_RETURN Derived.count(int)
+    cProfile: the same
+    afterwards: the same
+__contains__: True
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__contains__(int), C_RETURN list.__contains__(int), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__contains__(int), C_RETURN list.__contains__(int)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__contains__(int), C_RETURN list.__contains__(int)
+    cProfile: the same
+    afterwards: the same
+__len__: 2
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__len__(MISSING), C_RETURN list.__len__(MISSING), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__len__(MISSING), C_RETURN list.__len__(MISSING)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__len__(MISSING), C_RETURN list.__len__(MISSING)
+    cProfile: the same
+    afterwards: the same
+__init__ and __new__: D[3]
+    setprofile: the same | c_call list.__new__, c_return list.__new__
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__init__(list), C_RETURN list.__init__(list), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__repr__(MISSING), C_RETURN list.__repr__(MISSING), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__init__(list), C_RETURN list.__init__(list), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__repr__(MISSING), C_RETURN list.__repr__(MISSING)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__init__(list), C_RETURN list.__init__(list), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__repr__(MISSING), C_RETURN list.__repr__(MISSING)
+    cProfile: the same
+    afterwards: the same
+__repr__: 'D[1, 1]'
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__repr__(MISSING), C_RETURN list.__repr__(MISSING), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__repr__(MISSING), C_RETURN list.__repr__(MISSING)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__repr__(MISSING), C_RETURN list.__repr__(MISSING)
+    cProfile: the same
+    afterwards: the same
+__eq__: True
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__eq__(list), C_RETURN list.__eq__(list), CALL super(MISSING), C_RETURN super(MISSING), CALL list.__eq__(list), C_RETURN list.__eq__(list)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL list.__eq__(list), C_RETURN list.__eq__(list)
+    cProfile: the same
+    afterwards: the same
+append: (None, 1)
+    setprofile: the same | c_call Derived.append, c_return Derived.append
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.append(int), C_RETURN Derived.append(int), CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.append(int), C_RETURN Derived.append(int)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.append(int), C_RETURN Derived.append(int)
+    cProfile: the same
+    afterwards: the same
+__getitem__: 1
+    setprofile: the same | c_call Derived.__getitem__, c_return Derived.__getitem__
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.__getitem__(int), C_RETURN Derived.__getitem__(int), CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.__getitem__(int), C_RETURN Derived.__getitem__(int)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.__getitem__(int), C_RETURN Derived.__getitem__(int)
+    cProfile: the same
+    afterwards: the same
+of_class: ('class', 'Derived', 5)
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(type), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(type)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(type)
+    cProfile: the same
+    afterwards: the same
+function_of_class: ('plain', 'type', 5)
+    setprofile: the same | call plain, return plain
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL plain(type), CALL super(MISSING), C_RETURN super(MISSING), CALL plain(type)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL plain(type)
+    cProfile: the same
+    afterwards: the same
+static_of_class: ('static', 5)
+    setprofile: the same | call Base.<lambda>, return Base.<lambda>
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(int), CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(int)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Base.<lambda>(int)
+    cProfile: the same
+    afterwards: the same
+fromkeys_: NotImplemented
+    setprofile: the same | c_call Derived.__subclasshook__, c_return Derived.__subclasshook__
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.__subclasshook__(type), C_RETURN Derived.__subclasshook__(type), CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.__subclasshook__(type), C_RETURN Derived.__subclasshook__(type)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL Derived.__subclasshook__(type), C_RETURN Derived.__subclasshook__(type)
+    cProfile: the same
+    afterwards: the same
+missing: AttributeError: 'super' object has no attribute 'no_such_name'
+    setprofile: the same | 
+    monitoring: the same | CALL super(MISSING), C_RETURN super(MISSING), CALL super(MISSING), C_RETURN super(MISSING)
+    monitoring, DISABLE: the same | CALL super(MISSING), C_RETURN super(MISSING)
+    cProfile: the same
+    afterwards: the same

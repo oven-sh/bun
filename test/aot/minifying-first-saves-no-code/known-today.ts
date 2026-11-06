@@ -165,6 +165,7 @@ export const knownToday: Record<string, string> = {
   "esbuild/dce: dce/TreeShakingClassEnumKey": "bundled: operations 15 -> 13",
   "esbuild/dce: dce/TreeShakingInESMWrapper":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
+  "esbuild/dce: dce/TreeShakingObjectLiteralOwnKey": "bundled: code bytes 300 -> 177, operations 20 -> 13",
   "esbuild/dce: dce/TreeShakingUnaryOperators":
     "written: the build: 6 |       delete keep; |                  ^ | error: TS1102: 'delete' cannot be called on an identifier",
   "esbuild/dce: dce/UnreferencedObjectLiteral":

@@ -5,11 +5,28 @@
 // CHECK: = PrivateHas {{*}}layout=[[layout]] @
 
 // The getter and the setter of an `accessor` field are on the object before its value, as a method is. A read is one operation on the value.
+// So is a store, and an update is one of each.
 // CHECK-LABEL: function {{*}}name="hasAccessorField"
 // CHECK: = PrivateHas {{*}}layout=[[layout]] @
 // CHECK-LABEL: function {{*}}name="readAccessorField"
+// CHECK-NOT: PrivateGet
 // CHECK: = PrivateGet {{*}}layout=[[layout]] field=2 @
 // CHECK-NOT: PrivateGet
+// CHECK-LABEL: function {{*}}name="storeAccessorField"
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK: PrivateSet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK-LABEL: function {{*}}name="updateAccessorField"
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK: = PrivateGet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK: PrivateSet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
 
 // An operand that is not an object is reported as the `in` operator reports it for any other key.
 // RUN(FIELD): lower
@@ -82,5 +99,11 @@ export class C {
   }
   static readAccessorField(o: C) {
     return o.#v;
+  }
+  static storeAccessorField(o: C) {
+    o.#v = 6;
+  }
+  static updateAccessorField(o: C) {
+    ++o.#v;
   }
 }

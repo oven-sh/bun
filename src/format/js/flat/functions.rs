@@ -34,6 +34,10 @@ impl<'a> Line<'_, 'a> {
                     line.list(elements.iter(), |line, element| {
                         let pattern = element.pat().ok_or(Refused)?;
                         if element.is_rest() {
+                            // `[...a = 1]` is an error that the parser lets pass.
+                            if element.default().is_some() {
+                                return Err(Refused);
+                            }
                             line.token("...")?;
                         }
                         line.pattern(pattern)?;

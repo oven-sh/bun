@@ -260,3 +260,41 @@ devTest("a file a plugin resolves to with forward slashes is watched", {
     await c.expectMessage("item s3");
   },
 });
+devTest("a file a plugin's onLoad filter matches but leaves to the disk is watched", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "shared",
+        setup(build) {
+          build.onResolve({ filter: /^shared$/ }, () => ({
+            path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
+          }));
+          // Matches the path as written, and returns nothing: the file is read from the disk.
+          build.onLoad({ filter: /\\/shared\\.ts$/ }, () => undefined);
+        },
+      };
+    `,
+    "shared.ts": `
+      export default "s1";
+    `,
+    "item.ts": `
+      import s from "shared";
+      console.log("item " + s);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("item s1");
+    await dev.patch("shared.ts", { find: "s1", replace: "s2" });
+    await c.expectMessage("item s2");
+  },
+});

@@ -116,7 +116,15 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
         parent = &parent[..parent.len() - 1];
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    // On Windows either separator: a plugin may name a file `C:/app/x.ts`, and change events come as `C:\app\x.ts`.
+    #[cfg(windows)]
+    let starts_with = |s: &[u8], prefix: &[u8]| {
+        s.len() >= prefix.len()
+            && s.iter().zip(prefix).all(|(&a, &b)| {
+                a.eq_ignore_ascii_case(&b) || (is_sep_any(a) && is_sep_any(b))
+            })
+    };
+    #[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
     let starts_with = strings::starts_with_case_insensitive_ascii;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let starts_with = strings::starts_with;

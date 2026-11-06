@@ -1,7 +1,7 @@
 // What Python is in the middle of is cut short, and then the program goes on.
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
-import { join } from "node:path";
+import { isASAN, isDebug, isWindows } from "harness";
+import { runFixture } from "./helpers";
 
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(120_000);
@@ -86,13 +86,7 @@ test.skipIf(isWindows).concurrent.each([
     `[("ValueError('thrown to JavaScript')", "ValueError('thrown to JavaScript')"), ('None', 'None')]`,
   ],
 ])("SIGINT breaks a script of node:vm in %s", async (where, log) => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fixtures", "interrupt-at-work-fixture.ts"), where],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runFixture("interrupt-at-work-fixture.ts", where);
   expect({ stdout, stderr }).toEqual({ stdout: `ERR_SCRIPT_EXECUTION_INTERRUPTED\n${log}\nthe end\n`, stderr: "" });
   expect(exitCode).toBe(0);
 });
@@ -156,13 +150,7 @@ test.skipIf(isWindows).concurrent.each([
     `[("ValueError('thrown to JavaScript')", "ValueError('thrown to JavaScript')"), 'ERR_SCRIPT_EXECUTION_INTERRUPTED', ("IndexError('outer')", "IndexError('outer')"), ('None', 'None')]`,
   ],
 ])("SIGINT breaks, in an except clause, a script of node:vm that was run in %s", async (where, log) => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fixtures", "interrupt-at-work-fixture.ts"), where, "goes on"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runFixture("interrupt-at-work-fixture.ts", where, "goes on");
   expect({ stdout, stderr }).toEqual({ stdout: `returned\n${log}\nthe end\n`, stderr: "" });
   expect(exitCode).toBe(0);
 });
@@ -177,29 +165,16 @@ test
     "a buffered file of a with statement",
     "a text file of a with statement",
   ])("no descriptor stays open when the timeouts of node:vm end scripts that open %s", async what => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fixtures", "timeout-with-files-fixture.ts"), what],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runFixture("timeout-with-files-fixture.ts", what);
   expect({ stdout, stderr }).toEqual({ stdout: "40 ended, 0 still open\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
 
 test.skipIf(isWindows)("an exception reaches its handler though a script was broken on the way", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(import.meta.dir, "fixtures", "interrupt-at-work-fixture.ts"),
-      "a script within the finally of a generator, while an exception leaves its loop",
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runFixture(
+    "interrupt-at-work-fixture.ts",
+    "a script within the finally of a generator, while an exception leaves its loop",
+  );
   expect({ stdout, stderr }).toEqual({
     stdout: `returned\n['ERR_SCRIPT_EXECUTION_INTERRUPTED', ("ValueError('on its way')", None)]\nthe end\n`,
     stderr: "",
@@ -210,13 +185,7 @@ test.skipIf(isWindows)("an exception reaches its handler though a script was bro
 test.skipIf(isWindows)(
   "the interpreter is whole though SIGINT broke the script in which it was first used",
   async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "interrupt-at-start-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runFixture("interrupt-at-start-fixture.ts");
     expect({ stdout, stderr }).toEqual({ stdout: "ERR_SCRIPT_EXECUTION_INTERRUPTED\n[''] ''\n", stderr: "" });
     expect(exitCode).toBe(0);
   },

@@ -57,7 +57,7 @@ q = queue.Queue(); q.put(1); q.shutdown(); print(q.get()); t(q.get); t(q.put, 1)
 
 import sched, time
 sc = sched.scheduler(time.monotonic, time.sleep); out = []
-sc.enter(0.02, 1, out.append, ('b',)); sc.enter(0.01, 1, out.append, ('a',)); ev = sc.enter(5, 1, out.append, ('never',)); sc.cancel(ev); print(sc.empty(), len(sc.queue)); sc.run(); print(out, sc.empty())
+now = time.monotonic(); sc.enterabs(now + 0.02, 1, out.append, ('b',)); sc.enterabs(now + 0.01, 1, out.append, ('a',)); ev = sc.enter(5, 1, out.append, ('never',)); sc.cancel(ev); print(sc.empty(), len(sc.queue)); sc.run(); print(out, sc.empty())
 
 import logging
 log = logging.getLogger('test'); h = logging.StreamHandler(sys.stdout); h.setFormatter(logging.Formatter('%(levelname)s %(name)s %(threadName)s %(message)s')); log.addHandler(h); log.setLevel(logging.INFO)

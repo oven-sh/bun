@@ -1,7 +1,7 @@
 // Each worker has a Python of its own.
 import { float } from "bun:python";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
+import { isASAN, isDebug, isLinux } from "harness";
 import { join } from "node:path";
 import {
   BufferError,
@@ -22,6 +22,7 @@ import {
 import datetime from "python:datetime";
 import { getitem } from "python:operator";
 import sys from "python:sys";
+import { runFixture, runFixtureWith } from "./helpers";
 
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(120_000);
@@ -116,17 +117,9 @@ describe.concurrent("Python exits", () => {
     ["sys.exit(3), and sys.exit(4) in a listener of exit", main, "atexit\nlistener of exit: 3\nfinalizer\n", 4],
   );
   test.each(rows)("%s, in %s", async (how, where, expected, status) => {
-    const fixtures = join(import.meta.dir, "fixtures");
-    await using proc = Bun.spawn({
-      cmd:
-        where === pythonMain
-          ? [bunExe(), join(fixtures, "exit-in-worker.py")]
-          : [bunExe(), join(fixtures, "exit-in-worker-fixture.ts"), where],
-      env: { ...bunEnv, HOW: how },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await (where === pythonMain
+      ? runFixtureWith({ HOW: how }, "exit-in-worker.py")
+      : runFixtureWith({ HOW: how }, "exit-in-worker-fixture.ts", where));
     expect(stdout).toBe(expected);
     if (how.endsWith("in a function of atexit"))
       expect(stderr).toStartWith("Exception ignored in atexit callback <function again at ");
@@ -184,13 +177,7 @@ describe.concurrent("workers", () => {
   test.each(["terminated", "terminated, not daemons", "ends"])(
     "a worker with threads of Python's that run and wait: %s",
     async how => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-with-threads-fixture.ts"), how],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { stdout, stderr, exitCode } = await runFixture("terminate-with-threads-fixture.ts", how);
       expect({ stdout, stderr }).toEqual({ stdout: "survived and the threads are gone\n", stderr: "" });
       expect(exitCode).toBe(0);
     },
@@ -247,25 +234,13 @@ describe.concurrent("workers", () => {
     // Elsewhere nothing gets the thread out of these.
     ...(isLinux ? ["in signal.sigwait()", "in signal.sigtimedwait()"] : []),
   ])("terminate() of a worker whose Python is %s", async what => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-work-fixture.ts"), what],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runFixture("terminate-at-work-fixture.ts", what);
     expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 
   test("terminate() of workers in which Python is starting", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-start-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runFixture("terminate-at-start-fixture.ts");
     expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
@@ -279,13 +254,7 @@ describe.concurrent("workers", () => {
     "threading, which raises",
     "flush, which raises",
   ])("terminate() while the interpreter of the worker is shutting down: %s", async where => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-exit-fixture.ts"), where],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await runFixture("terminate-at-exit-fixture.ts", where);
     expect({ stdout, stderr }).toEqual({ stdout: "closed\n", stderr: "" });
     expect(exitCode).toBe(0);
   });

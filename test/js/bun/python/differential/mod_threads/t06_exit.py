@@ -1,9 +1,11 @@
 # What happens to threads when the program ends. Each case is a program of its own.
+# No case goes by the clock: a thread that is to outlast the main one waits until that one is about to join it (threading._register_atexit()).
 import subprocess, sys, os
 cases = {
 "non-daemon threads are waited for": '''
-import threading, time
-def late(): time.sleep(0.1); print("thread done")
+import threading
+ending = threading.Event(); threading._register_atexit(ending.set)
+def late(): ending.wait(); print("thread done")
 threading.Thread(target=late).start()
 print("main done")
 ''',
@@ -21,14 +23,16 @@ time.sleep(0.05)
 print("main done")
 ''',
 "atexit runs after the threads are joined": '''
-import threading, time, atexit
+import threading, atexit
+ending = threading.Event(); threading._register_atexit(ending.set)
 atexit.register(lambda: print("atexit"))
-threading.Thread(target=lambda: (time.sleep(0.05), print("thread"))).start()
+threading.Thread(target=lambda: (ending.wait(), print("thread"))).start()
 print("main")
 ''',
 "sys.exit in the main thread waits too": '''
-import threading, time, sys
-threading.Thread(target=lambda: (time.sleep(0.05), print("thread"))).start()
+import threading, sys
+ending = threading.Event(); threading._register_atexit(ending.set)
+threading.Thread(target=lambda: (ending.wait(), print("thread"))).start()
 sys.exit(3)
 ''',
 "os._exit does not": '''
@@ -38,8 +42,9 @@ print("main"); sys.stdout.flush()
 os._exit(4)
 ''',
 "an exception in the main thread": '''
-import threading, time
-threading.Thread(target=lambda: (time.sleep(0.05), print("thread"))).start()
+import threading
+ending = threading.Event(); threading._register_atexit(ending.set)
+threading.Thread(target=lambda: (ending.wait(), print("thread"))).start()
 raise ValueError("main fails")
 ''',
 "no new threads at shutdown": '''
@@ -61,9 +66,10 @@ time.sleep(0.02)
 print("main done")
 ''',
 "threading._register_atexit": '''
-import threading, time
+import threading
+ending = threading.Event(); threading._register_atexit(ending.set) # The last registered is called first.
 threading._register_atexit(lambda: print("threading atexit"))
-threading.Thread(target=lambda: (time.sleep(0.03), print("thread"))).start()
+threading.Thread(target=lambda: (ending.wait(), print("thread"))).start()
 print("main")
 ''',
 }

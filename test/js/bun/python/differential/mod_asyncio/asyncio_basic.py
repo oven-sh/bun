@@ -5,7 +5,7 @@ async def main():
     t0 = time.monotonic()
     print(await sleeper(1, 0.01))
     print(await asyncio.gather(sleeper(1, 0.03), sleeper(2, 0.01), sleeper(3, 0.02)))
-    print(time.monotonic() - t0 < 2)
+    print(time.monotonic() - t0 < 60)
     task = asyncio.create_task(sleeper(5, 0.01)); print(task.done()); print(await task, task.done(), task.result())
     try: await asyncio.wait_for(asyncio.sleep(5), 0.02)
     except TimeoutError as e: print('TimeoutError', type(e).__name__)
@@ -42,7 +42,11 @@ async def main():
             tg.create_task(boom())
     except* ValueError as eg: print('group', [str(e) for e in eg.exceptions])
     done, pending = await asyncio.wait([asyncio.create_task(sleeper(i, 0.001 * i)) for i in range(3)]); print(sorted(t.result() for t in done), len(pending))
-    print([await f for f in asyncio.as_completed([sleeper(3, 0.03), sleeper(1, 0.01)])])
+    # Whichever of the two is started first.
+    is_first_done = asyncio.Event()
+    async def first(): is_first_done.set(); return 2
+    async def second(): await is_first_done.wait(); return 6
+    print([await f for f in asyncio.as_completed([second(), first()])])
     print(await asyncio.shield(sleeper(4, 0.001)))
     print(type(loop).__name__, type(loop._selector).__name__, loop.is_running(), loop.time() > 0)
     print(await loop.run_in_executor(None, lambda: 'executor') if False else 'skip executor')

@@ -254,7 +254,8 @@ subprocess.run(["second", "-c", "print('found on PATH')"], check=True, env={**os
       const all = (await python(["--help-all"])).stdout;
       expect(all).toContain("\nPYTHONPATH ");
       expect(all).toContain("\n-X importtime");
-    });
+      // Six programs one after the other, of a few milliseconds each, among twenty tests that run at the same time.
+    }, 30_000);
 
     test("mistakes", async () => {
       const usage = lines(

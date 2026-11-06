@@ -7,8 +7,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
-// These builds take seconds to start Python.
-if (isDebug || isASAN) setDefaultTimeout(90_000);
+// These builds take seconds to start Python, and a program waits for its turn (see run()).
+if (isDebug || isASAN) setDefaultTimeout(180_000);
 
 /** Statements, the last line of which is an expression (`await` is fine); what it prints; why it does not, if it does not. */
 export type Check = [code: string, expected: string, notYet?: string];
@@ -27,7 +27,24 @@ def _show(index, text):
     print(f"{index}\\t" + text.replace("\\\\", "\\\\\\\\").replace("\\n", "\\\\n"), flush=True)
 `;
 
+// A file starts all its programs when it is loaded, up to nineteen of them. Side by side they take each other's time, and on the slow
+// builds, where one takes up to 40 s by itself, the limit below is for a program that has a processor more or less to itself.
+let turnsLeft = isDebug || isASAN ? 4 : Infinity;
+const waitingForTurn: (() => void)[] = [];
+async function takeTurn() {
+  if (turnsLeft) --turnsLeft;
+  else await new Promise<void>(resolve => waitingForTurn.push(resolve));
+  return {
+    [Symbol.dispose]() {
+      const next = waitingForTurn.shift();
+      if (next) next();
+      else ++turnsLeft;
+    },
+  };
+}
+
 export async function run(files: Record<string, string>, args: string[] = ["main.py"]) {
+  using turn = await takeTurn();
   using dir = tempDir("python-host", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],

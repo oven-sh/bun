@@ -1,6 +1,6 @@
 status: 0
-script: 20c106883d8d1d4b
-source: 30524a4e6cb023cd
+script: d72c5501c56bfe61
+source: 4bbdd3e521ae236f
 ---
 base.__name__ [base=CalledAsItIs] => CalledAsItIs
 f.__name__ [base=CalledAsItIs, f=function] => plain
@@ -47,6 +47,16 @@ f.__name__ [base=CalledAsItIs, f=function] => second_of_two
 log [base=CalledAsItIs, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
 f.__name__ [base=CalledAsItIs, f=function] => second_nested
 log [base=CalledAsItIs, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => native_exit
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => native_exit_return
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => native_exit_break
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => native_exit_continue
+log [base=CalledAsItIs, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledAsItIs, f=function] => native_exit_of_two
+log [base=CalledAsItIs, f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
 f.__name__ [base=CalledAsItIs, f=function] => async_with
 log [base=CalledAsItIs, f=function] => ['body', 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
 f.__name__ [base=CalledAsItIs, f=function] => async_with_named
@@ -100,6 +110,16 @@ f.__name__ [base=CalledWithTheObject, f=function] => second_of_two
 log [base=CalledWithTheObject, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
 f.__name__ [base=CalledWithTheObject, f=function] => second_nested
 log [base=CalledWithTheObject, f=function] => ['body', 'second KeyboardInterrupt', 'first KeyboardInterrupt', 'KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => native_exit
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => native_exit_return
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => native_exit_break
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => native_exit_continue
+log [base=CalledWithTheObject, f=function] => ['KeyboardInterrupt']
+f.__name__ [base=CalledWithTheObject, f=function] => native_exit_of_two
+log [base=CalledWithTheObject, f=function] => ['first KeyboardInterrupt', 'KeyboardInterrupt']
 f.__name__ [base=CalledWithTheObject, f=function] => async_with
 log [base=CalledWithTheObject, f=function] => ['body', 'aexit KeyboardInterrupt', 'KeyboardInterrupt']
 f.__name__ [base=CalledWithTheObject, f=function] => async_with_named

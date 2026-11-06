@@ -200,6 +200,42 @@ try:
                 log.extend(['body'])
         log.append('after')
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def second_nested(log):')
+# After the call of an __exit__ written in C it is looked at, whichever way the statement is left.
+try:
+    class NativeExit:
+        __enter__ = staticmethod(interrupt)
+        __exit__ = staticmethod('{}{}{}'.format)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: class NativeExit:')
+try:
+    def native_exit(log):
+        with NativeExit():
+            pass
+        log.append('after')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def native_exit(log):')
+try:
+    def native_exit_return(log):
+        with NativeExit():
+            return 1
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def native_exit_return(log):')
+try:
+    def native_exit_break(log):
+        for i in (1, 2):
+            with NativeExit():
+                break
+        log.append('after')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def native_exit_break(log):')
+try:
+    def native_exit_continue(log):
+        for i in (1, 2):
+            with NativeExit():
+                continue
+        log.append('after')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def native_exit_continue(log):')
+try:
+    def native_exit_of_two(log):
+        with Quiet(log, 'first'), NativeExit():
+            return 1
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def native_exit_of_two(log):')
 try:
     def drive(c):
         try: c.send(None)
@@ -246,11 +282,12 @@ try:
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: base.__name__')
         for f in (plain, assigned, before_try, in_try, call_in_body, named, empty_body, no_call_in_body, loop_in_body, while_in_body, two, nested,
                   swallowed, in_loop, returns, enter_in_python, in_generator, in_coroutine, in_handler, in_finally,
-                  second_of_two, second_nested, async_with, async_with_named, async_with_empty, async_second_of_two):
+                  second_of_two, second_nested, native_exit, native_exit_return, native_exit_break, native_exit_continue, native_exit_of_two, async_with, async_with_named, async_with_empty, async_second_of_two):
             try: log = []
             except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: log = []')
             try: f(log)
-            except KeyboardInterrupt: log.append('KeyboardInterrupt')
+            except KeyboardInterrupt as e:
+                log.append('KeyboardInterrupt' if e.__traceback__.tb_next else 'KeyboardInterrupt, when the function had returned')
             try: print('f.__name__ [' + 'base=' + (repr(base) if type(base) in (str, int, float, bytes, bool, type(None)) or (type(base) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in base)) else base.__name__ if type(base) is type else type(base).__name__) + ", " + 'f=' + (repr(f) if type(f) in (str, int, float, bytes, bool, type(None)) or (type(f) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in f)) else f.__name__ if type(f) is type else type(f).__name__) + '] =>', f.__name__)
             except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: f.__name__')
             try: print('log [' + 'base=' + (repr(base) if type(base) in (str, int, float, bytes, bool, type(None)) or (type(base) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in base)) else base.__name__ if type(base) is type else type(base).__name__) + ", " + 'f=' + (repr(f) if type(f) in (str, int, float, bytes, bool, type(None)) or (type(f) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in f)) else f.__name__ if type(f) is type else type(f).__name__) + '] =>', log)

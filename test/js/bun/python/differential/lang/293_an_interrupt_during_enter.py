@@ -142,6 +142,30 @@ def second_nested(log):
         with Manager(log, 'second'):
             log.extend(['body'])
     log.append('after')
+# After the call of an __exit__ written in C it is looked at, whichever way the statement is left.
+class NativeExit:
+    __enter__ = staticmethod(interrupt)
+    __exit__ = staticmethod('{}{}{}'.format)
+def native_exit(log):
+    with NativeExit():
+        pass
+    log.append('after')
+def native_exit_return(log):
+    with NativeExit():
+        return 1
+def native_exit_break(log):
+    for i in (1, 2):
+        with NativeExit():
+            break
+    log.append('after')
+def native_exit_continue(log):
+    for i in (1, 2):
+        with NativeExit():
+            continue
+    log.append('after')
+def native_exit_of_two(log):
+    with Quiet(log, 'first'), NativeExit():
+        return 1
 def drive(c):
     try: c.send(None)
     except StopIteration: pass
@@ -175,10 +199,11 @@ for base in (CalledAsItIs, CalledWithTheObject):
     print(base.__name__)
     for f in (plain, assigned, before_try, in_try, call_in_body, named, empty_body, no_call_in_body, loop_in_body, while_in_body, two, nested,
               swallowed, in_loop, returns, enter_in_python, in_generator, in_coroutine, in_handler, in_finally,
-              second_of_two, second_nested, async_with, async_with_named, async_with_empty, async_second_of_two):
+              second_of_two, second_nested, native_exit, native_exit_return, native_exit_break, native_exit_continue, native_exit_of_two, async_with, async_with_named, async_with_empty, async_second_of_two):
         log = []
         try: f(log)
-        except KeyboardInterrupt: log.append('KeyboardInterrupt')
+        except KeyboardInterrupt as e:
+            log.append('KeyboardInterrupt' if e.__traceback__.tb_next else 'KeyboardInterrupt, when the function had returned')
         print(f.__name__, log)
 
 # Locks, under a timer whose handler raises, once a round. Whenever it strikes: a lock that has been entered, and the statements not begun, has been left.

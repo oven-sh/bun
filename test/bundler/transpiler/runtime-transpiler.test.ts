@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import vm from "node:vm";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -286,3 +287,199 @@ test.skipIf(isDebug || isASAN)(
     expect(exitCode).toBe(0);
   },
 );
+
+// An early error is a syntax error that stops a program before any of it runs. Bun's parser reports some early errors
+// itself. It leaves the others to JavaScriptCore, which reads what Bun printed. So where a pass removes the code or
+// prints it differently, nothing reports the error, and the program runs.
+//
+// The table records what happens today to each program in two files. Nothing runs the program in either:
+//
+//   if (globalThis.never) { <program> }   the code stays
+//   if (0) { <program> }                  dead code elimination removes the code
+//
+// It says what Bun does, not what Bun should do. Two rules have a position in the tree: an invalid RegExp literal in
+// removed code has to run (test/aot/parallel/language/invalid-regexp-in-dropped-code.js), and the parser's error for
+// `new.target` outside a function "is intentionally not emitted" (src/js_parser/visit/visit_expr.rs). A change that
+// reports one of these errors moves its lines to "is reported".
+describe("an early error in code that nothing runs", () => {
+  // By outcome, then by rule and extension. A `.cjs` file is CommonJS. Any other file is a module.
+  const table: Record<string, Record<string, string[]>> = {
+    // Both files have a SyntaxError.
+    "is reported": {
+      "assignment-targets.js": ["a?.b = 1;", "({ a = 1 });"],
+      "class-members.js": ["class C { #a; m() { delete this.#a; } }"],
+      "declarations.js": ["let a; let a;", "const a;"],
+      "labels-and-jumps.js": ["break;"],
+      "regexp-literals.js": ["x = /a/gg;"],
+      "reserved-names.js": ["var eval;", "var { this } = a;"],
+      "strict-code.cjs": ['"use strict"; with ({}) {}', '"use strict"; var let;'],
+    },
+    // Only the file where the code stays has a SyntaxError.
+    "is erased under `if (0)`": {
+      "accessors.js": ["class C { set a(...b) {} }", "f({ set a(...b) {} });"],
+      "assignment-targets.js": ["({ ...{ a } } = b);", "({ ...[a] } = b);", "[a] += 1;", "[a]++;"],
+      "await.js": [
+        "class C { a = await 1; }",
+        "f(async (a = await 1) => 1);",
+        "class C { static { function await() {} } }",
+        "class C { static { var { await } = a; } }",
+        "async function f() { let { await } = a; }",
+        "function await() {}",
+      ],
+      "class-members.js": [
+        "class C { constructor() {} constructor() {} }",
+        "x = class { constructor() {} constructor() {} };",
+      ],
+      "declarations.js": ["let [a];", "let { a };", "for (let [a]; ; ) {}", "for (using a; ; ) {}"],
+      "delete.js": ["var a; delete a;", "var a; delete (a);"],
+      "delete.ts": ["let a: number; delete a;"],
+      "labels-and-jumps.js": ["a: a: ;", "a: { a: ; }", "yield: ;", "let: ;", "return;", "{ return; }"],
+      "new.js": ["new.target;", "f(() => new.target);", "new a?.b();", "new a?.b.c();"],
+      "regexp-literals.js": ["x = /(/;", "x = /a**/;", "x = /(?<a>)(?<a>)/;", "f(/[b-a]/);"],
+      "reserved-names.js": [
+        "let { enum } = a;",
+        "let { class } = a;",
+        "let { static } = a;",
+        "({ implements } = a);",
+        "let [let] = a;",
+        "const { let } = a;",
+        "class let {}",
+        "class static {}",
+        "class eval {}",
+        "(class arguments {});",
+        "function f(eval) {}",
+        "function arguments() {}",
+        "const f = package => 1;",
+        "var f = (yield) => 1;",
+        "try {} catch (eval) {}",
+        "try {} catch (arguments) {}",
+        "function* g() { class yield {} }",
+        "function* g() { let { yield } = a; }",
+      ],
+      "reserved-names.ts": ["function* g() { enum yield {} }", "async function f() { enum await {} }"],
+      "strict-code.cjs": [
+        "class C { m() { with ({}) {} } }",
+        "class C { m() { var let; } }",
+        "class eval {}",
+        '"use strict"; var a; delete a;',
+        '"use strict"; function f() { delete f; }',
+      ],
+      "using.js": [
+        "switch (a) { case 1: using b = c; }",
+        "switch (a) { default: await using b = c; }",
+        "for (using a in b);",
+        "for (await using a in b);",
+      ],
+    },
+    // Both files load, although the engine refuses the first one as it is written. The code stays, but nothing reads
+    // the expression, or the branch is never taken, or the statement follows a `return`, or Bun prints it differently.
+    "is erased where it stays": {
+      "accessors.js": ["({ set a(...b) {} });"],
+      "class-members.js": [
+        "0 && class { constructor() {} constructor() {} };",
+        "function f() { return; class C { constructor() {} constructor() {} } }",
+      ],
+      "declarations.js": ["var [a];", "var { a };"],
+      "new.js": ["new a?.();"],
+      "regexp-literals.js": [
+        "/(/;",
+        "/\\P{assigned}/u;",
+        "void /(/;",
+        "[/(/];",
+        "0 && /(/;",
+        "1 ? 0 : /(/;",
+        "function f() { return; x = /(/; }",
+      ],
+      "strict-code.cjs": ['"use strict"; x = 010;', 'function f() { "use strict"; with ({}) {} }'],
+      "using.js": ["await\nusing a = b;"],
+    },
+    // Both files load, and the engine accepts the first one as it is written, or can't read it.
+    "has no early error": {
+      "modules.js": ["await 1;"],
+      "sloppy-code.cjs": ["var a; delete a;", "new.target;", "return;"],
+      "typescript.ts": ["enum E { A }"],
+    },
+  };
+
+  // A `"use strict";` at the start of a program stays above the `if`: inside the block it is no directive.
+  const directive = '"use strict";';
+  const fileOf = (program: string, condition: string) => {
+    const head = program.startsWith(directive) ? directive : "";
+    return `${head && head + "\n"}if (${condition}) {\n${program.slice(head.length)}\n}\n`;
+  };
+
+  // The engine reads a `.cjs` text as the body of a CommonJS function and a `.js` text as a module. It doesn't read
+  // TypeScript.
+  const isRefusedAsWritten = (extension: string, text: string) => {
+    try {
+      if (extension === "cjs") new Function("exports", "require", "module", "__filename", "__dirname", text);
+      else if (extension === "js") new vm.SourceTextModule(text);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return true;
+    }
+    return false;
+  };
+
+  test("is reported or erased as the table says", async () => {
+    const rows = Object.entries(table).flatMap(([, lists]) =>
+      Object.entries(lists).flatMap(([list, programs]) =>
+        programs.map(program => ({ list, program, extension: list.slice(list.lastIndexOf(".") + 1) })),
+      ),
+    );
+    const files: Record<string, string> = {};
+    rows.forEach(({ program, extension }, index) => {
+      files[`kept/${index}.${extension}`] = fileOf(program, "globalThis.never");
+      files[`removed/${index}.${extension}`] = fileOf(program, "0");
+    });
+    using dir = tempDir("early-errors-in-removed-code", {
+      ...files,
+      "package.json": JSON.stringify({ type: "module" }),
+      // `import()` would load a `.cjs` file that has no CommonJS in it as a module.
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const errors = {};
+        for (const file of ${JSON.stringify(Object.keys(files))}) {
+          try {
+            if (file.endsWith(".cjs")) require("./" + file);
+            else await import("./" + file);
+          } catch (error) {
+            errors[file] = error.name;
+          }
+        }
+        console.log(JSON.stringify(errors));
+      `,
+    });
+    // Without --no-install, a program that needs a package would make Bun look for it on the network.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const errors: Record<string, string> = JSON.parse(stdout);
+    const isRefused = (file: string) => {
+      if (!(file in errors)) return false;
+      // The engine throws a SyntaxError. Bun's parser throws a BuildMessage, or an AggregateError of them.
+      if (/^(SyntaxError|BuildMessage|AggregateError)$/.test(errors[file])) return true;
+      throw new Error(`A ${errors[file]} for ${JSON.stringify(files[file])}`);
+    };
+
+    const found: typeof table = {};
+    rows.forEach(({ list, program, extension }, index) => {
+      const kept = `kept/${index}.${extension}`;
+      let outcome: string;
+      if (isRefused(`removed/${index}.${extension}`)) {
+        outcome = isRefused(kept) ? "is reported" : "is refused only under `if (0)`";
+      } else if (isRefused(kept)) outcome = "is erased under `if (0)`";
+      else outcome = isRefusedAsWritten(extension, files[kept]) ? "is erased where it stays" : "has no early error";
+      ((found[outcome] ??= {})[list] ??= []).push(program);
+    });
+    expect(found).toEqual(table);
+    expect(exitCode).toBe(0);
+  });
+});

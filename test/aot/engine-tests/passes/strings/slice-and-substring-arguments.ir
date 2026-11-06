@@ -1,5 +1,7 @@
 # slice() and substring() with every kind of argument (in range, reversed, negative, fractional, NaN, infinite, huge, past the end) on every internal representation of a string, inside and outside loops.
 # FORM: AsRead
+# The program calls these functions and uses nothing of what they answer: with the calls gone there would be no code to look at.
+# OPTIONS: disable=pass:RemoveUnusedCalls
 # RUN: lower-to-air size f0 f6 f7
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
@@ -505,13 +507,13 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 countedSlices constants
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 485, patchpoints: 74, rare instructions: 464, polls: 6
+# CHECK-NEXT: instructions: 447, patchpoints: 72, rare instructions: 367, polls: 6
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="countedSlices"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 257, patchpoints: 7, rare instructions: 29, polls: 1
-# CHECK-NEXT: end of function f6
+# CHECK-NEXT: instructions: 4, patchpoints: 0, rare instructions: 4
+# CHECK-NEXT: end of function f51
 # CHECK-LABEL: function {{*}}name="constants"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 491, patchpoints: 101
+# CHECK-NEXT: instructions: 51, patchpoints: 16, rare instructions: 8
 # CHECK-NEXT: end of function f7

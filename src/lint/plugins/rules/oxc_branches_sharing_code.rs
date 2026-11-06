@@ -6,10 +6,10 @@ use smallvec::SmallVec;
 /// Checks if the `if` and `else` blocks contain shared code that can be moved out of the blocks.
 pub struct BranchesSharingCode;
 
-const AT_START: Message = Message::new("", "All `if` blocks contain the same code at the start");
-const AT_END: Message = Message::new("", "All `if` blocks contain the same code at the end");
-const MOVE_BEFORE: Message = Message::new("", "Move the shared statements before the `if` statement.");
-const MOVE_AFTER: Message = Message::new("", "Move the shared statements after the `if` statement.");
+const AT_START: &Message = &Message::new("", "All `if` blocks contain the same code at the start");
+const AT_END: &Message = &Message::new("", "All `if` blocks contain the same code at the end");
+const MOVE_BEFORE: &Message = &Message::new("", "Move the shared statements before the `if` statement.");
+const MOVE_AFTER: &Message = &Message::new("", "Move the shared statements after the `if` statement.");
 
 /// The statements of each block in `if {} else if {} else {}`.
 type Bodies<'a> = SmallVec<[List<'a, Stmt<'a>>; 4]>;

@@ -225,6 +225,58 @@ impl FileLowering<'_, '_, '_, '_> {
         self.compare_pending_pairs(comparison, position);
     }
 
+    // The layout of a class names that of its base class where it is defined, so only the members that differ are left to follow.
+    pub(super) fn record_flow_into_base_class(
+        &mut self,
+        instance: CheckerTypeId,
+        base: CheckerTypeId,
+        position: u32,
+    ) {
+        let class_of = |file: &mut Self, ty| match file.queries.type_shape(ty) {
+            Ok(shape) => match classify_shape(&shape.kind) {
+                ComparedShape::Class(class) => Some(class),
+                _ => None,
+            },
+            Err(_) => None,
+        };
+        let classes = (class_of(self, instance), class_of(self, base));
+        let (Some(class), Some(base_class)) = classes else {
+            return self.record_conversion(instance, base, position, ConversionKind::Performed);
+        };
+        if class == base_class {
+            return self.record_conversion(instance, base, position, ConversionKind::Performed);
+        }
+        let pair = ComparedPair {
+            source: instance,
+            target: base,
+            is_asserted: false,
+        };
+        if self.types.conversions.compared_types.insert(pair, 0) == Some(0) {
+            return;
+        }
+        let Ok(members) = self.queries.members_typed_otherwise(instance, base) else {
+            return;
+        };
+        let mut comparison = Comparison::default();
+        for member in members {
+            let (from, to) = (member.checked, member.in_base);
+            if is_read_through(member.kind_in_base)
+                && let Ok(true) = self.queries.is_assignable(from, to)
+            {
+                comparison.add_pair(
+                    ComparedPair {
+                        source: from,
+                        target: to,
+                        is_asserted: false,
+                    },
+                    MAX_COMPARED_DEPTH,
+                    true,
+                );
+            }
+        }
+        self.compare_pending_pairs(comparison, position);
+    }
+
     fn collect_object_types(&mut self, ty: CheckerTypeId) -> SmallVec<[CheckerTypeId; 4]> {
         let mut objects = SmallVec::new();
         let mut visited: SmallVec<[CheckerTypeId; 4]> = SmallVec::new();
@@ -412,7 +464,7 @@ impl FileLowering<'_, '_, '_, '_> {
             (ComparedShape::NoValue | ComparedShape::Loose, _)
             | (_, ComparedShape::NoValue | ComparedShape::Loose | ComparedShape::Primitive) => {}
             (_, ComparedShape::Transparent(types)) => {
-                self.follow_into_fitting_member(comparison, source, value_kind, types);
+                self.follow_into_fitting_member(comparison, source, value_kind, target, types);
             }
             // Two instantiations of one class share each field, whose type is the type parameter.
             (ComparedShape::Class(class), ComparedShape::Class(target_class))
@@ -622,14 +674,38 @@ impl FileLowering<'_, '_, '_, '_> {
             })
     }
 
+    // A union of thousands of literal types is what thousands of stores of a text under one name make, and each of them asks.
+    fn has_open_member(&mut self, union: CheckerTypeId, members: &[CheckerTypeId]) -> bool {
+        if let Some(&known) = self.types.conversions.unions_with_open_members.get(&union) {
+            return known;
+        }
+        let mut is_every_shape_known = true;
+        let mut has_open_member = false;
+        for &member in members {
+            is_every_shape_known &= self.queries.type_shape(member).is_ok();
+            has_open_member |=
+                self.classify_union_member(ValueKind::Primitive, member) == UnionMember::Open;
+        }
+        if is_every_shape_known {
+            let known = &mut self.types.conversions.unions_with_open_members;
+            known.insert(union, has_open_member);
+        }
+        has_open_member
+    }
+
     // The type of a position is the union of the families of its members, so one member that takes the value is enough.
     fn follow_into_fitting_member(
         &mut self,
         comparison: &mut Comparison,
         source: CheckerTypeId,
         kind: ValueKind,
+        union: CheckerTypeId,
         members: &[CheckerTypeId],
     ) {
+        // A primitive that flows into a primitive adds nothing to any family.
+        if kind == ValueKind::Primitive && !self.has_open_member(union, members) {
+            return;
+        }
         if members.contains(&source) {
             return;
         }
@@ -640,10 +716,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut kinds: SmallVec<[UnionMember; 8]> = SmallVec::new();
         for &member in members {
             kinds.push(self.classify_union_member(kind, member));
-        }
-        // A primitive that flows into a primitive adds nothing to any family.
-        if kind == ValueKind::Primitive && !kinds.contains(&UnionMember::Open) {
-            return;
         }
         let of_same_kind = || {
             let members = members.iter().zip(&kinds);

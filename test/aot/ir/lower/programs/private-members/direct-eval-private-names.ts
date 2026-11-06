@@ -192,8 +192,14 @@ export {};
 // CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v13 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v13
+// CHECK-NEXT: v13 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v14):
+// CHECK-NEXT: v15 = PropGet v14 key="#count"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v16):
+// CHECK-NEXT: v17 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="runInArrow"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=3 thisType={type=[[L_1]] site=[[w_12]]} parameters=[{type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] {

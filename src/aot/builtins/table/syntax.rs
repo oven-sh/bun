@@ -64,6 +64,8 @@ pub enum Intrinsic {
     Conversion(Conversion),
     Throw(ErrorKind),
     IfAbruptCloseIterator,
+    IteratorGenericClose,
+    IteratorGenericNext,
     SymbolKey(WellKnownSymbol),
     HasJSType {
         first: CheckedJSType,

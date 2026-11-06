@@ -1,5 +1,4 @@
 # A type may list functions beside `function`. What is printed of a program as read holds the list, so that the text reads back as the program that was printed
-# TODO: nobody: the reader takes a named function for its family, and the print of the program as read leaves the list out: a printed build has weaker declared types than the build
 # FORM: AsRead
 # RUN: print
 # CHECK: variable g0 name="held" {{*}} declared={type=undefined|null|function|f1 flags=[IsExpected]}

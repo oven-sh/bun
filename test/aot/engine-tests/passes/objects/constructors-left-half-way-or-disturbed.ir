@@ -214,26 +214,50 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=1852 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=object} parameters=[{type=number site=w9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: object, v1: number):
 # CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v3: int|whole):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: boolean = Less v3, v1
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v3: boolean = Less v2, v1
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b12()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: anything = PropGet v0 key="n" accessSite=9
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: anything|absent = GetCachedValue v0 key="n" valueType=anything|absent
+# CHECK-NEXT: v7: boolean = TypeTest v6 testedType=anything
+# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b6()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: anything = PropGet v0 key="n" accessSite=9
-# CHECK-NEXT: v7: boolean = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b6(| 0)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v9: int|whole = Increment v3
-# CHECK-NEXT: Jump -> next b1(v9)
-# CHECK-NEXT: b6(v10: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
-# CHECK-NEXT: v11: number|string|bigint = Add v10, v3
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: v8: boolean = TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b4(v5)
+# CHECK-NEXT: b3(v9: i32):
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b4(v10: int|whole ~ 1) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v12: boolean = Less v10, v1
+# CHECK-NEXT: Branch v12 -> taken b5(), notTaken b12()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v13: int|whole ~ 2 = Increment v10
+# CHECK-NEXT: Jump -> next b4(v13)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: boolean = TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch v14 -> taken b7(| 0), notTaken b10(v5)
+# CHECK-NEXT: b7(v15: i32):
+# CHECK-NEXT: Jump -> next b8(v5)
+# CHECK-NEXT: b8(v16: int[1, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v18: boolean = Less v16, v15
+# CHECK-NEXT: Branch v18 -> taken b9(| 0), notTaken b12()
+# CHECK-NEXT: b9(v19: int[1, 2147483646]):
+# CHECK-NEXT: v20: anything = PropGet v0 key="n" accessSite=9
+# CHECK-NEXT: v21: int[2, 2147483647] = Increment v19
+# CHECK-NEXT: Jump -> next b8(v21)
+# CHECK-NEXT: b10(v22: int|whole ~ 1) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v24: boolean = Less v22, v1
+# CHECK-NEXT: Branch v24 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v25: anything = PropGet v0 key="n" accessSite=9
+# CHECK-NEXT: v26: int|whole ~ 2 = Increment v22
+# CHECK-NEXT: Jump -> next b10(v26)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Looping"
 # CHECK: module=m0 position=1852 role=GenericVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=object} parameters=[{type=number site=w9 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f14} {
@@ -246,12 +270,11 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2(v6: int|whole) frequency=Unlikely:
 # CHECK-NEXT: v7: anything = PropGet v0 key="n" accessSite=9
-# CHECK-NEXT: v8: number|string|bigint = Add v7, v6 form=Generic
-# CHECK-NEXT: v9: int|whole = Increment v6 form=Numbers
-# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: v8: int|whole = Increment v6 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v8)
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ByName"
 # CHECK: module=m0 position=1306 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=1306 isTailCall=true module=m0}] {

@@ -21,6 +21,18 @@ const show = `
   const at = new Date(1721000000000);
 `;
 
+const namesIntl = (localeOfDate: string) => `
+    ${show}
+    show("segments", () => [...new Intl.Segmenter("ja", { granularity: "word" }).segment("今日は良い天気です")].map(part => part.segment));
+    show("names", () => [new Intl.DisplayNames("de", { type: "language" }).of("fr"), new Intl.DisplayNames("fr", { type: "region" }).of("US")]);
+    show("plural", () => [new Intl.PluralRules("ru").select(3), new Intl.PluralRules("en", { type: "ordinal" }).select(22)]);
+    show("relative", () => new Intl.RelativeTimeFormat("es", { numeric: "auto" }).format(-1, "day"));
+    show("list", () => new Intl.ListFormat("de", { type: "disjunction" }).format(["a", "b", "c"]));
+    show("collator", () => ["10", "9", "1"].sort(new Intl.Collator("sv", { numeric: true }).compare));
+    show("number", () => new Intl.NumberFormat("ja", { style: "unit", unit: "kilometer-per-hour" }).format(50));
+    show("date", () => new Intl.DateTimeFormat(${localeOfDate}, { dateStyle: "full", timeStyle: "full", timeZone: "Asia/Shanghai" }).format(at));
+`;
+
 const files = {
   "hello.ts": `console.log("hello world");`,
   "names-none.ts": `
@@ -82,17 +94,9 @@ const files = {
     }
     show("array", () => [[1234.5, at].toLocaleString("de", { timeZone: "UTC" }), new Float64Array([1234.5]).toLocaleString("fr")]);
   `,
-  "names-Intl.ts": `
-    ${show}
-    show("segments", () => [...new Intl.Segmenter("ja", { granularity: "word" }).segment("今日は良い天気です")].map(part => part.segment));
-    show("names", () => [new Intl.DisplayNames("de", { type: "language" }).of("fr"), new Intl.DisplayNames("fr", { type: "region" }).of("US")]);
-    show("plural", () => [new Intl.PluralRules("ru").select(3), new Intl.PluralRules("en", { type: "ordinal" }).select(22)]);
-    show("relative", () => new Intl.RelativeTimeFormat("es", { numeric: "auto" }).format(-1, "day"));
-    show("list", () => new Intl.ListFormat("de", { type: "disjunction" }).format(["a", "b", "c"]));
-    show("collator", () => ["10", "9", "1"].sort(new Intl.Collator("sv", { numeric: true }).compare));
-    show("number", () => new Intl.NumberFormat("ja", { style: "unit", unit: "kilometer-per-hour" }).format(50));
-    show("date", () => new Intl.DateTimeFormat("zh", { dateStyle: "full", timeStyle: "full", timeZone: "Asia/Shanghai" }).format(at));
-  `,
+  // Its last locale isn't a constant, so the data of every locale stays.
+  "names-Intl.ts": namesIntl('process.env.LOCALE ?? "zh"'),
+  "names-Intl-in-eight-locales.ts": namesIntl('"zh"'),
   "names-number-toLocaleString.ts": `
     ${show}
     const amount: number = 1234567.891;
@@ -206,6 +210,12 @@ const without = (...kept: string[]) => features.filter(feature => !kept.includes
 
   test("a program that uses every Intl service keeps all of it", async () => {
     await runsLikeBun("names-Intl.ts", []);
+  });
+
+  test("a program whose locales are constants keeps the data of those alone", async () => {
+    const command = [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "names-Intl-in-eight-locales.ts"];
+    const { stderr } = await run(command, folder, { ...bunEnv, NO_COLOR: "1" });
+    expect(stderr).toContain("aot: trim: locales: de, en, es, fr, ja, ru, sv, zh");
   });
 
   for (const feature of without("IntlUnits")) {

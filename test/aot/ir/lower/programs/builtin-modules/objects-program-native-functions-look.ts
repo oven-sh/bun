@@ -62,7 +62,7 @@ process.exit(0);
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, IsChecked, HasExplicitName] captures=[{type=[[f_6]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|number|[[L_1]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsSloppy, IsChecked, HasExplicitName] captures=[{type=[[f_6]] flags=[IsFromCompiler] variableName="Delay"}] thisType={type=anything} results=[{type=undefined|null|number|[[L_1]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: [[f_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

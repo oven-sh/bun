@@ -271,11 +271,11 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="masks"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 293, patchpoints: 11, rare instructions: 125, polls: 1
+# CHECK-NEXT: instructions: 54, patchpoints: 0, rare instructions: 64
 # CHECK-NEXT: end of function f12
 # CHECK-LABEL: function {{*}}name="masks"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 53, patchpoints: 19, polls: 1
+# CHECK-NEXT: instructions: 48, patchpoints: 18, polls: 1
 # CHECK-NEXT: end of function f15
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=EntryChecks
@@ -283,7 +283,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 35, patchpoints: 3, rare instructions: 86, polls: 1
+# CHECK-NEXT: instructions: 67, patchpoints: 6, rare instructions: 137, polls: 1
 # CHECK-NEXT: end of function f13
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=GenericVersion
@@ -295,9 +295,9 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="flags"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 38, patchpoints: 3, rare instructions: 57, polls: 2
+# CHECK-NEXT: instructions: 38, patchpoints: 3, rare instructions: 56, polls: 2
 # CHECK-NEXT: end of function f14
 # CHECK-LABEL: function {{*}}name="flags"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 16, patchpoints: 3, rare instructions: 40, polls: 1
+# CHECK-NEXT: instructions: 16, patchpoints: 3, rare instructions: 38, polls: 1
 # CHECK-NEXT: end of function f17

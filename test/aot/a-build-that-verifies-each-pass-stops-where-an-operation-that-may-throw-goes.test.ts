@@ -11,7 +11,7 @@ import { describe, test } from "./supported";
 describe("compile/aot/a build that verifies each pass stops where an operation that may throw goes", () => {
   const root = String(tempDir("aot-operations-that-go", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
-  const program = join(import.meta.dir, "parallel/pass-conditions/lists-of-constants-answer-what-hold-now.ts");
+  const program = join(import.meta.dir, "parallel/pass-conditions/a-call-whose-answer-is-only-tested-still-runs.ts");
   const build = (...flags: string[]) =>
     spawned(
       [

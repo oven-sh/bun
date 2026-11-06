@@ -131,7 +131,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v15: "called" = String string="called"
 # CHECK-NEXT: v16: f9 = NewClosure v1, v2, v0 function=f9
 # CHECK-NEXT: v17: anything = PropGet v16 key="name" accessSite=3
-# CHECK-NEXT: v18: anything ~ undefined|null|string = Upcast v17 castType=anything
+# CHECK-NEXT: v18: undefined|string = AssumeType v17 provenType=undefined|string
 # CHECK-NEXT: v19: anything = PropGet v16 key="length" accessSite=4
 # CHECK-NEXT: v20: undefined|number = AssumeType v19 provenType=undefined|number
 # CHECK-NEXT: v21: undefined|number ~ number = Upcast v20 castType=anything
@@ -152,7 +152,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v36: anything ~ object = Construct v29, -, v35 calleeName="OnTheLine" accessSite=12
 # CHECK-NEXT: v37: L1 = AssumeType v36 provenType=L1
 # CHECK-NEXT: v38: Array<string> = CallBuiltin -, v37 overload=ObjectKeys/0 accessSite=13
-# CHECK-NEXT: v39: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v38 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v39: Array<"x"|"y", proven, pristine[Storage, Names, Dense]> = AssumeType v38 provenType=Array<"x"|"y", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v40: string = CallBuiltin v39 overload=ArrayPrototypeJoin/0 accessSite=15
 # CHECK-NEXT: v41: anything ~ number = Call v24, -, v31, v30, v34, v40 calleeName="say" accessSite=16 callees=[f3]
 # CHECK-NEXT: v42: undefined = Undefined

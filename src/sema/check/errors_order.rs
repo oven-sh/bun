@@ -597,6 +597,15 @@ fn is_same_scope_descendent_of(hir: &File, initial: Node, parent: Node, stop_at:
     if parent.is_none() {
         return false;
     }
+    // FOR SPEED: a descendant starts before its ancestor ends. The uses in the body of `for (let i = 0; ..)` don't.
+    let end = match hir.data(parent) {
+        NodeData::VarDecl(d) => hir[d].loc.end,
+        NodeData::Expr(e) => crate::hir::end_of_expr(hir, e),
+        _ => u32::MAX,
+    };
+    if hir.start(initial) >= end {
+        return false;
+    }
     let found = hir.find_ancestor_or_quit(initial, |n| {
         if n == parent {
             return Break(true);

@@ -1,5 +1,6 @@
-// Files of cases. Every line of such a file that starts with `t("<name>"` or `await t("<name>"` is one case, and the lines ahead of them serve all of them. The name of a case is its value on each axis of the table, separated by spaces.
-// A case is compiled beside the other cases of its file, and alone: the whole-program analysis of --aot proves more about a small program, and other things about a large one.
+// Reads files of cases. Every line that starts with `t("<name>"` or `await t("<name>"` is one case, and the lines
+// before them are shared. A case's name is its value on each axis of the table. A case is compiled beside the other
+// cases of its file and alone, because whole-program analysis proves different things about small and large programs.
 import { mkdirSync, writeFileSync } from "fs";
 import { extname, join } from "path";
 import type { Member } from "../family";
@@ -8,7 +9,7 @@ export interface CaseFile {
   name: string;
   head: string;
   cases: { name: string; line: string }[];
-  /** Lines behind the cases. */
+  /** Lines after the cases. */
   tail?: string;
 }
 
@@ -21,7 +22,10 @@ export const textOf = ({ head, cases, tail = "" }: CaseFile, isKept: (name: stri
   "\n" +
   tail;
 
-/** So many of the names that every value of every axis, and then every pair of values, occurs as often as any other. The same names give the same choice. */
+/**
+ * A subset of the names in which every value of every axis, and then every pair of values, occurs equally often. The
+ * same names give the same subset.
+ */
 export function spread(names: string[], count: number): string[] {
   const values = names.map(name => name.split(" "));
   const axes = Math.max(0, ...values.map(words => words.length));
@@ -64,13 +68,13 @@ export function spread(names: string[], count: number): string[] {
 export interface Expectations {
   /** How many cases are compiled alone in every run of the test. */
   alone: number;
-  /** The cases that depart from plain Bun today, and how. They are listed as todos and left out of the programs. */
+  /** The cases that differ from plain Bun today, and how. They are listed as todos and left out of the programs. */
   failsToday?: { cases: RegExp; how: string }[];
-  /** The cases that leave an error that nobody catches. */
+  /** The cases that end with an uncaught error. */
   leaveAnError?: RegExp;
 }
 
-/** Each file as one program, and each case as a program of its own. */
+/** Each file as one program, and each case as its own program. */
 export function programsOf(files: CaseFile[], { alone, failsToday = [], leaveAnError }: Expectations): Member[] {
   const failure = (name: string) => failsToday.find(({ cases }) => cases.test(name))?.how;
   const names = files.flatMap(file => file.cases.map(({ name }) => name));

@@ -5,8 +5,8 @@ pub struct NoMultipleH1 {
     title: util::PatternOption,
 }
 
-const MULTIPLE_H1: Message =
-    Message::new("multipleH1", "Unexpected additional H1 heading found.");
+const MULTIPLE_H1: &Message =
+    &Message::new("multipleH1", "Unexpected additional H1 heading found.");
 
 
 impl Rule for NoMultipleH1 {

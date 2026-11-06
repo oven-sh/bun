@@ -61,7 +61,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|[[L_7]] flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=undefined|null|string flags=[IsExpected] variableName="flags"}, {type=undefined|null|[[L_7]] flags=[IsExpected] variableName="r"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0(v0: env [[L_6]], v1: undefined|null|string, v2: undefined|null|[[L_7]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -87,7 +87,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v21
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|string|[[L_1]]|[[L_10]] flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|string|[[L_1]]|[[L_10]] flags=[IsExpected] variableName="r"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string|[[L_1]]|[[L_10]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

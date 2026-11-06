@@ -1816,7 +1816,7 @@ pub mod bv2_impl {
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
                 core::ptr::NonNull<super::JSBundleCompletionTask>,
-                *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+                core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ),
         }
         #[derive(Copy, Clone)]
@@ -1847,7 +1847,7 @@ pub mod bv2_impl {
                 task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ) {
                 // SAFETY: vtable contract.
-                unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task.as_ptr()) }
+                unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
             }
         }
     }
@@ -1970,7 +1970,7 @@ pub mod bv2_impl {
             // the overwritten value is correct), then boxes it on the global heap
             // (NOT the bump arena — the clone holds `Box`/`Vec`/`MimallocArena`
             // fields that need `Drop` to run) and wires the self-referential
-            // `linker`/`macro_context`. The box is parked on
+            // `macro_context`. The box is parked on
             // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
             // releases it.
 
@@ -2453,13 +2453,7 @@ pub mod bv2_impl {
             }
 
             if self.graph.pending_items == 0 {
-                let this: *mut Self = self;
-                // reshaped for borrowck — `&self.graph` and
-                // `self` go to the same call. Take a raw ptr so the two `&mut` don't
-                // overlap from rustc's view.
-                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-                // fields and the `BundleV2` callback surface; no aliasing UB.
-                if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
+                if self.drain_deferred_tasks() {
                     return false;
                 }
                 return true;
@@ -2672,21 +2666,12 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
-                    // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
-                    // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
-                    // until after the last `*value_ptr` access below.
-                    let (found_existing, value_ptr): (bool, *mut u32) = {
-                        let entry = self
-                            .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
-                            .expect("oom");
-                        (
-                            entry.found_existing,
-                            std::ptr::from_mut::<u32>(entry.value_ptr),
-                        )
-                    };
-                    if !found_existing {
+                    let entry = self.graph.build_graphs[target]
+                        .get_or_put(path_primary.text)
+                        .expect("oom");
+                    if !entry.found_existing {
+                        // `enqueue_parse_task` below borrows all of `self`.
+                        let value_ptr: *mut u32 = entry.value_ptr;
                         let loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
@@ -2717,7 +2702,7 @@ pub mod bv2_impl {
                                 import_record.original_target,
                             )
                             .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
+                        // SAFETY: nothing has touched `build_graphs[target]` since `get_or_put`.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
@@ -2731,8 +2716,7 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        // SAFETY: see `value_ptr` note above.
-                        record.source_index = Index::init(unsafe { *value_ptr });
+                        record.source_index = Index::init(*entry.value_ptr);
                     }
                     return;
                 }
@@ -3561,16 +3545,6 @@ pub mod bv2_impl {
 
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
             for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
-                // Ensure we have the proper conditions set for client-side entrypoints.
-                // SAFETY: hold the transpiler as a `*mut` across the loop body
-                // so it doesn't keep `self` borrowed through the plugin
-                // dispatch / dev_server calls below; the pointee lives for `'a`.
-                let transpiler: *mut Transpiler<'a> =
-                    if flags.client() && !flags.server() && !flags.ssr() {
-                        std::ptr::from_mut(self.transpiler_for_target(Target::Browser))
-                    } else {
-                        &raw mut *self.transpiler
-                    };
                 let server_target = self.transpiler.options.target;
                 let client_loader = flags.html().then_some(Loader::Html);
 
@@ -3616,30 +3590,34 @@ pub mod bv2_impl {
 
                 // Fall back to normal resolution if no plugins matched
                 let dot_slash = OnceCell::new();
-                // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                let resolved =
-                    match unsafe { &mut *transpiler }.resolve_entry_point(abs_path, &dot_slash) {
-                        Ok(r) => r,
-                        Err(err) => {
-                            let dev = self.dev_server.expect("unreachable");
-                            dev.handle_parse_task_failure(
-                                err,
-                                if flags.client() {
-                                    bake::Graph::Client
-                                } else {
-                                    bake::Graph::Server
-                                },
-                                abs_path,
-                                // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                                unsafe { (*transpiler).log }.cast_const(),
-                                std::ptr::from_mut(self),
-                            )
-                            .expect("oom");
-                            // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
-                            unsafe { (*(*transpiler).log).reset() };
-                            continue;
-                        }
-                    };
+                // Ensure we have the proper conditions set for client-side entrypoints.
+                let transpiler = if flags.client() && !flags.server() && !flags.ssr() {
+                    self.transpiler_for_target(Target::Browser)
+                } else {
+                    &mut *self.transpiler
+                };
+                let resolved = match transpiler.resolve_entry_point(abs_path, &dot_slash) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        let log = transpiler.log;
+                        let dev = self.dev_server.expect("unreachable");
+                        dev.handle_parse_task_failure(
+                            err,
+                            if flags.client() {
+                                bake::Graph::Client
+                            } else {
+                                bake::Graph::Server
+                            },
+                            abs_path,
+                            log.cast_const(),
+                            std::ptr::from_mut(self),
+                        )
+                        .expect("oom");
+                        // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
+                        unsafe { (*log).reset() };
+                        continue;
+                    }
+                };
 
                 if flags.client() {
                     'brk: {
@@ -3738,12 +3716,7 @@ pub mod bv2_impl {
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
             let runtime_parse_task: &mut ParseTask = self.arena().alloc(rt.parse_task);
-            // SAFETY: BACKREF — `self` outlives the task; lifetime erased per ParseTask::ctx convention.
-            runtime_parse_task.ctx = Some(unsafe {
-                bun_ptr::ParentRef::from_raw_mut(
-                    std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                )
-            });
+            runtime_parse_task.ctx = Some(bun_ptr::ParentRef::from_ref_mut(self));
             runtime_parse_task.loader = Some(Loader::Js);
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
@@ -4123,12 +4096,7 @@ pub mod bv2_impl {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
             let task: &mut ParseTask = self.arena().alloc(ParseTask {
-                // SAFETY: BACKREF — `self` outlives the task; lifetime erased per ParseTask::ctx convention.
-                ctx: Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                    )
-                }),
+                ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 path: task_path,
                 contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
                 side_effects: bun_ast::SideEffects::HasSideEffects,
@@ -4194,14 +4162,7 @@ pub mod bv2_impl {
             // result posts back to the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
-                // SAFETY: `from_mut(self)` is the live bundle (write provenance for
-                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
-                // `'static` for the BACKREF.
-                ctx: Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
-                    )
-                }),
+                ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 source: task_source,
                 // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..Default::default()
@@ -4335,6 +4296,27 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
+        /// `load` has returned its `&mut Graph` before `link` starts the workers that read the graph.
+        pub(crate) fn link(
+            &mut self,
+            reachable: &[Index],
+        ) -> Result<Box<[Chunk<'a>]>, crate::linker_context_mod::LinkError> {
+            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
+            unsafe {
+                self.linker.load(
+                    &mut self.graph,
+                    &*self.transpiler,
+                    &mut self.dynamic_import_entry_points,
+                    reachable,
+                )
+            }?;
+            self.linker.link(
+                self.has_any_top_level_await_modules,
+                self.unique_key,
+                reachable,
+            )
+        }
+
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4397,28 +4379,7 @@ pub mod bv2_impl {
 
                 this.clone_ast()?;
 
-                // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
-                // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
-                // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
-                // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
-                // overlapping `&mut`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    // `Graph::entry_points: Vec<Index>` and `link()` takes `&[Index]` —
-                    // both are `crate::Index` (= `bun_ast::Index`), so no cast is needed.
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // `this.graph.server_component_boundaries` must stay intact for
-                    // `StaticRouteVisitor` (generateChunksInParallel) to read via
-                    // `parse_graph`. Borrow — do NOT `take`, which would empty the
-                    // graph slot and drop the moved-out `MultiArrayList` heap inside
-                    // `load()` (ASAN use-after-poison / wrong `fully_static`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` (not `this.linker`) so no
-                    // second `Box::deref_mut` retag invalidates `ep`/`scbs` (SB).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
+                let mut chunks = this.link(&reachable_files)?;
                 this.dump_pool_stats("link");
 
                 // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
@@ -4561,21 +4522,7 @@ pub mod bv2_impl {
 
                 this.clone_ast()?;
 
-                // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
-                // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
-                // from `this.linker`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // Value-copy (original preserved for `StaticRouteVisitor`).
-                    // Borrow — do NOT `take` (see `generate_from_cli`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
-                    // retag invalidates `ep`/`scbs` (SB hygiene).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
+                let mut chunks = this.link(&reachable_files)?;
 
                 if chunks.is_empty() {
                     return Ok(Vec::new());
@@ -5307,14 +5254,7 @@ pub mod bv2_impl {
                                 })
                                 .expect("unreachable");
                             let task_val = ParseTask {
-                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
-                                // outlives the task.
-                                ctx: Some(unsafe {
-                                    bun_ptr::ParentRef::from_raw_mut(
-                                        std::ptr::from_mut::<BundleV2>(this)
-                                            .cast::<BundleV2<'static>>(),
-                                    )
-                                }),
+                                ctx: Some(bun_ptr::ParentRef::from_ref_mut(this)),
                                 path,
                                 // unknown at this point:
                                 contents_or_fd: parse_task::ContentsOrFd::Fd {
@@ -5606,20 +5546,7 @@ pub mod bv2_impl {
 
             self.add_server_component_boundaries_as_extra_entry_points()?;
 
-            // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
-            // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
-            let mut chunks = unsafe {
-                let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Value-copy (original preserved for `StaticRouteVisitor`).
-                // Borrow — do NOT `take` (see `generate_from_cli`).
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .link(bundle_ptr, ep, scbs, &reachable_files)?
-            };
+            let mut chunks = self.link(&reachable_files)?;
 
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
@@ -5870,10 +5797,7 @@ pub mod bv2_impl {
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                // `scan_css_imports` takes the column as a raw
-                                // `*const` slice (the scanImportsAndExports caller holds raw
-                                // SoA pointers); it only reads via `is_none()`.
-                                std::ptr::from_ref(css_asts),
+                                css_asts,
                                 sources,
                                 loaders,
                                 &mut log,
@@ -5990,23 +5914,16 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
-            // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
-            // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
-            // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
-            // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
+            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
             unsafe {
-                let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Value-copy (original preserved). Borrow — do NOT `take`.
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .load(bundle_ptr, ep, scbs, js_reachable_files)
-                    .map_err(|_| AllocError)?;
+                self.linker.load(
+                    &mut self.graph,
+                    &*self.transpiler,
+                    &mut self.dynamic_import_entry_points,
+                    js_reachable_files,
+                )
             }
+            .map_err(|_| AllocError)?;
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
             // here: every part of every JS file is considered live.
@@ -7239,13 +7156,7 @@ pub mod bv2_impl {
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
             // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
             // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
-            // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
-            let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
-                Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
-                    )
-                });
+            let self_ptr = Some(bun_ptr::ParentRef::from_ref_mut(self));
             let dev_server_is_none = self.dev_server.is_none();
             for (key, value) in resolve_queue.iter() {
                 let value: *mut ParseTask = *value;

@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 
 const MAX_STATES_OF_CLASS: usize = 256;
 
-const METHODS_OF_COLLECTIONS: [BuiltinId; 5] = [
+pub(super) const METHODS_OF_COLLECTIONS: [BuiltinId; 5] = [
     BuiltinId::WeakMapPrototypeGet,
     BuiltinId::WeakMapPrototypeHas,
     BuiltinId::WeakMapPrototypeSet,

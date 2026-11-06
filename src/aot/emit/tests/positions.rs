@@ -1,5 +1,7 @@
 use crate::emit::{source_positions, source_positions_in_bundle};
 use crate::ir::generated::ColumnAdjustment;
+use bun_builtin_sources::PlaceInOtherFile;
+use bun_core::strings::index_of;
 
 fn find_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0];
@@ -123,7 +125,8 @@ fn find_text_behind(adjustments: &[ColumnAdjustment], in_written: &str) -> &'sta
 #[test]
 fn tokens_of_a_module_are_found_in_the_text_that_is_evaluated() {
     // Word 2, `require`, stands for the word 2 words behind the one that a reading side by side comes to.
-    let positions = source_positions_in_bundle(WRITTEN.as_bytes(), EVALUATED.as_bytes(), &[2, 5]);
+    let positions =
+        source_positions_in_bundle(WRITTEN.as_bytes(), EVALUATED.as_bytes(), &[2, 5], &[]);
     assert!(positions.line_starts.is_empty());
     let adjustments = &positions.column_adjustments;
     assert!(adjustments.is_sorted_by(|first, second| first.offset < second.offset));
@@ -149,7 +152,8 @@ fn tokens_of_a_module_are_found_in_the_text_that_is_evaluated() {
 
 #[test]
 fn what_stands_alike_in_a_bundle_goes_on_over_line_breaks() {
-    let positions = source_positions_in_bundle(b"ab cd\nef  gh\n\nk", b"{ab cd\nef gh\nk", &[]);
+    let positions =
+        source_positions_in_bundle(b"ab cd\nef  gh\n\nk", b"{ab cd\nef gh\nk", &[], &[]);
     assert_eq!(
         positions.column_adjustments,
         [
@@ -166,7 +170,7 @@ fn what_stands_alike_in_a_bundle_goes_on_over_line_breaks() {
 fn a_word_that_was_moved_to_the_front_is_found_there() {
     let written = b"first(a);\nif (second) third();";
     let evaluated = b"if (first(a), second)\n  third();";
-    let positions = source_positions_in_bundle(written, evaluated, &[]);
+    let positions = source_positions_in_bundle(written, evaluated, &[], &[]);
     let find = |offset: u32| {
         let adjustments = &positions.column_adjustments;
         let preceding = adjustments.partition_point(|it| it.offset <= offset);
@@ -188,7 +192,7 @@ fn a_word_that_was_moved_to_the_front_is_found_there() {
 #[test]
 fn the_words_of_a_comment_are_passed_over() {
     let written = "//a b c d e f g h i j\nk /* a b c d e f g h i j\na */ l /**/ x m /* */ n";
-    let positions = source_positions_in_bundle(written.as_bytes(), b"k l m n", &[]);
+    let positions = source_positions_in_bundle(written.as_bytes(), b"k l m n", &[], &[]);
     let adjustments = &positions.column_adjustments;
     for (word, column) in [("k", 0), ("l", 2), ("m", 4), ("n", 6)] {
         let offset = written.find(word).unwrap() as u32;
@@ -228,10 +232,37 @@ fn corrections_that_do_not_fit_the_texts_stop_nothing() {
     for corrections in records {
         for written in texts {
             for evaluated in texts {
-                let positions = source_positions_in_bundle(written, evaluated, corrections);
+                let positions = source_positions_in_bundle(written, evaluated, corrections, &[]);
                 let adjustments = positions.column_adjustments;
                 assert!(adjustments.is_sorted_by(|first, second| first.offset < second.offset));
             }
         }
     }
+}
+
+#[test]
+fn word_with_a_place_in_another_file_is_shown_there_with_what_follows_it() {
+    let written = b"function a(x) {}\nfunction /* as in other.ts: function long */ b(y) {\n  y;\n}\nfunction c(z) {}";
+    let evaluated = b"function a(x) {}\nfunction b(y) {\n  y;\n}\nfunction c(z) {}";
+    let offset_of = |text: &[u8]| index_of(written, text).unwrap() as u32;
+    let word = offset_of(b"b(y)");
+    let place = PlaceInOtherFile {
+        offset: word,
+        line: 39,
+        column: 11,
+        end_column: 15,
+    };
+    let positions = source_positions_in_bundle(written, evaluated, &[], &[place]);
+    let place_of = |offset: u32| {
+        let adjustments = &positions.column_adjustments;
+        let next = adjustments.partition_point(|adjustment| adjustment.offset <= offset);
+        let last = adjustments[next - 1];
+        (last.line, last.column + offset - last.offset)
+    };
+    assert_eq!(place_of(word), (39, 11));
+    assert_eq!(place_of(word + 1), (39, 15));
+    assert_eq!(place_of(word + 2), (1, 11));
+    assert_eq!(place_of(offset_of(b"a(x)")), (0, 9));
+    assert_eq!(place_of(offset_of(b"y;")), (2, 2));
+    assert_eq!(place_of(offset_of(b"c(z)") + 1), (4, 10));
 }

@@ -38,7 +38,7 @@ console.log(typeof alike.get, tell(given), tell({ d: { get: () => "g" } }))
 // CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="once"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_3]] site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_3]] site=[[w_4]] flags=[OmitsNull, OmitsUndefined] variableName="child"}] thisType={type=anything} results=[{type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_3]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

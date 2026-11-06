@@ -8,7 +8,7 @@ use crate::lower::expression::find_constant;
 use crate::lower::{FileLowering, FunctionLowering, operator};
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn is_read_left_out_by_bun_run(&self, expression: ExprId) -> bool {
+    pub(in crate::lower) fn is_read_left_out_by_bun_run(&self, expression: ExprId) -> bool {
         self.builtins
             .global_path(self.hir, self.bound, expression)
             .is_some_and(|steps| is_read_left_out_by_bun_run(steps[0].id))
@@ -94,7 +94,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_nesting();
     }
 
-    fn lower_read_of_locked_path(&mut self, path: ExprId) {
+    pub(in crate::lower) fn lower_read_of_locked_path(&mut self, path: ExprId) {
         let member = match self.file.builtins.of_pure_expr(path) {
             Some(Resolved::Builtin(member)) => member,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) => return,

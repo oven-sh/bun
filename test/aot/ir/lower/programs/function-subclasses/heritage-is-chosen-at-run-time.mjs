@@ -28,24 +28,25 @@ console.log(new Late() instanceof Writable, new Late() instanceof Readable);
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]]|[[f_2]]|[[f_3]]|[[f_4]]|[[f_5]], v1: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = NewDictionary
-// CHECK-NEXT: v3 = ToPropertyKey v1
-// CHECK-NEXT: v4 = ResolveHeritage v0
-// CHECK-NEXT: v5 = NewClosure v1 function=[[f_7]]
-// CHECK-NEXT: SetFunctionName v5, v3
-// CHECK-NEXT: v7 = NewClass v5, v0, v4 layout=[[L_8]]
-// CHECK-NEXT: v8 = FinishClass v7 layout=[[L_8]]
-// CHECK-NEXT: ElemDefine v2, v3, v8
-// CHECK-NEXT: v10 = ElemGet v2, v1
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: Return v11
+// CHECK-NEXT: v2 = ToPropertyKey v1
+// CHECK-NEXT: v3 = ResolveHeritage v0
+// CHECK-NEXT: v4 = NewClosure v1 function=[[f_7]]
+// CHECK-NEXT: SetFunctionName v4, v2
+// CHECK-NEXT: v6 = NewClass v4, v0, v3 layout=[[L_8]]
+// CHECK-NEXT: v7 = FinishClass v6 layout=[[L_8]]
+// CHECK-NEXT: v8 = NewObject layout=[[L_9]]
+// CHECK-NEXT: ElemDefine v8, v2, v7
+// CHECK-NEXT: v10 = FinishObject v8
+// CHECK-NEXT: v11 = ElemGet v10, v1
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
+// CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Own"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=[[L_9]] flags=[IsExpected]} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: [[L_9]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] thisType={type=[[L_10]] flags=[IsExpected]} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
+// CHECK-NEXT: b0(v0: [[L_10]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_10]] flags=[IsExpected]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_11]] flags=[IsExpected]}
 // CHECK-NEXT: v2 = Integer integer=1
 // CHECK-NEXT: PropSet v1, v2 key="own"
 // CHECK-NEXT: v4 = Undefined
@@ -58,8 +59,8 @@ console.log(new Late() instanceof Writable, new Late() instanceof Readable);
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Absent
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstruct v3, v1 layout=[[L_11]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstruct v3, v1 layout=[[L_12]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_12]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: v6 = TypeTest v2 testedType=absent
 // CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v7):
@@ -69,8 +70,8 @@ console.log(new Late() instanceof Writable, new Late() instanceof Readable);
 // CHECK-NEXT: v10 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v10
 // CHECK-NEXT: b4(v11):
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[L_11]] flags=[IsExpected]}
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_12]]
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[L_12]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_13]]
 // CHECK-NEXT: v14 = CheckInitialized v13 name="flag"
 // CHECK-NEXT: v15 = Convert v14 declared={type=boolean flags=[IsExpected]}
 // CHECK-NEXT: PropSet v12, v15 key="side"
@@ -105,7 +106,7 @@ console.log(new Late() instanceof Writable, new Late() instanceof Readable);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_13]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_13]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_14]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_14]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

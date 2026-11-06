@@ -32,7 +32,9 @@ unsafe extern "C" {
         substrings: *mut JSValue,
     );
     fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32) -> u32;
-    fn JSC__JSString__createUninitializedLatin1(
+    safe fn JSC__JSString__singleLatin1Character(global: &JSGlobalObject, character: u8)
+    -> JSValue;
+    fn JSC__JSString__tryCreateUninitializedLatin1(
         global: &JSGlobalObject,
         length: u32,
         characters: *mut *mut u8,
@@ -218,6 +220,12 @@ impl JSString {
     /// `JSString::MaxLength`.
     pub const MAX_LENGTH: usize = i32::MAX as usize;
 
+    /// The string of one 8-bit character, which every VM already has.
+    #[inline]
+    pub fn single_latin1_character(global: &JSGlobalObject, character: u8) -> JSValue {
+        JSC__JSString__singleLatin1Character(global, character)
+    }
+
     /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]). SAFETY: `fill` writes all of them, and allocates nothing in the JavaScript heap.
     #[inline(always)]
     pub unsafe fn create_latin1_with(
@@ -225,14 +233,29 @@ impl JSString {
         length: usize,
         fill: impl FnOnce(*mut u8),
     ) -> JSValue {
+        // SAFETY: forwarded.
+        unsafe { Self::try_create_latin1_with(global, length, fill) }
+            .unwrap_or_else(|| bun_core::out_of_memory())
+    }
+
+    /// As [`create_latin1_with`](Self::create_latin1_with), `None` when the characters cannot be allocated.
+    #[inline(always)]
+    pub unsafe fn try_create_latin1_with(
+        global: &JSGlobalObject,
+        length: usize,
+        fill: impl FnOnce(*mut u8),
+    ) -> Option<JSValue> {
         assert!(length >= 2 && length <= Self::MAX_LENGTH);
         let mut characters = core::ptr::null_mut();
         // SAFETY: `characters` receives the address of `length` bytes that the new string owns.
         let string = unsafe {
-            JSC__JSString__createUninitializedLatin1(global, length as u32, &raw mut characters)
+            JSC__JSString__tryCreateUninitializedLatin1(global, length as u32, &raw mut characters)
         };
+        if string.is_empty() {
+            return None;
+        }
         fill(characters);
-        string
+        Some(string)
     }
 }
 

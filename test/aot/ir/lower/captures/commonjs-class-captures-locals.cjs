@@ -8,7 +8,7 @@
 // CHECK-NOT: = NewObject
 // CHECK-LABEL: function {{*}}kind=BaseConstructor
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: captures=[{type=1 flags=[IsExpected]}] thisType
+// CHECK: captures=[{type=1 flags=[IsExpected] variableName="a"}] thisType
 // CHECK: b0([[copy]]: 1):
 
 // RUN(STORAGE): lower

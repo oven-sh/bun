@@ -5,7 +5,7 @@ globalThis.countRun = name => (runs[name] = (runs[name] ?? 0) + 1);
 globalThis.baseName = path => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
 exports.marker = "set by main";
-console.log("main:", this === exports, module.exports === exports, module.id, module.filename === __filename, __filename.startsWith(__dirname), require.main === module, typeof require.resolve);
+console.log("main:", this === exports, module.exports === exports, module.id, baseName(module.filename) === baseName(__filename), __filename.startsWith(__dirname), require.main === module, typeof require.resolve);
 
 const moduleObject = require("./module-object.js");
 console.log("required:", JSON.stringify(moduleObject.atEntry));

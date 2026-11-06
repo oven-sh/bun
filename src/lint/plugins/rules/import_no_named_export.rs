@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Forbid named exports.
 pub struct NoNamedExport;
 
-const NO_NAMED_EXPORT: Message = Message::new("", "Named exports are not allowed.");
+const NO_NAMED_EXPORT: &Message = &Message::new("", "Named exports are not allowed.");
 
 impl Rule for NoNamedExport {
     const META: Meta = Meta::plugin(Plugin::Import, "no-named-export", Kind::Suggestion);

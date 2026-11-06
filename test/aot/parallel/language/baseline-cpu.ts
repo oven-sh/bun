@@ -1,5 +1,5 @@
-// CALLS+ storeInUntyped PutByIdDouble
-// CALLS+ extend CloneObjectAndExtendWithNumber
+// CALLS+ storeInUntyped PutByIdAtSite
+// CALLS+ extend BoxNumber\.Double
 type Shape = { name: string; sides: number };
 
 const numbers: number[] = [0, -0, 1, -1, 1.5, -1.5, 0.1 + 0.2, 2147483647, 2147483648, -2147483648, -2147483649, 4294967295, 4294967296, 9007199254740991, 1e21, 1e300, -1e300, 5e-324, Infinity, -Infinity, NaN];
@@ -8,11 +8,11 @@ function show(value: unknown): string {
   return Object.is(value, -0) ? "-0" : String(value);
 }
 
-function storeInUntyped(target: any, value: number) {
+export function storeInUntyped(target: any, value: number) {
   target.value = value;
 }
 
-function extend(shape: Shape, sides: number): Shape {
+export function extend(shape: Shape, sides: number): Shape {
   return { ...shape, sides };
 }
 

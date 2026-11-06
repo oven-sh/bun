@@ -76,10 +76,9 @@ for (let i = 0; i < values.length; i++) sum += read(values[i] as Long) > 0 ? 1 :
 console.log(sum);
 `;
 
-// The pinned engine does not have those cells yet.
-(isASAN && isLinux && process.arch === "x64" ? test.todo : test.skip).each([
-  ["code that B3 generates", ["--aot-heat=everything-is-hot"]],
-])(
+test
+  .skipIf(!isASAN || !isLinux || process.arch !== "x64")
+  .each([["code that B3 generates", ["--aot-heat=everything-is-hot"]]])(
   "AddressSanitizer reports a read behind the end of an object by %s",
   async (_, flags) => {
     using dir = tempDir("asan-red-zone-cells", { "entry.ts": shorterObject });
@@ -129,8 +128,7 @@ const walked = (read: string) =>
   );
 const at = (name: string) => String.raw`    at ${name} \(\S*entry\.ts:\d+:\d+\)\n`;
 
-// The pinned engine does not print the names yet.
-(isASAN && isLinux && process.arch === "x64" ? test.todo : test.skip).each([
+test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each([
   [
     "code that B3 generates",
     typedRead,

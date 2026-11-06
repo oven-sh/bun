@@ -1,8 +1,9 @@
 use super::layout::{Source, Task};
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Layout, Module, ModuleFailure, ProgramList,
-    PropertyKey, RuntimeFunctionEntry, Type, TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Layout, Module, ModuleFailure,
+    OpenedName, ProgramList, PropertyKey, ReplaceableBuiltin, RuntimeFunctionEntry, SourceStamp,
+    Type, TypeSite, Variable, WebAssemblyModule,
 };
 use crate::ir::{ListCounts, Program, SectionWriter, StringTable};
 
@@ -49,11 +50,15 @@ record_table!(
     Variable,
     Module,
     ModuleFailure,
+    AmbiguousExport,
+    SourceStamp,
     EvalScope,
     Data,
     Entry,
     RuntimeFunctionEntry,
     WebAssemblyModule,
+    ReplaceableBuiltin,
+    OpenedName,
 );
 
 pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, 'o>> {
@@ -71,6 +76,10 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             ProgramList::Variables => add_table(&mut tasks, list, &program.variables),
             ProgramList::Modules => add_table(&mut tasks, list, &program.modules),
             ProgramList::ModuleFailures => add_table(&mut tasks, list, &program.module_failures),
+            ProgramList::AmbiguousExports => {
+                add_table(&mut tasks, list, &program.ambiguous_exports);
+            }
+            ProgramList::SourceStamps => add_table(&mut tasks, list, &program.source_stamps),
             ProgramList::EvalScopes => add_table(&mut tasks, list, &program.eval_scopes),
             ProgramList::Data => add_table(&mut tasks, list, &program.data),
             ProgramList::Entries => add_table(&mut tasks, list, &program.entries),
@@ -80,11 +89,18 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             ProgramList::WebAssemblyModules => {
                 add_table(&mut tasks, list, &program.web_assembly_modules);
             }
+            ProgramList::ReplaceableBuiltins => {
+                add_table(&mut tasks, list, &program.replaceable_builtins);
+            }
+            ProgramList::OpenedNames => {
+                add_table(&mut tasks, list, &program.opened_names);
+            }
             ProgramList::Functions
             | ProgramList::Bytes
             | ProgramList::Words
             | ProgramList::ClassParts
             | ProgramList::DeclaredTypes
+            | ProgramList::DeclaredCaptures
             | ProgramList::Fields
             | ProgramList::StaticFields
             | ProgramList::ModuleRequests

@@ -14,27 +14,27 @@ pub struct PreferRegexLiterals {
     disallow_redundant_wrapping: bool,
 }
 
-const UNEXPECTED_REGEXP: Message = Message::new(
+const UNEXPECTED_REGEXP: &Message = &Message::new(
     "unexpectedRegExp",
     "Use a regular expression literal instead of the 'RegExp' constructor.",
 );
-const REPLACE_WITH_LITERAL: Message = Message::new(
+const REPLACE_WITH_LITERAL: &Message = &Message::new(
     "replaceWithLiteral",
     "Replace with an equivalent regular expression literal.",
 );
-const REPLACE_WITH_LITERAL_AND_FLAGS: Message = Message::new(
+const REPLACE_WITH_LITERAL_AND_FLAGS: &Message = &Message::new(
     "replaceWithLiteralAndFlags",
     "Replace with an equivalent regular expression literal with flags '{{ flags }}'.",
 );
-const REPLACE_WITH_INTENDED_LITERAL_AND_FLAGS: Message = Message::new(
+const REPLACE_WITH_INTENDED_LITERAL_AND_FLAGS: &Message = &Message::new(
     "replaceWithIntendedLiteralAndFlags",
     "Replace with a regular expression literal with flags '{{ flags }}'.",
 );
-const UNEXPECTED_REDUNDANT_REGEXP: Message = Message::new(
+const UNEXPECTED_REDUNDANT_REGEXP: &Message = &Message::new(
     "unexpectedRedundantRegExp",
     "Regular expression literal is unnecessarily wrapped within a 'RegExp' constructor.",
 );
-const UNEXPECTED_REDUNDANT_REGEXP_WITH_FLAGS: Message = Message::new(
+const UNEXPECTED_REDUNDANT_REGEXP_WITH_FLAGS: &Message = &Message::new(
     "unexpectedRedundantRegExpWithFlags",
     "Use regular expression literal with flags instead of the 'RegExp' constructor.",
 );

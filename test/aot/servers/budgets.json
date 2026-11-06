@@ -2,6 +2,7 @@
   "node": {
     "codeBytes": 4619588,
     "bytesAValue": 33.08,
+    "engineRuns": 1,
     "tests": {
       "executed": 10569,
       "failed": 214
@@ -59,6 +60,10 @@
       "cells": 416.88,
       "bytes": 28157.44
     },
+    "allocatedInTotal": {
+      "cells": 638.07,
+      "bytes": 41739.84
+    },
     "closures": {
       "aRound": 54,
       "once": 2016
@@ -67,6 +72,7 @@
   "express": {
     "codeBytes": 7791720,
     "bytesAValue": 33.3,
+    "engineRuns": 1,
     "tests": {
       "executed": 14131,
       "failed": 751
@@ -128,8 +134,12 @@
       "operationAOTToNumber": 9
     },
     "allocated": {
-      "cells": 705.96,
-      "bytes": 41800
+      "cells": 585,
+      "bytes": 39100
+    },
+    "allocatedInTotal": {
+      "cells": 895.5,
+      "bytes": 55900
     },
     "closures": {
       "aRound": 72,
@@ -139,6 +149,7 @@
   "hono": {
     "codeBytes": 1744968,
     "bytesAValue": 24.3,
+    "engineRuns": 1,
     "tests": {
       "executed": 4936,
       "failed": 191
@@ -174,17 +185,22 @@
       "operationAOTWeakMapSet": 1
     },
     "allocated": {
-      "cells": 449.78,
-      "bytes": 23098.24
+      "cells": 314,
+      "bytes": 17650
+    },
+    "allocatedInTotal": {
+      "cells": 735.43,
+      "bytes": 36125.12
     },
     "closures": {
-      "aRound": 149,
+      "aRound": 30,
       "once": 1363
     }
   },
   "fastify": {
     "codeBytes": 11082392,
     "bytesAValue": 34.48,
+    "engineRuns": 1,
     "tests": {
       "executed": 14791,
       "failed": 559
@@ -272,6 +288,10 @@
       "cells": 544.1,
       "bytes": 35483.52
     },
+    "allocatedInTotal": {
+      "cells": 854.12,
+      "bytes": 49205.12
+    },
     "closures": {
       "aRound": 73.02,
       "once": 3969.2
@@ -280,6 +300,7 @@
   "elysia": {
     "codeBytes": 5893820,
     "bytesAValue": 26.43,
+    "engineRuns": 1,
     "tests": {
       "executed": 4313,
       "failed": 265
@@ -311,6 +332,10 @@
     "allocated": {
       "cells": 219.56,
       "bytes": 13974.72
+    },
+    "allocatedInTotal": {
+      "cells": 575.44,
+      "bytes": 31472.64
     },
     "closures": {
       "aRound": 6,
@@ -375,6 +400,10 @@
       "cells": 953.23,
       "bytes": 55781.44
     },
+    "allocatedInTotal": {
+      "cells": 1357.17,
+      "bytes": 69829.76
+    },
     "closures": {
       "aRound": 282.03,
       "once": 2210.8
@@ -383,6 +412,7 @@
   "typescript": {
     "codeBytes": 27639808,
     "bytesAValue": 32.76,
+    "engineRuns": 1,
     "tests": {
       "executed": 294714,
       "failed": 61006
@@ -455,6 +485,10 @@
       "cells": 8068.05,
       "bytes": 419450.4
     },
+    "allocatedInTotal": {
+      "cells": 8471.8,
+      "bytes": 426493.6
+    },
     "closures": {
       "aRound": 805,
       "once": 7822
@@ -463,6 +497,7 @@
   "bun": {
     "codeBytes": 1580704,
     "bytesAValue": 23.99,
+    "engineRuns": 1,
     "tests": {
       "executed": 4063,
       "failed": 142
@@ -498,6 +533,10 @@
       "cells": 197.75,
       "bytes": 11032.64
     },
+    "allocatedInTotal": {
+      "cells": 458.43,
+      "bytes": 22732.96
+    },
     "closures": {
       "aRound": 2,
       "once": 1303
@@ -506,6 +545,7 @@
   "koa": {
     "codeBytes": 6860920,
     "bytesAValue": 29.36,
+    "engineRuns": 1,
     "tests": {
       "executed": 21537.02,
       "failed": 724.01
@@ -628,11 +668,15 @@
       "operationAOTValueBitNot": 3
     },
     "allocated": {
-      "cells": 1257.95,
-      "bytes": 66619.36
+      "cells": 1132,
+      "bytes": 60300
+    },
+    "allocatedInTotal": {
+      "cells": 1518,
+      "bytes": 77050
     },
     "closures": {
-      "aRound": 284,
+      "aRound": 270,
       "once": 2998
     }
   }

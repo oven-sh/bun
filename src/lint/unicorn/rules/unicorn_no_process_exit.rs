@@ -6,7 +6,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallow all usage of `process.exit()`.
 pub struct NoProcessExit;
 
-const NO_PROCESS_EXIT: Message = Message::new("", "Don't use `process.exit()`");
+const NO_PROCESS_EXIT: &Message = &Message::new("", "Don't use `process.exit()`");
 
 pub struct State<'a> {
     exit: Name<'a>,

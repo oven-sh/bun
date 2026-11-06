@@ -1,6 +1,6 @@
 status: 0
-script: 4281d4aefe858993
-source: ed5f00cf9fd93fb5
+script: 684e175d8a8697a6
+source: 9010a895d63026c5
 ---
 -- the jump behind the first arm of a test that is a conditional expression, in front of something short
 if ((c(a) or b) if c(1) else c(0)): return 3 | (0, 0) | C1 L2 R2 => None
@@ -372,6 +372,46 @@ assert (a or /     1), c(1) | (1, 0) | C1 L2 R2 => None
 assert (a or /     1), c(1) | (1, 0) | L2 br2>2
 assert (a or /     1), c(1) | (1, 1) | C1 L2 R2 => None
 assert (a or /     1), c(1) | (1, 1) | L2 br2>2
+assert (a or /     1), (c(1) if 0 else c(2)) | (0, 0) | C1 L2 L3 R3 => None
+assert (a or /     1), (c(1) if 0 else c(2)) | (0, 0) | L2 bl2>3 L3
+assert (a or /     1), (c(1) if 0 else c(2)) | (0, 1) | C1 L2 L3 R3 => None
+assert (a or /     1), (c(1) if 0 else c(2)) | (0, 1) | L2 bl2>3 L3
+assert (a or /     1), (c(1) if 0 else c(2)) | (1, 0) | C1 L2 R2 => None
+assert (a or /     1), (c(1) if 0 else c(2)) | (1, 0) | L2 br2>2
+assert (a or /     1), (c(1) if 0 else c(2)) | (1, 1) | C1 L2 R2 => None
+assert (a or /     1), (c(1) if 0 else c(2)) | (1, 1) | L2 br2>2
+if (a and /     0): /     x = 1 if 1 else 2 | (0, 0) | C1 L2 R2 => None
+if (a and /     0): /     x = 1 if 1 else 2 | (0, 0) | L2 br2>2
+if (a and /     0): /     x = 1 if 1 else 2 | (0, 1) | C1 L2 R2 => None
+if (a and /     0): /     x = 1 if 1 else 2 | (0, 1) | L2 br2>2
+if (a and /     0): /     x = 1 if 1 else 2 | (1, 0) | C1 L2 L3 R3 => None
+if (a and /     0): /     x = 1 if 1 else 2 | (1, 0) | L2 bl2>3 L3
+if (a and /     0): /     x = 1 if 1 else 2 | (1, 1) | C1 L2 L3 R3 => None
+if (a and /     0): /     x = 1 if 1 else 2 | (1, 1) | L2 bl2>3 L3
+match a: /     case x if (a and /         0): /         y = 1 | (0, 0) | C1 L2 L3 R3 => None
+match a: /     case x if (a and /         0): /         y = 1 | (0, 0) | L2 L3 br3>3
+match a: /     case x if (a and /         0): /         y = 1 | (0, 1) | C1 L2 L3 R3 => None
+match a: /     case x if (a and /         0): /         y = 1 | (0, 1) | L2 L3 br3>3
+match a: /     case x if (a and /         0): /         y = 1 | (1, 0) | C1 L2 L3 L4 R4 => None
+match a: /     case x if (a and /         0): /         y = 1 | (1, 0) | L2 L3 bl3>4 L4
+match a: /     case x if (a and /         0): /         y = 1 | (1, 1) | C1 L2 L3 L4 R4 => None
+match a: /     case x if (a and /         0): /         y = 1 | (1, 1) | L2 L3 bl3>4 L4
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (0, 0) | C1 L2 L3 L4 R4 => None
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (0, 0) | L2 L3 bl3>4 L4
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (0, 1) | C1 L2 L3 L4 R4 => None
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (0, 1) | L2 L3 bl3>4 L4
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (1, 0) | C1 L2 L3 L5 R5 => None
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (1, 0) | L2 L3 br3>5 L5 br5>5
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (1, 1) | C1 L2 L3 L5 L6 R6 => None
+match a: /     case 0: /         y = 0 /     case x if (b and /         0): /         y = 1 | (1, 1) | L2 L3 br3>5 L5 bl5>6 L6
+match a: /     case x if (b or /         1): /         y = 1 | (0, 0) | C1 L2 L3 L4 L5 R5 => None
+match a: /     case x if (b or /         1): /         y = 1 | (0, 0) | L2 L3 bl3>4 L4 L5
+match a: /     case x if (b or /         1): /         y = 1 | (0, 1) | C1 L2 L3 L5 R5 => None
+match a: /     case x if (b or /         1): /         y = 1 | (0, 1) | L2 L3 br3>5 L5
+match a: /     case x if (b or /         1): /         y = 1 | (1, 0) | C1 L2 L3 L4 L5 R5 => None
+match a: /     case x if (b or /         1): /         y = 1 | (1, 0) | L2 L3 bl3>4 L4 L5
+match a: /     case x if (b or /         1): /         y = 1 | (1, 1) | C1 L2 L3 L5 R5 => None
+match a: /     case x if (b or /         1): /         y = 1 | (1, 1) | L2 L3 br3>5 L5
 -- a chained comparison at the end of a function
 0 < c(a) < 2 | (0, 0) | C1 L2 R2 => None
 0 < c(a) < 2 | (0, 1) | C1 L2 R2 => None
@@ -566,6 +606,187 @@ match a: /     case 1: /         x = a /     case _: /         c(0) | (1,)
 while a: /     if b: /         break /     c("s") /     break | ('s',)
 if a: /     x = a / else: /     return "s" | ('s',)
 if a: /     x = a / else: /     return None | (None,)
+-- constants where something loads None
+await c() / x = "q" | (None, 'q')
+x = "q" / await c() | ('q',)
+if a: /     await c() / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     await c() | ('q',)
+try: /     await c() / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     await c() / x = "q" | (None, 'q')
+if a: /     await c() | (None,)
+await c() | (None,)
+if a: /     if b: /         await c() /     else: /         x = a / else: /     x = "q" | (None, 'q')
+x = await c() / x = "q" | (None, 'q')
+x = "q" / x = await c() | ('q',)
+if a: /     x = await c() / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     x = await c() | ('q',)
+try: /     x = await c() / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     x = await c() / x = "q" | (None, 'q')
+if a: /     x = await c() | (None,)
+x = await c() | (None,)
+if a: /     if b: /         x = await c() /     else: /         x = a / else: /     x = "q" | (None, 'q')
+yield / x = "q" | (None, 'q')
+x = "q" / yield | ('q',)
+if a: /     yield / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     yield | ('q',)
+try: /     yield / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     yield / x = "q" | (None, 'q')
+if a: /     yield | (None,)
+yield | (None,)
+if a: /     if b: /         yield /     else: /         x = a / else: /     x = "q" | (None, 'q')
+x = yield / x = "q" | (None, 'q')
+x = "q" / x = yield | ('q',)
+if a: /     x = yield / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     x = yield | ('q',)
+try: /     x = yield / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     x = yield / x = "q" | (None, 'q')
+if a: /     x = yield | (None,)
+x = yield | (None,)
+if a: /     if b: /         x = yield /     else: /         x = a / else: /     x = "q" | (None, 'q')
+yield from c() / x = "q" | (None, 'q')
+x = "q" / yield from c() | ('q',)
+if a: /     yield from c() / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     yield from c() | ('q',)
+try: /     yield from c() / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     yield from c() / x = "q" | (None, 'q')
+if a: /     yield from c() | (None,)
+yield from c() | (None,)
+if a: /     if b: /         yield from c() /     else: /         x = a / else: /     x = "q" | (None, 'q')
+async for i in c(): pass / x = "q" | (None, 'q')
+x = "q" / async for i in c(): pass | ('q',)
+if a: /     async for i in c(): pass / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     async for i in c(): pass | ('q',)
+try: /     async for i in c(): pass / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     async for i in c(): pass / x = "q" | (None, 'q')
+if a: /     async for i in c(): pass | (None,)
+async for i in c(): pass | (None,)
+if a: /     if b: /         async for i in c(): pass /     else: /         x = a / else: /     x = "q" | (None, 'q')
+async with c(): pass / x = "q" | (None, 'q')
+x = "q" / async with c(): pass | ('q',)
+if a: /     async with c(): pass / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     async with c(): pass | ('q',)
+try: /     async with c(): pass / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     async with c(): pass / x = "q" | (None, 'q')
+if a: /     async with c(): pass | (None,)
+async with c(): pass | (None,)
+if a: /     if b: /         async with c(): pass /     else: /         x = a / else: /     x = "q" | (None, 'q')
+with c(): pass / x = "q" | (None, 'q')
+x = "q" / with c(): pass | ('q',)
+if a: /     with c(): pass / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     with c(): pass | ('q',)
+try: /     with c(): pass / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     with c(): pass / x = "q" | (None, 'q')
+if a: /     with c(): pass | (None,)
+with c(): pass | (None,)
+if a: /     if b: /         with c(): pass /     else: /         x = a / else: /     x = "q" | (None, 'q')
+try: /     c() / except E as e: /     pass / x = "q" | (None, 'q')
+x = "q" / try: /     c() / except E as e: /     pass | ('q',)
+if a: /     try: /         c() /     except E as e: /         pass / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     try: /         c() /     except E as e: /         pass | ('q',)
+try: /     try: /         c() /     except E as e: /         pass / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     try: /         c() /     except E as e: /         pass / x = "q" | (None, 'q')
+if a: /     try: /         c() /     except E as e: /         pass | (None,)
+try: /     c() / except E as e: /     pass | (None,)
+if a: /     if b: /         try: /             c() /         except E as e: /             pass /     else: /         x = a / else: /     x = "q" | (None, 'q')
+try: /     c() / except E as e: /     return / x = "q" | (None, 'q')
+x = "q" / try: /     c() / except E as e: /     return | ('q',)
+if a: /     try: /         c() /     except E as e: /         return / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     try: /         c() /     except E as e: /         return | ('q',)
+try: /     try: /         c() /     except E as e: /         return / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     try: /         c() /     except E as e: /         return / x = "q" | (None, 'q')
+if a: /     try: /         c() /     except E as e: /         return | (None,)
+try: /     c() / except E as e: /     return | (None,)
+if a: /     if b: /         try: /             c() /         except E as e: /             return /     else: /         x = a / else: /     x = "q" | (None, 'q')
+try: /     c() / except E as e: /     x = 7000 / x = "q" | (7000, 'q')
+x = "q" / try: /     c() / except E as e: /     x = 7000 | ('q', 7000)
+if a: /     try: /         c() /     except E as e: /         x = 7000 / else: /     x = "q" | (7000, 'q')
+if a: /     x = "q" / else: /     try: /         c() /     except E as e: /         x = 7000 | ('q', 7000)
+try: /     try: /         c() /     except E as e: /         x = 7000 / except KeyError: /     x = "q" | (7000, 'q')
+for j in a: /     try: /         c() /     except E as e: /         x = 7000 / x = "q" | (7000, 'q')
+if a: /     try: /         c() /     except E as e: /         x = 7000 | (7000,)
+try: /     c() / except E as e: /     x = 7000 | (7000,)
+if a: /     if b: /         try: /             c() /         except E as e: /             x = 7000 /     else: /         x = a / else: /     x = "q" | (7000, 'q')
+try: /     c() / except E as e: /     pass / except KeyError: /     pass / x = "q" | (None, 'q')
+x = "q" / try: /     c() / except E as e: /     pass / except KeyError: /     pass | ('q',)
+if a: /     try: /         c() /     except E as e: /         pass /     except KeyError: /         pass / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     try: /         c() /     except E as e: /         pass /     except KeyError: /         pass | ('q',)
+try: /     try: /         c() /     except E as e: /         pass /     except KeyError: /         pass / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     try: /         c() /     except E as e: /         pass /     except KeyError: /         pass / x = "q" | (None, 'q')
+if a: /     try: /         c() /     except E as e: /         pass /     except KeyError: /         pass | (None,)
+try: /     c() / except E as e: /     pass / except KeyError: /     pass | (None,)
+if a: /     if b: /         try: /             c() /         except E as e: /             pass /         except KeyError: /             pass /     else: /         x = a / else: /     x = "q" | (None, 'q')
+try: /     c() / except* E as e: /     pass / x = "q" | (None, 'q')
+x = "q" / try: /     c() / except* E as e: /     pass | ('q',)
+if a: /     try: /         c() /     except* E as e: /         pass / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     try: /         c() /     except* E as e: /         pass | ('q',)
+try: /     try: /         c() /     except* E as e: /         pass / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     try: /         c() /     except* E as e: /         pass / x = "q" | (None, 'q')
+if a: /     try: /         c() /     except* E as e: /         pass | (None,)
+try: /     c() / except* E as e: /     pass | (None,)
+if a: /     if b: /         try: /             c() /         except* E as e: /             pass /     else: /         x = a / else: /     x = "q" | (None, 'q')
+for k in a: /     try: /         c() /     except E as e: /         break / x = "q" | (None, 'q')
+x = "q" / for k in a: /     try: /         c() /     except E as e: /         break | ('q',)
+if a: /     for k in a: /         try: /             c() /         except E as e: /             break / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     for k in a: /         try: /             c() /         except E as e: /             break | ('q',)
+try: /     for k in a: /         try: /             c() /         except E as e: /             break / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     for k in a: /         try: /             c() /         except E as e: /             break / x = "q" | (None, 'q')
+if a: /     for k in a: /         try: /             c() /         except E as e: /             break | (None,)
+for k in a: /     try: /         c() /     except E as e: /         break | (None,)
+if a: /     if b: /         for k in a: /             try: /                 c() /             except E as e: /                 break /     else: /         x = a / else: /     x = "q" | (None, 'q')
+x = [i async for i in c()] / x = "q" | (None, 'q')
+x = "q" / x = [i async for i in c()] | ('q',)
+if a: /     x = [i async for i in c()] / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     x = [i async for i in c()] | ('q',)
+try: /     x = [i async for i in c()] / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     x = [i async for i in c()] / x = "q" | (None, 'q')
+if a: /     x = [i async for i in c()] | (None,)
+x = [i async for i in c()] | (None,)
+if a: /     if b: /         x = [i async for i in c()] /     else: /         x = a / else: /     x = "q" | (None, 'q')
+x = [await c() for i in a] / x = "q" | (None, 'q')
+x = "q" / x = [await c() for i in a] | ('q',)
+if a: /     x = [await c() for i in a] / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     x = [await c() for i in a] | ('q',)
+try: /     x = [await c() for i in a] / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     x = [await c() for i in a] / x = "q" | (None, 'q')
+if a: /     x = [await c() for i in a] | (None,)
+x = [await c() for i in a] | (None,)
+if a: /     if b: /         x = [await c() for i in a] /     else: /         x = a / else: /     x = "q" | (None, 'q')
+c((yield)) / x = "q" | (None, 'q')
+x = "q" / c((yield)) | ('q',)
+if a: /     c((yield)) / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     c((yield)) | ('q',)
+try: /     c((yield)) / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     c((yield)) / x = "q" | (None, 'q')
+if a: /     c((yield)) | (None,)
+c((yield)) | (None,)
+if a: /     if b: /         c((yield)) /     else: /         x = a / else: /     x = "q" | (None, 'q')
+return / x = "q" | (None,)
+x = "q" / return | ('q',)
+if a: /     return / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     return | ('q',)
+try: /     return / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     return / x = "q" | (None, 'q')
+if a: /     return | (None,)
+return | (None,)
+if a: /     if b: /         return /     else: /         x = a / else: /     x = "q" | (None, 'q')
+x = None / x = "q" | (None, 'q')
+x = "q" / x = None | ('q',)
+if a: /     x = None / else: /     x = "q" | (None, 'q')
+if a: /     x = "q" / else: /     x = None | ('q',)
+try: /     x = None / except KeyError: /     x = "q" | (None, 'q')
+for j in a: /     x = None / x = "q" | (None, 'q')
+if a: /     x = None | (None,)
+x = None | (None,)
+if a: /     if b: /         x = None /     else: /         x = a / else: /     x = "q" | (None, 'q')
+pass / x = "q" | ('q',)
+x = "q" / pass | ('q',)
+if a: /     pass / else: /     x = "q" | ('q',)
+if a: /     x = "q" / else: /     pass | ('q',)
+try: /     pass / except KeyError: /     x = "q" | ('q',)
+for j in a: /     pass / x = "q" | ('q',)
+if a: /     pass | (None,)
+pass | (None,)
+if a: /     if b: /         pass /     else: /         x = a / else: /     x = "q" | ('q',)
 -- a loop at the end of the last case
 match 1: /     case 0: x = 5 /     case _ if a: /         for i in (): /             break | (0, 0) | C1 L2 L3 L4 R4 => None
 match 1: /     case 0: x = 5 /     case _ if a: /         for i in (): /             break | (0, 0) | L2 L3 br3>4 L4 br4>4

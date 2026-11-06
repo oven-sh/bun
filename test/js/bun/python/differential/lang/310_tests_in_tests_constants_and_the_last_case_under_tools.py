@@ -28,7 +28,7 @@ def show(title, bodies, kinds, ARGS=ARGS):
     print('--', title)
     for body in bodies:
         g = {'E': E, 'c': c}
-        exec(compile('def f(a, b):\n' + indent(body) + '\n', 'p', 'exec'), g); f = g['f']
+        exec(compile(('async def' if 'K' in kinds and ('await ' in body or 'async ' in body) else 'def') + ' f(a, b):\n' + indent(body) + '\n', 'p', 'exec'), g); f = g['f']
         name = body.replace('\n', ' / ')
         if 'K' in kinds: print(name, '|', f.__code__.co_consts)
         for args in ARGS:
@@ -68,7 +68,8 @@ show('the jump behind the first arm of a test that is a conditional expression, 
 show('a test over several lines that ends in a constant',
      ['if (a and\n    b and\n    0):\n    x = 1', 'if not (a or\n    b or\n    1):\n    x = 1', 'assert (a or\n    b or\n    1)', 'assert (a or\n    b or\n    1), c', 'if a:\n    assert (a or\n        b or\n        1)\nelse:\n    x = 1',
       'for i in (1, 2):\n    assert (a or\n        b or\n        1)', 'for i in (1, 2):\n    if (a and\n        b and\n        0):\n        x = 1', 'if a:\n    if (a and\n        b and\n        0):\n        x = 1\nelse:\n    x = 2',
-      'if (a or\n    0): return 3', 'if (a or\n    0):\n    return 3', 'while (a or\n    0):\n    break', 'assert ((a or\n    "x") if c(1) else c(0))', 'assert (a or\n    1)', 'assert (a or\n    1), c(1)'], 'SM')
+      'if (a or\n    0): return 3', 'if (a or\n    0):\n    return 3', 'while (a or\n    0):\n    break', 'assert ((a or\n    "x") if c(1) else c(0))', 'assert (a or\n    1)', 'assert (a or\n    1), c(1)', 'assert (a or\n    1), (c(1) if 0 else c(2))', 'if (a and\n    0):\n    x = 1 if 1 else 2', 'match a:\n    case x if (a and\n        0):\n        y = 1',
+      'match a:\n    case 0:\n        y = 0\n    case x if (b and\n        0):\n        y = 1', 'match a:\n    case x if (b or\n        1):\n        y = 1'], 'SM')
 COMPARISONS = [p.replace('X', x) for x in ('0 < c(a) < 2', '(0 < c(a) <\n        2)', '(c(0) if c(0) else 0 < c(a) < 2)', '(c(b) and 0 < c(a) < 2)', '(0 < c(a) < 2 if c(b) else c(0))', '0 < c(a) < c(b) < 2')
       for p in ('X', 'if c(1):\n    X', 'if c(b):\n    X\nelse:\n    x = 1', 'for i in (1, 2):\n    X', 'try:\n    X\nexcept E:\n    x = 1')]
 show('a chained comparison at the end of a function', COMPARISONS, 'S')
@@ -78,6 +79,13 @@ show('constants',
       '(a and\n    300)', '(a and\n    (1, 2))', '(a and\n    None)', '(a and "x")', 'if a:\n    x = a\nelse:\n    c(0)', 'if a:\n    x = a\nelse:\n    c("s")', 'if a:\n    x = a\nelse:\n    x = 300', 'for i in (a,):\n    if i:\n        x = i\n    else:\n        c(0)',
       'if a:\n    pass\nelif b:\n    c(5)\nelse:\n    c(6)', 'try:\n    x = a\nexcept E:\n    c(0)', 'if a:\n    return\nc(0)', 'if a:\n    x = a\nelse:\n    c(None, 0)', 'match a:\n    case 1:\n        x = a\n    case _:\n        c(0)',
       'while a:\n    if b:\n        break\n    c("s")\n    break', 'if a:\n    x = a\nelse:\n    return "s"', 'if a:\n    x = a\nelse:\n    return None'], 'K')
+NONE = ['await c()', 'x = await c()', 'yield', 'x = yield', 'yield from c()', 'async for i in c(): pass', 'async with c(): pass', 'with c(): pass', 'try:\n    c()\nexcept E as e:\n    pass', 'try:\n    c()\nexcept E as e:\n    return',
+        'try:\n    c()\nexcept E as e:\n    x = 7000', 'try:\n    c()\nexcept E as e:\n    pass\nexcept KeyError:\n    pass', 'try:\n    c()\nexcept* E as e:\n    pass', 'for k in a:\n    try:\n        c()\n    except E as e:\n        break',
+        'x = [i async for i in c()]', 'x = [await c() for i in a]', 'c((yield))', 'return', 'x = None', 'pass']
+def put(t, mark, what): return '\n'.join(indent(what, len(l) - len(l.lstrip())) if l.strip() == mark else l for l in t.split('\n'))
+show('constants where something loads None',
+     [put(t, 'N', n) for n in NONE for t in ('N\nx = "q"', 'x = "q"\nN', 'if a:\n    N\nelse:\n    x = "q"', 'if a:\n    x = "q"\nelse:\n    N', 'try:\n    N\nexcept KeyError:\n    x = "q"', 'for j in a:\n    N\nx = "q"', 'if a:\n    N', 'N',
+                                               'if a:\n    if b:\n        N\n    else:\n        x = a\nelse:\n    x = "q"')], 'K')
 LOOPS = ['for i in ():\n    break', 'for i in (1,):\n    break', 'for i in (1, 2):\n    if b: break', 'for i in (1,): pass']
 show('a loop at the end of the last case',
      ['match 1:\n    case 0: x = 5\n' + indent(k + '\n' + indent(l)) + t for k in ('case _ if a:', 'case _:', 'case 1 if a:', 'case q if a:', 'case 1:') for l in LOOPS for t in ('', '\nx = 7') if not (t and k == 'case _:')], 'SM')

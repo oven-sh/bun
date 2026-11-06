@@ -424,13 +424,6 @@ impl Quick {
         Ok(())
     }
 
-    pub(crate) fn remove_entries(&mut self, at: i32, count: i32) {
-        self.print_jsx
-            .jx
-            .move_within(at, at + count * 3, self.print_jsx.jx_top);
-        self.print_jsx.jx_top -= count * 3;
-    }
-
     pub(crate) fn is_empty_or_any_line(&self, type_: i32) -> bool {
         return type_ == EMPTY
             || type_ == LINE
@@ -441,18 +434,19 @@ impl Quick {
 
     /// The edits of print_jsx_element_internal. Returns the new base of the list.
     pub(crate) fn clean_children(&mut self, mut base: i32, contains_text: bool) -> i32 {
-        let mut i = (self.print_jsx.jx_top - base) / 3 - 2;
-        while i >= 0 {
-            let at = base + i * 3;
-            let length = (self.print_jsx.jx_top - base) / 3;
+        // From the last entry to the first. What has been looked at and stays is moved up to what stays behind it: it starts at `kept`.
+        let top = self.print_jsx.jx_top;
+        let mut kept = if top - base < 6 { base } else { top - 3 };
+        let mut at = kept - 3;
+        while at >= base {
             let c0 = self.print_jsx.jx.at(at);
-            let c1 = if i + 1 < length {
-                self.print_jsx.jx.at(at + 3)
+            let c1 = if kept < top {
+                self.print_jsx.jx.at(kept)
             } else {
                 -1
             };
-            let c2 = if i + 2 < length {
-                self.print_jsx.jx.at(at + 6)
+            let c2 = if kept + 3 < top {
+                self.print_jsx.jx.at(kept + 3)
             } else {
                 -1
             };
@@ -472,12 +466,21 @@ impl Quick {
                 || is_double_jsx_whitespace
                 || is_pair_of_hard_or_soft_lines
             {
-                self.remove_entries(at, 2);
-            } else if is_jsx_whitespace_followed_by_line {
-                self.remove_entries(at + 3, 2);
+                // this one and the next one go
+                kept += 3;
+            } else {
+                if is_jsx_whitespace_followed_by_line {
+                    // the next two go
+                    kept += 6;
+                }
+                kept -= 3;
+                if kept != at {
+                    self.print_jsx.jx.move_within(kept, at, at + 3);
+                }
             }
-            i -= 1;
+            at -= 3;
         }
+        base = kept;
         while self.print_jsx.jx_top > base
             && self.is_empty_or_any_line(self.print_jsx.jx.at(self.print_jsx.jx_top - 3))
         {

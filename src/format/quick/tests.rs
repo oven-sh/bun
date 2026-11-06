@@ -1,6 +1,7 @@
 //! What ends a run that would take too much. Here the buffers are small (`LARGEST`), so that small texts come to their limits.
 
 use crate::root::LONGEST_FILE;
+use crate::text::SRC_BASE;
 use crate::{
     Answer, Dialect, Guest, Guests, LARGEST, Language, Options, OwnLosses, Quick, Sink, format,
     grow, has_lost_something, larger, lose, why,
@@ -316,4 +317,23 @@ fn a_template_that_its_guest_cannot_read_is_tried_once() {
     let printed = print_with(&mut scratch, "a.js", &text, &Options::default());
     assert_eq!(printed.as_deref(), Ok(&text[..]));
     assert_eq!(asked.load(Ordering::Relaxed), depth);
+}
+
+#[test]
+fn a_comment_that_is_not_written_is_missed() {
+    let mut scratch = Quick::new();
+    scratch.start_run();
+    scratch.reset_doc(64);
+    scratch.set_comment_window(0, 0);
+    assert!(scratch.check_that_comments_are_written().is_ok());
+    scratch.push_comment(SRC_BASE, SRC_BASE + 4, 0);
+    scratch.push_comment(SRC_BASE + 4, SRC_BASE + 8, 0);
+    assert!(scratch.check_that_comments_are_written().is_err());
+    scratch.print_comment(0);
+    assert!(scratch.check_that_comments_are_written().is_err());
+    assert_eq!(scratch.why(), why::RARE);
+    // (twice: one document can be written for several layouts)
+    scratch.print_comment(1);
+    scratch.print_comment(1);
+    assert!(scratch.check_that_comments_are_written().is_ok());
 }

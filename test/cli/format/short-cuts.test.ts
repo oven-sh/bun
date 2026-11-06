@@ -4625,6 +4625,19 @@ describe("scripts that are too much for the quick way", () => {
       ));
   });
 
+  // A comment is given to a node, whose printer has to ask for it. One that nobody asks for is missed at the end.
+  describe("comments that no printer asks for", () =>
+    expectSame(
+      "a.js.flow",
+      ["/* keep me */ ", "/* c */", "/* c */\n"].flatMap(comment => [
+        `function f<const ${comment}T>(a: T) {}\n`,
+        `class A {\n  m<const ${comment}T>() {}\n}\n`,
+        `type A = <const ${comment}T>(a: T) => T;\n`,
+        `function f<${comment}const T>(a: T) {}\n`,
+      ]),
+      [[]],
+    ));
+
   describe("escapes beyond the last character", () =>
     expectSame(
       "a.js",

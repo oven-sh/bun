@@ -219,7 +219,8 @@ impl Quick {
         if self.host.wrap != WRAP_NONE {
             return self.print_expression(root);
         }
-        self.print(root)
+        self.print(root)?;
+        self.check_that_comments_are_written()
     }
 
     /// The text is `(`, an expression, a line break and `)`, which is how one expression is read as a program. Prints the expression, with what the

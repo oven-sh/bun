@@ -3,6 +3,7 @@
 use crate::ast::{F_DANGLING, F_LEADING, F_TRAILING};
 use crate::comments::{
     CF_BEFORE_ARROW, CF_MARK_EXTENDS, CF_MARK_IMPLEMENTS, CF_MARK_MIXINS, CF_MARKERS, CF_PRINTED,
+    CF_WRITTEN,
 };
 use crate::doc::ALIGN_MARK_ROOT;
 use crate::lexer::{C_FLAGS, C_STRIDE, CF_BLOCK, CF_INDENTABLE, CF_PLAIN};
@@ -54,11 +55,9 @@ impl Quick {
     }
 
     pub(crate) fn print_comment(&mut self, c: i32) {
-        self.print_comment_at(
-            self.comment_start(c),
-            self.comment_end(c),
-            self.comment_flags(c),
-        );
+        let flags = self.comment_flags(c);
+        self.lexer.c.put(c * C_STRIDE + C_FLAGS, flags | CF_WRITTEN);
+        self.print_comment_at(self.comment_start(c), self.comment_end(c), flags);
     }
 
     /// The comment T[s, e), with the flags that the lexer gave it.

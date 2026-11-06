@@ -812,12 +812,29 @@ pub(crate) const CF_MARKERS: i32 =
     CF_BEFORE_ARROW | CF_MARK_IMPLEMENTS | CF_MARK_EXTENDS | CF_MARK_MIXINS;
 /// a "prettier-ignore" that was taken note of in another way (F_IGNORED)
 pub(crate) const CF_UNIGNORE: i32 = 8192;
+/// print_comment() has written it, at least once: see check_that_comments_are_written()
+pub(crate) const CF_WRITTEN: i32 = 32768;
 impl Quick {
     pub(crate) fn reset_comments(&mut self) {
         self.comments.trailing_count = 0;
         self.comments.map_mask = 63;
         self.comments.map.fill_range(0, 0, 64 * 3);
         self.comments.map_room = 16;
+    }
+
+    /// A comment is given to a node, and the printer of that node, or of the node around it, has to ask for it. Where none does, the comment would be gone, and nobody
+    /// would know. So each one is written, or is part of what is printed as it stands (CF_PRINTED), or has a node of its own in a list (CF_CLAIMED).
+    pub(crate) fn check_that_comments_are_written(&self) -> R<()> {
+        let mut c = self.lexer.c_base;
+        while c < self.lexer.c_count {
+            if (self.lexer.c.at(c * C_STRIDE + C_FLAGS) & (CF_WRITTEN | CF_PRINTED | CF_CLAIMED))
+                == 0
+            {
+                return Err(self.rare(rare::COMMENT));
+            }
+            c += 1;
+        }
+        Ok(())
     }
 
     pub(crate) fn make_room_in_map(&mut self, count: i32) -> R<()> {

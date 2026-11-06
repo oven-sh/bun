@@ -4451,6 +4451,8 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.js", "", "/**\n * c\n */", "\na;\n", 8000],
     ["a.ts", "type A = ", "/* c */ ", "| B | C;\n", 8000],
     ["a.ts", "type A = { ", "/* c */ ", "[K in B]: C };\n", 8000],
+    // two long lists of a node that stand in another order in the text
+    ["a.js.flow", "declare class A mixins ", "B, ¦C implements ¦D, ", "E {\n  // c\n  a: F;\n}\n", 4000],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

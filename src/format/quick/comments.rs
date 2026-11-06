@@ -1145,7 +1145,9 @@ impl Quick {
                 j += 1;
             }
         }
-        // by start, then by end; nearly sorted already
+        // By start, then by end. They are nearly sorted already: few have to go, and not far. (Where one long list stands before another one in the text
+        // and behind it in the node, all of the one would go past all of the other.)
+        let mut steps_left = (self.comments.ch_pos - first) * 4 + 64;
         let mut i = first + 1;
         while i < self.comments.ch_pos {
             let c = self.comments.ch.at(i);
@@ -1161,6 +1163,11 @@ impl Quick {
                 j -= 1;
             }
             self.comments.ch.put(j + 1, c);
+            steps_left -= i - 1 - j;
+            if steps_left < 0 {
+                self.merge_children(first);
+                break;
+            }
             i += 1;
         }
         if self.comments.path_pos + 3 > (self.comments.path.len() as i32) {
@@ -1174,6 +1181,38 @@ impl Quick {
             .path
             .put(self.comments.path_pos + 2, self.comments.ch_pos);
         self.comments.path_pos += 3;
+    }
+
+    /// Sorts the children from `first` on as push_level() does, by merging.
+    #[cold]
+    fn merge_children(&mut self, first: i32) {
+        let mut from = self.comments.ch.sub(first, self.comments.ch_pos).to_vec();
+        let count = from.len() as i32;
+        let mut to = zeros::<i32>(count);
+        let mut width = 1;
+        while width < count {
+            let mut low = 0;
+            while low < count {
+                let middle = count.min(low + width);
+                let high = count.min(middle + width);
+                let (mut a, mut b) = (low, middle);
+                for o in low..high {
+                    let takes_right = a == middle
+                        || (b < high && {
+                            let (left, right) = (from.at(a), from.at(b));
+                            (self.n.at(right + 1), self.n.at(right + 2))
+                                < (self.n.at(left + 1), self.n.at(left + 2))
+                        });
+                    to.put(o, from.at(if takes_right { b } else { a }));
+                    a += i32::from(!takes_right);
+                    b += i32::from(takes_right);
+                }
+                low = high;
+            }
+            std::mem::swap(&mut from, &mut to);
+            width *= 2;
+        }
+        self.comments.ch.set_all(&from, first);
     }
 
     pub(crate) fn expression_index(&self, quasis: i32, start: i32) -> i32 {

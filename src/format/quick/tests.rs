@@ -42,7 +42,7 @@ fn print(name: &str, text: &[u8]) -> Result<Vec<u8>, i32> {
 fn lines_of(printed: &Result<Vec<u8>, i32>) -> usize {
     printed
         .as_ref()
-        .map_or(0, |out| out.iter().filter(|&&c| c == b'\n').count())
+        .map_or(0, |out| bun_core::strings::count_char(out, b'\n'))
 }
 
 #[test]

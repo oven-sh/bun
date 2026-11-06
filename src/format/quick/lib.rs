@@ -13,6 +13,8 @@
 //! - Arrays are read with `at()` and written with `put()` ([`Words`]), which have an answer for every index. Nothing can panic.
 //!   A write that falls beyond the end of its buffer, and a read beyond the end of a buffer of numbers, is a mistake of whoever was to
 //!   make room: it is noted, and the file is refused.
+//! - No buffer grows beyond [`LARGEST`]. Whoever finds no room ends the run ([`Quick::end_run`]), so that no length and no position has to be looked at where it is
+//!   packed into a part of a word.
 //! - A function that can stop the work returns [`R`]; why it stopped is `Quick::why`. `REDO` means: a short cut was taken on a wrong
 //!   guess, and the file is formatted again without short cuts.
 //! - Whoever calls itself, directly or not, asks `self.stack()?` first.
@@ -555,7 +557,8 @@ pub(crate) fn larger(length: i32, need: i32) -> Option<i32> {
 }
 
 /// Makes room for `need` items and `spare` more, and keeps the first `used`. False if that is more than a buffer may hold: it then stays as it is.
-/// This is the one way in which a buffer grows.
+/// Whatever is written at a position grows this way. A table that is laid out anew when it grows (the comments of the nodes, the docs that are kept, the trials that
+/// have failed) asks for itself whether it may.
 #[cold]
 #[inline(never)]
 pub(crate) fn grow<T: Default + Copy>(

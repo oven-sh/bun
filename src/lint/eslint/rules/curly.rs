@@ -17,15 +17,15 @@ enum Mode {
     MultiOrNest,
 }
 
-const MISSING_CURLY_AFTER: Message =
-    Message::new("missingCurlyAfter", "Expected { after '{{name}}'.");
-const MISSING_CURLY_AFTER_CONDITION: Message = Message::new(
+const MISSING_CURLY_AFTER: &Message =
+    &Message::new("missingCurlyAfter", "Expected { after '{{name}}'.");
+const MISSING_CURLY_AFTER_CONDITION: &Message = &Message::new(
     "missingCurlyAfterCondition",
     "Expected { after '{{name}}' condition.",
 );
-const UNEXPECTED_CURLY_AFTER: Message =
-    Message::new("unexpectedCurlyAfter", "Unnecessary { after '{{name}}'.");
-const UNEXPECTED_CURLY_AFTER_CONDITION: Message = Message::new(
+const UNEXPECTED_CURLY_AFTER: &Message =
+    &Message::new("unexpectedCurlyAfter", "Unnecessary { after '{{name}}'.");
+const UNEXPECTED_CURLY_AFTER_CONDITION: &Message = &Message::new(
     "unexpectedCurlyAfterCondition",
     "Unnecessary { after '{{name}}' condition.",
 );
@@ -248,7 +248,7 @@ impl Curly {
             true => first_of_chain(body, chains),
             false => None,
         };
-        let report = |message: Message| match chain {
+        let report = |message: &'static Message| match chain {
             Some(first) => cx.report(body, message).called_with(first),
             None => cx.report(body, message),
         };

@@ -1,5 +1,7 @@
 //! The pragmas in the comments before the first token: `/// <reference .. />`, `// @ts-check` and
-//! `// @ts-nocheck`, `/* @jsx h */` and similar.
+//! `// @ts-nocheck`, `/* @jsx h */` and similar. For `bun compile`, the JSX pragmas in all comments.
+
+mod code_pragmas;
 
 use bun_sema::atom::Atom;
 use bun_sema::hir::{
@@ -7,12 +9,12 @@ use bun_sema::hir::{
 };
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
-/// token. Returns false if TypeScript reports an error about one of them. With `recovers`, the
-/// error is added to the file's diagnostics instead.
+/// token. `error_kind`: the kind of the diagnostic for TypeScript's error about one of them, `None` for none and a false result. `compiles`: the JSX pragmas are those `bun run` reads.
 pub(crate) fn process_pragmas_into_fields(
     text: &[u8],
     leading: &[(u32, u32)],
-    recovers: bool,
+    error_kind: Option<DiagnosticKind>,
+    compiles: bool,
     intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
@@ -20,16 +22,19 @@ pub(crate) fn process_pragmas_into_fields(
         let comment = &text[start as usize..end as usize];
         match comment.get(..2) {
             Some(b"//") => {
-                if !single_line_pragma(comment, start as usize, recovers, intern, file) {
+                if !single_line_pragma(comment, start as usize, error_kind, intern, file) {
                     return false;
                 }
             }
             // Only read for files that can contain JSX.
-            Some(b"/*") if file.kind == FileKind::Tsx => {
+            Some(b"/*") if file.kind == FileKind::Tsx && !compiles => {
                 multi_line_pragmas(comment, intern, &mut file.jsx_pragmas);
             }
             _ => {}
         }
+    }
+    if file.kind == FileKind::Tsx && compiles {
+        file.jsx_pragmas = code_pragmas::code_jsx_pragmas(text, &file.comments, intern);
     }
     true
 }
@@ -39,7 +44,7 @@ pub(crate) fn process_pragmas_into_fields(
 fn single_line_pragma(
     text: &[u8],
     comment_pos: usize,
-    recovers: bool,
+    error_kind: Option<DiagnosticKind>,
     intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
@@ -104,11 +109,7 @@ fn single_line_pragma(
         (None, None, Some(path)) => (ReferenceKind::Path, path),
         (None, None, None) => {
             let at = (comment_pos as u32, (comment_pos + text.len()) as u32);
-            if recovers {
-                let error = Diagnostic::new(DiagnosticKind::Parse, at, 1084, &[]);
-                file.diagnostics.push(error);
-            }
-            return recovers;
+            return report(file, error_kind, at, 1084);
         }
     };
     // `parseResolutionMode`
@@ -116,11 +117,11 @@ fn single_line_pragma(
         Some((from, to)) => match &text[from..to] {
             b"import" => ResolutionMode::Import,
             b"require" => ResolutionMode::Require,
-            _ if !recovers => return false,
             _ => {
                 let at = ((comment_pos + from) as u32, (comment_pos + to) as u32);
-                let error = Diagnostic::new(DiagnosticKind::Parse, at, 1453, &[]);
-                file.diagnostics.push(error);
+                if !report(file, error_kind, at, 1453) {
+                    return false;
+                }
                 ResolutionMode::None
             }
         },
@@ -129,6 +130,20 @@ fn single_line_pragma(
     let value = intern(&text[from..to]);
     file.references
         .push((kind, value, (comment_pos + from) as u32, mode));
+    true
+}
+
+/// See `error_kind` of [`process_pragmas_into_fields`].
+fn report(
+    file: &mut FileBuilder,
+    error_kind: Option<DiagnosticKind>,
+    at: (u32, u32),
+    code: u32,
+) -> bool {
+    let Some(kind) = error_kind else {
+        return false;
+    };
+    file.diagnostics.push(Diagnostic::new(kind, at, code, &[]));
     true
 }
 

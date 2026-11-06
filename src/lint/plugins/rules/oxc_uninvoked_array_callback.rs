@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// This rule applies when an Array function has a callback argument used for an array with empty slots.
 pub struct UninvokedArrayCallback;
 
-const UNINVOKED_ARRAY_CALLBACK: Message = Message::new("", "Uninvoked array callback");
+const UNINVOKED_ARRAY_CALLBACK: &Message = &Message::new("", "Uninvoked array callback");
 
 impl Rule for UninvokedArrayCallback {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "uninvoked-array-callback", Kind::Problem);

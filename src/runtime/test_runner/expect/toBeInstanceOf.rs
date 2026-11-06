@@ -17,14 +17,12 @@ impl Expect {
         let this_value = this_value.to_js();
 
         this.increment_expect_call_counter();
-        let mut formatter = super::make_formatter(global);
-        // `defer formatter.deinit()` → handled by Drop.
 
         let expected = expected.to_js();
         if !expected.is_constructor() {
             return Err(global.throw(format_args!(
                 "Expected value must be a function: {}",
-                expected.to_fmt(&mut formatter),
+                expected.to_fmt(&mut super::make_formatter(global)),
             )));
         }
 
@@ -40,6 +38,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
+        let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let expected_fmt = expected.to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);

@@ -18,29 +18,29 @@ pub struct NoFloatingPromises {
     ignore_void: bool,
 }
 
-const FLOATING: Message = Message::new(
+const FLOATING: &Message = &Message::new(
     "floating",
     "Promises must be awaited, end with a call to .catch, or end with a call to .then with a rejection handler.",
 );
-const FLOATING_FIX_AWAIT: Message = Message::new("floatingFixAwait", "Add await operator.");
-const FLOATING_FIX_VOID: Message = Message::new("floatingFixVoid", "Add void operator to ignore.");
-const FLOATING_PROMISE_ARRAY: Message = Message::new(
+const FLOATING_FIX_AWAIT: &Message = &Message::new("floatingFixAwait", "Add await operator.");
+const FLOATING_FIX_VOID: &Message = &Message::new("floatingFixVoid", "Add void operator to ignore.");
+const FLOATING_PROMISE_ARRAY: &Message = &Message::new(
     "floatingPromiseArray",
     "An array of Promises may be unintentional. Consider handling the promises' fulfillment or rejection with Promise.all or similar.",
 );
-const FLOATING_PROMISE_ARRAY_VOID: Message = Message::new(
+const FLOATING_PROMISE_ARRAY_VOID: &Message = &Message::new(
     "floatingPromiseArrayVoid",
     "An array of Promises may be unintentional. Consider handling the promises' fulfillment or rejection with Promise.all or similar, or explicitly marking the expression as ignored with the `void` operator.",
 );
-const FLOATING_USELESS_REJECTION_HANDLER: Message = Message::new(
+const FLOATING_USELESS_REJECTION_HANDLER: &Message = &Message::new(
     "floatingUselessRejectionHandler",
     "Promises must be awaited, end with a call to .catch, or end with a call to .then with a rejection handler. A rejection handler that is not a function will be ignored.",
 );
-const FLOATING_USELESS_REJECTION_HANDLER_VOID: Message = Message::new(
+const FLOATING_USELESS_REJECTION_HANDLER_VOID: &Message = &Message::new(
     "floatingUselessRejectionHandlerVoid",
     "Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator. A rejection handler that is not a function will be ignored.",
 );
-const FLOATING_VOID: Message = Message::new(
+const FLOATING_VOID: &Message = &Message::new(
     "floatingVoid",
     "Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator.",
 );

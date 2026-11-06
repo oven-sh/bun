@@ -128,6 +128,15 @@ struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
 
+// Bytes that C++ passes to Rust. Nothing converts a JS value to it.
+struct IDLByteSpan : WebCore::IDLType<std::span<const uint8_t>> {};
+
+// The characters of a string where they are: no reference is taken, and those of a substring stay in its base.
+template<bool allowStringObject>
+struct IDLStringView : WebCore::IDLType<JSC::GCOwnedDataScope<WTF::StringView>> {
+    using SequenceStorageType = void;
+};
+
 // `b.bytes`: which values it takes.
 struct BytesOptions {
     // Without `ToString`. A string: what IDLStrictUTF8String takes. A buffer: a BufferSource, shared or not.
@@ -157,6 +166,14 @@ struct IDLRawBufferSource : IDLRawAny {};
 
 // A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawCallable : IDLRawAny {};
+
+// A string as the cell itself. The caller's frame keeps it alive.
+struct IDLRawString : WebCore::IDLType<JSC::JSString*> {
+    using SequenceStorageType = void;
+    using NullableType = JSC::JSString*;
+    using NullableInnerParameterType = JSC::JSString*;
+    static JSC::JSString* nullValue() { return nullptr; }
+};
 
 // An object as the `JSValue` itself. See IDLRawAny.
 struct IDLRawObject : IDLRawAny {};

@@ -1,0 +1,27 @@
+# new ($newCppFunction(..))(handed)
+# The function that the macro makes is no constructor: the construction throws before native code sees an operand.
+# LIBRARY: own
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> NativeFunctionsInternalForTestingCppJsFunction_hasReifiedStatic
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="library" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeNewCppFunctionInternalForTestingCppJsFunction_hasReifiedStatic
+    v1 = NewClosure function=f2
+    v2 = Construct v0, -, v1
+    Return
+}
+function f2 name="handed" results=[{type=anything}] {
+  b0():
+    Return
+}

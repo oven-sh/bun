@@ -792,10 +792,11 @@ impl Snapshots {
     /// jest-snapshot's `saveSnapshotFile`. The text comes from `values` alone.
     #[optimize(size)]
     fn write_pending(&mut self, files: &FileList, file: &mut File) -> bun_sys::Result<()> {
-        let from = match file.pending {
+        // New entries go behind the text that was loaded, which can be text with no entry.
+        let (from, at) = match file.pending {
             Pending::Nothing => return Ok(()),
-            Pending::NewEntries => file.loaded_entries,
-            Pending::WholeFile => 0,
+            Pending::NewEntries => (file.loaded_entries, file.loaded_len),
+            Pending::WholeFile => (0, 0),
         };
         if self.values.is_empty() {
             if let Some(opened) = file.file.take() {
@@ -825,7 +826,7 @@ impl Snapshots {
             };
             order.insert(at, i);
         }
-        let (mut text, at) = if from == 0 { (file.format.header().to_vec(), 0) } else { (Vec::new(), file.loaded_len) };
+        let mut text = if file.pending == Pending::WholeFile { file.format.header().to_vec() } else { Vec::new() };
         for i in order {
             file.format.write_entry(&mut text, &keys[i], &values[i].value);
         }

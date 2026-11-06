@@ -55,6 +55,24 @@ test("--update-snapshots keeps the old file until the new contents are written",
   expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });
 
+// What a person wrote into a file in Bun's format that has no entry yet.
+const textWithNoEntry: [string, string][] = [
+  ["the first line alone", "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n"],
+  [
+    "the first line and a note",
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n// a note that a person wrote\n",
+  ],
+  ["a note and no first line", "// a note that a person wrote\n"],
+  [
+    "a note of three lines",
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n// line one\n// line two\n// line three\n",
+  ],
+  [
+    "a statement that is no entry",
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`z 1`] = `x ${1} y`;\n",
+  ],
+];
+
 describe.concurrent("--update-snapshots", () => {
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
   const snap = (entries: Record<string, string>) =>
@@ -219,6 +237,11 @@ describe.concurrent("--update-snapshots", () => {
     const more = `test("c", () => { expect("c").toMatchSnapshot(); });`;
     const result = await updateOne(testsOfLayouts("old", more), before);
     expect(result).toMatchObject({ snapshot: before + '\nexports[`c 1`] = `"c"`;\n', exitCode: 0 });
+  });
+
+  test.each(textWithNoEntry)("puts the first entry behind the text of a file with %s", async (_, before) => {
+    const result = await updateOne(`test("a", () => { expect("a").toMatchSnapshot(); });`, before);
+    expect(result).toMatchObject({ snapshot: before + '\nexports[`a 1`] = `"a"`;\n', exitCode: 0 });
   });
 
   // A changed or removed entry prints the file from its entries, in the order of the file. Comments and the layout go.
@@ -490,6 +513,14 @@ describe.concurrent("a run without --update-snapshots", () => {
     const { stderr, exitCode } = await run(dir, "false");
     expect(stderr).toContain("snapshots: 1 passed, 1 added");
     expect(fs.readFileSync(file(dir), "utf8")).toBe(stored + '\nexports[`two 1`] = `"2"`;\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(textWithNoEntry)("puts the first entry behind the text of a file with %s", async (_, before) => {
+    using dir = tempDir("snapshot-first-entry", { "a.test.ts": one, "__snapshots__/a.test.ts.snap": before });
+    const { stderr, exitCode } = await run(dir, "false");
+    expect(stderr).toContain("snapshots: +1 added");
+    expect(fs.readFileSync(file(dir), "utf8")).toBe(before + '\nexports[`one 1`] = `"1"`;\n');
     expect(exitCode).toBe(0);
   });
 

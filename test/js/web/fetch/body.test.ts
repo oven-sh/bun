@@ -1533,6 +1533,106 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
   });
 });
 
+// A server that closes the connection before the body ends. The bytes it sent
+// before the close still reach a reader, and only then does the read reject
+// with ECONNRESET, as in node. The `Bun.sleepSync` after the close keeps the
+// JS thread busy until the HTTP thread has seen both the bytes and the close,
+// so the two always reach the body in one batch (the case #48008 reports).
+describe("a fetch() body cut short by the server", () => {
+  const head = {
+    chunked: "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n",
+    contentLength: "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\n",
+  };
+  const partialBody = {
+    chunked: "6\r\nhello\n\r\n",
+    contentLength: "hello\n",
+  };
+  type Framing = keyof typeof head;
+
+  // Sends the head and the bytes, then closes. With `whenToCut`, only the head
+  // goes out at once: the bytes and the close wait for it.
+  function listen(framing: Framing, whenToCut?: Promise<void>) {
+    return Bun.listen<{ request: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { request: "" };
+        },
+        async data(socket, data) {
+          socket.data.request += data.toString("latin1");
+          if (!socket.data.request.includes("\r\n\r\n")) return;
+          if (whenToCut) {
+            socket.write(head[framing]);
+            await whenToCut;
+            socket.write(partialBody[framing]);
+          } else {
+            socket.write(head[framing] + partialBody[framing]);
+          }
+          socket.end();
+          Bun.sleepSync(20);
+        },
+      },
+    });
+  }
+
+  async function readAll(res: Response) {
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    let error: any;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += decoder.decode(value, { stream: true });
+      }
+    } catch (e) {
+      error = e;
+    }
+    return { received, code: error?.code };
+  }
+
+  test.each(["chunked", "contentLength"] as Framing[])(
+    "%s: the head, the bytes and the close in one batch: a reader gets the bytes, then ECONNRESET",
+    async framing => {
+      using server = listen(framing);
+      for (let i = 0; i < 5; i++) {
+        const res = await fetch(`http://127.0.0.1:${server.port}/`);
+        expect(await readAll(res)).toEqual({ received: "hello\n", code: "ECONNRESET" });
+      }
+    },
+  );
+
+  test.each(["chunked", "contentLength"] as Framing[])(
+    "%s: the bytes and the close in one batch while a read is pending: the read gets the bytes, then ECONNRESET",
+    async framing => {
+      const cut = Promise.withResolvers<void>();
+      using server = listen(framing, cut.promise);
+      const res = await fetch(`http://127.0.0.1:${server.port}/`);
+      const reader = res.body!.getReader();
+      const first = reader.read();
+      cut.resolve();
+      expect(new TextDecoder().decode((await first).value)).toBe("hello\n");
+      const error = await reader.read().then(
+        () => null,
+        e => e,
+      );
+      expect(error?.code).toBe("ECONNRESET");
+    },
+  );
+
+  test("the whole body rejects: text() gets ECONNRESET and no partial result", async () => {
+    using server = listen("chunked");
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const error = await res.text().then(
+      () => null,
+      e => e,
+    );
+    expect(error?.code).toBe("ECONNRESET");
+  });
+});
+
 // A body's ReadableStream is one object no matter whether the body started out
 // as a string, a Blob, a typed array, a JS ReadableStream, or zero bytes, so the
 // disturbed/locked bookkeeping on it must not depend on what backs the body or

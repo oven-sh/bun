@@ -175,6 +175,10 @@ pub struct FetchTasklet {
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
+    /// A terminal failure that arrived while `result` still holds body bytes the JS thread
+    /// has not seen. `callback` parks it here instead of overwriting that result, and
+    /// `on_progress_update` delivers it on a task of its own, behind the bytes.
+    pub(crate) pending_terminal: Option<http::Error>,
 
     // must be stored because AbortSignal stores reason weakly
     pub(crate) abort_reason: StrongOptional,
@@ -898,7 +902,8 @@ impl FetchTasklet {
                 }
             }
             self.mutex.unlock();
-            if is_done {
+            // A parked failure was the last callback: no task follows this one.
+            if is_done || self.pending_terminal.is_some() {
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(self));
             }
@@ -908,6 +913,19 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
+            if !is_done {
+                if let Some(fail) = this.pending_terminal.take() {
+                    // The bytes this run carried are out. The failure that followed them takes a
+                    // task of its own, as it does when it reaches the HTTP thread on its own.
+                    this.result.fail = Some(fail);
+                    this.result.has_more = false;
+                    // SAFETY: `vm.event_loop()` is the live JS-thread loop; `this` is the heap
+                    // tasklet and this run's ref passes to the task.
+                    unsafe {
+                        (*vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut(this)));
+                    }
+                }
+            }
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
@@ -928,7 +946,7 @@ impl FetchTasklet {
             if let Err(err) = self.start_request_stream() {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
                 self.mutex.unlock();
-                if is_done {
+                if is_done || self.pending_terminal.is_some() {
                     // SAFETY: `self` is the live heap tasklet; we hold a ref.
                     FetchTasklet::deref(std::ptr::from_mut(self));
                 }
@@ -1970,6 +1988,7 @@ impl FetchTasklet {
             signals: Signals::default(),
             signal_store: http::signals::Store::unclaimed(),
             has_schedule_callback: AtomicBool::new(false),
+            pending_terminal: None,
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             fetch_session: fetch_options.fetch_session,
@@ -2475,6 +2494,66 @@ impl FetchTasklet {
         Ok(node)
     }
 
+    /// HTTP thread, under `mutex`. Makes `result` the one the JS thread sees next. What an
+    /// earlier result of the same batch reported once (`can_stream`, the certificate, the
+    /// head) survives the replacement. Returns this callback's body bytes.
+    fn store_result<'a>(&mut self, mut result: HTTPClientResult<'a>) -> (&'a [u8], Vec<u8>) {
+        let prev_metadata = self.result.metadata.take();
+        let prev_cert_info = self.result.certificate_info.take();
+        let prev_can_stream = self.result.can_stream;
+        // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
+        // callbacks; the terminal callback carries the bytes in `body_owned`
+        // instead. Capture both; the stored copy keeps neither.
+        let body: &'a [u8] = result.body;
+        let body_owned: Vec<u8> = core::mem::take(&mut result.body_owned);
+        self.result = result.without_borrowed_body();
+        // can_stream is a one-shot signal to start the request body stream; don't let a
+        // later coalesced result clobber it before the JS thread sees it.
+        self.result.can_stream = self.result.can_stream || prev_can_stream;
+
+        // Preserve pending certificate info if it was preovided in the previous update.
+        if self.result.certificate_info.is_none() {
+            if let Some(cert_info) = prev_cert_info {
+                self.result.certificate_info = Some(cert_info);
+            }
+        }
+
+        // metadata should be provided only once
+        if let Some(metadata) = self.result.metadata.take().or(prev_metadata) {
+            bun_output::scoped_log!(FetchTasklet, "added callback metadata");
+            if self.metadata.is_none() {
+                self.metadata = Some(metadata);
+            }
+
+            self.result.metadata = None;
+        }
+
+        self.body_size = self.result.body_size;
+        (body, body_owned)
+    }
+
+    /// HTTP thread, under `mutex`. A terminal failure that follows body bytes the JS thread
+    /// has not taken yet must not replace the result that carries them: the bytes would
+    /// never reach the consumer. Parks the failure in `pending_terminal` and returns true.
+    /// Returns false when `result` has to be stored as is: nothing undelivered precedes it,
+    /// or an abort ends the body at once.
+    fn park_terminal_failure(&mut self, result: &HTTPClientResult<'_>) -> bool {
+        if self.scheduled_response_buffer.list.is_empty()
+            || !self.result.has_more
+            || !self.has_schedule_callback.load(Ordering::Relaxed)
+            || result.metadata.is_some()
+            || result.certificate_info.is_some()
+            || result.abort_reason().is_some()
+            || self.signal_store.aborted.load(Ordering::Relaxed)
+        {
+            return false;
+        }
+        bun_output::scoped_log!(FetchTasklet, "callback parked failure behind body bytes");
+        self.pending_terminal = result.fail;
+        self.body_size = result.body_size;
+        true
+    }
+
     /// Called from HTTP thread. Handles HTTP events received from socket.
     ///
     /// # Safety
@@ -2486,7 +2565,7 @@ impl FetchTasklet {
     fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult,
+        result: HTTPClientResult,
     ) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
@@ -2517,41 +2596,11 @@ impl FetchTasklet {
             result.body.len()
         );
 
-        let prev_metadata = task_ref.result.metadata.take();
-        let prev_cert_info = task_ref.result.certificate_info.take();
-        let prev_can_stream = task_ref.result.can_stream;
-        // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
-        // callbacks; the terminal callback carries the bytes in `body_owned`
-        // instead. Capture both; the stored copy keeps neither.
-        let body: &[u8] = result.body;
-        let body_owned: Vec<u8> = core::mem::take(&mut result.body_owned);
-        task_ref.result = result.without_borrowed_body();
-        // can_stream is a one-shot signal to start the request body stream; don't let a
-        // later coalesced result clobber it before the JS thread sees it.
-        task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
+        let success = result.is_success();
+        let receive_mode = task_ref.signal_store.body_receive_mode();
 
-        // Preserve pending certificate info if it was preovided in the previous update.
-        if task_ref.result.certificate_info.is_none() {
-            if let Some(cert_info) = prev_cert_info {
-                task_ref.result.certificate_info = Some(cert_info);
-            }
-        }
-
-        // metadata should be provided only once
-        if let Some(metadata) = task_ref.result.metadata.take().or(prev_metadata) {
-            bun_output::scoped_log!(FetchTasklet, "added callback metadata");
-            if task_ref.metadata.is_none() {
-                task_ref.metadata = Some(metadata);
-            }
-
-            task_ref.result.metadata = None;
-        }
-
-        task_ref.body_size = task_ref.result.body_size;
-
-        let success = task_ref.result.is_success();
-
-        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
+        if receive_mode == BodyReceiveMode::Abandoned {
+            task_ref.store_result(result);
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
                 task_ref.scheduled_response_buffer = MutableString::default();
             }
@@ -2560,6 +2609,7 @@ impl FetchTasklet {
                 return;
             }
         } else if success {
+            let (body, body_owned) = task_ref.store_result(result);
             let scheduled = &mut task_ref.scheduled_response_buffer;
             if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
                 scheduled.list = body_owned;
@@ -2567,7 +2617,7 @@ impl FetchTasklet {
                 // Grow to Content-Length once so the per-packet append below
                 // doesn't leave the ~2x doubling over-capacity that the
                 // ArrayBuffer would adopt. Only for a consumer that wants the whole body.
-                if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
+                if receive_mode == BodyReceiveMode::BufferAll {
                     if let http::BodySize::ContentLength(n) = task_ref.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n
@@ -2591,6 +2641,8 @@ impl FetchTasklet {
             {
                 task_ref.signal_store.pause_receive();
             }
+        } else if !task_ref.park_terminal_failure(&result) {
+            task_ref.store_result(result);
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(

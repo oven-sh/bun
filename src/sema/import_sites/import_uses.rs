@@ -82,11 +82,12 @@ fn alias_evaluation(hir: &File<'_>, bound: &Bound<'_>, alias: ImportEqualsId) ->
     }
     match bound.parent_of_stmt(import.stmt) {
         Parent::None => AliasEvaluation::Never,
-        Parent::File if !import.flags.contains(Flags::EXPORT) => AliasEvaluation::WhenUsed,
-        Parent::Module(namespace) => match bound.makes_namespace_object(hir, namespace) {
-            true => AliasEvaluation::Always,
-            false => AliasEvaluation::Never,
-        },
+        Parent::Module(namespace) if !bound.makes_namespace_object(hir, namespace) => {
+            AliasEvaluation::Never
+        }
+        Parent::File | Parent::Module(_) if !import.flags.contains(Flags::EXPORT) => {
+            AliasEvaluation::WhenUsed
+        }
         _ => AliasEvaluation::Always,
     }
 }

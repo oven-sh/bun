@@ -8890,7 +8890,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
 
             for part in head_parts.iter() {
-                // Bake does not care about 'import =', as it handles it on it's own
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     part.stmts.slice_mut(),
@@ -8914,137 +8913,118 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
-            loop {
-                let mut kept_import_equals = false;
-                let mut removed_import_equals = false;
+            let begin = parts_end;
+            // Potentially remove some statements, then filter out parts to remove any
+            // with no statements
+            for idx in begin..parts.len() {
+                // `part` is a non-owning bitwise duplicate of `parts[idx]` (paired
+                // with `ptr::write`/`forget` below to avoid double-drop of
+                // arena-backed Vec fields).
+                // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
+                // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
+                // a valid non-owning duplicate.
+                let mut part = core::mem::ManuallyDrop::new(unsafe {
+                    core::ptr::read(&raw const parts[idx])
+                });
+                self.import_records_for_current_part.clear();
+                self.declared_symbols.clear_retaining_capacity();
 
-                let begin = parts_end;
-                // Potentially remove some statements, then filter out parts to remove any
-                // with no statements
-                for idx in begin..parts.len() {
-                    // A shallow bitwise copy leaves `parts[idx]` intact so the outer
-                    // multi-pass loop (which restarts at `begin = parts_end`) re-scans
-                    // real data on the next iteration. `mem::take` would zero the slot
-                    // and degrade this to a single pass, so use `ptr::read`; the
-                    // duplicate is non-owning (paired with `ptr::write`/`forget`
-                    // below to avoid double-drop of arena-backed Vec fields).
-                    // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
-                    // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
-                    // a valid non-owning duplicate.
-                    let mut part = core::mem::ManuallyDrop::new(unsafe {
-                        core::ptr::read(&raw const parts[idx])
-                    });
-                    self.import_records_for_current_part.clear();
-                    self.declared_symbols.clear_retaining_capacity();
-
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
-                        self,
-                        part.stmts.slice_mut(),
-                        wrap_mode != WrapMode::None,
-                        None,
-                    ) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            // `part` is a bitwise duplicate of `parts[idx]` held in
-                            // `ManuallyDrop`; let it fall out of scope so the source
-                            // slot keeps sole ownership.
-                            return Err(e);
-                        }
-                    };
-                    kept_import_equals = kept_import_equals || result.kept_import_equals;
-                    removed_import_equals = removed_import_equals || result.removed_import_equals;
-
-                    part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
-                    if !part.stmts.is_empty() {
-                        if self.module_scope().contains_direct_eval
-                            && part.declared_symbols.len() > 0
-                        {
-                            // If this file contains a direct call to "eval()", all parts that
-                            // declare top-level symbols must be kept since the eval'd code may
-                            // reference those symbols.
-                            part.can_be_removed_if_unused = false;
-                        }
-                        if part.declared_symbols.len() == 0 {
-                            // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
-                            // (via `ptr::read` above); the old `declared_symbols`
-                            // is still owned by that slot. Overwrite without running
-                            // Drop, which would double-free the original.
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.declared_symbols,
-                                    self.declared_symbols.clone().expect("unreachable"),
-                                );
-                            }
-                        } else {
-                            part.declared_symbols
-                                .append_list(&self.declared_symbols)
-                                .expect("unreachable");
-                        }
-
-                        if part.import_record_indices.is_empty() {
-                            // The *old* value is a bitwise duplicate of
-                            // `parts[idx].import_record_indices` and may be Owned —
-                            // overwrite without running Drop, which would double-free the original.
-                            // SAFETY: bitwise duplicate field — overwrite without
-                            // running Drop (see `declared_symbols` above).
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.import_record_indices,
-                                    Vec::from_arena_slice(arena.alloc_slice_copy(
-                                        self.import_records_for_current_part.as_slice(),
-                                    )),
-                                );
-                            }
-                        } else {
-                            part.import_record_indices
-                                .append_slice(self.import_records_for_current_part.as_slice());
-                        }
-
-                        // Wipe the source slot's heap-backed maps so a multi-pass
-                        // re-scan of `idx` never aliases the compacted survivor.
-                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
-                        unsafe {
-                            let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*src).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // SAFETY: bitwise overwrite — the old slot value is intentionally not
-                        // dropped (its fields are arena-owned, so abandoning it does not leak).
-                        unsafe {
-                            core::ptr::write(
-                                parts.as_mut_ptr().add(parts_end),
-                                core::mem::ManuallyDrop::into_inner(part),
-                            )
-                        };
-                        parts_end += 1;
-                    } else {
-                        // Filtered out; free the global-heap maps and clear the
-                        // alias in `parts[idx]` so a re-scan never sees freed handles.
-                        drop(core::mem::take(&mut part.symbol_uses));
-                        drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
-                        unsafe {
-                            let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*slot).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
+                let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
+                    self,
+                    part.stmts.slice_mut(),
+                    wrap_mode != WrapMode::None,
+                    None,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // `part` is a bitwise duplicate of `parts[idx]` held in
+                        // `ManuallyDrop`; let it fall out of scope so the source
+                        // slot keeps sole ownership.
+                        return Err(e);
                     }
-                }
+                };
 
-                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
-                unsafe { parts.set_len(parts_end) };
+                part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
+                if !part.stmts.is_empty() {
+                    if self.module_scope().contains_direct_eval
+                        && part.declared_symbols.len() > 0
+                    {
+                        // If this file contains a direct call to "eval()", all parts that
+                        // declare top-level symbols must be kept since the eval'd code may
+                        // reference those symbols.
+                        part.can_be_removed_if_unused = false;
+                    }
+                    if part.declared_symbols.len() == 0 {
+                        // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
+                        // (via `ptr::read` above); the old `declared_symbols`
+                        // is still owned by that slot. Overwrite without running
+                        // Drop, which would double-free the original.
+                        unsafe {
+                            core::ptr::write(
+                                &raw mut part.declared_symbols,
+                                self.declared_symbols.clone().expect("unreachable"),
+                            );
+                        }
+                    } else {
+                        part.declared_symbols
+                            .append_list(&self.declared_symbols)
+                            .expect("unreachable");
+                    }
 
-                // We need to iterate multiple times if an import-equals statement was
-                // removed and there are more import-equals statements that may be removed
-                if !kept_import_equals || !removed_import_equals {
-                    break;
+                    if part.import_record_indices.is_empty() {
+                        // The *old* value is a bitwise duplicate of
+                        // `parts[idx].import_record_indices` and may be Owned —
+                        // overwrite without running Drop, which would double-free the original.
+                        // SAFETY: bitwise duplicate field — overwrite without
+                        // running Drop (see `declared_symbols` above).
+                        unsafe {
+                            core::ptr::write(
+                                &raw mut part.import_record_indices,
+                                Vec::from_arena_slice(arena.alloc_slice_copy(
+                                    self.import_records_for_current_part.as_slice(),
+                                )),
+                            );
+                        }
+                    } else {
+                        part.import_record_indices
+                            .append_slice(self.import_records_for_current_part.as_slice());
+                    }
+
+                    // Wipe the source slot's heap-backed maps so that it never
+                    // aliases the compacted survivor.
+                    // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
+                    unsafe {
+                        let src = parts.as_mut_ptr().add(idx);
+                        core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
+                        core::ptr::write(
+                            &raw mut (*src).import_symbol_property_uses,
+                            Default::default(),
+                        );
+                    }
+                    // SAFETY: bitwise overwrite — the old slot value is intentionally not
+                    // dropped (its fields are arena-owned, so abandoning it does not leak).
+                    unsafe {
+                        core::ptr::write(
+                            parts.as_mut_ptr().add(parts_end),
+                            core::mem::ManuallyDrop::into_inner(part),
+                        )
+                    };
+                    parts_end += 1;
+                } else {
+                    // Filtered out; free the global-heap maps and clear the
+                    // alias in `parts[idx]` so that it never holds freed handles.
+                    drop(core::mem::take(&mut part.symbol_uses));
+                    drop(core::mem::take(&mut part.import_symbol_property_uses));
+                    // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
+                    unsafe {
+                        let slot = parts.as_mut_ptr().add(idx);
+                        core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
+                        core::ptr::write(
+                            &raw mut (*slot).import_symbol_property_uses,
+                            Default::default(),
+                        );
+                    }
+                    // `part` is `ManuallyDrop`; falls out of scope without dropping.
                 }
             }
 

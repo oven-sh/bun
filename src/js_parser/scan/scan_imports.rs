@@ -13,8 +13,6 @@ use bun_crash_handler::handle_oom::handle_oom;
 #[derive(Default)]
 pub(crate) struct ImportScanner<'a> {
     pub stmts: &'a mut [Stmt],
-    pub kept_import_equals: bool,
-    pub removed_import_equals: bool,
 }
 
 // `StoreStr` literal helper — keeps `Some(raw_str(b"…"))` ergonomic at the
@@ -651,42 +649,6 @@ impl<'a> ImportScanner<'a> {
                     if st.is_export {
                         for decl in st.decls.slice() {
                             p.record_exported_binding(decl.binding);
-                        }
-                    }
-
-                    // Remove unused import-equals statements, since those likely
-                    // correspond to types instead of values
-                    if st.origin.is_ts_import_equals() && !st.is_export && st.decls.len_u32() > 0 {
-                        let decl = &st.decls.slice()[0];
-
-                        // Skip to the underlying reference
-                        let mut value: Option<Expr> = decl.value;
-                        if decl.value.is_some() {
-                            while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
-                                value = Some(dot.target);
-                            }
-                        }
-
-                        // Is this an identifier reference and not a require() call?
-                        if let Some(val) = value {
-                            if let js_ast::ExprData::EIdentifier(id) = val.data {
-                                // Is this import statement unused?
-                                if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
-                                    let b_id_ref = b_id.r#ref;
-                                    if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
-                                        == 0
-                                    {
-                                        p.ignore_usage(id.ref_);
-
-                                        scanner.removed_import_equals = true;
-                                        continue;
-                                    } else {
-                                        scanner.kept_import_equals = true;
-                                    }
-                                } else {
-                                    scanner.kept_import_equals = true;
-                                }
-                            }
                         }
                     }
                 }

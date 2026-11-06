@@ -887,6 +887,18 @@ const UNUSED_IMPORTS: &[(&str, &str, &[&str], usize)] = &[
     (
         "a.ts",
         r#"import * as n from "m"; namespace N { import a = n.b; export const c = 1; }"#,
+        &["n", "a"],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; namespace N { import a = n.b; export const c = a; }"#,
+        &[],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import * as n from "m"; namespace N { export import a = n.b; }"#,
         &[],
         1,
     ),

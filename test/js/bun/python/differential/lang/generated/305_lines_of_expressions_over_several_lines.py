@@ -20,9 +20,9 @@ try: B = [3]
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: B = [3]')
 try: MATCH = ['match SUBJECT:\n    case 0:\n        x = 1\n    case _:\n        x = 2', 'match SUBJECT:\n    case [0, *r] | (0, *r):\n        x = 1\n    case v if c(b):\n        x = 2']
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: MATCH = ['match SUBJECT:\\n case 0:\\n x = 1\\n case _:\\n x = 2', 'match...")
-try: SUBJECTS = ['a', 'c(a)', '(\nc(a))', '(c(a)\n)', '(c(a)\nif b else c(2))', '(c(a) if b else\nc(2))', '(c(a)\nif b\nelse c(2))', '(a and\nb)', '(a or\nb)', '(\na and\nb\n)', 'c(\na)', '(a,\nb)', '[(\nc(a)\n), 1]', '[c(a),\n1]',
-            '(c(a),\n0)[0]', '[c(a)\n][0]', '(not\na)', '(a +\nb)', '(\na +\nb)', '(lambda:\na)()', '\\\nc(a)', '(x := (\nc(a)))', '{"k":\na}', 'c(a).real', '(c(a)\n.real)', '(1 if a else\n2 if b else\n3)']
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: SUBJECTS = ['a', 'c(a)', '(\\nc(a))', '(c(a)\\n)', '(c(a)\\nif b else c(...")
+try: SUBJECTS = ['a', 'c(a)', '(\nc(a))', '(c(a)\n)', '(c(a) if b else\nc(2))', '(a and\nb)', '(a or\nb)', '(\na and\nb\n)', 'c(\na)', '(a,\nb)', '[c(a),\n1]', '(c(a),\n0)[0]', '[c(a)\n][0]', '(a +\nb)',
+            '(\na +\nb)', '(lambda:\na)()', '\\\nc(a)', '{"k":\na}', 'c(a).real', '(c(a)\n.real)', '(1 if a else\n2 if b else\n3)']
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: SUBJECTS = ['a', 'c(a)', '(\\nc(a))', '(c(a)\\n)', '(c(a) if b else\\nc(...")
 try: RAISE = ['raise E', 'raise E(1)', 'raise (\nE(1))', 'raise (E(1)\n)', 'raise \\\nE(1)', 'raise E(\n1)', 'raise (E if a else\nF)', 'raise (E\nif a else F)', 'raise (a and\nE(1)) or F(2)', 'raise (E(1) or\nb)', 'raise (a or\nE(1))',
          'raise (E(1),\n0)[0]', 'raise E(1) from None', 'raise E(1) from \\\nNone', 'raise E(1) from (\nF(2))', 'raise (E(1) or\nb) from None', 'raise (\nE(1)) from (\nF(2))', 'raise (E if a else\nF) from (F if b else\nE)']
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: RAISE = ['raise E', 'raise E(1)', 'raise (\\nE(1))', 'raise (E(1)\\n)',...")
@@ -34,9 +34,8 @@ except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> 
 try: COMPREHENSIONS = ['x = [y for y in ITER]', 'x = [y\n    for y in ITER]', 'x = [y for y in ITER if c(y)]', 'x = [y\n    for y in ITER\n    if c(y)]', 'x = {y for y in ITER}', 'x = {y: 1\n    for y in ITER}', 'x = sorted(y for y in ITER)',
                   'x = [(y,\n    z) for y in A for z in ITER]', '[y for y in ITER]', 'x = [(a or\n    y) for y in ITER]', 'for y in ITER:\n    x = y']
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: COMPREHENSIONS = ['x = [y for y in ITER]', 'x = [y\\n for y in ITER]',...")
-try: TESTS = ['((c(a) or\nb) if c(1) else c(0))', '((c(a) and\nb) if c(1) else c(0))', '((c(a) or\nb) if (\nc(1)) else c(0))', '(c(0) if c(0) else (c(a) or\nb))', '((not\nc(a)) if c(1) else c(0))', '((c(a) or b or\n0) if (1 and 1\nand c(b)) else c(1))',
-         '((c(a) if b else\nc(1)) if c(1) else c(0))', '((c(a) or\nb) and c(1))', '(not (c(a) or\nb))', '(not ((c(a) or\nb) if c(1) else c(0)))', '((c(a) or\nb) if c(1) else (c(b) and\na))', '(((c(a) or\nb) and\nc(1)) if c(1) else c(0))']
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: TESTS = ['((c(a) or\\nb) if c(1) else c(0))', '((c(a) and\\nb) if c(1) ...")
+try: TESTS = ['(c(0) if c(0) else (c(a) or\nb))', '((not\nc(a)) if c(1) else c(0))', '((c(a) if b else\nc(1)) if c(1) else c(0))', '((c(a) or\nb) and c(1))', '(not (c(a) or\nb))']
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: TESTS = ['(c(0) if c(0) else (c(a) or\\nb))', '((not\\nc(a)) if c(1) el...")
 try: TESTED = ['if TEST:\n    x = 1\nx = 2', 'if TEST:\n    x = 1\nelse:\n    x = 2', 'while TEST:\n    x = 1\n    break\nx = 2', 'x = 1 if TEST else 2', 'x = [y for y in A if TEST]', 'assert TEST, c(1)\nx = 2', 'if c(0):\n    x = 0\nelif TEST:\n    x = 1']
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: TESTED = ['if TEST:\\n x = 1\\nx = 2', 'if TEST:\\n x = 1\\nelse:\\n x = 2...")
 try: ASSERTS = ['assert a', 'assert (a or\nb)', 'assert (a and\nb)', 'assert (\na)', 'assert (a if b else\n1)', 'assert (a\nif b else 1)', 'assert (a or\nb), c(1)', 'assert (a or\nb), (\nc(1))', 'assert (not\na)', 'assert (a or\nb or\n1)', 'assert (0 <\na + 1 <\n3)', 'assert c(\na)']

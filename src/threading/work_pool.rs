@@ -151,6 +151,7 @@ impl WorkPool {
                     stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
                 })
                 .named("Bun I/O")
+                .without_spare_threads()
             })
             .schedule(Batch::from(task));
     }
@@ -164,6 +165,7 @@ impl WorkPool {
                     stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
                 })
                 .named("Bun Output")
+                .without_spare_threads()
             })
             .schedule(Batch::from(task));
     }

@@ -190,8 +190,7 @@ fn is_dom_exception(value: JSValue) -> bool {
     SnapshotFormat__isDOMException(value)
 }
 
-/// The name and the message of a `DOMException` are accessors of its prototype, which the object printer does not read.
-/// Returns false if a getter of a subclass threw, so the object printer prints the value as before.
+/// Returns false if a `name` or `message` getter of a subclass threw, so the object printer prints the value as before.
 #[cold]
 #[inline(never)]
 fn print_dom_exception(global: &JSGlobalObject, writer: &mut dyn bun_io::Write, value: JSValue) -> JsResult<bool> {

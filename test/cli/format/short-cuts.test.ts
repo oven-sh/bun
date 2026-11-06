@@ -639,6 +639,24 @@ describe("GraphQL", () => {
   });
 });
 
+/** How much longer it takes to format `text` with the short cuts than without them: the CPU time of the one by that of the other. */
+async function slowdownByShortCuts(name: string, text: string) {
+  using dir = tempDir("format-short-cuts", { [name]: text });
+  const cpu = async (own: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    // (Windows counts in ticks of 1/64 s)
+    return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+  };
+  return (await cpu([])) / (await cpu(["--no-short-cuts"]));
+}
+
 const markdownOptions = [
   [],
   ["--embedded-language-formatting=off"],
@@ -855,6 +873,12 @@ describe("MDX", () => {
         ["--tab-width=600000000", "--use-tabs"],
       ],
     ));
+
+  // 0.5 in a release build, and 500 when every `_` looked at all of the word.
+  test.skipIf(!hasFlag)("a word with many `_` is looked at once", async () => {
+    const text = `${"foo_bar_baz,".repeat(isDebug || isASAN ? 6_000 : 24_000)}\n`;
+    expect(await slowdownByShortCuts("a.mdx", text)).toBeLessThan(4);
+  });
 
   // What is formatted already isn't as it's printed if its classes are sorted.
   test.skipIf(!hasFlag).concurrent("with prettier-plugin-tailwindcss", async () => {

@@ -513,6 +513,8 @@ pub(crate) struct Reader<'t> {
     /// isn't.
     safe_underscores: std::ops::Range<usize>,
     unsafe_underscores: std::ops::Range<usize>,
+    /// For MDX: the last word with a `_` in it that was found to be ASCII.
+    ascii_word: std::ops::Range<usize>,
     /// Where the lines start that are being read.
     start: usize,
     /// Up to where they have been copied to `Memory::rewritten`. `None` as long as they are printed as they are
@@ -541,6 +543,7 @@ impl<'t> Reader<'t> {
             empty_line: Next::new(b"\n\n"),
             safe_underscores: 0..0,
             unsafe_underscores: 0..0,
+            ascii_word: 0..0,
             start: 0,
             copied: None,
         }
@@ -2376,10 +2379,7 @@ impl<'t> Reader<'t> {
                         return None;
                     }
                     // The word is written anew, character by character.
-                    let is_in_word = |byte: &&u8| !matches!(byte, b' ' | b'\n');
-                    if !(text[from..at].iter().rev().take_while(is_in_word)).all(u8::is_ascii)
-                        || !text[at..].iter().take_while(is_in_word).all(u8::is_ascii)
-                    {
+                    if !self.is_in_ascii_word(from, at) {
                         return None;
                     }
                     if self.unsafe_underscores.contains(&at) {
@@ -2444,6 +2444,26 @@ impl<'t> Reader<'t> {
             at += 1;
         };
         Some((end, at))
+    }
+
+    /// True if the word around `at`, in a text that starts at `from`, is ASCII. A word is looked at once, however many `_`
+    /// it has.
+    #[inline(never)]
+    fn is_in_ascii_word(&mut self, from: usize, at: usize) -> bool {
+        let (text, known) = (self.text, &self.ascii_word);
+        if known.contains(&at)
+            && (from >= known.start || matches!(self.byte(known.start - 1), b' ' | b'\n'))
+        {
+            return true;
+        }
+        let is_in_word = |byte: &&u8| !matches!(byte, b' ' | b'\n');
+        let start = at - text[from..at].iter().rev().take_while(is_in_word).count();
+        let end = at + text[at..].iter().take_while(is_in_word).count();
+        if !text[start..end].is_ascii() {
+            return false;
+        }
+        self.ascii_word = start..end;
+        true
     }
 
     // ───────────────────────────── code ─────────────────────────────

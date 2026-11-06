@@ -6,6 +6,7 @@ import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedS
 import { createServer as createTlsServer } from "node:tls";
 import { dirname, join } from "path";
 import { once } from "node:events";
+import { createSecureServer } from "node:http2";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -6494,8 +6495,81 @@ describe.concurrent("npmrc client TLS identity", () => {
     expect(stdout).toContain("installed");
     expect(exitCode).toBe(0);
   });
+  test("concurrent registry redirects retain independent TLS configuration references", async () => {
+    const names = ["tls-ref-0", "tls-ref-1", "tls-ref-2", "tls-ref-3"];
+    const tarballs = new Map(
+      await Promise.all(
+        names.map(
+          async name =>
+            [
+              name,
+              await new Bun.Archive({
+                "package/package.json": JSON.stringify({ name, version: "1.0.0" }),
+              }).bytes("gzip"),
+            ] as const,
+        ),
+      ),
+    );
+    await using target = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      fetch(req) {
+        const name = new URL(req.url).pathname.slice(1);
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name, version: "1.0.0", dist: { tarball: `https://localhost:${registry.port}/${name}.tgz` } },
+          },
+        });
+      },
+    });
+    const requests: string[] = [];
+    await using registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: true },
+      fetch(req) {
+        const path = new URL(req.url).pathname.slice(1);
+        requests.push(path);
+        if (path.endsWith(".tgz")) return new Response(tarballs.get(path.slice(0, -4))!);
+        return Response.redirect(`https://localhost:${target.port}/${path}`);
+      },
+    });
+    using dir = tempDir("npmrc-mtls-references", {
+      "home/.npmrc": `registry=https://localhost:${registry.port}/\n//localhost:${registry.port}/:certfile=client.pem\n//localhost:${registry.port}/:keyfile=client.key\ncafile=client.pem\n`,
+      "home/client.pem": tls.cert,
+      "home/client.key": tls.key,
+      "project/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+      }),
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), "project"),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("4 packages installed");
+    expect(requests.sort()).toEqual(names.flatMap(name => [name, `${name}.tgz`]).sort());
+    expect(exitCode).toBe(0);
+  });
+
   test("HTTP2 cross-origin redirect strips the client identity", async () => {
-    const { createSecureServer } = await import("node:http2");
     await using target = await certificateServer();
     const first: unknown[] = [];
     const registry = createSecureServer({ ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: false });

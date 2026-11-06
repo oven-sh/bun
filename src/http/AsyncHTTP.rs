@@ -725,7 +725,7 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_settings`, `client.tls_props` — is *shared*
+                // `client.proxy_settings` — is *shared*
                 // with the original and must NOT be dropped here; the original
                 // drops them when its `Box<AsyncHTTP>` is reclaimed. Only the
                 // state the clone built up itself during request processing is
@@ -771,6 +771,7 @@ impl<'a> AsyncHTTP<'a> {
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
+                    drop(core::mem::take(&mut client.tls_props));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.

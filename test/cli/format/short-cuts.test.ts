@@ -5197,6 +5197,17 @@ describe("TypeScript that the long way rejects", () => {
     // `constructor` with an escape
     'class A { "\\u0063onstructor" = 1 }\n',
     'class A {\n  "constructo\\x72": T;\n}\n',
+    // type arguments that TypeScript's parser mends
+    "x = a<keyof<b>>(c);\n",
+    "x = a<readonly<b>>(c);\n",
+    "x = a<unique<b>>(c);\n",
+    "x = a<b<keyof<d>>>(e);\n",
+    "f(a < import(b), 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, c > (d));\n",
+    "x = a?.b<T>`c`;\n",
+  ]);
+  expectRejected("a.tsx", [
+    // a comment directly behind the `<` of type arguments in a tag
+    "x = <a><Component<// c\nnumber> foo></Component></a>;\n",
   ]);
   describe("what looks like it and is printed", () =>
     expectSame(
@@ -6743,6 +6754,9 @@ describe("programs that are read as written", () => {
         "while (a) declare enum E {}\n",
         "if (a) declare const enum E {}\n",
         "if (a) b;\nelse declare enum E {}\n",
+        // type arguments that end far away
+        "f(a < b!, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, c > (d));\n",
+        "f(a < !b, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, c > (d));\n",
       ],
       [[]],
     ));

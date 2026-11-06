@@ -4925,7 +4925,7 @@ impl Quick {
                         );
                     } else if self.lexer.tok == tk::BackQuote {
                         // (not printed alike in Flow)
-                        if self.parse.typed == TYPED_FLOW {
+                        if self.parse.typed == TYPED_FLOW || chain != 0 {
                             return Err(self.text_refuse());
                         }
                         let quasi = self.parse_template(false)?;
@@ -7208,8 +7208,8 @@ impl Quick {
                 let mut type_arguments: i32 = 0;
                 if self.parse.typed != 0 && self.lexer.tok == tk::Lt {
                     // <Component<T> prop />
-                    if self.t.at(self.lexer.tok_end) == 60 {
-                        // nor here
+                    // nor here; `</` is one token in a tag, also where a comment starts
+                    if self.t.at(self.lexer.tok_end) == 60 || self.t.at(self.lexer.tok_end) == 47 {
                         return Err(self.unexpected());
                     }
                     type_arguments = self.ts_parse_type_arguments()?;

@@ -48,6 +48,9 @@ pub(crate) struct ParseTypescript {
     /// How many lists are open in the type that is read: the members of a tuple or an object type, parameters, type parameters. What a failure leaves behind is not taken
     /// back: only differences count.
     pub(crate) open_type_lists: i32,
+    /// What ts_type_arguments_may_end() has found: between these two places there is no `>` behind which type arguments could have ended.
+    pub(crate) no_end_from: i32,
+    pub(crate) no_end_to: i32,
 }
 impl ParseTypescript {
     pub(crate) fn new() -> Self {
@@ -64,6 +67,8 @@ impl ParseTypescript {
             in_namespace: 0,
             in_heritage: false,
             open_type_lists: 0,
+            no_end_from: 0,
+            no_end_to: 0,
         }
     }
 }
@@ -88,6 +93,8 @@ impl Quick {
         self.parse_typescript.in_namespace = 0;
         self.parse_typescript.in_heritage = false;
         self.parse_typescript.open_type_lists = 0;
+        self.parse_typescript.no_end_from = 0;
+        self.parse_typescript.no_end_to = 0;
         self.flow_reset_context();
     }
 
@@ -2771,6 +2778,8 @@ impl Quick {
                                 | tk::Eq
                                 | tk::Dot
                                 | tk::Ellipsis
+                                | tk::Lt
+                                | tk::Shl
                         )));
             self.parse_typescript.open_type_lists = open_lists;
             self.rewind(m);
@@ -2810,12 +2819,16 @@ impl Quick {
     }
 
     /// The current token is a `<`. Does a `>` follow, before the end of the statement or of what is open around it, behind which type arguments could have ended?
-    /// Leaves the lexer where it is.
+    /// Leaves the lexer where it is. No text is looked through twice: who asks in the middle of what has been looked through in vain gets
+    /// the same answer.
     #[cold]
     fn ts_type_arguments_may_end(&mut self) -> R<bool> {
+        let from = self.lexer.tok_start;
+        if from >= self.parse_typescript.no_end_from && from < self.parse_typescript.no_end_to {
+            return Ok(false);
+        }
         let m = self.mark();
         let mut depth: i32 = 0;
-        let mut count: i32 = 0;
         let mut result = false;
         let mut is_read = false;
         loop {
@@ -2828,7 +2841,6 @@ impl Quick {
                 break;
             }
             is_read = false;
-            count += 1;
             match self.lexer.tok {
                 tk::ParenL | tk::BracketL | tk::BraceL => {
                     depth += 1;
@@ -2869,9 +2881,10 @@ impl Quick {
                 }
                 _ => {}
             }
-            if count > 200 {
-                break;
-            }
+        }
+        if !result {
+            self.parse_typescript.no_end_from = from;
+            self.parse_typescript.no_end_to = self.lexer.tok_start;
         }
         self.rewind(m);
         return Ok(result);

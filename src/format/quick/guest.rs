@@ -11,7 +11,7 @@
 use crate::doc::{G_CAN_BREAK, G_WILL_BREAK, op};
 use crate::holes::FILTER_QUOT;
 use crate::lang::lang;
-use crate::{Quick, R, Words, why};
+use crate::{Bytes, Quick, R, Words, why};
 use std::any::Any;
 
 /// The language of a text in a template: one of Prettier's parsers.
@@ -61,8 +61,11 @@ pub(crate) struct State {
     guests: Option<Box<dyn Guests>>,
     /// The text of the running guest. What the guest reads cannot be in the buffer that it writes to.
     text: Vec<u8>,
-    /// Where the template starts whose text is the next guest.
+    /// Where the template starts whose text is the next guest, and where its line starts. 0: there has been none in this text.
     pub(crate) template_at: i32,
+    pub(crate) template_line: i32,
+    /// No line ends between the start of that line and here.
+    pub(crate) template_line_to: i32,
 }
 
 impl State {
@@ -71,6 +74,8 @@ impl State {
             guests: None,
             text: Vec::new(),
             template_at: 0,
+            template_line: 0,
+            template_line_to: 0,
         }
     }
 }
@@ -93,6 +98,28 @@ impl Quick {
             // `embed()` refuses the file.
             (None, _) => true,
             (_, None) => false,
+        }
+    }
+
+    /// The text of the template that starts at `at` is the next guest.
+    pub(crate) fn set_template(&mut self, at: i32) {
+        self.guest.template_at = at;
+        // A line can have many templates. They come in the order of the text, so only what is between two of them is looked through.
+        let line = self.guest.template_line;
+        let is_known = self.text.src_start <= line && line <= at;
+        let from = if is_known {
+            self.guest.template_line_to
+        } else {
+            self.text.src_start
+        };
+        if from < at || !is_known {
+            let found = self.t.sub(from, at).last_index_of(10, at - from - 1);
+            if found >= 0 {
+                self.guest.template_line = from + found + 1;
+            } else if !is_known {
+                self.guest.template_line = from;
+            }
+            self.guest.template_line_to = at;
         }
     }
 
@@ -186,16 +213,16 @@ impl Sink<'_> {
     /// How many columns the line is indented on which the template starts, as the file has it. A tab counts as
     /// `tab_width` columns.
     pub fn indentation_of_template(&self, tab_width: u32) -> u32 {
-        let at = self.q.guest.template_at;
-        let line = crate::Bytes::last_index_of(self.q.t.sub(0, at), 10, at - 1)
-            .max(self.q.text.src_start - 1)
-            + 1;
         // The first line starts with the byte order mark, which is no blank. It isn't in the buffer.
-        if self.q.had_bom && line == self.q.text.src_start {
+        if self.q.had_bom && self.q.guest.template_line == self.q.text.src_start {
             return 0;
         }
         let mut columns = 0u32;
-        for byte in self.q.t.sub(line, at) {
+        for byte in self
+            .q
+            .t
+            .sub(self.q.guest.template_line, self.q.guest.template_at)
+        {
             columns = columns.saturating_add(match byte {
                 b' ' => 1,
                 b'\t' => tab_width,

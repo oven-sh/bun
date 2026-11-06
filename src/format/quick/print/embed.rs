@@ -845,6 +845,9 @@ pub(crate) const HTML_PREFIX: i32 = 1777; // staticText(HTML_PREFIX_TEXT)
 impl Quick {
     pub(crate) fn reset_embed(&mut self) {
         self.print_embed.ex_top = 0;
+        self.guest.template_at = 0;
+        self.guest.template_line = 0;
+        self.guest.template_line_to = 0;
     }
 
     pub(crate) fn print_embed_html(&mut self, n: i32, language: i32) -> R<bool> {
@@ -918,7 +921,7 @@ impl Quick {
         if has_linebreak && self.options.short_cuts {
             self.set_guest_column(GUEST_BETWEEN_LINES);
         }
-        self.guest.template_at = self.n.at(n + 1);
+        self.set_template(self.n.at(n + 1));
         let ok = self.embed(language, start, end)?;
         self.end_holes();
         self.print_embed.ex_top = base;

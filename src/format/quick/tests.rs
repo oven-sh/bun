@@ -312,7 +312,7 @@ fn a_template_that_its_guest_cannot_read_is_tried_once() {
     let asked = Arc::new(AtomicUsize::new(0));
     let mut scratch = Quick::new();
     scratch.lend_guests(Some(Box::new(ReadsNothing {
-        asked: asked.clone(),
+        asked: Arc::clone(&asked),
     })));
     let printed = print_with(&mut scratch, "a.js", &text, &Options::default());
     assert_eq!(printed.as_deref(), Ok(&text[..]));

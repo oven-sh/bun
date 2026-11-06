@@ -7969,6 +7969,25 @@ try {
     120_000,
   );
 
+  // A `<` can start type arguments and a `(` the parameters of an arrow function. With the other kind of ternaries a
+  // file goes the long way.
+  test.each<[string, string]>([
+    ["ts", "for (let i = 0; i < n; i++) {}\n"],
+    ["ts", "a = b < c;\n"],
+    ["js", "x = (a);\n"],
+  ])(
+    "a parser that takes something back on every line takes linear time: .%s %j",
+    async (ending, unit) => {
+      const count = isDebug || isASAN ? 2_000 : 16_000;
+      const run = (times: number) =>
+        format({ [`a.${ending}`]: unit.repeat(times) }, ["--check", "--experimental-ternaries", "--threads=1"]);
+      const [long, short] = [await run(4 * count), await run(count)];
+      // 3 to 4 when all is well, 8 to 13 when it is not.
+      expect(slowdown(long, short)).toBeLessThan(6);
+    },
+    120_000,
+  );
+
   // A comment in each repetition. These are inputs that attaching or printing comments once rescanned for each comment,
   // and similar ones.
   test("JavaScript with many comments takes linear time", async () => {

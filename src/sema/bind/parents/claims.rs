@@ -39,8 +39,8 @@ pub struct TypeParents<'a> {
 }
 
 /// See the [module](self). The lists are those of a [`BoundBuilder`] with the same names, and [`TypeParents`], which a
-/// `BoundBuilder` doesn't have. Each is as long as it had to be so far: what is beyond its end is empty, like what nothing
-/// has claimed.
+/// `BoundBuilder` doesn't have. Each is at least as long as it had to be so far: what is beyond its end is empty, and so
+/// is what is beyond the nodes of the file, like what nothing has claimed.
 #[derive(Default)]
 pub struct Claims {
     expr_parent: Vec<PackedParent>,
@@ -118,8 +118,15 @@ macro_rules! lists {
             self.has_type_parents = false;
         }
 
-        fn truncate(&mut self, lens: &ClaimLens) {
-            $(self.$list.truncate(lens.$nodes as usize);)*
+        /// Empties the entries of the nodes of `f` from `lens` on. The lists keep their lengths: one that is cut here
+        /// is filled again up to twice the nodes of the file by the next claim.
+        fn empty_since(&mut self, f: &FileBuilder, lens: &ClaimLens) {
+            $(
+                let end = self.$list.len().min(f.$nodes.len());
+                if let Some(gone) = self.$list.get_mut(lens.$nodes as usize..end) {
+                    gone.fill($empty);
+                }
+            )*
         }
     };
 }
@@ -170,8 +177,8 @@ impl Claims {
     /// Call before removing the nodes of `f` from `lens` on.
     #[inline(never)]
     pub fn forget_since(&mut self, f: &FileBuilder, lens: &ClaimLens) {
-        // From here on, what goes is out of range. So below only what stays loses its parent.
-        self.truncate(lens);
+        // What goes has no parent from here on. So below only what stays loses its parent.
+        self.empty_since(f, lens);
         for (i, e) in f.exprs.iter().enumerate().skip(lens.exprs as usize) {
             self.children_of_expr::<true>(f, ExprId(i as u32), &e.kind);
         }

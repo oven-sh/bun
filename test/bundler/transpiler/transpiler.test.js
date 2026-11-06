@@ -4018,6 +4018,8 @@ console.log(resolve.length)
         // `=`, or `:` in TypeScript, behind `of` makes it a declaration of `of`.
         expectPrintedNoTrim("for (using of = f(); c; ) {}", "for (using of = f();c; ) {}\n");
         ts.expectPrinted_("for (using of: T = f(); c; ) {}", "for (using of = f();c; ) {}");
+        // test262 using-for-using-of-of.js: the second `of` is a variable, and `[0, 1, 2]` indexes it.
+        expectPrintedNoTrim("for (using of of [0, 1, 2]) {}", "for (using of of[0, 1, 2]) {}\n");
         expect(errorsOf("for (using of of xs) {}")).toEqual(['Expected ")" but found "xs"', "Unexpected )"]);
         // Outside the head of a loop, `using of` always declares `of`.
         expect(errorsOf("{ using of; }")).toEqual(['The declaration "of" must be initialized']);

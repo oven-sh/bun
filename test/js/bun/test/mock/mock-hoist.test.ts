@@ -185,6 +185,26 @@ describe.concurrent("hoisting", () => {
     ]);
   });
 
+  // Vitest, and Jest with Babel, read an import off an object too. Only an import that stays static is a SyntaxError.
+  test.each([
+    [`import { test, vi } from "bun:test";`, "vi.mock"],
+    [`import { test, jest } from "bun:test";`, "jest.mock"],
+    [`import { test, jest } from "@jest/globals";`, "jest.mock"],
+    [`import { test, vi } from "vitest";`, "vi.mock"],
+  ])("%s %s(): a name that a module doesn't export is undefined", async (header, mock) => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          ${header}
+          import absentDefault, { absent, other } from "./other";
+          ${mock}("./mod", () => ({ value: "mocked" }));
+          events.push(other, typeof absent, typeof absentDefault);
+          ${print}
+        `,
+      }),
+    ).toEqual([["load other", "other", "undefined", "undefined"]]);
+  });
+
   test("an import is a live binding", async () => {
     expect(
       await events({

@@ -82,6 +82,7 @@ mod parse {
 }
 
 pub use guest::{Answer, Detached, GroupId, Guest, Guests, Open, Sink};
+pub use jsx_guess::is_probably_jsx;
 pub use root::{
     Dialect, EndOfLine, Expression, Language, Options, QuoteProps, Refused, TrailingComma, Wrap,
     format, format_expression, stands,

@@ -1,0 +1,7 @@
+<script lang="ts">
+/*
+
+a/>
+*/
+x = ["q", <b>c</b>/d/g];
+</script>

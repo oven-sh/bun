@@ -48,43 +48,7 @@ pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
 pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
 pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
-/// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
-pub fn is_probably_jsx(text: &[u8]) -> bool {
-    // `</` with no quote between it and the start of its line.
-    let mut rest = if strings::contains(text, b"</") {
-        text
-    } else {
-        b""
-    };
-    let mut is_after_quote = false;
-    while let Some(at) = strings::index_of_any(rest, b"\"'`\n<") {
-        match rest[at] {
-            b'\n' => is_after_quote = false,
-            b'<' if is_after_quote || rest.get(at + 1) != Some(&b'/') => {}
-            b'<' => return true,
-            _ => is_after_quote = true,
-        }
-        rest = &rest[at + 1..];
-    }
-    // `/>` with two characters that are no slashes at the start of its line.
-    let mut from = 0;
-    while let Some(at) = strings::index_of(&text[from..], b"/>").map(|at| from + at) {
-        let line_start = strings::last_index_of_char(&text[..at], b'\n').map_or(0, |it| it + 1);
-        if at < line_start + 2 {
-            from = at + 1;
-            continue;
-        }
-        if text[line_start] != b'/' && text[line_start + 1] != b'/' {
-            return true;
-        }
-        // The rest of the line starts with the same two characters.
-        match strings::index_of_char_usize(&text[at..], b'\n') {
-            Some(line_len) => from = at + line_len,
-            None => break,
-        }
-    }
-    false
-}
+pub use bun_format_quick::is_probably_jsx;
 
 /// Returns the options for code embedded in HTML that's formatted with `options`.
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {

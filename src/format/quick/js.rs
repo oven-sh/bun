@@ -1,6 +1,7 @@
 //! From the text to the document: which parser reads the file, and the stages in their order.
 
 use crate::ast::{F_PAREN, k};
+use crate::jsx_guess::is_probably_jsx;
 use crate::lang::lang;
 use crate::lexer::{C_END, C_START, C_STRIDE};
 use crate::parse::core::{TYPED_FLOW, TYPED_TS};
@@ -129,7 +130,7 @@ impl Quick {
             self.set_parser_mode(TYPED_TS, jsx);
             return self.parse_program();
         }
-        let jsx = self.is_probably_jsx(self.text.src_start, self.text.src_end);
+        let jsx = is_probably_jsx(self.t.sub(self.text.src_start, self.text.src_end));
         let comments = self.lexer.c_count;
         self.set_parser_mode(TYPED_TS, jsx);
         match self.parse_program() {

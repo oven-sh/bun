@@ -1478,7 +1478,7 @@ test("disposes", () => {
   expect(plain.exitCode).toBe(0);
 });
 
-test("every line of a class with an undecorated accessor #x that ran is reported as run", async () => {
+test("every line and every called function of a class with an undecorated accessor #x is reported as run", async () => {
   using dir = tempDir("cov-accessor", {
     "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
     // An accessor with no value, and one whose value is on the next line, have no code of their own on their line.
@@ -1515,6 +1515,8 @@ test("every line of a class with an undecorated accessor #x that ran is reported
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   expect(lcov.match(/^DA:\d+,0$/gm)).toBeNull();
   expect(lcov.match(/^L[FH]:\d+$/gm)).toEqual(["LF:12", "LH:12"]);
+  // The getter and the setter of each accessor count as functions. The test calls all but the setters of #a and #s.
+  expect(lcov.match(/^FN[FH]:\d+$/gm)).toEqual(["FNF:11", "FNH:9"]);
   expect(exitCode).toBe(0);
 });
 

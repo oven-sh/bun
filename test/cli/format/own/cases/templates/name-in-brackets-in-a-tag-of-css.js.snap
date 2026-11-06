@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+A[extend]`
+  color:red;
+`;
+A[extend].attrs({})`
+  color:red;
+`;
+A["extend"]`
+  color:red;
+`;
+a[extend]`
+  color:red;
+`;
+styled[a]`
+  color: red;
+`;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+A[extend]`
+  color:red;
+`;
+A[extend].attrs({})`
+  color:red;
+`;
+A["extend"]`
+  color:red;
+`;
+a[extend]`
+  color:red;
+`;
+styled[a]`
+  color: red;
+`;
+
+===================== End =====================

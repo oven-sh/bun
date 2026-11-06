@@ -397,13 +397,19 @@ fn call_callee(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `Component.extend`
+/// `Component.extend`, and `Component[extend]`, whose property has that name too.
 fn is_styled_extend(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Dot { obj, name, .. }
-        if member_object(e).is_some()
-            && name.bytes() == b"extend"
-            && matches!(obj.kind(), ExprKind::Ident(_))
-            && obj.text().first().is_some_and(u8::is_ascii_uppercase))
+    let (object, name) = match e.kind() {
+        ExprKind::Dot { obj, name, .. } => (obj, name.bytes()),
+        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {
+            (obj, index.text())
+        }
+        _ => return false,
+    };
+    member_object(e).is_some()
+        && name == b"extend"
+        && matches!(object.kind(), ExprKind::Ident(_))
+        && object.text().first().is_some_and(u8::is_ascii_uppercase)
 }
 
 fn is_styled_object(e: Expr<'_>) -> bool {

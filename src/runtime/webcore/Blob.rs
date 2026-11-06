@@ -752,7 +752,6 @@ impl BlobExt for Blob {
             ctx_ptr: *mut c_void,
             name_: *mut EncodedSlice,
             value_ptr: *mut c_void,
-            filename: *mut EncodedSlice,
             is_blob: u8,
         ) {
             // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
@@ -763,18 +762,9 @@ impl BlobExt for Blob {
                 // bytes are a string of the `DOMFormData`, which is borrowed past `joiner.done()`.
                 FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
             } else {
-                FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the `Blob` that the entry's `WebCore::Blob` holds a
-                    // ref on; the `DOMFormData` is borrowed past `joiner.done()`.
-                    blob: unsafe { &*value_ptr.cast::<Blob>() },
-                    filename: if filename.is_null() {
-                        EncodedSlice::EMPTY
-                    } else {
-                        // SAFETY: non-null `filename` is a valid `*EncodedSlice` for this call.
-                        // Its bytes are the file name that the same `WebCore::Blob` holds.
-                        unsafe { *filename }
-                    },
-                }
+                // SAFETY: `value_ptr` is the `Blob` that the entry's `WebCore::Blob` holds a
+                // ref on; the `DOMFormData` is borrowed past `joiner.done()`.
+                FormDataEntry::File(unsafe { &*value_ptr.cast::<Blob>() })
             };
             // SAFETY: `name_` is always a valid non-null `*EncodedSlice` for this callback.
             // Its bytes are a string of the `DOMFormData` too.
@@ -790,13 +780,7 @@ impl BlobExt for Blob {
                 // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
                 // body localises every raw deref individually), so the callback
                 // type carries no caller-side precondition.
-                cb: extern "C" fn(
-                    *mut c_void,
-                    *mut EncodedSlice,
-                    *mut c_void,
-                    *mut EncodedSlice,
-                    u8,
-                ),
+                cb: extern "C" fn(*mut c_void, *mut EncodedSlice, *mut c_void, u8),
             );
         }
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
@@ -3290,10 +3274,7 @@ use bun_jsc::SysErrorJsc as _;
 #[derive(Clone, Copy)]
 pub(crate) enum FormDataEntry<'a> {
     String(EncodedSlice<'a>),
-    File {
-        blob: &'a Blob,
-        filename: EncodedSlice<'a>,
-    },
+    File(&'a Blob),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3417,9 +3398,17 @@ impl<'a> FormDataContext<'a> {
                 joiner.push_static(b"\"\r\n\r\n");
                 Self::push_string_slice(joiner, value.to_utf8(), FormDataComponent::StringValue);
             }
-            FormDataEntry::File { blob, filename } => {
+            FormDataEntry::File(blob) => {
                 joiner.push_static(b"\"; filename=\"");
-                Self::push_string_slice(joiner, filename.to_utf8(), FormDataComponent::Filename);
+                // The entry's Blob got its name when the entry was made. One with no name sends an empty filename.
+                let filename = blob.name.get();
+                if !filename.is_empty() {
+                    Self::push_string_slice(
+                        joiner,
+                        filename.to_utf8(),
+                        FormDataComponent::Filename,
+                    );
+                }
                 joiner.push_static(b"\"\r\n");
 
                 // Borrowed from the blob, which the `DOMFormData` keeps alive
@@ -3747,33 +3736,35 @@ pub(crate) extern "C" fn Blob__createEmptyJSONBodyError(global: &JSGlobalObject)
     global.create_syntax_error_instance(format_args!("Unexpected end of JSON input"))
 }
 
+/// A copy of `this` that is a File. A `name` that is given names the copy, an empty one too.
+#[inline]
+fn dupe_as_file(this: &Blob, name: Option<&BunString>) -> Blob {
+    let blob = this.dupe();
+    blob.is_jsdom_file.set(true);
+    if let Some(name) = name {
+        blob.name.set(name.clone());
+    }
+    blob
+}
+
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
+pub(crate) extern "C" fn Blob__dupeFromJSAsFile(
+    value: JSValue,
+    name: Option<&BunString>,
+) -> Option<NonNull<Blob>> {
     let this = Blob::from_js(value)?;
     // SAFETY: `from_js` returns a live heap pointer when Some.
-    Some(
-        NonNull::new(Blob__dupe(unsafe { &*this }))
-            .expect("Blob__dupe returns a fresh heap allocation"),
-    )
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
-    this.is_jsdom_file.set(true);
-    if !path_str.is_empty() {
-        this.name.set(path_str.clone());
+    let blob = dupe_as_file(unsafe { &*this }, name);
+    if name.is_none() {
+        // A FormData entry that has no name of its own takes the name of its store now: `get_name_string` stores it.
+        _ = blob.get_name_string();
     }
+    NonNull::new(Blob::new(blob))
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    this.get_name_string()
-        .map_or(BunString::EMPTY, Clone::clone)
+pub(crate) extern "C" fn Blob__dupeAsFile(this: &Blob, name: Option<&BunString>) -> *mut Blob {
+    Blob::new(dupe_as_file(this, name))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -6920,8 +6920,11 @@ CPP_DECL bool WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, JSC::JSGl
 CPP_DECL bool WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
 {
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
-    RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
-    auto result = arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    // Only a part that has a filename parameter gets here, so an empty `fileName` is the name of the File.
+    auto fileNameString = toStringCopy(*fileName);
+    BunString entryFileName = Bun::toString(fileNameString);
+    RefPtr<Blob> blob = WebCore::Blob::createEntry(blobValueInner, entryFileName);
+    auto result = arg0->append(toStringCopy(*arg2), blob);
     if (result.hasException()) [[unlikely]] {
         WebCore::propagateException(*arg1, throwScope, result.releaseException());
         return false;

@@ -77,16 +77,15 @@ String DOMFormData::toURLEncodedString()
     return WTF::URLParser::serialize(form);
 }
 
-extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, EncodedSlice*, void*, EncodedSlice*, uint8_t))
+extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, EncodedSlice*, void*, uint8_t))
 {
     for (auto& item : form->items()) {
         auto name = toEncodedSlice(item.name);
         if (auto value = std::get_if<String>(&item.data)) {
             auto value_ = toEncodedSlice(*value);
-            callback(context, &name, &value_, nullptr, 0);
+            callback(context, &name, &value_, 0);
         } else if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
-            auto filename = toEncodedSlice(value->get()->fileName());
-            callback(context, &name, value->get()->impl(), &filename, 1);
+            callback(context, &name, value->get()->impl(), 1);
         }
     }
 }
@@ -112,9 +111,8 @@ ExceptionOr<void> DOMFormData::append(const String& name, const String& value)
     return appendItem(createStringEntry(name, value));
 }
 
-ExceptionOr<void> DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
+ExceptionOr<void> DOMFormData::append(const String& name, RefPtr<Blob> blob)
 {
-    blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
     return appendItem({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 void DOMFormData::remove(const StringView name)
@@ -161,9 +159,8 @@ ExceptionOr<void> DOMFormData::set(const String& name, const String& value)
     return set(name, { name, value });
 }
 
-ExceptionOr<void> DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
+ExceptionOr<void> DOMFormData::set(const String& name, RefPtr<Blob> blob)
 {
-    blob->setFileName(filename);
     return set(name, { name, blob });
 }
 

@@ -1379,6 +1379,48 @@ describe("expect()", () => {
         signalCode: null,
       });
     });
+
+    test("toThrow(fn) rejects a function that is not a constructor with an argument error", async () => {
+      const thrower = () => {
+        throw new Error("boom");
+      };
+      const message =
+        "Expected value must be a string, RegExp, Error or constructor, not a non-constructible function: ";
+      const arrow = () => true;
+      const bound = (() => {}).bind(null);
+      const { method } = {
+        method() {},
+      };
+      const asyncFn = async function named() {};
+
+      expect(() => expect(thrower).toThrow(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(thrower).not.toThrow(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(() => {}).toThrow(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(() => {}).not.toThrow(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(thrower).toThrowError(arrow)).toThrow(message + "[Function: arrow]");
+      expect(() => expect(thrower).toThrow(bound)).toThrow(message + "[Function]");
+      expect(() => expect(thrower).toThrow(method)).toThrow(message + "[Function: method]");
+      expect(() => expect(thrower).toThrow(asyncFn)).toThrow(message + "[AsyncFunction: named]");
+      await expect((async () => expect(Promise.reject(new Error("boom"))).rejects.toThrow(arrow))()).rejects.toThrow(
+        message + "[Function: arrow]",
+      );
+      await expect(
+        (async () => expect(Promise.reject(new Error("boom"))).rejects.not.toThrow(arrow))(),
+      ).rejects.toThrow(message + "[Function: arrow]");
+      await expect((async () => expect(Promise.resolve(thrower)).resolves.toThrow(arrow))()).rejects.toThrow(
+        message + "[Function: arrow]",
+      );
+
+      // A constructor, an Error instance, an asymmetric matcher that wraps a
+      // constructor and a plain object still go down their usual paths.
+      function Ctor() {}
+      expect(() => expect(thrower).toThrow(Ctor)).toThrow("Expected constructor: Ctor");
+      expect(thrower).toThrow(Error);
+      expect(thrower).toThrow(new Error("boom"));
+      expect(thrower).toThrow(expect.any(Error));
+      expect(() => expect(thrower).toThrow({})).toThrow("Expected constructor: Object");
+      expect(() => expect(thrower).toThrow(42)).toThrow("Expected value must be string or Error: 42");
+    });
   }
 
   test("deepEquals derived strings and strings", () => {

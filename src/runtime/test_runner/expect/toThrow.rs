@@ -48,6 +48,15 @@ impl Expect {
                         break 'brk inner_constructor_value;
                     }
                 }
+                // `thrown instanceof fn` throws a bare TypeError when `fn` has no
+                // `prototype` (arrow, method, async, bound function).
+                if value.is_callable() && !value.is_constructor() {
+                    let mut fmt = Formatter::new(global).with_quote_strings(true);
+                    return Err(global.throw(format_args!(
+                        "Expected value must be a string, RegExp, Error or constructor, not a non-constructible function: {}",
+                        value.to_fmt(&mut fmt),
+                    )));
+                }
             } else if value.is_string() {
                 // `.toThrow("")` behaves the same as `.toThrow()`
                 let s = value.to_js_string(global)?;

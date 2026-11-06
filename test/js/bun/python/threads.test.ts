@@ -883,12 +883,12 @@ import gc, signal
 
 class Stop(Exception):
     pass
-def number():
-    return int(signal.SIGUSR1)
-def wait():
+def install():
     def handler(number, frame):
         raise Stop
     signal.signal(signal.SIGUSR1, handler)
+    return int(signal.SIGUSR1)
+def wait():
     try:
         gc.get_objects()
         for _ in range(3000000):
@@ -897,13 +897,20 @@ def wait():
     except Stop:
         return "ended by the signal"
 `,
+      // The handler is there before there is anything to finalize: a collection of the engine's own may come at any time, and then the
+      // signal may have come before wait() is in its try.
       "main.js": `
 const { drop } = await import("./first.py");
 const realm = new ShadowRealm();
-const number = await realm.importValue("./second.py", "number");
+const install = await realm.importValue("./second.py", "install");
 const wait = await realm.importValue("./second.py", "wait");
-drop(number());
-console.log(wait());
+const number = install();
+try {
+  drop(number);
+  console.log(wait());
+} catch (error) {
+  console.log("ended by the signal");
+}
 `,
     },
     "main.js",
@@ -932,23 +939,25 @@ def drop(number):
       "second.py": `
 import gc, signal
 
-def number():
-    return int(signal.SIGUSR1)
-def wait(throws):
+def install(throws):
     signal.signal(signal.SIGUSR1, lambda number, frame: throws())
+    return int(signal.SIGUSR1)
+def wait():
     gc.get_objects()
     for _ in range(3000000):
         pass
     return "not ended by the signal"
 `,
+      // (The handler first, as above.)
       "main.js": `
 const { drop } = await import("./first.py");
 const realm = new ShadowRealm();
-const number = await realm.importValue("./second.py", "number");
+const install = await realm.importValue("./second.py", "install");
 const wait = await realm.importValue("./second.py", "wait");
-drop(number());
+const number = install(() => { throw new RangeError("thrown by JS in the handler"); });
 try {
-  console.log(wait(() => { throw new RangeError("thrown by JS in the handler"); }));
+  drop(number);
+  console.log(wait());
 } catch (error) {
   console.log("ended by the signal");
 }

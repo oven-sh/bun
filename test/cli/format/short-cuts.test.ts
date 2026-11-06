@@ -4576,6 +4576,15 @@ describe("scripts that are too much for the quick way", () => {
         [[], ["--print-width=40"]],
       ),
     );
+    // What is said about the parentheses that come next is not about those in a function among the arguments.
+    describe("a superclass", () =>
+      expectSame(
+        "a.ts",
+        ["f(function () { (a)\n{} })", "f(() => { (a)\n{} })", "f[(a)\n]", "(f)(function () { (a)\n{} })", "(a)\n"].map(
+          superclass => `class A extends ${superclass} {}\n`,
+        ),
+        [[]],
+      ));
   });
 
   // One trial can hold another. What is given up is read again, but not tried again, and not without end.

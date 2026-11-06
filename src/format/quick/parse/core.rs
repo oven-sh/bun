@@ -3713,7 +3713,8 @@ impl Quick {
             {
                 return Err(self.text_refuse());
             }
-            self.parse.is_operand = true;
+            // (whoever reads the parentheses takes it back; nobody else does)
+            self.parse.is_operand = self.lexer.tok == tk::ParenL;
             self.parse_typescript.in_heritage = true;
             let super_start = self.lexer.tok_start;
             super_class = self.parse_expr_atom()?;

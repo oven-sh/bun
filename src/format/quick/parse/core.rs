@@ -2504,6 +2504,31 @@ impl Quick {
         }
     }
 
+    /// Does `n` end with something in parentheses that ends the body of an arrow function in it?
+    fn ends_with_parentheses_in_arrow_function(&self, mut n: i32) -> bool {
+        let mut is_in_arrow_function = false;
+        loop {
+            let head = self.n.at(n);
+            if (head & F_PAREN) != 0 {
+                return is_in_arrow_function;
+            }
+            n = match head & 0xff {
+                k::ArrowFunctionExpression => {
+                    is_in_arrow_function = true;
+                    self.n.at(n + 5)
+                }
+                k::AssignmentExpression => self.n.at(n + 5),
+                k::ConditionalExpression => self.n.at(n + 6),
+                k::YieldExpression => self.n.at(n + 4),
+                k::SequenceExpression => {
+                    let list = self.n.at(n + 4);
+                    self.n.at(list + self.n.at(list))
+                }
+                _ => return false,
+            };
+        }
+    }
+
     pub(crate) fn parse_switch(&mut self, start: i32) -> R<i32> {
         self.next()?;
         let discriminant = self.parse_paren_expression()?;
@@ -4028,6 +4053,15 @@ impl Quick {
         self.parse.no_in = saved_no_in;
         // `a ? async() : b`: the head of an arrow function with a return type for TypeScript's parser, and for the long way everywhere
         if self.t.at(self.lexer.prev_end - 1) == 41 && self.ends_with_call_of_async(consequent) {
+            return Err(self.rare(rare::OTHER));
+        }
+        // In the body of what can only be an arrow function, `(b): T` is the head of another one if T can be read as a type and a `{` or
+        // a `=>` follows it: `a ? () => (b) : () => class {}`, `a ? c = () => (b) : void {}`,
+        // `a ? () => (b) : () => { if (c) { d } { e } }`, `a ? () => (b) : c`, the end of the line, `{}`.
+        if self.t.at(self.lexer.prev_end - 1) == 41
+            && self.parse.typed != TYPED_FLOW
+            && self.ends_with_parentheses_in_arrow_function(consequent)
+        {
             return Err(self.rare(rare::OTHER));
         }
         self.expect(tk::Colon)?;

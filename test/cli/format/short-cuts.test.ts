@@ -4492,6 +4492,17 @@ describe("TypeScript that the long way rejects", () => {
     });
   }
   expectRejected("a.ts", [
+    // parentheses that end the body of an arrow function before the `:` of a conditional expression, and what can be read as a type before a `{` or a `=>`
+    "2?():X=>({}):()=>class{}",
+    "a?()=>(b):()=>class{}",
+    "a?()=>(b):c|class{}",
+    "a?()=>(b):typeof class{}",
+    "a?()=>(b):void{}",
+    "a?()=>(b):c\n{}",
+    "a?x=>()=>(b):()=>c\n{}",
+    "a?c=()=>(b):class{}",
+    "a?c?d:()=>(b):class{}",
+    "a?()=>(b):()=>{if(x){y}{z}}",
     // parentheses as the body of an arrow function before the `:` of a conditional expression and a class
     "a?()=>(b):class{}",
     "2?():X=>({}):class{}",
@@ -5977,6 +5988,12 @@ describe("JavaScript and Flow that the long way rejects", () => {
     });
   }
   expectRejected("a.js", "a.js", [
+    // parentheses that end the body of an arrow function before the `:` of a conditional expression, and what can be read as a type before a `{` or a `=>`
+    "a?()=>(b):()=>{if(x){y}{z}}",
+    "a?()=>(b):()=>({a(){if(x){y}{z}}})",
+    "a?()=>(b):{a(){if(x){y}{z}}}",
+    "a?c=()=>(b):c=>d",
+    "a?c?d:()=>(b):()=>c=>d",
     // a call of `async` without arguments, or with a spread first, before the `:` of a conditional expression
     "a?async():b",
     "a?async(...x):b",

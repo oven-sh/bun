@@ -18,7 +18,17 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -609,6 +619,49 @@ for (let [gcTick, label] of [
     });
   });
 }
+
+describe.each([
+  ["Bun.spawn", spawn],
+  ["Bun.spawnSync", spawnSync],
+] as const)("%s", (_, run) => {
+  it.each(["absolute", "relative"])("failed spawn cwd names the missing %s directory", form => {
+    using dir = tempDir("spawn-missing-cwd", {});
+    const missing = join(String(dir), "missing");
+    const cwd = form === "relative" ? path.relative(process.cwd(), missing) : missing;
+    expect(() => run({ cmd: [bunExe(), "--version"], cwd })).toThrow(
+      expect.objectContaining({ code: "ENOENT", path: cwd, message: expect.stringContaining(cwd) }),
+    );
+  });
+
+  it("failed spawn cwd names the file supplied as cwd", () => {
+    using dir = tempDir("spawn-nondirectory-cwd", { "file.txt": "" });
+    const cwd = join(String(dir), "file.txt");
+    expect(() => run({ cmd: [bunExe(), "--version"], cwd })).toThrow(
+      expect.objectContaining({ path: cwd, message: expect.stringContaining(cwd) }),
+    );
+  });
+
+  it("failed spawn cwd names the dangling directory link", () => {
+    using dir = tempDir("spawn-dangling-cwd", { target: { "file.txt": "" } });
+    const target = join(String(dir), "target");
+    const cwd = join(String(dir), "link");
+    symlinkSync(target, cwd, isWindows ? "junction" : "dir");
+    rmSync(target, { recursive: true });
+    expect(() => run({ cmd: [bunExe(), "--version"], cwd })).toThrow(
+      expect.objectContaining({ code: "ENOENT", path: cwd, message: expect.stringContaining(cwd) }),
+    );
+  });
+
+  it.each(["plain", "dot"])("failed spawn cwd keeps the executable path with a valid %s cwd", form => {
+    using dir = tempDir("spawn-missing-executable", {});
+    // Use an explicit executable path so the failure comes from the spawn call.
+    const executable = join(String(dir), "missing.exe");
+    const cwd = form === "dot" ? `${dir}${path.sep}.` : String(dir);
+    expect(() => run({ cmd: [executable], cwd })).toThrow(
+      expect.objectContaining({ code: "ENOENT", path: executable }),
+    );
+  });
+});
 
 // The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
 // kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux

@@ -1216,21 +1216,39 @@ fn spawn_maybe_sync(
                         .global()
                         .throw_value(c.target.blame(&err).to_js(cx.global())));
                 }
+
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT
                     | sys::Errno::EPERM
                     | sys::Errno::EISDIR
                     | sys::Errno::ENOTDIR) => {
-                        let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                            // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `cstr_storage`).
-                            ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
+                        // The spawn call reports the same errno for an invalid cwd and executable.
+                        let invalid_cwd = user_specified_cwd
+                            && matches!(err.syscall, sys::Tag::posix_spawn | sys::Tag::uv_spawn)
+                            && matches!(errno, sys::Errno::ENOENT | sys::Errno::ENOTDIR)
+                            && match sys::stat(ZBox::from_bytes(cwd).as_zstr()) {
+                                Ok(stat) => !bun_core::S::ISDIR(stat.st_mode as _),
+                                Err(stat_err) => matches!(
+                                    stat_err.get_errno(),
+                                    sys::Errno::ENOENT | sys::Errno::ENOTDIR
+                                ),
+                            };
+                        let (syscall, display_path): (_, &[u8]) = if invalid_cwd {
+                            (sys::Tag::chdir, cwd)
+                        } else if !argv.is_empty() && !argv[0].is_null() {
+                            // SAFETY: argv[0] is non-null and NUL-terminated (lives in `cstr_storage`).
+                            (
+                                err.syscall,
+                                unsafe { bun_core::ffi::cstr(argv[0]) }.to_bytes(),
+                            )
                         } else {
-                            ZStr::EMPTY
+                            (err.syscall, b"")
                         };
-                        if !display_path.as_bytes().is_empty() {
-                            let mut systemerror = err.with_path(display_path).to_system_error();
+                        if !display_path.is_empty() {
+                            let mut systemerror = err
+                                .with_path_and_syscall(display_path, syscall)
+                                .to_system_error();
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }

@@ -1,6 +1,6 @@
 status: 0
-script: 2f778093ab7cf112
-source: 8dc879a8137dee95
+script: 8466ea79228397dd
+source: 6a8bad655f95be68
 ---
 function, the rest in | if else pass | 8 rows d6f1fd46
 function, the rest in | if pass else | 8 rows d6f1fd46
@@ -189,6 +189,7 @@ in handler, the rest behind | try raises in if else | 8 rows 88c92420
 in handler, the rest behind | try raises in both | 8 rows af08c48b
 in handler, the rest behind | match in handler | 8 rows a5211669
 in handler, the rest behind | match in handler 2 | 8 rows 479f05c0
+in handler, the rest behind | try in case | 8 rows ab95eabf
 in handler, the rest behind | handler returns | 8 rows d3045093
 in handler, the rest behind | handler raises | 8 rows 2158d002
 in handler, the rest behind | body returns | 8 rows e3a6b9a8
@@ -216,6 +217,7 @@ in for, the rest in | try raises in if else | 8 rows 98a7335a
 in for, the rest in | try raises in both | 8 rows 4964d8c3
 in for, the rest in | match in handler | 8 rows 1235f190
 in for, the rest in | match in handler 2 | 8 rows cca77807
+in for, the rest in | try in case | 8 rows f7f35962
 in for, the rest in | handler returns | 8 rows dfbba871
 in for, the rest in | handler raises | 8 rows b73d800f
 in for, the rest in | body returns | 8 rows 754a1dbc
@@ -243,6 +245,7 @@ in while, the rest in | try raises in if else | 8 rows 9c70d99a
 in while, the rest in | try raises in both | 8 rows 3ad51293
 in while, the rest in | match in handler | 8 rows a79a5156
 in while, the rest in | match in handler 2 | 8 rows aba73ba3
+in while, the rest in | try in case | 8 rows 3b2071eb
 in while, the rest in | handler returns | 8 rows 5e1649c1
 in while, the rest in | handler raises | 8 rows 242bd711
 in while, the rest in | body returns | 8 rows ddaef223

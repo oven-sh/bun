@@ -1,6 +1,6 @@
 status: 0
-script: ba9d282fe20aba8d
-source: ad525bf399c3490a
+script: 0c326f85a9461536
+source: f24b84450fb73240
 ---
 function, the rest in | if else | 8 rows d6f1fd46
 function, the rest in | elif | 8 rows d0f796b2
@@ -295,7 +295,9 @@ in for, the rest in | finally | 8 rows 1d1080be
 in for, the rest in | finally if else | 8 rows 6900c80e
 in for, the rest in | try except finally | 8 rows f7048aa8
 in for, the rest in | finally, raising | 8 rows 115a2966
+in for, the rest in | match | 8 rows 5040bb4e
 in for, the rest in | match default | 8 rows 00c222f2
+in for, the rest in | match if | 8 rows 3d7d2720
 in for, the rest in | for break else | 8 rows da214308
 in for, the rest in | for break more | 8 rows 160d63e4
 in for, the rest in | while break | 8 rows 15204fb0
@@ -332,7 +334,9 @@ in while, the rest in | finally | 8 rows ee28d739
 in while, the rest in | finally if else | 8 rows 81312f22
 in while, the rest in | try except finally | 8 rows b46f5b35
 in while, the rest in | finally, raising | 8 rows 5401bc48
+in while, the rest in | match | 8 rows 973cc22a
 in while, the rest in | match default | 8 rows 839922cc
+in while, the rest in | match if | 8 rows 8301670f
 in while, the rest in | for break else | 8 rows fd0da9f4
 in while, the rest in | for break more | 8 rows 12e29d43
 in while, the rest in | while break | 8 rows 2a41b347

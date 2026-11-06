@@ -2076,10 +2076,30 @@ impl Quick {
                 {
                     return Err(self.text_refuse());
                 }
+                let statement = self.parse_statement()?;
+                if self.parse.typed != 0
+                    && (self.n.at(statement) & 0xff) != k::ExpressionStatement
+                    && self.is_odd_as_body(statement)
+                {
+                    return Err(self.text_refuse());
+                }
+                return Ok(statement);
             }
             _ => {}
         }
         return self.parse_statement();
+    }
+
+    /// What starts with a word that is a name elsewhere: `declare enum`, which is printed like an enum; a record, which is a class;
+    /// an async component or hook, which is an async function.
+    #[cold]
+    fn is_odd_as_body(&self, statement: i32) -> bool {
+        let head = self.n.at(statement);
+        match head & 0xff {
+            k::EnumDeclaration | k::RecordDeclaration => true,
+            k::ComponentDeclaration | k::HookDeclaration => (head & F_ASYNC) != 0,
+            _ => false,
+        }
     }
 
     #[cold]

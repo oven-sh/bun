@@ -6673,6 +6673,14 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "x = match (a) { [...,] => c };\n",
     "x = new match (a) { b => c };\n",
     "class A extends match (a) { b => c } {}\n",
+    // a declaration that starts with a name, as the body of a statement
+    "if (a) async component B() {}\n",
+    "if (a) {} else async hook useB() {}\n",
+    "label: async component B() {}\n",
+    "if (a) record A {}\n",
+    "for (;;) record A {}\n",
+    "do record A {} while (a)\n",
+    "label: record A {}\n",
   ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared
@@ -6683,6 +6691,17 @@ describe("JavaScript and Flow that the long way rejects", () => {
 // What the quick way's parser takes for another program than the long way's, or reads alike and the long way prints in a way of its
 // own: the result is the long way's.
 describe("programs that are read as written", () => {
+  describe("TypeScript", () =>
+    expectSame(
+      "a.ts",
+      [
+        // a declaration that starts with a name, as the body of a statement
+        "while (a) declare enum E {}\n",
+        "if (a) declare const enum E {}\n",
+        "if (a) b;\nelse declare enum E {}\n",
+      ],
+      [[]],
+    ));
   describe("Flow", () =>
     expectSame(
       "a.js.flow",

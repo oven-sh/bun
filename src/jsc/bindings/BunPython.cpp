@@ -23,6 +23,8 @@
 
 extern "C" JSC::EncodedJSValue Bun__Process__createArgv(JSC::JSGlobalObject*);
 extern "C" void Bun__setExitCode(void* bunVM, uint8_t);
+extern "C" uint8_t Bun__getExitCode(void* bunVM);
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject*, uint8_t exitCode);
 // src/runtime/cli/python_command.rs
 extern "C" BunString Bun__Python__linkToSelf();
 extern "C" BunString Bun__Python__executedPath();
@@ -154,7 +156,17 @@ void PythonModules::exitWithPythonStatus(JSGlobalObject* globalObject, int statu
         Python::finalizeInterpreter(globalObject);
         Python::dieIfStatusIsSignal(status);
     }
-    Bun__Process__exit(defaultGlobalObject(globalObject), static_cast<uint8_t>(status));
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto code = static_cast<uint8_t>(status);
+    // In a worker nothing of the program's runs once Bun__Process__exit() has been called, so this does first what process.exit() does first.
+    // (The main thread comes to it by itself, after it has written the profiles.)
+    if (!zigGlobal->scriptExecutionContext()->isMainThread()) {
+        Bun__setExitCode(zigGlobal->bunVM(), code);
+        Process__dispatchOnExit(zigGlobal, code);
+        // A listener of "exit" may have set another.
+        code = Bun__getExitCode(zigGlobal->bunVM());
+    }
+    Bun__Process__exit(zigGlobal, code);
 }
 
 extern "C" bool Bun__Python__exitIfExceptionAsksTo(JSGlobalObject* globalObject, EncodedJSValue encodedException)

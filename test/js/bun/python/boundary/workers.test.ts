@@ -40,6 +40,101 @@ function start() {
   });
 }
 
+// What is to run when Python exits runs, once, in a worker as in the main program: the functions of atexit, the listeners of "exit",
+// the finalizers.
+describe.concurrent("Python exits", () => {
+  const pythonWorker = "a worker that is a module of Python";
+  const worker = "a worker of JavaScript that calls Python";
+  const main = "the main program, of JavaScript, which calls Python";
+  const pythonMain = "the main program, of Python";
+  const rows: [how: string, where: string, stdout: string, status: number][] = [];
+  for (const how of ["sys.exit(3)", "raise SystemExit(3)"]) {
+    rows.push(
+      [how, pythonWorker, "atexit\nfinalizer\nclosed with 3\n", 0],
+      [how, worker, "atexit\nlistener of exit: 3\nfinalizer\nclosed with 3\n", 0],
+      [how, main, "atexit\nlistener of exit: 3\nfinalizer\n", 3],
+      [how, pythonMain, "atexit\nfinalizer\n", 3],
+    );
+  }
+  rows.push(
+    [
+      "sys.exit(3) in a function that a callback of the event loop calls",
+      pythonWorker,
+      "atexit\nfinalizer\nclosed with 3\n",
+      0,
+    ],
+    [
+      "sys.exit(3) in a function that a callback of the event loop calls",
+      worker,
+      "went on\natexit\nlistener of exit: 3\nfinalizer\nclosed with 3\n",
+      0,
+    ],
+    [
+      "sys.exit(3) in a function that a callback of the event loop calls",
+      main,
+      "went on\natexit\nlistener of exit: 3\nfinalizer\n",
+      3,
+    ],
+    ["sys.exit(3) in a function that a callback of the event loop calls", pythonMain, "atexit\nfinalizer\n", 3],
+    // It ends the thread.
+    ["sys.exit(5) in a thread", pythonWorker, "the thread has ended\natexit\nfinalizer\nclosed with 0\n", 0],
+    [
+      "sys.exit(5) in a thread",
+      worker,
+      "the thread has ended\nwent on\natexit\nlistener of exit: 0\nfinalizer\nclosed with 0\n",
+      0,
+    ],
+    ["sys.exit(5) in a thread", main, "the thread has ended\nwent on\natexit\nlistener of exit: 0\nfinalizer\n", 0],
+    ["sys.exit(5) in a thread", pythonMain, "the thread has ended\natexit\nfinalizer\n", 0],
+    // It is reported, and there is no second round.
+    [
+      "sys.exit(3), and sys.exit(4) in a function of atexit",
+      pythonWorker,
+      "atexit, which exits\natexit\nfinalizer\nclosed with 3\n",
+      0,
+    ],
+    [
+      "sys.exit(3), and sys.exit(4) in a function of atexit",
+      worker,
+      "atexit, which exits\natexit\nlistener of exit: 3\nfinalizer\nclosed with 3\n",
+      0,
+    ],
+    [
+      "sys.exit(3), and sys.exit(4) in a function of atexit",
+      main,
+      "atexit, which exits\natexit\nlistener of exit: 3\nfinalizer\n",
+      3,
+    ],
+    ["sys.exit(3), and sys.exit(4) in a function of atexit", pythonMain, "atexit, which exits\natexit\nfinalizer\n", 3],
+    // The status is the later one, and there is no second round.
+    [
+      "sys.exit(3), and sys.exit(4) in a listener of exit",
+      worker,
+      "atexit\nlistener of exit: 3\nfinalizer\nclosed with 4\n",
+      0,
+    ],
+    ["sys.exit(3), and sys.exit(4) in a listener of exit", main, "atexit\nlistener of exit: 3\nfinalizer\n", 4],
+  );
+  test.each(rows)("%s, in %s", async (how, where, expected, status) => {
+    const fixtures = join(import.meta.dir, "fixtures");
+    await using proc = Bun.spawn({
+      cmd:
+        where === pythonMain
+          ? [bunExe(), join(fixtures, "exit-in-worker.py")]
+          : [bunExe(), join(fixtures, "exit-in-worker-fixture.ts"), where],
+      env: { ...bunEnv, HOW: how },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(expected);
+    if (how.endsWith("in a function of atexit"))
+      expect(stderr).toStartWith("Exception ignored in atexit callback <function again at ");
+    else expect(stderr).toBe("");
+    expect(exitCode).toBe(status);
+  });
+});
+
 describe.concurrent("workers", () => {
   test("started at once have interpreters of their own, and share memory", async () => {
     using first = start();

@@ -1469,6 +1469,12 @@ no-semicolons/ignored-exported-declaration-with-its-semicolon.ts
 201 222 L TSTypeAliasDeclaration 223 234 -
 242 263 L VariableDeclaration 264 276 -
 284 305 L TSDeclareFunction 306 334 -
+no-semicolons/type-cast-that-starts-a-statement.mjs
+7 23 L ExpressionStatement 24 37 -
+47 63 L ExpressionStatement 64 77 -
+86 102 L ExpressionStatement 103 114 -
+124 140 L ExpressionStatement 141 152 -
+181 197 L ExpressionStatement 198 207 -
 objects/computed-key-that-is-short.js
 11 54 T NumericLiteral 9 10 -
 474 481 L NumericLiteral 482 483 -

@@ -13,7 +13,9 @@ use crate::js::utils::statement_body::{
     FormatStatementBody, TrailingComments, write_comments_before_keyword,
     write_comments_before_token, write_space_before_body,
 };
-use crate::js::utils::typecast::{comments_of_expression, has_comments, is_cast_target};
+use crate::js::utils::typecast::{
+    comments_of_expression, has_comments, is_cast_target, is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -91,6 +93,8 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
         return false;
     }
     match expression.kind() {
+        // `/** @type {T} */ (await a)` starts with its parenthesis. oxfmt prints no `;` before it.
+        _ if is_cast_target_that_hides_its_kind(expression, f) => {}
         // `a => {}` starts with a name.
         ExprKind::Fn(func) if func.is_arrow() => return !can_avoid_parentheses(func, f),
         ExprKind::New(_) | ExprKind::Await(_) | ExprKind::Yield { .. } => return false,

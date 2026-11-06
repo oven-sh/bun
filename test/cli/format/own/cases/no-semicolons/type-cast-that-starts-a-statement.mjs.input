@@ -1,0 +1,12 @@
+first;
+/** @type {T} */ (await alpha);
+second;
+/** @type {T} */ (new Alpha());
+third;
+/** @type {T} */ (new Alpha);
+fourth;
+/** @type {T} */ ((a) => {});
+function* g() {
+  fifth;
+  /** @type {T} */ (yield a);
+}

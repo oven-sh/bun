@@ -45,13 +45,9 @@ pub(crate) enum Syntax {
     },
 }
 
-/// The start and the end of the front matter of `text`, if it has any. It starts with the text. In MDX it can also
-/// follow lines of spaces and tabs: remark-parse 8 offers every block to Prettier's front matter tokenizer until one
-/// has made a node, and such a line makes none.
-///
-/// remark also reads what is in a block quote or in a footnote definition before it makes the node for it, so Prettier
-/// finds front matter at the start of the first one too. That is not followed: for `> ---\n> **a**: b\n> ---` Prettier
-/// prints the text outside of the quote.
+/// The start and the end of the front matter of `text`, if it has any. In MDX it can follow lines of spaces and tabs,
+/// which make no node in remark-parse 8. Prettier also reads it at the start of a first block quote or footnote
+/// definition. That isn't followed.
 fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
     let mut start = 0;
     if syntax == Syntax::Mdx {
@@ -70,9 +66,8 @@ fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
-/// Prettier parses a text with spaces in place of the front matter. That only makes a difference if something follows
-/// the front matter on its last line. In that case this returns the text with the spaces. For MDX there are none:
-/// remark-parse 8 goes on behind the front matter.
+/// Prettier's Markdown parser gets the text with spaces in place of the front matter, which matters only if something
+/// follows the front matter on its last line. This returns that text then. Its MDX parser reads on behind the fence.
 pub(crate) fn blank_front_matter(text: &[u8], syntax: Syntax) -> Option<Vec<u8>> {
     if syntax == Syntax::Mdx {
         return None;

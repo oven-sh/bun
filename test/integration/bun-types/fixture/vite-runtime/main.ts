@@ -4,12 +4,11 @@ declare const viteMeta: ViteRuntimeImportMeta;
 declare const runnerMeta: ModuleRunnerImportMeta;
 
 // A vite `ImportMeta` is a Bun `ImportMeta`, and its `hot` fits Bun's.
-const meta: ImportMeta = viteMeta;
-const bunHot: ImportMeta["hot"] = viteMeta.hot;
-const runnerHot: ImportMeta["hot"] = runnerMeta.hot;
-expectType(meta.hot).is<ImportMeta["hot"]>();
-expectType(bunHot).is<ImportMeta["hot"]>();
-expectType(runnerHot).is<ImportMeta["hot"]>();
+export const meta: ImportMeta = viteMeta;
+export const bunHot: ImportMeta["hot"] = viteMeta.hot;
+export const runnerHot: ImportMeta["hot"] = runnerMeta.hot;
+expectType(viteMeta.hot).is<ViteHotContext | undefined>();
+expectType(runnerMeta.hot).is<ViteHotContext | undefined>();
 
 if (viteMeta.hot) {
   viteMeta.hot.accept();

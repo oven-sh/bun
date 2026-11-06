@@ -798,6 +798,23 @@ describe("@types/bun integration test", () => {
 
   const DOM_LIBS = ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"];
 
+  // Runs `tsc -p .` in `checkDir` with the typescript of the base fixture and expects no diagnostics.
+  async function expectTscToPass(checkDir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("import.meta.glob", () => {
     // fixture/vite-client/client.d.ts also declares `ImportMeta.glob`, so it needs its own tsc program.
@@ -820,19 +837,7 @@ describe("@types/bun integration test", () => {
         await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
         await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-          env: bunEnv,
-          cwd: checkDir,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-        expect(stderr.trim()).toBe("");
-        expect(stdout.trim()).toBe("");
-        expect(exitCode).toBe(0);
+        await expectTscToPass(checkDir);
       },
     );
   });
@@ -856,19 +861,7 @@ describe("@types/bun integration test", () => {
       await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
       await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+      await expectTscToPass(checkDir);
     });
 
     // The other init tests type-check the templates against the published @types/bun, not the checkout.
@@ -881,7 +874,7 @@ describe("@types/bun integration test", () => {
         expect(readFileSync(join(template, "src", "frontend.tsx"), "utf8")).toBe(frontend);
       }
 
-      const checkDir = await createIsolatedFixture(["@types/react", "@types/react-dom"]);
+      const checkDir = await createIsolatedFixture(["@types/react@19", "@types/react-dom@19"]);
       const tsconfig = ts.readConfigFile(join(templates[0]!, "tsconfig.json"), ts.sys.readFile).config;
       tsconfig.include = ["src"];
       await makeTree(checkDir, {
@@ -890,19 +883,7 @@ describe("@types/bun integration test", () => {
         "src/App.tsx": "export function App() { return <div />; }",
       });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(checkDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+      await expectTscToPass(checkDir);
     });
   });
 

@@ -21,8 +21,12 @@ pub(crate) fn print_stored_strings_and_exit(executable: &[u8]) -> ! {
     if !has_compiler() {
         refuse(b"--aot-stored-strings needs the compiler, which this Bun does not have");
     }
-    let Ok(file) = bun_sys::File::read_from(Fd::cwd(), executable) else {
-        refuse(b"--aot-stored-strings: the file can't be read");
+    let file = match bun_sys::File::read_from(Fd::cwd(), executable) {
+        Ok(file) => file,
+        Err(error) => {
+            let path = bun_core::fmt::quote(executable);
+            refuse(format!("--aot-stored-strings: failed to read {path}: {error}").as_bytes())
+        }
     };
     let stored = read_stored_strings(&file);
     let _ = Output::writer().write_all(&stored.strings);

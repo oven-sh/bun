@@ -247,14 +247,12 @@ pub extern "C" fn Bun__AOT__pathOfDefaultForm(path: &bun_core::String) -> bun_co
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__AOT__stampOfFile(path: *const u8, length: usize) -> u64 {
-    // SAFETY: see above.
-    let path = unsafe { bun_core::ZStr::from_raw(path, length) };
+    // SAFETY: the caller hands `length` readable bytes at `path`. No zero byte is asked for behind them.
+    let path = unsafe { core::slice::from_raw_parts(path, length) };
+    let stat = |file: &[u8]| bun_sys::stat(&bun_core::ZBox::from_bytes(file)).ok();
     // What an import attribute makes of a file is written when the file is. The build stamps it so: src/aot/compile/link_stage.rs.
-    let stat_file_of_form = || {
-        let file = bun_aot::module_keys::path_without_form(path.as_bytes())?;
-        bun_sys::stat(&bun_core::ZBox::from_bytes(file)).ok()
-    };
-    let Some(stat) = bun_sys::stat(path).ok().or_else(stat_file_of_form) else {
+    let stat_file_of_form = || stat(bun_aot::module_keys::path_without_form(path)?);
+    let Some(stat) = stat(path).or_else(stat_file_of_form) else {
         return 0;
     };
     let stat = bun_sys::PosixStat::init(&stat);

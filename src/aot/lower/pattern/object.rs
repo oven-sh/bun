@@ -33,7 +33,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 continue;
             }
             let name = match property.key {
-                PropKey::Computed(_) => self.lower_property_name(property.key),
+                PropKey::Computed(key) => self.lower_computed_name_read_by_pattern(key),
                 PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {
                     let Some(name) = self.file.property_name(property) else {
                         continue;

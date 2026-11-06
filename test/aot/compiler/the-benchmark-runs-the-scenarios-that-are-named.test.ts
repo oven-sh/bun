@@ -1,7 +1,7 @@
 // bench/compiler/run.ts takes `--scenarios=<name>,<name>`. Seven of its names held a comma themselves ("typed, one thread"), so none of them could be chosen, and a name that it
 // does not have was passed over in silence: `--scenarios="typed, one thread"` ran "typed", on every thread, and printed its numbers.
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 import { run } from "../harness/run";
 import { test } from "../supported";
@@ -28,6 +28,13 @@ test("a scenario is chosen by its whole name, and no other", async () => {
     stderr: "",
     exitCode: 0,
   });
+});
+
+// Go adds no `.exe` to a name that it is given: on Windows the benchmark looked for an `app.exe` that nobody had written, and ended there, behind minutes of work.
+test("Go is told the name under which its executable is looked for", async () => {
+  const { stdout } = await benchmark("--scenarios=go-cold,go-std-warm", "--commands");
+  const name = isWindows ? "app.exe" : "app";
+  expect(stdout.split("\n").map(line => / -o (\S+) /.exec(line)?.[1])).toEqual([name, name, undefined]);
 });
 
 test("what is chosen is built and measured, and nothing else", async () => {

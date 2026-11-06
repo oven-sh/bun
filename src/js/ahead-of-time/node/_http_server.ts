@@ -1801,7 +1801,6 @@ function onNodeHTTPRequest(
 
   if (!hasBody) req.complete = true;
 
-  // What is caught below is the refusal of an object that takes no stores, which refuses again on the full road. A setter of the program's may throw once.
   if (
     (exchange.flags & ExchangeFlags.ended_clean) !== 0 &&
     IS_COMPILED_AHEAD_OF_TIME &&
@@ -1810,9 +1809,19 @@ function onNodeHTTPRequest(
     connectionRemovesListenersUnseen(socket)
   ) {
     exchange.awaitsClose = false;
+    let takesStores = true;
+    const isPrepared = socket.$isPrepared;
     try {
+      // Nobody lays an accessor under this name, and what it held is stored back: only a socket that takes no stores refuses.
+      socket.$isPrepared = isPrepared;
+    } catch {
+      // It refuses again on the full road, from the functions of that road.
+      takesStores = false;
+    }
+    if (takesStores) {
       res[kCloseCallback] = undefined;
       exchange.detachedFrom = res[kDetachedFrom] = socket;
+      // What an accessor of the program's throws escapes, as from detachSocket().
       if (socket._httpMessage === res) {
         socket[kCloseCallback] = undefined;
         socket._httpMessage = null;
@@ -1821,8 +1830,6 @@ function onNodeHTTPRequest(
       res[fakeSocketSymbol] = null;
       res[kSocket] = null;
       return undefined;
-    } catch {
-      // One of the two takes no stores. The same stores again, from the functions of the full road.
     }
   } else if (
     exchange.awaitsClose === true &&

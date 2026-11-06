@@ -211,6 +211,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (PropertyName::Computed(key), Some(value))
     }
 
+    pub(crate) fn lower_computed_name_read_by_pattern(&mut self, computed: ExprId) -> PropertyName {
+        if let Some(found) = self.file.find_constant_key(computed) {
+            return PropertyName::Constant(found);
+        }
+        let position = self.position();
+        let value = self.lower_expression(computed);
+        let constant = expression::find_constant_outside_dead_zone(self.file, computed);
+        match constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
+            Some(found) => {
+                self.set_position(position);
+                PropertyName::Constant(found)
+            }
+            None => PropertyName::Computed(self.builder.to_property_key(value)),
+        }
+    }
+
     pub(crate) fn emit_name_value(&mut self, name: PropertyName) -> ValueId {
         let key = match name {
             PropertyName::Constant(key) => *self.file.fragment.property_keys.get(key),

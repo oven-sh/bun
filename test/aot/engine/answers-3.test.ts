@@ -1,3 +1,3 @@
 import { answersTests } from "./answers";
 
-answersTests(3, 4);
+answersTests(3, 8);

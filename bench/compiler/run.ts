@@ -56,9 +56,9 @@ const aot = (entry: string, ...flags: string[]) => [
   "--outfile",
   "app",
 ];
-// On Windows every compiler here writes `<name>.exe`.
-const builtIn = (folder: string, { executable }: Scenario) =>
-  join(folder, process.platform === "win32" ? `${executable}.exe` : executable);
+// On Windows Bun and cargo write `<name>.exe`. Go writes the name that it is given, so it is given that one.
+const onThisSystem = (executable: string) => (process.platform === "win32" ? `${executable}.exe` : executable);
+const builtIn = (folder: string, { executable }: Scenario) => join(folder, onThisSystem(executable));
 const open = `\nif (process.argv.length > 90) await import(process.argv[90]);\n`;
 const evaluates = `\nif (process.argv.length > 90) eval(process.argv[90]);\n`;
 const scenarios: Scenario[] = [
@@ -120,7 +120,7 @@ const scenarios: Scenario[] = [
     dress: "go",
     needs: "go",
     prepare: folder => [["rm", "-rf", join(folder, ".cache")]],
-    command: () => ["go", "build", "-o", "app", "."],
+    command: () => ["go", "build", "-o", onThisSystem("app"), "."],
     environment: folder => ({ GOCACHE: join(folder, ".cache"), GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" }),
     executable: "app",
   },
@@ -132,7 +132,7 @@ const scenarios: Scenario[] = [
       ["rm", "-rf", join(folder, ".cache")],
       ["go", "build", "std"],
     ],
-    command: () => ["go", "build", "-o", "app", "."],
+    command: () => ["go", "build", "-o", onThisSystem("app"), "."],
     environment: folder => ({ GOCACHE: join(folder, ".cache"), GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" }),
     executable: "app",
   },

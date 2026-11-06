@@ -93,6 +93,10 @@ test("the strings that an executable stores are printed out of the finished file
     stderr: ["the file holds no image"],
   });
 
+  const missing = await print(directory, "no-such-file");
+  expect({ exitCode: missing.exitCode, stdout: missing.stdout }).toEqual({ exitCode: 2, stdout: "" });
+  expect(missing.stderr).toContain('--aot-stored-strings: failed to read "no-such-file": ENOENT');
+
   for (const more of [["--minify"], ["main.ts"]]) {
     const refused = await print(directory, executable, ...more);
     expect({ exitCode: refused.exitCode, stdout: refused.stdout }).toEqual({ exitCode: 2, stdout: "" });

@@ -15,7 +15,7 @@ pub(crate) use bun_lint_driver::fmt::cli::HELP;
 
 /// True if `bun fmt --run-prettier-tests` exists, for `test/cli/format/conformance.test.ts`.
 /// Release builds don't include it.
-const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+const HAS_TEST_RUNNER: bool = bun_lint_driver::fmt::cli::HAS_FLAGS_FOR_TESTS;
 
 fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
     match flag {
@@ -99,22 +99,7 @@ impl FormatCommand {
             );
             Global::exit(u32::from(!ran));
         }
-        let mut args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
-        // `--bench=<rounds>` and `--no-short-cuts`, for measurements and for the tests.
-        let (mut bench, mut no_short_cuts) = (0, false);
-        if HAS_TEST_RUNNER {
-            args.retain(|arg| match arg.strip_prefix(b"--bench=") {
-                Some(rounds) => {
-                    bench = bun_core::fmt::parse_decimal::<usize>(rounds).unwrap_or(1);
-                    false
-                }
-                None if *arg == b"--no-short-cuts" => {
-                    no_short_cuts = true;
-                    false
-                }
-                None => true,
-            });
-        }
+        let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         let options = match Options::parse(&args) {
             Ok(options) => options,
             Err(UsageError(message)) => usage_error("fmt", &message),
@@ -139,13 +124,12 @@ impl FormatCommand {
                     })
                 },
             );
-            let mut options =
+            let options =
                 match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
                     None => options,
                     Some(Ok(options)) => options,
                     Some(Err(UsageError(message))) => usage_error("fmt", &message),
                 };
-            (options.bench, options.no_short_cuts) = (bench, no_short_cuts);
             bun_lint_driver::fmt::run(&options, environment)
         })
     }

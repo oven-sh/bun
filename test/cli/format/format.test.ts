@@ -4234,6 +4234,19 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  test("what follows -- is the name of a file, whatever it looks like", async () => {
+    const names = ["--bench=1.js", "--no-short-cuts", "--check.ts"];
+    const result = await format(
+      Object.fromEntries(names.map(name => [name, ugly])),
+      ["--parser=babel", "--", ...names],
+      {
+        reads: names,
+      },
+    );
+    expect(result.files).toEqual(Object.fromEntries(names.map(name => [name, formatted])));
+    expect(result.exitCode).toBe(0);
+  });
+
   test("formats HTML in template literals", async () => {
     const result = await format(
       {

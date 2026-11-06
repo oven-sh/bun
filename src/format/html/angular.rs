@@ -217,6 +217,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         // An `NGEmptyExpression` or an `NGChainedExpression`.
         self.write_hugged(hug.should_hug_non_expression(), |printer| {
             if !is_action {
+                // Nothing between two lines: two blanks in the document of the quick way, one here.
+                printer.out.gives_up_quick_way();
                 return true;
             }
             let mut is_written = true;

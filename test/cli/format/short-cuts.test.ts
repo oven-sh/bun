@@ -5174,6 +5174,18 @@ describe("JavaScript and TypeScript in a host", () => {
         ]),
         [[]],
       ));
+    // Nothing between the braces: two blanks for one way, one for the other.
+    describe("an interpolation of Angular without an expression", () =>
+      expectSame(
+        "a.ts",
+        [
+          "@Component({ template: `<a>{{ \u00a0 }}</a>` })\nclass A {}\n",
+          "@Component({ template: `<a>{{ \\x01 }}</a>` })\nclass A {}\n",
+          "@Component({ template: `<a>{{ }}</a>` })\nclass A {}\n",
+        ],
+        [[]],
+      ));
+
     // What a thread has learned from the texts that it has formatted decides what the next one costs, and nothing else.
     describe("what was formatted before", () => {
       // The files are named one by one: those that a search finds are formatted in the order in which they are found.

@@ -420,8 +420,7 @@ impl Bin {
     }
 
     // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
-    // `u32`s); reading the wrong variant is well-defined garbage.
+    // `Value` is a `Copy` POD union; reading the wrong variant is well-defined garbage.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         File      => file: String;
@@ -479,13 +478,13 @@ pub union Value {
     ///```
     pub(crate) map: ExternalStringList,
 }
+bun_core::impl_zeroable!(Value);
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
     #[inline]
     pub(crate) fn init_none() -> Value {
-        // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed_unchecked() }
+        bun_core::ffi::zeroed()
     }
     #[inline]
     pub(crate) fn init_file(file: String) -> Value {
@@ -1196,17 +1195,7 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) -> Result<(), Error> {
-        // `encode_into` reinterprets this byte buffer as `[u16]`.
-        // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
-        // *immediate language UB* — the reference validity invariant requires
-        // alignment even if never dereferenced.
-        // `[u8; N]` has `align_of == 1`, so the compiler is free to place it at
-        // an odd address. Force 2-byte alignment at the declaration site so the
-        // `*mut u16` slice construction in `encode_into` is provably sound.
-        #[repr(align(2))]
-        struct ShimBuf([u8; 65536]);
-        let mut shim_buf = ShimBuf([0u8; 65536]);
-        let shim_buf = &mut shim_buf.0;
+        let mut shim_buf = [0u16; 32768];
         let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
         let mut dest_buf = bun_paths::w_path_buffer_pool::get();
         let mut target_buf = bun_paths::w_path_buffer_pool::get();
@@ -1289,17 +1278,14 @@ impl<'a> Linker<'a> {
             shebang,
         };
 
-        let len = shim.encoded_length();
-        if len > shim_buf.len() {
+        let Some(metadata) = shim_buf.get_mut(..shim.encoded_length() / 2) else {
             return Err(crate::Error::InvalidBinContent);
-        }
-
-        let metadata = &mut shim_buf[0..len];
+        };
         if shim.encode_into(metadata).is_err() {
             return Err(crate::Error::InvalidBinContent);
         }
 
-        bunx_file.write_all(metadata)?;
+        bunx_file.write_all(bun_core::slice_as_bytes(metadata))?;
 
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above

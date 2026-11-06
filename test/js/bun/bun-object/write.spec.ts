@@ -30,9 +30,9 @@ describe("Bun.write()", () => {
 
   // NOTE: if/when we ban fds, this will become ERR_INVALID_ARG_TYPE. When that
   // happens, delete or update this test
-  it("Throws when given a negative number", async () => {
+  it("Throws when given a negative number", () => {
     // @ts-expect-error
-    await expect(() => Bun.write(-1, "foo")).toThrow(RangeError);
+    expect(() => Bun.write(-1, "foo")).toThrow(RangeError);
   });
 
   it.each(["foo", ""])("Cannot write to readonly Blobs", async input => {

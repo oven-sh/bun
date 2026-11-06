@@ -108,53 +108,53 @@ describe("Bun.cron API", () => {
     expect(typeof Bun.cron.parse).toBe("function");
   });
 
-  test("throws with no arguments", async () => {
+  test("throws with no arguments", () => {
     // @ts-ignore
-    await expect(() => Bun.cron()).toThrow();
+    expect(() => Bun.cron()).toThrow();
   });
 
-  test("throws with non-string path", async () => {
+  test("throws with non-string path", () => {
     // @ts-ignore
-    await expect(() => Bun.cron(123, "* * * * *", "test-bad")).toThrow();
+    expect(() => Bun.cron(123, "* * * * *", "test-bad")).toThrow();
   });
 
-  test("throws with non-string schedule", async () => {
+  test("throws with non-string schedule", () => {
     // @ts-ignore
-    await expect(() => Bun.cron("./test.ts", 123, "test-bad")).toThrow();
+    expect(() => Bun.cron("./test.ts", 123, "test-bad")).toThrow();
   });
 
-  test("throws with non-string title", async () => {
+  test("throws with non-string title", () => {
     // @ts-ignore
-    await expect(() => Bun.cron("./test.ts", "* * * * *", 123)).toThrow();
+    expect(() => Bun.cron("./test.ts", "* * * * *", 123)).toThrow();
   });
 
-  test("remove throws with non-string title", async () => {
+  test("remove throws with non-string title", () => {
     // @ts-ignore
-    await expect(() => Bun.cron.remove(123)).toThrow();
+    expect(() => Bun.cron.remove(123)).toThrow();
   });
 
-  test("throws with invalid title characters", async () => {
-    await expect(() => Bun.cron("./test.ts", "* * * * *", "bad title!")).toThrow(/alphanumeric/);
-    await expect(() => Bun.cron("./test.ts", "* * * * *", "bad/title")).toThrow(/alphanumeric/);
-    await expect(() => Bun.cron("./test.ts", "* * * * *", "")).toThrow(/alphanumeric/);
+  test("throws with invalid title characters", () => {
+    expect(() => Bun.cron("./test.ts", "* * * * *", "bad title!")).toThrow(/alphanumeric/);
+    expect(() => Bun.cron("./test.ts", "* * * * *", "bad/title")).toThrow(/alphanumeric/);
+    expect(() => Bun.cron("./test.ts", "* * * * *", "")).toThrow(/alphanumeric/);
   });
 
-  test("throws with invalid cron expression", async () => {
-    await expect(() => Bun.cron("./test.ts", "not a cron", "test-bad")).toThrow(/cron expression/i);
-    await expect(() => Bun.cron("./test.ts", "* * *", "test-bad")).toThrow(/cron expression/i);
-    await expect(() => Bun.cron("./test.ts", "* * * * * *", "test-bad")).toThrow(/cron expression/i);
-    await expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
+  test("throws with invalid cron expression", () => {
+    expect(() => Bun.cron("./test.ts", "not a cron", "test-bad")).toThrow(/cron expression/i);
+    expect(() => Bun.cron("./test.ts", "* * *", "test-bad")).toThrow(/cron expression/i);
+    expect(() => Bun.cron("./test.ts", "* * * * * *", "test-bad")).toThrow(/cron expression/i);
+    expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
   });
 
   test("throws with percent sign in path", async () => {
     using dir = tempDir("bun-cron-test", {
       "test%file.ts": `export default { scheduled() {} };`,
     });
-    await expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+    expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
   });
 
-  test("remove throws with invalid title characters", async () => {
-    await expect(() => Bun.cron.remove("bad title!")).toThrow(/alphanumeric/);
+  test("remove throws with invalid title characters", () => {
+    expect(() => Bun.cron.remove("bad title!")).toThrow(/alphanumeric/);
   });
 });
 
@@ -422,11 +422,11 @@ describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
 
   for (const { expr, title, triggers } of nonDivisorSteps) {
     if (isWindows) {
-      test(`${expr} throws on Windows (${triggers} triggers > 48)`, async () => {
+      test(`${expr} throws on Windows (${triggers} triggers > 48)`, () => {
         using dir = tempDir("bun-cron-test", {
           "job.ts": `export default { scheduled() {} };`,
         });
-        await expect(() => Bun.cron(`${dir}/job.ts`, expr, `test-win-${title}`)).toThrow(/too many triggers/i);
+        expect(() => Bun.cron(`${dir}/job.ts`, expr, `test-win-${title}`)).toThrow(/too many triggers/i);
       });
     } else {
       test(`${expr} succeeds on ${isMacOS ? "macOS" : "Linux"}`, async () => {
@@ -462,11 +462,11 @@ describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
 
   for (const { expr, title, why } of restrictedFieldExprs) {
     if (isWindows) {
-      test(`${expr} throws on Windows (${why})`, async () => {
+      test(`${expr} throws on Windows (${why})`, () => {
         using dir = tempDir("bun-cron-test", {
           "job.ts": `export default { scheduled() {} };`,
         });
-        await expect(() => Bun.cron(`${dir}/job.ts`, expr, `test-win-${title}`)).toThrow(/too many triggers/i);
+        expect(() => Bun.cron(`${dir}/job.ts`, expr, `test-win-${title}`)).toThrow(/too many triggers/i);
       });
     } else {
       test(`${expr} succeeds on ${isMacOS ? "macOS" : "Linux"}`, async () => {
@@ -487,11 +487,11 @@ describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
   // Category 3: POSIX OR-split (both day-of-month and day-of-week non-wild)
   // doubles the trigger count per (hour, minute) pair.
   if (isWindows) {
-    test("0,30 * 15 * 5 throws on Windows (2×24×2 = 96 triggers from OR-split)", async () => {
+    test("0,30 * 15 * 5 throws on Windows (2×24×2 = 96 triggers from OR-split)", () => {
       using dir = tempDir("bun-cron-test", {
         "job.ts": `export default { scheduled() {} };`,
       });
-      await expect(() => Bun.cron(`${dir}/job.ts`, "0,30 * 15 * 5", "test-win-or-split")).toThrow(/too many triggers/i);
+      expect(() => Bun.cron(`${dir}/job.ts`, "0,30 * 15 * 5", "test-win-or-split")).toThrow(/too many triggers/i);
     });
   } else {
     test(`0,30 * 15 * 5 succeeds on ${isMacOS ? "macOS" : "Linux"} (OR semantics)`, async () => {

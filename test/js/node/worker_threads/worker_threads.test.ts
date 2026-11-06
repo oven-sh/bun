@@ -226,6 +226,15 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
+test.each([
+  ["file:", new URL("./worker.js", import.meta.url)],
+  ["data:", new URL("data:text/javascript,")],
+])("the filename can be a %s URL of another implementation", async (_, { href, protocol, hostname, pathname }) => {
+  const worker = new Worker({ href, protocol, hostname, pathname, toString: () => href } as URL);
+  await once(worker, "online");
+  await worker.terminate();
+});
+
 test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url), {
@@ -784,20 +793,20 @@ test.concurrent.each([
 });
 
 describe("getHeapSnapshot", () => {
-  test("throws if the wrong options are passed", async () => {
+  test("throws if the wrong options are passed", () => {
     const worker = new Worker("", { eval: true });
     // @ts-expect-error
-    await expect(() => worker.getHeapSnapshot(0)).toThrow({
+    expect(() => worker.getHeapSnapshot(0)).toThrow({
       name: "TypeError",
       message: 'The "options" argument must be of type object. Received type number (0)',
     });
     // @ts-expect-error
-    await expect(() => worker.getHeapSnapshot({ exposeInternals: 0 })).toThrow({
+    expect(() => worker.getHeapSnapshot({ exposeInternals: 0 })).toThrow({
       name: "TypeError",
       message: 'The "options.exposeInternals" property must be of type boolean. Received type number (0)',
     });
     // @ts-expect-error
-    await expect(() => worker.getHeapSnapshot({ exposeNumericValues: 0 })).toThrow({
+    expect(() => worker.getHeapSnapshot({ exposeNumericValues: 0 })).toThrow({
       name: "TypeError",
       message: 'The "options.exposeNumericValues" property must be of type boolean. Received type number (0)',
     });
@@ -2600,7 +2609,7 @@ describe("terminate with work in flight", () => {
     }
   });
 
-  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+  async function terminateWhileFetchBodyStreams(env: typeof bunEnv) {
     // Subprocess: the exiting main thread must not touch the dead worker's fetch.
     await using proc = Bun.spawn({
       cmd: [
@@ -2626,13 +2635,21 @@ describe("terminate with work in flight", () => {
            process.exit(0);
          });`,
       ],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("exiting\n");
     expect(exitCode).toBe(0);
+  }
+
+  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+    await terminateWhileFetchBodyStreams(bunEnv);
+  });
+
+  test("a fetch whose body is still streaming at terminate(), then process exit, with useZombieMode", async () => {
+    await terminateWhileFetchBodyStreams({ ...bunEnv, BUN_JSC_useZombieMode: "1" });
   });
 
   test("the main thread exits while a worker is mid-way through sqlite statements", async () => {

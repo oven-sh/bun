@@ -1,6 +1,11 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
+import {
+  createSocketPair,
+  putBoringSSLErrorForTesting,
+  setSocketOptions,
+  socketFaultInjection,
+} from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
@@ -1030,23 +1035,23 @@ it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
 
-it("should throw on empty hostname from truthy non-string value", async () => {
+it("should throw on empty hostname from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // A truthy value whose toString() returns "" should throw, not crash
   for (const hostname of [[], new String("")]) {
     expect(() => Bun.listen({ hostname: hostname as any, port: 0, socket })).toThrow('Expected a non-empty "hostname"');
-    await expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
+    expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
       'Expected a non-empty "hostname"',
     );
   }
 });
 
-it("should throw on empty unix path from truthy non-string value", async () => {
+it("should throw on empty unix path from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // unix uses a strict string type in bindgen, so non-string values are rejected before
   // reaching the empty-string check — the error message differs from hostname
   expect(() => Bun.listen({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
-  await expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
+  expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
 describe.each([
@@ -1061,8 +1066,8 @@ describe.each([
     expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: makeTls() as any, socket })).toThrow(message);
   });
 
-  it("Bun.connect throws instead of opening a plaintext connection", async () => {
-    await expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
+  it("Bun.connect throws instead of opening a plaintext connection", () => {
+    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
   });
 
   it("upgradeTLS throws", async () => {
@@ -1211,6 +1216,31 @@ it("getPeerCertificate and exportKeyingMaterial accept undefined for optional ar
     await promise;
     expect(socket.getPeerCertificate(undefined)).toEqual(socket.getPeerCertificate());
     expect(socket.exportKeyingMaterial(8, "label", undefined)).toEqual(socket.exportKeyingMaterial(8, "label"));
+  } finally {
+    socket.end();
+  }
+});
+
+it("exportKeyingMaterial does not report an earlier BoringSSL failure", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+  const socket = await connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      data() {},
+      handshake: () => resolve(),
+      error: (_, error) => reject(error),
+      close: () => reject(new Error("closed before the handshake")),
+    },
+  });
+  try {
+    await promise;
+    putBoringSSLErrorForTesting();
+    expect(() => socket.exportKeyingMaterial(1_000_000, "label")).toThrow(
+      expect.objectContaining({ message: "OpenSSL OUTPUT_TOO_LARGE via OPENSSL_internal HKDF functions" }),
+    );
   } finally {
     socket.end();
   }
@@ -6637,16 +6667,15 @@ it("a view of part of a buffer as a tls option is read as the view", () => {
   }
 });
 
-it("Array.prototype as a tls option is none of the types one takes", () => {
+it("Array.prototype as a tls option is an empty array, as in Node", () => {
   for (const name of ["key", "cert", "ca", "crl"]) {
-    expect(() =>
-      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
-    ).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
-      }),
-    );
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+      tls: { [name]: Array.prototype } as any,
+    });
+    expect(listener.port).toBeGreaterThan(0);
   }
 });
 
@@ -6668,7 +6697,7 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
   it("doesn't crash the dispatch that called it", async () => {
     const source = `
       import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
-      import { expect, test } from "bun:test";
+      import { test } from "bun:test";
 
       // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
       function waitInsideHandler() {

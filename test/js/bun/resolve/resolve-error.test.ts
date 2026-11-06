@@ -137,14 +137,14 @@ describe("ResolveMessage", () => {
   });
 
   it("invalid data URL import", async () => {
-    await expect(async () => {
+    expect(async () => {
       // @ts-ignore
       await import("data:Hello%2C%20World!");
     }).toThrow("Cannot resolve invalid data URL");
   });
 
   it("doesn't crash", async () => {
-    await expect(async () => {
+    expect(async () => {
       // @ts-ignore
       await import(":://filesystem");
     }).toThrow("Cannot find package '::'");

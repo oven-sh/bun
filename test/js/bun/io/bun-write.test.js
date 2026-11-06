@@ -828,7 +828,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
       it("throws when given a file descriptor", async () => {
         const file = Bun.file(123);
-        await expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+        expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
           "Cannot create a directory for a file descriptor",
         );
       });

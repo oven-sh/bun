@@ -1,6 +1,10 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use crate::generated_bindgen::dev_server::{
+    Bun__DevServer__onPluginSetupReject, Bun__DevServer__onPluginSetupResolve,
+};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -255,7 +259,7 @@ impl DevServer {
         content_hash: u64,
     ) -> crate::Result<()> {
         let _g = self.graph_safety_lock.guard();
-        let _ = self.assets.replace_path(
+        let _ = self.replace_asset_path(
             path.text,
             contents,
             &MimeType::by_extension(path.name().ext_without_leading_dot()),
@@ -351,16 +355,14 @@ impl DevServer {
         }
         // SAFETY: `forget_plugin_setup` clears the address before the `DevServer` is freed, and
         // a promise reaction runs with no other borrow of it on the stack.
-        Ok(Some(unsafe { &mut *address.as_promise_ptr::<DevServer>() }))
+        Ok(Some(unsafe {
+            &mut *(address.as_ptr_address() as *mut DevServer)
+        }))
     }
 
-    fn on_plugin_setup_resolve(
-        global: &JSGlobalObject,
-        frame: &jsc::CallFrame,
-    ) -> JsResult<JSValue> {
-        let [_, context] = frame.arguments_as_array::<2>();
+    fn on_plugin_setup_resolve(global: &JSGlobalObject, context: JSValue) -> JsResult<()> {
         let Some(dev) = Self::waiting_for_plugin_setup(global, context)? else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // The next `setup()` can stop the server, and a drained server frees `dev`, so count as a pending request until the end.
         let mut server = dev.server;
@@ -383,17 +385,17 @@ impl DevServer {
         if let Some(server) = server.as_mut() {
             server.on_static_request_complete();
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     fn on_plugin_setup_reject(
         global: &JSGlobalObject,
-        frame: &jsc::CallFrame,
-    ) -> JsResult<JSValue> {
-        let [err, context] = frame.arguments_as_array::<2>();
+        err: JSValue,
+        context: JSValue,
+    ) -> JsResult<()> {
         let dev = Self::waiting_for_plugin_setup(global, context)?;
         Self::plugin_setup_failed(global, dev, err);
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     fn plugin_setup_failed(global: &JSGlobalObject, dev: Option<&mut DevServer>, err: JSValue) {
@@ -406,12 +408,21 @@ impl DevServer {
     }
 }
 
-bun_jsc::jsc_promise_handler!(
-    pub fn Bun__DevServer__onPluginSetupResolve => DevServer::on_plugin_setup_resolve
-);
-bun_jsc::jsc_promise_handler!(
-    pub fn Bun__DevServer__onPluginSetupReject => DevServer::on_plugin_setup_reject
-);
+pub(crate) fn on_plugin_setup_resolve(
+    cx: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    context: JsLocal<'_>,
+) -> JsResult<()> {
+    DevServer::on_plugin_setup_resolve(cx.global(), context.to_js())
+}
+
+pub(crate) fn on_plugin_setup_reject(
+    cx: &mut JsScope<'_>,
+    value: JsLocal<'_>,
+    context: JsLocal<'_>,
+) -> JsResult<()> {
+    DevServer::on_plugin_setup_reject(cx.global(), value.to_js(), context.to_js())
+}
 
 #[derive(Default)]
 pub(crate) struct TestingBatch {
@@ -441,12 +452,14 @@ impl TestingBatch {
 }
 
 impl DevServer {
+    #[inline(never)]
     pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
         had_reload_event: bool,
         timer: Instant,
     ) -> crate::Result<()> {
+        bun_removable_features::removable_definition!(Bundler, Self::start_async_bundle);
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
@@ -472,25 +485,10 @@ impl DevServer {
         // `CurrentBundle.bv2`).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
         // Borrows `heap`, so AST nodes built during bundle setup
-        // live exactly as long as the bundle. The arena-allocated allocator
-        // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
-        // on success and recycled by the guard below on error paths.
-        let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
-            heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
-        struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
-        impl Drop for ReleaseAstState {
-            fn drop(&mut self) {
-                // SAFETY: points at the arena-allocated allocator in `heap`,
-                // which outlives this guard; the `Scope` has already exited.
-                unsafe { (*self.0).release_ast_state() };
-            }
-        }
-        let _release_ast_state = ReleaseAstState(ast_memory_store);
-        // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
-        // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime.
-        // The exclusive reborrow is owned by the `ast_scope` guard, which is
-        // dropped before `bv2` is moved into `current_bundle` below.
-        let ast_scope = unsafe { bun_ast::ASTMemoryAllocator::enter(&mut *ast_memory_store) };
+        // live exactly as long as the bundle. The `AstAllocState` is taken
+        // into `CurrentBundle` on success and recycled on error paths.
+        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(&heap);
+        let ast_scope = ast_memory_store.enter();
 
         // The bundler stores
         // `Option<NonNull<AnyEventLoop>>`. Park the value in `heap`
@@ -503,40 +501,28 @@ impl DevServer {
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
+        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
         // SAFETY: `heap` is `Box`-allocated above and moved into
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
-        // Note: split `&mut self` into disjoint field reborrows so
-        // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
-        // (NonNull) don't trip the single-`&mut self` rule.
-        let self_ptr = std::ptr::from_mut::<Self>(self);
+        let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
+        let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
+            unsafe { &mut *server_transpiler },
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
-                // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
-                // raw pointers and never moves them.
-                client_transpiler: unsafe {
-                    ::core::ptr::NonNull::from((*self_ptr).client_transpiler.assume_init_mut())
-                },
-                // SAFETY: sibling field of `*self`; `BundleV2` stores it as a raw
-                // pointer and never moves it.
-                ssr_transpiler: unsafe {
-                    ::core::ptr::NonNull::from((*self_ptr).ssr_transpiler.assume_init_mut())
-                },
+                client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
+                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
                 plugins: self.bundler_options.plugin,
             }),
-            // SAFETY: see `heap_ptr` note above.
-            unsafe { &*heap_ptr },
+            heap_ref,
             event_loop,
             false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            // SAFETY: see `heap_ptr` note above.
-            unsafe { &*heap_ptr },
+            heap_ref,
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
@@ -569,9 +555,7 @@ impl DevServer {
         // End the AST scope and move its state into the bundle so the small
         // `AstVec`s built during setup stay alive until the bundle completes.
         drop(ast_scope);
-        // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
-        // exited, so no `&mut` to the allocator is live.
-        let ast_alloc_state = unsafe { (*ast_memory_store).take_ast_state() };
+        let ast_alloc_state = ast_memory_store.take_ast_state();
         self.current_bundle = Some(CurrentBundle {
             _bv2: bv2,
             _heap: heap,
@@ -610,7 +594,6 @@ impl DevServer {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle
         debug_assert!(self.current_bundle.is_none());
-        self.emit_visualizer_message_if_needed();
 
         // If there were pending requests, begin another bundle.
         if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {

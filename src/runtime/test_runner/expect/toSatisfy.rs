@@ -6,6 +6,7 @@ use super::get_signature;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_satisfy(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -13,7 +14,6 @@ impl Expect {
         predicate: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // Not `matcher_prelude`: the argument is checked before the value is read.
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();

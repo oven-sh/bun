@@ -2758,6 +2758,11 @@ export const after = { a: 1 };
     });
   });
 
+  it("Array.prototype as external is an empty array", () => {
+    const transform = external => new Bun.Transpiler({ external }).transformSync('import "a"; 1');
+    expect(transform(Array.prototype)).toBe(transform([]));
+  });
+
   it("define errors after an earlier config error don't corrupt the log", async () => {
     // An `external` with two `*` logs one error without aborting the constructor.
     // The four define-key errors that follow make the log's buffer grow.
@@ -5605,7 +5610,7 @@ it.concurrent('data loaders print only `export default` when the only key is "de
 });
 
 it("runtime transpiler stack overflows", async () => {
-  await expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
+  expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });
 
 it("Bun.Transpiler.transformSync stack overflows", async () => {
@@ -5617,7 +5622,7 @@ it("Bun.Transpiler.transformSync stack overflows", async () => {
 it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
-  await expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+  expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 }, 60_000);
 
 it("deeply nested expressions error instead of crashing the process", () => {

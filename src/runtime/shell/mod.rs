@@ -17,8 +17,6 @@
 
 #[path = "shell_body.rs"]
 pub(crate) mod shell_body;
-// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
-pub(crate) use shell_body as shell;
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
@@ -144,10 +142,10 @@ pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
 // layout) at the arena/state-machine boundary.
 pub(crate) mod ast {
-    pub(crate) use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
     pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
+    pub(crate) type SmolList<T, const N: usize> = bun_shell_parser::parse::SmolList<'static, T, N>;
     pub(crate) type Script = p::Script<'static>;
     pub(crate) type Stmt = p::Stmt<'static>;
     pub(crate) type Expr = p::Expr<'static>;

@@ -6,26 +6,20 @@
 //! Symbols that already have a Rust `#[export_name]` / `#[no_mangle]` elsewhere
 //! are intentionally **not** re-declared here to avoid duplicate-symbol link
 //! errors:
-//!   - `Bun__getTLSDefaultCiphers` / `Bun__setTLSDefaultCiphers`
 //!   - `Bun__Process__getStdinFdType`
 //!       → `src/jsc/rare_data.rs`
-//!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
+//!   - `Resolver__nodeModulePathsJSValue`
 //!       → `src/jsc/resolver_jsc.rs`
 //!   - `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
 //!       → `src/runtime/webcore/wasm_streaming.rs`
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
-//!   - `Bun__JSSourceMap__find`
-//!       → `src/runtime/api/JSSourceMap.rs`
-//!   - `Bun__Process__send`
-//!       → `bun_jsc::virtual_machine_exports`
 
 use core::ffi::c_void;
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame,
-};
+use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -40,15 +34,8 @@ pub(crate) fn is_main_thread_vm() -> bool {
     VirtualMachine::get().as_mut().is_main_thread
 }
 
-/// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
-///
-/// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
-/// deref+call with no `ExceptionValidationScope`.
-/// `drain_microtasks()` runs arbitrary microtasks; wrapping in a
-/// scope would trip `assert_exception_presence_matches(false)` if one left an
-/// exception pending while we return `UNDEFINED`.
-// HOST_EXPORT(Bun__drainMicrotasksFromJS)
-pub(crate) fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
+pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
+    let global = cx.global();
     // Hot path (~2×/request via cork callback chain): pass the incoming
     // `global` straight through instead of re-deriving it via
     // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
@@ -59,7 +46,6 @@ pub(crate) fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame)
     let _ = vm
         .event_loop_mut()
         .drain_microtasks_with_global(global, jsc_vm);
-    JSValue::UNDEFINED
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
@@ -79,7 +65,7 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
-    frames: *mut ZigStackFrame,
+    frames: *mut ZigStackFrame<'_>,
     frames_count: usize,
 ) {
     // The collector thread is not otherwise a Bun thread: give it the per-thread output source a source-map warning writes
@@ -87,9 +73,8 @@ pub(crate) fn remap_stack_frame_positions(
     // nothing else on that thread will.
     let on_js_thread = VirtualMachine::get_or_null().is_some();
     bun_core::output::Source::configure_thread();
-    // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
-    // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    // SAFETY: `frames[..frames_count]` is a live C++ array that only this call touches.
+    vm.remap_stack_frame_positions(unsafe { bun_core::ffi::slice_mut(frames, frames_count) });
     if !on_js_thread {
         bun_core::output::flush();
     }
@@ -177,8 +162,7 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
 pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
-        // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data().disconnect() };
+        current_ipc.data().disconnect();
     }
 }
 
@@ -208,7 +192,7 @@ mod sql_hooks {
         // an embedded field with stable address for the VM lifetime.
         unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
-    unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
+    fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
         crate::jsc_hooks::timer_all().cast()
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
@@ -240,7 +224,7 @@ mod sql_hooks {
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache.get_or_create_opts(opts, err)
     }
-    unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+    fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
             Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
@@ -292,54 +276,31 @@ mod sql_hooks {
 
 // ─── entry-point promise reactions (used by `--print`) ───────────────────────
 
-// HOST_EXPORT(Bun__onResolveEntryPointResult)
-pub(crate) fn on_resolve_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
+    let global = cx.global();
+    let result = result.to_js();
+    bun_jsc::ConsoleObject::message_with_type_and_level(
+        bun_jsc::ConsoleObject::MessageType::Log,
+        bun_jsc::ConsoleObject::MessageLevel::Log,
+        global,
+        &[result],
+    );
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
-// HOST_EXPORT(Bun__onRejectEntryPointResult)
-pub(crate) fn on_reject_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
+    let global = cx.global();
+    let result = result.to_js();
+    bun_jsc::ConsoleObject::message_with_type_and_level(
+        bun_jsc::ConsoleObject::MessageType::Log,
+        bun_jsc::ConsoleObject::MessageLevel::Log,
+        global,
+        &[result],
+    );
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
 // `crate::webview::chrome_process` (mod webview is declared in lib.rs).
-//
-// `Bun__JSSourceMap__find` — exported from `crate::api::js_source_map`
-// via `#[bun_jsc::host_fn(export = ...)]`.

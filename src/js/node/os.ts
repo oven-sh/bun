@@ -1,6 +1,49 @@
 // Hardcoded module "node:os"
-var tmpdir = function () {
-  var env = Bun.env;
+interface CpuInfo {
+  model: string;
+  speed: number;
+  times: { user: number; nice: number; sys: number; idle: number; irq: number };
+}
+
+interface NetworkInterfaceInfo {
+  address: string;
+  netmask: string;
+  family: "IPv4" | "IPv6";
+  mac: string;
+  internal: boolean;
+  cidr: string | null;
+  scopeid?: number;
+}
+
+interface UserInfo {
+  uid: number;
+  gid: number;
+  username: string | Buffer;
+  homedir: string | Buffer;
+  shell: string | Buffer | null;
+}
+
+// src/runtime/node/node_os.bind.ts
+interface Binding {
+  hostCpuCount: number;
+  cpus(): CpuInfo[];
+  freemem(): number;
+  getPriority(pid?: number): number;
+  homedir(): string;
+  hostname(): string;
+  loadavg(): number[];
+  networkInterfaces(): Record<string, NetworkInterfaceInfo[]>;
+  release(): string;
+  totalmem(): number;
+  uptime(): number;
+  userInfo(options?: { encoding?: string } | null): UserInfo;
+  version(): string;
+  setPriority(pid: number, priority: number): void;
+  setPriority(priority: number): void;
+}
+
+var tmpdir = function (): string {
+  var env: Record<string, string | undefined> = Bun.env;
 
   tmpdir = function () {
     if (process.platform === "win32") {
@@ -29,9 +72,9 @@ var tmpdir = function () {
 // Some packages like FastGlob only bother to read the length of the array
 // so instead of actually populating the entire object
 // we turn them into getters
-function lazyCpus({ cpus, hostCpuCount }) {
+function lazyCpus({ cpus, hostCpuCount }: Binding) {
   return () => {
-    const array = new Array(hostCpuCount);
+    const array: CpuInfo[] = new Array(hostCpuCount);
     function populate() {
       const results = cpus();
       const length = results.length;
@@ -87,7 +130,7 @@ function lazyCpus({ cpus, hostCpuCount }) {
 }
 
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time
-function bound(binding) {
+function bound(binding: Binding) {
   return {
     availableParallelism: function () {
       return navigator.hardwareConcurrency;
@@ -103,7 +146,7 @@ function bound(binding) {
     },
     freemem: binding.freemem,
     // Plain functions where Node's are, so that `new os.homedir()` does what it does there. The other four are not constructors in Node either.
-    getPriority: function (pid) {
+    getPriority: function (pid?: number) {
       return binding.getPriority(pid);
     },
     homedir: function () {
@@ -122,8 +165,8 @@ function bound(binding) {
       return process.platform;
     },
     release: binding.release,
-    setPriority: function (pid, priority) {
-      return binding.setPriority(pid, priority);
+    setPriority: function (pid: number, priority?: number) {
+      return binding.setPriority(pid, priority!);
     },
     get tmpdir() {
       return tmpdir;
@@ -143,7 +186,7 @@ function bound(binding) {
     uptime: function () {
       return binding.uptime();
     },
-    userInfo: function (options) {
+    userInfo: function (options?: { encoding?: string } | null) {
       return binding.userInfo(options);
     },
     version: binding.version,
@@ -170,7 +213,7 @@ function bound(binding) {
 }
 
 const out = bound({
-  hostCpuCount: $bindgen("node_os.bind.ts", "hostCpuCount")(),
+  hostCpuCount: $bindgen("node_os.bind.ts", "hostCpuCount") as number,
   cpus: $bindgen("node_os.bind.ts", "cpus"),
   freemem: $bindgen("node_os.bind.ts", "freemem"),
   getPriority: $bindgen("node_os.bind.ts", "getPriority"),
@@ -201,7 +244,7 @@ symbolToStringify(out, "uptime");
 symbolToStringify(out, "version");
 symbolToStringify(out, "machine");
 
-function symbolToStringify(obj, key) {
+function symbolToStringify<Key extends string>(obj: Record<Key, () => unknown>, key: Key) {
   $assert(obj[key] !== undefined, `Missing ${key}`);
   obj[key][Symbol.toPrimitive] = function (_hint: string) {
     return obj[key]();

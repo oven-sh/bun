@@ -566,7 +566,7 @@ it("request.signal works in trivial case", async () => {
       },
     },
     async server => {
-      await expect(async () => {
+      expect(async () => {
         const response = await fetch(server.url.origin, {
           signal: aborty.signal,
         });
@@ -2908,7 +2908,7 @@ it("#5859 json", async () => {
 it("#5859 arrayBuffer", async () => {
   const tmp = join(tmpdirSync(), "bad");
   await Bun.write(tmp, new Uint8Array([0xfd]));
-  await expect(async () => await Bun.file(tmp).json()).toThrow();
+  expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
 describe("server.requestIP", () => {

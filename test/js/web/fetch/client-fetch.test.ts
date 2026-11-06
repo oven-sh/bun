@@ -16,8 +16,8 @@ test("function signature", () => {
 
 test("args validation", async () => {
   // @ts-expect-error
-  await expect(fetch()).rejects.toThrow(TypeError);
-  await expect(fetch("ftp://unsupported")).rejects.toThrow(TypeError);
+  expect(fetch()).rejects.toThrow(TypeError);
+  expect(fetch("ftp://unsupported")).rejects.toThrow(TypeError);
 });
 
 test("request json", async () => {
@@ -72,7 +72,7 @@ test("pre aborted with readable request body", async () => {
 
     const ac = new AbortController();
     ac.abort();
-    await expect(
+    expect(
       fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
         signal: ac.signal,
         method: "POST",
@@ -105,7 +105,7 @@ test("pre aborted with closed readable request body", async () => {
     },
   });
 
-  await expect(
+  expect(
     fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
       signal: ac.signal,
       method: "POST",
@@ -218,7 +218,7 @@ test("busboy emit error", async () => {
   await listen(0);
 
   const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
-  await expect(res.formData()).rejects.toThrow("FormData parse error missing final boundary");
+  expect(res.formData()).rejects.toThrow("FormData parse error missing final boundary");
 });
 
 // https://github.com/nodejs/undici/issues/2244
@@ -278,7 +278,7 @@ test("locked blob body", async () => {
 
   const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   const reader = res.body!.getReader();
-  await expect(res.blob()).rejects.toThrow("ReadableStream is locked");
+  expect(res.blob()).rejects.toThrow("ReadableStream is locked");
   reader.cancel();
 });
 
@@ -290,7 +290,7 @@ test("disturbed blob body", async () => {
 
   const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   await res.blob();
-  await expect(res.blob()).rejects.toThrow("Body already used");
+  expect(res.blob()).rejects.toThrow("Body already used");
 });
 
 test("redirect with body", async () => {

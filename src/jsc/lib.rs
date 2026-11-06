@@ -32,11 +32,10 @@ extern crate self as bun_jsc;
 use core::ffi::{c_char, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Proc-macro re-exports. `#[bun_jsc::host_fn]` /
-// `#[bun_jsc::host_call]` are implemented in the `bun_jsc_macros` crate
+// Proc-macro re-exports. `#[bun_jsc::host_call]` is implemented in the `bun_jsc_macros` crate
 // (Rust forbids `proc-macro = true` crates from exporting non-macro items).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsAffine, host_call, host_fn};
+pub use bun_jsc_macros::{JsAffine, host_call};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
@@ -138,7 +137,7 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
 pub mod encoded_slice;
-pub use encoded_slice::EncodedSliceJsc;
+pub use encoded_slice::{CompiledJsonParser, EncodedSliceJsc};
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "JSArray.rs"]
@@ -432,10 +431,9 @@ pub mod any_promise;
 pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
+pub mod compiled_program;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
-#[path = "host_object.rs"]
-pub mod host_object;
 #[path = "JSArrayIterator.rs"]
 pub mod js_array_iterator;
 #[path = "JSGlobalObject.rs"]
@@ -493,6 +491,10 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+    pub runs_compiled_code: bool,
+    pub locks_builtins: bool,
+    /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
+    pub is_compiler: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -512,6 +514,9 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            options.runs_compiled_code,
+            options.locks_builtins,
+            options.is_compiler,
         )
     };
 }
@@ -678,23 +683,8 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
 pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
-    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, to_js_host_call,
-    to_js_host_fn_result,
+    JSHostFn, from_js_host_call, from_js_host_call_generic, to_js_host_call, to_js_host_fn_result,
 };
-pub use self::host_object::{HostFnEntry, create_host_function_object};
-
-// Compile-time smoke test for the `host_fn` proc-macro (no runtime body —
-// just asserts the expansion type-checks against the real
-// `JSGlobalObject`/`CallFrame`/`JSValue`/`JsResult` shapes).
-#[cfg(test)]
-mod __macro_smoke {
-    use super::{CallFrame, JSGlobalObject, JSValue, JsResult};
-
-    #[crate::host_fn(export = "SmokeFree__call")]
-    fn smoke_free(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-}
 
 // JSC Classes Bindings — re-exported from their per-type modules (declared
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
@@ -773,11 +763,22 @@ pub mod resolved_source_tag {
         pub const ExportDefaultObject: Self = Self(9);
         /// Signal upwards that the matching value in `require.extensions` should be used.
         pub const CommonJsCustomExtension: Self = Self(10);
+        pub const ExportDefaultOnly: Self = Self(11);
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
         pub(crate) fn try_from_name(name: &[u8]) -> Option<Self> {
             INTERNAL_MODULE_TAG.get(name).copied()
+        }
+
+        pub fn feature(self) -> Option<bun_removable_features::Feature> {
+            if self.0 & (1 << 9) == 0 {
+                return None;
+            }
+            INTERNAL_MODULE_FEATURE
+                .get((self.0 & !(1 << 9)) as usize)
+                .copied()
+                .flatten()
         }
 
         /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
@@ -814,6 +815,30 @@ pub mod resolved_source_tag {
         env!("BUN_CODEGEN_DIR"),
         "/generated_resolved_source_tag.rs"
     ));
+}
+
+#[cfg(test)]
+mod resolved_source_tag_tests {
+    use super::resolved_source_tag::ResolvedSourceTag;
+    use bun_removable_features::Feature;
+
+    #[test]
+    fn tag_feature() {
+        assert_eq!(ResolvedSourceTag::Esm.feature(), None);
+        assert_eq!(ResolvedSourceTag(u32::MAX).feature(), None);
+        assert_eq!(
+            ResolvedSourceTag::try_from_name(b"bun:sqlite")
+                .unwrap()
+                .feature(),
+            Some(Feature::Sqlite)
+        );
+        assert_eq!(
+            ResolvedSourceTag::try_from_name(b"node:path")
+                .unwrap()
+                .feature(),
+            None
+        );
+    }
 }
 
 /// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
@@ -857,9 +882,6 @@ pub enum BuiltinName {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -888,9 +910,6 @@ impl BuiltinName {
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
     pub(crate) const InspectCustom: Self = Self::inspectCustom;
-    pub const HighWaterMark: Self = Self::highWaterMark;
-    pub const Path: Self = Self::path;
-    pub const Stream: Self = Self::stream;
     pub const Message: Self = Self::message;
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
@@ -1255,12 +1274,18 @@ pub trait SysErrorJsc {
     fn throw(&self, global: &JSGlobalObject) -> JsError;
 }
 impl SysErrorJsc for bun_sys::Error {
+    #[cold]
+    #[inline(never)]
     fn to_system_error(&self) -> SystemError {
         SystemError::from(bun_sys::Error::to_system_error(self))
     }
+    #[cold]
+    #[inline(never)]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
     }
+    #[cold]
+    #[inline(never)]
     fn throw(&self, global: &JSGlobalObject) -> JsError {
         global.throw_value(<Self as SysErrorJsc>::to_js(self, global))
     }
@@ -1422,6 +1447,9 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        runs_compiled_code: bool,
+        locks_builtins: bool,
+        is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

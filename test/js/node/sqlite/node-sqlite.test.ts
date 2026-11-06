@@ -460,6 +460,23 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test.each([
+    ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
+    ["import.meta.env", () => import.meta.env as Record<string, string>],
+  ])("binds the named parameters of an object that lists its properties itself: %s", (_, object) => {
+    const env = process.env;
+    process.env = { first: "one", second: "two" };
+    const db = new DatabaseSync(":memory:");
+    try {
+      const statement = db.prepare("SELECT $first AS first, $second AS second");
+      statement.setAllowUnknownNamedParameters(true);
+      expect({ ...statement.get(object()) }).toEqual({ first: "one", second: "two" });
+    } finally {
+      db.close();
+      process.env = env;
+    }
+  });
+
   test("named parameters come from the object's own [[OwnPropertyKeys]] (Proxy, String object)", () => {
     const db = new DatabaseSync(":memory:");
     const stmt = db.prepare("SELECT $a AS a, $b AS b");
@@ -556,7 +573,7 @@ describe("DatabaseSync", () => {
     );
   });
 
-  test("explicit undefined options argument is rejected where Node validates on arity", async () => {
+  test("explicit undefined options argument is rejected where Node validates on arity", () => {
     // Node's constructor/createSession/function/backup gate on args.Length(),
     // so an explicitly-passed `undefined` is rejected even though an omitted
     // argument is accepted. prepare/applyChangeset/etc gate on IsUndefined()
@@ -586,9 +603,9 @@ describe("DatabaseSync", () => {
         db.createSession();
       }
 
-      await expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
+      expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
       // @ts-expect-error
-      await expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
+      expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
       expect(() => Reflect.construct(backup, [db, ":memory:"])).toThrow(TypeError);
 
       // Controls: these are value-gated in Node (explicit undefined is the
@@ -1635,7 +1652,7 @@ describe("backup()", () => {
     });
   });
 
-  test("re-checks the source is open after reading options", async () => {
+  test("re-checks the source is open after reading options", () => {
     // sqlite3_backup_init dereferences pSrcDb->mutex with no API-armor
     // guard; a hostile getter that closes the source would hand it a
     // nullptr. Matches the post-option-parse REQUIRE_DB_OPEN on
@@ -1643,7 +1660,7 @@ describe("backup()", () => {
     using dir = tempDir("node-sqlite-backup-recheck", {});
     const src = new DatabaseSync(":memory:");
     src.exec("CREATE TABLE t (x)");
-    await expect(() =>
+    expect(() =>
       backup(src, path.join(String(dir), "dst.db"), {
         get rate() {
           src.close();

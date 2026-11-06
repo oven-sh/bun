@@ -16,23 +16,23 @@ use bun_lint::utils::ts_utils::{
 /// Disallow awaiting a value that is not a Thenable.
 pub struct AwaitThenable;
 
-const AWAIT: Message =
-    Message::new("await", "Unexpected `await` of a non-Promise (non-\"Thenable\") value.");
-const AWAIT_USING_OF_NON_ASYNC_DISPOSABLE: Message = Message::new(
+const AWAIT: &Message =
+    &Message::new("await", "Unexpected `await` of a non-Promise (non-\"Thenable\") value.");
+const AWAIT_USING_OF_NON_ASYNC_DISPOSABLE: &Message = &Message::new(
     "awaitUsingOfNonAsyncDisposable",
     "Unexpected `await using` of a value that is not async disposable.",
 );
-const CONVERT_TO_ORDINARY_FOR: Message =
-    Message::new("convertToOrdinaryFor", "Convert to an ordinary `for...of` loop.");
-const FOR_AWAIT_OF_NON_ASYNC_ITERABLE: Message = Message::new(
+const CONVERT_TO_ORDINARY_FOR: &Message =
+    &Message::new("convertToOrdinaryFor", "Convert to an ordinary `for...of` loop.");
+const FOR_AWAIT_OF_NON_ASYNC_ITERABLE: &Message = &Message::new(
     "forAwaitOfNonAsyncIterable",
     "Unexpected `for await...of` of a value that is not async iterable.",
 );
-const INVALID_PROMISE_AGGREGATOR_INPUT: Message = Message::new(
+const INVALID_PROMISE_AGGREGATOR_INPUT: &Message = &Message::new(
     "invalidPromiseAggregatorInput",
     "Unexpected iterable of non-Promise (non-\"Thenable\") values passed to promise aggregator.",
 );
-const REMOVE_AWAIT: Message = Message::new("removeAwait", "Remove unnecessary `await`.");
+const REMOVE_AWAIT: &Message = &Message::new("removeAwait", "Remove unnecessary `await`.");
 
 /// Removes the first `await` in `node`, plus the whitespace before the next token or comment.
 fn remove_await_token(fixer: Fixer, node: Span) -> Option<Fix> {
@@ -84,9 +84,9 @@ fn is_invalid_promise_aggregator_input<'a>(node: Expr<'a>, ty: Type<'a>) -> bool
     is_iterable(ty) && union_constituents(ty).iter().any(|part| has_non_awaitable_value_type(part, node))
 }
 
-/// True for `expect(promise).resolves.toBe(1)` and `expect(promise).rejects.not.toThrow()` from `bun:test`. They
-/// return a promise, but older versions of bun-types declare them as returning `void`, like the matchers for a plain
-/// value.
+/// True for `expect(promise).resolves.toBe(1)` and `expect(promise).rejects.not.toThrow()` from `bun:test`. In
+/// bun-types these matchers return `void`, like the matchers for a plain value, but tests are conventionally written
+/// with `await`.
 fn is_bun_test_promise_matcher(node: Expr) -> bool {
     let Some(call) = node.as_call() else {
         return false;

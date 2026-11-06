@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
+import { isHardened } from "../aot/hardened";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -1272,7 +1273,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ]);
         expect(stderr).toContain("--bytecode-order requires --compile --bytecode");
         expect(exitCode).not.toBe(0);
-        await expect(() =>
+        expect(() =>
           Bun.build({
             entrypoints: [join(cwd(), "app.js")],
             compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder: "plain.order" },
@@ -1280,7 +1281,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ).toThrow("compile.bytecodeOrder requires bytecode: true");
         // An empty path names no file: the API says so, the command line's list just has nothing between two commas.
         for (const bytecodeOrder of ["", ["plain.order", ""]]) {
-          await expect(() =>
+          expect(() =>
             Bun.build({
               entrypoints: [join(cwd(), "app.js")],
               bytecode: true,
@@ -1289,7 +1290,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           ).toThrow("compile.bytecodeOrder must not contain an empty path");
         }
         // The error is about the entry that is not a path, not about the array it is in.
-        await expect(() =>
+        expect(() =>
           Bun.build({
             entrypoints: [join(cwd(), "app.js")],
             bytecode: true,
@@ -1298,7 +1299,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ).toThrow('The "compile.bytecodeOrder" property must be of type string or array of strings. Received number');
         // `false`, `null` and `[]` are no order file (`haveProfile && path`): the options after it are looked at.
         for (const bytecodeOrder of [false, null, [] as string[]] as const) {
-          await expect(() =>
+          expect(() =>
             Bun.build({
               entrypoints: [join(cwd(), "app.js")],
               bytecode: true,
@@ -2039,7 +2040,7 @@ export function inOther() {
       "index.js": `console.log("test");`,
     });
 
-    await expect(() =>
+    expect(() =>
       Bun.build({
         entrypoints: [join(dir, "index.js")],
         compile: {
@@ -2215,6 +2216,33 @@ describe("compiled binary validity", () => {
 
     expect(stdout.trim()).toBe("compile-test-output");
     expect(exitCode).toBe(0);
+  });
+
+  test("import.meta.main is true in the entry point and false in what it imports", async () => {
+    using dir = tempDir("build-compile-import-meta-main", {
+      "app.ts": `import { isMain } from "./imported";\nconsole.log(import.meta.main, isMain);`,
+      "imported.ts": `export const isMain = import.meta.main;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.ts")],
+      compile: {
+        outfile: join(dir + "", "app-main"),
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
   });
 });
 
@@ -2470,8 +2498,8 @@ if (isLinux) {
       // #29963: the writable PT_LOAD must have been grown to cover .bun,
       // rather than a new late PT_LOAD being appended.
       expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments; the fix must not add a 4th.
-      expect(loadCount).toBe(3);
+      // A stock bun has 3 PT_LOAD segments (4 when built with --hardened=on); the fix must not add one.
+      expect(loadCount).toBe(isHardened ? 4 : 3);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode
@@ -2929,14 +2957,14 @@ describe("Bun.build compile optimize", () => {
     await runExe(outfile);
   });
 
-  test("compile.jitPolicy must be a finite number >= 1", async () => {
+  test("compile.jitPolicy must be a finite number >= 1", () => {
     using dir = tempDir("build-compile-jit-policy", files);
     for (const jitPolicy of [0, 0.5, NaN, Infinity]) {
-      await expect(() => Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy } })).toThrow(
+      expect(() => Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy } })).toThrow(
         RangeError,
       );
     }
-    await expect(() =>
+    expect(() =>
       Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy: "8" as unknown as number } }),
     ).toThrow(TypeError);
   });

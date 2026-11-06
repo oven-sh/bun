@@ -3,17 +3,17 @@
 /* Source for ZigGlobalObject.lut.h
 @begin bunGlobalObjectTable
   addEventListener                jsFunctionAddEventListener                           Function 2
-  alert                           WebCore__alert                                       Function 1
+  alert                           Bun::Bindgen::Generated::Prompt::jsAlert             Function 1
   atob                            functionATOB                                         Function 1
   btoa                            functionBTOA                                         Function 1
   clearImmediate                  functionClearImmediate                               Function 1
   clearInterval                   functionClearInterval                                Function 1
   clearTimeout                    functionClearTimeout                                 Function 1
-  confirm                         WebCore__confirm                                     Function 1
+  confirm                         Bun::Bindgen::Generated::Prompt::jsConfirm           Function 1
   dispatchEvent                   jsFunctionDispatchEvent                              Function 1
   fetch                           constructBunFetchObject                              PropertyCallback
   postMessage                     jsFunctionPostMessage                                Function 1
-  prompt                          WebCore__prompt                                      Function 1
+  prompt                          Bun::Bindgen::Generated::Prompt::jsPrompt            Function 1
   queueMicrotask                  functionQueueMicrotask                               Function 1
   removeEventListener             jsFunctionRemoveEventListener                        Function 2
   reportError                     functionReportError                                  Function 1

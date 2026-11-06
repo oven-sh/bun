@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 // See: HTTP Header Injection via S3 Content-Disposition Value
 
 describe("S3 header injection prevention", () => {
-  test("contentDisposition with CRLF should throw", async () => {
+  test("contentDisposition with CRLF should throw", () => {
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -20,14 +20,14 @@ describe("S3 header injection prevention", () => {
       bucket: "test-bucket",
     });
 
-    await expect(() =>
+    expect(() =>
       client.write("test-file.txt", "Hello", {
         contentDisposition: 'attachment; filename="evil"\r\nX-Injected: value',
       }),
     ).toThrow(/CR\/LF/);
   });
 
-  test("contentEncoding with CRLF should throw", async () => {
+  test("contentEncoding with CRLF should throw", () => {
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -42,14 +42,14 @@ describe("S3 header injection prevention", () => {
       bucket: "test-bucket",
     });
 
-    await expect(() =>
+    expect(() =>
       client.write("test-file.txt", "Hello", {
         contentEncoding: "gzip\r\nX-Injected: value",
       }),
     ).toThrow(/CR\/LF/);
   });
 
-  test("type (content-type) with CRLF should throw", async () => {
+  test("type (content-type) with CRLF should throw", () => {
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -64,14 +64,14 @@ describe("S3 header injection prevention", () => {
       bucket: "test-bucket",
     });
 
-    await expect(() =>
+    expect(() =>
       client.write("test-file.txt", "Hello", {
         type: "text/plain\r\nX-Injected: value",
       }),
     ).toThrow(/CR\/LF/);
   });
 
-  test("contentDisposition with only CR should throw", async () => {
+  test("contentDisposition with only CR should throw", () => {
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -86,14 +86,14 @@ describe("S3 header injection prevention", () => {
       bucket: "test-bucket",
     });
 
-    await expect(() =>
+    expect(() =>
       client.write("test-file.txt", "Hello", {
         contentDisposition: "attachment\rinjected",
       }),
     ).toThrow(/CR\/LF/);
   });
 
-  test("contentDisposition with only LF should throw", async () => {
+  test("contentDisposition with only LF should throw", () => {
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -108,7 +108,7 @@ describe("S3 header injection prevention", () => {
       bucket: "test-bucket",
     });
 
-    await expect(() =>
+    expect(() =>
       client.write("test-file.txt", "Hello", {
         contentDisposition: "attachment\ninjected",
       }),

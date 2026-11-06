@@ -11,111 +11,111 @@ pub struct NoRestrictedImports {
 }
 
 /// A message, and the same message followed by `{{customMessage}}`.
-type Messages = (Message, Message);
+type Messages = (&'static Message, &'static Message);
 
 const PATH: Messages = (
-    Message::new("path", "'{{importSource}}' import is restricted from being used."),
-    Message::new(
+    &Message::new("path", "'{{importSource}}' import is restricted from being used."),
+    &Message::new(
         "pathWithCustomMessage",
         "'{{importSource}}' import is restricted from being used. {{customMessage}}",
     ),
 );
 const PATTERNS: Messages = (
-    Message::new(
+    &Message::new(
         "patterns",
         "'{{importSource}}' import is restricted from being used by a pattern.",
     ),
-    Message::new(
+    &Message::new(
         "patternWithCustomMessage",
         "'{{importSource}}' import is restricted from being used by a pattern. {{customMessage}}",
     ),
 );
 const PATTERN_AND_IMPORT_NAME: Messages = (
-    Message::new(
+    &Message::new(
         "patternAndImportName",
         "'{{importName}}' import from '{{importSource}}' is restricted from being used by a pattern.",
     ),
-    Message::new(
+    &Message::new(
         "patternAndImportNameWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted from being used by a pattern. {{customMessage}}",
     ),
 );
 const PATTERN_AND_EVERYTHING: Messages = (
-    Message::new(
+    &Message::new(
         "patternAndEverything",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted from being used by a pattern.",
     ),
-    Message::new(
+    &Message::new(
         "patternAndEverythingWithCustomMessage",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted from being used by a pattern. {{customMessage}}",
     ),
 );
 const PATTERN_AND_EVERYTHING_WITH_REGEX_IMPORT_NAME: Messages = (
-    Message::new(
+    &Message::new(
         "patternAndEverythingWithRegexImportName",
         "* import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used.",
     ),
-    Message::new(
+    &Message::new(
         "patternAndEverythingWithRegexImportNameAndCustomMessage",
         "* import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used. {{customMessage}}",
     ),
 );
 const EVERYTHING: Messages = (
-    Message::new(
+    &Message::new(
         "everything",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted.",
     ),
-    Message::new(
+    &Message::new(
         "everythingWithCustomMessage",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted. {{customMessage}}",
     ),
 );
 const IMPORT_NAME: Messages = (
-    Message::new(
+    &Message::new(
         "importName",
         "'{{importName}}' import from '{{importSource}}' is restricted.",
     ),
-    Message::new(
+    &Message::new(
         "importNameWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted. {{customMessage}}",
     ),
 );
 const ALLOWED_IMPORT_NAME: Messages = (
-    Message::new(
+    &Message::new(
         "allowedImportName",
         "'{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} {{isOrAre}} allowed.",
     ),
-    Message::new(
+    &Message::new(
         "allowedImportNameWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} {{isOrAre}} allowed. {{customMessage}}",
     ),
 );
 const EVERYTHING_WITH_ALLOW_IMPORT_NAMES: Messages = (
-    Message::new(
+    &Message::new(
         "everythingWithAllowImportNames",
         "* import is invalid because only {{allowedImportNames}} from '{{importSource}}' {{isOrAre}} allowed.",
     ),
-    Message::new(
+    &Message::new(
         "everythingWithAllowImportNamesAndCustomMessage",
         "* import is invalid because only {{allowedImportNames}} from '{{importSource}}' {{isOrAre}} allowed. {{customMessage}}",
     ),
 );
 const ALLOWED_IMPORT_NAME_PATTERN: Messages = (
-    Message::new(
+    &Message::new(
         "allowedImportNamePattern",
         "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'.",
     ),
-    Message::new(
+    &Message::new(
         "allowedImportNamePatternWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'. {{customMessage}}",
     ),
 );
 const EVERYTHING_WITH_ALLOWED_IMPORT_NAME_PATTERN: Messages = (
-    Message::new(
+    &Message::new(
         "everythingWithAllowedImportNamePattern",
         "* import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed.",
     ),
-    Message::new(
+    &Message::new(
         "everythingWithAllowedImportNamePatternWithCustomMessage",
         "* import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed. {{customMessage}}",
     ),
@@ -508,7 +508,7 @@ fn includes(names: &[Box<[u8]>], name: &[u8]) -> bool {
     names.iter().any(|it| **it == *name)
 }
 
-type ReportAt<'r, 'a> = &'r dyn Fn(Span, Message) -> Report<'a>;
+type ReportAt<'r, 'a> = &'r dyn Fn(Span, &'static Message) -> Report<'a>;
 
 impl Restriction {
     /// ESLint's `checkRestrictedPathAndReport` for one entry, and `reportPathForPatterns`. `report_at` is the rule's

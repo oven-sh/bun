@@ -515,9 +515,8 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// The generated ${name}__doClose detached m_sinkPtr and then called __close,
-// so the wrapper's destructor skipped __finalize and the wrapper's +1 on the
-// native FileSink was never released.
+// close() takes the sink from the JS object, whose destructor then has none to
+// finalize, so close() itself has to release the object's +1 on the native FileSink.
 it("close() does not leak the native FileSink", async () => {
   const dir = tmpdirSync();
   const baseline = fileSinkInternals.liveCount();
@@ -622,10 +621,10 @@ it("writing after end() fails during flush does not crash", async () => {
   expect(endErr).toBeDefined();
   // Previously this would attempt to write to an invalid fd and crash with a
   // debug assertion; now it should behave as if the sink is closed.
-  await expect(() => writer.write("y")).not.toThrow();
+  expect(() => writer.write("y")).not.toThrow();
   expect(() => writer.start({})).not.toThrow();
-  await expect(() => writer.write("z")).not.toThrow();
-  await expect(() => writer.flush()).not.toThrow();
+  expect(() => writer.write("z")).not.toThrow();
+  expect(() => writer.flush()).not.toThrow();
   await Promise.resolve(writer.end()).catch(() => {});
   await 1;
 });

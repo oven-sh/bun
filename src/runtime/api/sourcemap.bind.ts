@@ -1,6 +1,8 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const find = { returns: b.any, capability: "js", throws: true } as const;
+export default b.module({ rustPath: "crate::api::js_source_map" });
+
+const find = { returns: b.any.returning("object"), capability: "js", throws: true } as const;
 
 export const SourceMap = b.class({
   rustPath: "crate::api::js_source_map::JSSourceMap",
@@ -19,4 +21,12 @@ export const SourceMap = b.class({
     lineLengths: { internalField: "lineLengths" },
     payload: { internalField: "payload" },
   },
+});
+
+/** Returns before it looks at `path`: source maps are not enabled. */
+export const findSourceMap = b.fn({
+  args: { path: b.any },
+  returns: SourceMap.optional,
+  capability: "js",
+  throws: true,
 });

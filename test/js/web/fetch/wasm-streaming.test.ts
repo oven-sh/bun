@@ -48,18 +48,18 @@ const responseFromStream = (pull: (controller: ReadableStreamDefaultController<a
 describe("WebAssembly.compileStreaming", () => {
   test("compiles a non-streaming Response", async () => {
     const response = await fetch(simpleWasmUri);
-    await expect(WebAssembly.compileStreaming(response)).resolves.toBeInstanceOf(WebAssembly.Module);
+    expect(WebAssembly.compileStreaming(response)).resolves.toBeInstanceOf(WebAssembly.Module);
   });
 
   test("compiles a resolved Promise to a non-streaming Response", async () => {
     const promise = Promise.resolve(await fetch(simpleWasmUri));
-    await expect(WebAssembly.compileStreaming(promise)).resolves.toBeInstanceOf(WebAssembly.Module);
+    expect(WebAssembly.compileStreaming(promise)).resolves.toBeInstanceOf(WebAssembly.Module);
   });
 
   test("compiles a pending Promise to a non-streaming Response", async () => {
     const response = await fetch(simpleWasmUri);
     const promise = Bun.sleep(100).then(() => response);
-    await expect(WebAssembly.compileStreaming(promise)).resolves.toBeInstanceOf(WebAssembly.Module);
+    expect(WebAssembly.compileStreaming(promise)).resolves.toBeInstanceOf(WebAssembly.Module);
   });
 
   // Errors:
@@ -67,7 +67,7 @@ describe("WebAssembly.compileStreaming", () => {
   test("doesn't compile a rejected Promise", async () => {
     const error = new Error("sudden explosion");
     const promise = Promise.reject(error);
-    await expect(WebAssembly.compileStreaming(promise)).rejects.toBe(error);
+    expect(WebAssembly.compileStreaming(promise)).rejects.toBe(error);
   });
 
   test("doesn't compile a non-Response", async () => {
@@ -80,7 +80,7 @@ describe("WebAssembly.compileStreaming", () => {
 
   test("doesn't compile a response with the wrong MIME type", async () => {
     const response = await fetch("data:image/png;base64," + simpleWasm);
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
       "WebAssembly response has unsupported MIME type 'image/png'",
     );
   });
@@ -145,7 +145,7 @@ describe("WebAssembly.compileStreaming", () => {
       status: 418,
     });
 
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow("WebAssembly response has status code 418");
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow("WebAssembly response has status code 418");
   });
 
   test("doesn't compile a used streaming response", async () => {
@@ -160,9 +160,7 @@ describe("WebAssembly.compileStreaming", () => {
     for await (const _ of response.body); // Consume the stream
     ok(response.bodyUsed);
 
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
-      "WebAssembly response body has already been used",
-    );
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow("WebAssembly response body has already been used");
   });
 
   test("doesn't compile a streaming response that throws while streaming", async () => {
@@ -174,7 +172,7 @@ describe("WebAssembly.compileStreaming", () => {
       i++;
     });
 
-    await expect(WebAssembly.compileStreaming(response)).rejects.toBe(error);
+    expect(WebAssembly.compileStreaming(response)).rejects.toBe(error);
   });
 
   test("doesn't compile a streaming response that yields neither ArrayBuffer nor ArrayBufferView", async () => {
@@ -182,7 +180,7 @@ describe("WebAssembly.compileStreaming", () => {
       controller.enqueue("something random");
     });
 
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
       "chunk must be an ArrayBufferView or an ArrayBuffer",
     );
   });
@@ -194,7 +192,7 @@ describe("WebAssembly.compileStreaming", () => {
       controller.enqueue(array);
     });
 
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
       "Underlying ArrayBuffer has been detached from the view or out-of-bounds",
     );
   });
@@ -206,14 +204,14 @@ describe("WebAssembly.compileStreaming", () => {
       controller.enqueue(buffer);
     });
 
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
       "Underlying ArrayBuffer has been detached from the view or out-of-bounds",
     );
   });
 
   test("doesn't compile a response that isn't valid WebAssembly", async () => {
     const response = await fetch("data:application/wasm,This is not actually Wasm");
-    await expect(WebAssembly.compileStreaming(response)).rejects.toBeInstanceOf(WebAssembly.CompileError);
+    expect(WebAssembly.compileStreaming(response)).rejects.toBeInstanceOf(WebAssembly.CompileError);
   });
 });
 
@@ -234,18 +232,18 @@ describe("WebAssembly.instantiateStreaming", () => {
 
   test("instantiates a non-streaming response", async () => {
     const response = await fetch(simpleWasmUri);
-    await expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");
+    expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");
   });
 
   test("instantiates a non-streaming response, without an import object", async () => {
     const response = await fetch(simplerWasmUri);
-    await expect(instantiateAndGetExports(response)).resolves.toHaveProperty("add");
+    expect(instantiateAndGetExports(response)).resolves.toHaveProperty("add");
   });
 
   test("instantiates a pending Promise to a non-streaming response", async () => {
     const response = await fetch(simpleWasmUri);
     const promise = Bun.sleep(100).then(() => response);
-    await expect(instantiateAndGetExports(promise, imports)).resolves.toHaveProperty("div");
+    expect(instantiateAndGetExports(promise, imports)).resolves.toHaveProperty("div");
   });
 
   test("instantiates a Bun.file() response", async () => {
@@ -253,7 +251,7 @@ describe("WebAssembly.instantiateStreaming", () => {
     await Bun.write(path, Buffer.from(simpleWasm, "base64"));
 
     const response = new Response(Bun.file(path));
-    await expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");
+    expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");
   });
 
   test("instantiates a ReadableStream response", async () => {
@@ -269,7 +267,7 @@ describe("WebAssembly.instantiateStreaming", () => {
       if (i >= buffer.length) controller.close();
     });
 
-    await expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");
+    expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");
   });
 
   test("instantiates a string response", async () => {
@@ -279,14 +277,14 @@ describe("WebAssembly.instantiateStreaming", () => {
       },
     });
 
-    await expect(instantiateAndGetExports(response)).resolves.toHaveProperty("foo");
+    expect(instantiateAndGetExports(response)).resolves.toHaveProperty("foo");
   });
 
   // Errors:
 
   test("doesn't instantiate a response without the correct import object", async () => {
     const response = await fetch(simpleWasmUri);
-    await expect(instantiateAndGetExports(response)).rejects.toThrow(
+    expect(instantiateAndGetExports(response)).rejects.toThrow(
       "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports",
     );
   });

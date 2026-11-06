@@ -1,17 +1,15 @@
 import { expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("mock.module throws TypeError for non-string first argument", async () => {
+test("mock.module throws TypeError for non-string first argument", () => {
   // @ts-expect-error
-  await expect(() => mock.module(SharedArrayBuffer, () => ({}))).toThrow(
-    "mock(module, fn) requires a module name string",
-  );
+  expect(() => mock.module(SharedArrayBuffer, () => ({}))).toThrow("mock(module, fn) requires a module name string");
   // @ts-expect-error
-  await expect(() => mock.module({}, () => ({}))).toThrow("mock(module, fn) requires a module name string");
+  expect(() => mock.module({}, () => ({}))).toThrow("mock(module, fn) requires a module name string");
   // @ts-expect-error
-  await expect(() => mock.module(123, () => ({}))).toThrow("mock(module, fn) requires a module name string");
+  expect(() => mock.module(123, () => ({}))).toThrow("mock(module, fn) requires a module name string");
   // @ts-expect-error
-  await expect(() => mock.module(Symbol("test"), () => ({}))).toThrow("mock(module, fn) requires a module name string");
+  expect(() => mock.module(Symbol("test"), () => ({}))).toThrow("mock(module, fn) requires a module name string");
 });
 
 test("mock.module still works with valid string argument", async () => {
@@ -20,7 +18,7 @@ test("mock.module still works with valid string argument", async () => {
   expect(m.default).toBe(42);
 });
 
-test("mock.module does not crash on specifiers that are not valid npm package names", async () => {
+test("mock.module does not crash on specifiers that are not valid npm package names", () => {
   const specifiers = [
     "function f2() {\n    const v6 = new ArrayBuffer();\n    v6.transferToFixedLength();\n}",
     "foo\nbar",
@@ -31,16 +29,16 @@ test("mock.module does not crash on specifiers that are not valid npm package na
     "[brackets]",
   ];
   for (const specifier of specifiers) {
-    await expect(() => mock.module(specifier, () => ({ default: 1 }))).not.toThrow();
+    expect(() => mock.module(specifier, () => ({ default: 1 }))).not.toThrow();
   }
   for (const specifier of specifiers) {
     // @ts-expect-error missing callback on purpose
-    await expect(() => mock.module(specifier)).toThrow("mock(module, fn) requires a function");
+    expect(() => mock.module(specifier)).toThrow("mock(module, fn) requires a function");
   }
   Bun.gc(true);
 });
 
-test("mock.module throws TypeError without resolving when callback is missing", async () => {
+test("mock.module throws TypeError without resolving when callback is missing", () => {
   // The resolver can reach the package-manager auto-install path and reentrantly
   // tick the JS event loop. When the caller forgets the callback, we must throw
   // before running the resolver at all.
@@ -54,11 +52,11 @@ test("mock.module throws TypeError without resolving when callback is missing", 
   ];
   for (const specifier of specifiers) {
     // @ts-expect-error missing callback on purpose
-    await expect(() => mock.module(specifier)).toThrow("mock(module, fn) requires a function");
+    expect(() => mock.module(specifier)).toThrow("mock(module, fn) requires a function");
   }
   for (const specifier of specifiers) {
     // @ts-expect-error non-callable second argument on purpose
-    await expect(() => mock.module(specifier, 123)).toThrow("mock(module, fn) requires a function");
+    expect(() => mock.module(specifier, 123)).toThrow("mock(module, fn) requires a function");
   }
   Bun.gc(true);
 });
@@ -81,9 +79,9 @@ test("mock.module does not run the resolver when callback is missing", async () 
 
   using dir = tempDir("mock-module-no-callback-no-resolve", {
     "index.js": `
-      const { vi } = Bun.jest();
-      try { vi.mock("PbQ"); } catch (e) { console.error("ERR:", e.message); }
-      try { vi.mock("some-valid-pkg-name-abc123"); } catch (e) { console.error("ERR:", e.message); }
+      const { mock } = Bun.jest();
+      try { mock.module("PbQ"); } catch (e) { console.error("ERR:", e.message); }
+      try { mock.module("some-valid-pkg-name-abc123"); } catch (e) { console.error("ERR:", e.message); }
       Bun.gc(true);
       console.log("done");
     `,

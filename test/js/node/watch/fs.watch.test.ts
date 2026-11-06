@@ -529,7 +529,7 @@ describe("fs.watch", () => {
         reject("timeout");
       }, 3000);
     });
-    await expect(promise).resolves.toBe("change");
+    expect(promise).resolves.toBe("change");
   });
 
   // on windows 0o200 will be readable (match nodejs behavior)
@@ -1237,7 +1237,7 @@ describe("fs.promises.watch", () => {
         clearInterval(interval);
       }
     })();
-    await expect(promise).resolves.toBe("rename");
+    expect(promise).resolves.toBe("rename");
   });
 
   test("should work with symlink dir", async () => {
@@ -1265,7 +1265,7 @@ describe("fs.promises.watch", () => {
         clearInterval(interval);
       }
     })();
-    await expect(promise).resolves.toBe("rename");
+    expect(promise).resolves.toBe("rename");
   });
 
   test("should work with symlink", async () => {
@@ -1288,7 +1288,33 @@ describe("fs.promises.watch", () => {
         clearInterval(interval);
       }
     })();
-    await expect(promise).resolves.toBe("change");
+    expect(promise).resolves.toBe("change");
+  });
+
+  test.each(["URL", "URL of another implementation"])("should work with a %s", async kind => {
+    const filepath = path.join(testDir, "url.txt");
+    let url = pathToFileURL(filepath);
+    if (kind !== "URL") {
+      const { href, protocol, hostname, pathname } = url;
+      url = { href, protocol, hostname, pathname } as URL;
+    }
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "hello");
+    });
+    try {
+      for await (const event of fs.promises.watch(url)) {
+        expect(event.filename).toBe("url.txt");
+        break;
+      }
+      const watcher = fs.watch(url);
+      try {
+        expect(await EventEmitter.once(watcher, "change")).toEqual(["change", "url.txt"]);
+      } finally {
+        watcher.close();
+      }
+    } finally {
+      clearInterval(interval);
+    }
   });
 
   test("yields events with a null prototype", async () => {

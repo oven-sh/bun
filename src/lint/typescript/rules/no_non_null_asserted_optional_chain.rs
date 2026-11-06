@@ -3,12 +3,12 @@ use bun_lint::prelude::*;
 /// Disallow non-null assertions after an optional chain expression.
 pub struct NoNonNullAssertedOptionalChain;
 
-const NO_NON_NULL_OPTIONAL_CHAIN: Message = Message::new(
+const NO_NON_NULL_OPTIONAL_CHAIN: &Message = &Message::new(
     "noNonNullOptionalChain",
     "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong.",
 );
-const SUGGEST_REMOVING_NON_NULL: Message =
-    Message::new("suggestRemovingNonNull", "You should remove the non-null assertion.");
+const SUGGEST_REMOVING_NON_NULL: &Message =
+    &Message::new("suggestRemovingNonNull", "You should remove the non-null assertion.");
 
 /// Returns the end of the expression right before the last `?.` in the chain `e`.
 fn end_before_optional_link(e: Expr) -> Option<u32> {

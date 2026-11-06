@@ -4,8 +4,8 @@ use bun_lint::rule::Plugin;
 /// Disallows destructuring values from an array in ways that are difficult to read.
 pub struct NoUnreadableArrayDestructuring;
 
-const NO_UNREADABLE_ARRAY_DESTRUCTURING: Message =
-    Message::new("", "Array destructuring may not contain consecutive ignored values.");
+const NO_UNREADABLE_ARRAY_DESTRUCTURING: &Message =
+    &Message::new("", "Array destructuring may not contain consecutive ignored values.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Element {

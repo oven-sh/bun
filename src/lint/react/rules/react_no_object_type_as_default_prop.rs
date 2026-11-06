@@ -9,12 +9,12 @@ use smallvec::{SmallVec, smallvec};
 /// Disallow usage of referential-type variables as default param in functional component
 pub struct NoObjectTypeAsDefaultProp;
 
-const FORBIDDEN_TYPE_DEFAULT_PARAM: Message = Message::new(
+const FORBIDDEN_TYPE_DEFAULT_PARAM: &Message = &Message::new(
     "forbiddenTypeDefaultParam",
     "{{propName}} has a/an {{forbiddenType}} as default prop. This could lead to potential infinite render loop in React. Use a variable reference instead of {{forbiddenType}}.",
 );
-const NO_OBJECT_TYPE_AS_DEFAULT_PROP: Message =
-    Message::new("", "Do not use {{kind}} as default prop value. Use a stable reference instead.");
+const NO_OBJECT_TYPE_AS_DEFAULT_PROP: &Message =
+    &Message::new("", "Do not use {{kind}} as default prop value. Use a stable reference instead.");
 
 pub struct State<'a> {
     /// `settings.react.componentWrapperFunctions`, for oxlint, which decides by the function's name and its parent.

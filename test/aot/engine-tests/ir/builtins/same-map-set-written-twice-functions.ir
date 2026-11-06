@@ -1,0 +1,84 @@
+# `map.set(key, value)` written twice in a row in functions that read no variable and no field: with keys that are NaN, zeros of both signs, a new object, a parameter.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline FinishBirths
+
+module m0 path="same-map-set-written-twice-functions.ts" displayPath="same-map-set-written-twice-functions.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Map
+    v3 = Construct v2 calleeName="Map"
+    v4 = Convert v3 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v5 = String string="b"
+    v6 = Call v1, -, v4, v5 calleeName="given"
+    v7 = NewArray contents=undefined|null|Array<undefined|null|number|string>
+    AppendSpread v7, v4
+    v9 = Undefined
+    Return v9
+}
+function f1 name="given" module=m0 position=414 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Map<undefined|null|string, number>, v1: undefined|null|string):
+    v2 = PropGet v0 key="set"
+    v3 = Integer integer=2
+    v4 = Call v2, v0, v1, v3 calleeKey="set" calleeName="table.set"
+    v5 = Convert v4 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="set"
+    v7 = Integer integer=2
+    v8 = Call v6, v5, v1, v7 calleeKey="set" calleeName="set"
+    v9 = Convert v8 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v10 = StrictEq v9, v0
+    v11 = Convert v10 declared={type=boolean}
+    Return v11
+}
+# -- generated: f0 given
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: v1: Map<never, never> = CallBuiltin -, v0 overload=Map/1 accessSite=0
+# CHECK-NEXT: v2: Map<"b", 2, proven, pristine[Storage, Names]> = AssumeType v1 provenType=Map<"b", 2, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: "b" = String string="b"
+# CHECK-NEXT: v4: boolean = CallDirect v2, v3 function=f1 accessSite=1
+# CHECK-NEXT: v5: int[0, 2147483647] = CallBuiltin v2 overload=MapPrototypeSize/0
+# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v7: int[0, 2147483647] = Add v6, v5
+# CHECK-NEXT: v8: Array<Array<int|"b", proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=Array<int|"b", proven, pristine[Storage, Names, Dense]> capacity=v7 allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v9: Array<Array<int|"b", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<Array<int|"b", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: anything = CollectionTable v2
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v10, v11)
+# CHECK-NEXT: b1(v12: anything, v13: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v15: undefined = MapNext v2, v12, v13
+# CHECK-NEXT: v16: boolean = ResultAt v15
+# CHECK-NEXT: v17: int[0, 2147483647] = ResultAt v15 index=1
+# CHECK-NEXT: v18: undefined|"b" = ResultAt v15 index=2
+# CHECK-NEXT: v19: undefined|2 = ResultAt v15 index=3
+# CHECK-NEXT: Branch v16 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v20: fact = Specified
+# CHECK-NEXT: v21: "b" = AssumeType v18, v20 provenType="b"
+# CHECK-NEXT: v22: 2 = AssumeType v19, v20 provenType=2
+# CHECK-NEXT: v23: anything = CollectionTable v2
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: int[1, 2147483648] = Add v17, v24
+# CHECK-NEXT: v26: Array<2|"b"> = NewArray v21, v22 contents=2|"b"
+# CHECK-NEXT: AppendElement v9, v26
+# CHECK-NEXT: Jump -> next b1(v23, v25)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="given"
+# CHECK: module=m0 position=414 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Map<"b", 2, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type="b" flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Map<"b", 2, proven, pristine[Storage, Names]>, v1: "b"):
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: Map<"b", 2, proven, pristine[Storage, Names]> = CallBuiltin v0, v1, v2 overload=MapPrototypeSet/0 accessSite=3
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: Map<"b", 2, proven, pristine[Storage, Names]> = CallBuiltin v3, v1, v4 overload=MapPrototypeSet/0 accessSite=5
+# CHECK-NEXT: v6: boolean = StrictEq v5, v0
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }

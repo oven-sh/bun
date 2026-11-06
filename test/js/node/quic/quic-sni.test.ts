@@ -353,7 +353,7 @@ test("a client verifies an Ed25519 server certificate", async () => {
 
 test("connect() refuses a servername with a NUL byte", async () => {
   await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
-  await expect(
+  expect(
     (async () =>
       connect(server.address!, {
         alpn: "quic-test",

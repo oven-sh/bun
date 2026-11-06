@@ -76,7 +76,7 @@ test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
       throw new Error("bad2");
     }),
   };
-  await expect(async () => await fetch(str as any, obj as any)).toThrow("bad2");
+  expect(async () => await fetch(str as any, obj as any)).toThrow("bad2");
   expect(mocked).not.toHaveBeenCalled();
   expect(str.toString).toHaveBeenCalledTimes(1);
 });
@@ -164,7 +164,7 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
   }
 
   const cases: [name: string, code: string, expectedStderr: string][] = [
-    ["no arguments", `fetch()`, "fetch() expects a string but received no arguments"],
+    ["no arguments", `fetch()`, 'The "input" argument must be specified'],
     ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
     ["invalid url", `fetch("not a url")`, "fetch() URL is invalid"],
     ["unsupported protocol", `fetch("gopher://example.com/")`, "protocol must be http:, https: or s3:"],
@@ -388,7 +388,7 @@ describe("does not send a request when", () => {
 
   test("Invalid headers", async () => {
     const prevCount = requestCount;
-    await expect(
+    expect(
       async () =>
         await fetch(url, {
           headers: {
@@ -403,7 +403,7 @@ describe("does not send a request when", () => {
 
   test("Invalid url", async () => {
     const prevCount = requestCount;
-    await expect(async () => await fetch("😀")).toThrow();
+    expect(async () => await fetch("😀")).toThrow();
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -411,7 +411,7 @@ describe("does not send a request when", () => {
 
   test("Invalid redirect", async () => {
     const prevCount = requestCount;
-    await expect(async () => await fetch(url, { redirect: "😀" as any })).toThrow("redirect must be");
+    expect(async () => await fetch(url, { redirect: "😀" as any })).toThrow("redirect must be");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -419,7 +419,7 @@ describe("does not send a request when", () => {
 
   test("proxy and unix", async () => {
     const prevCount = requestCount;
-    await expect(async () => await fetch(url, { proxy: url, unix: "/tmp/abc.sock" })).toThrow(
+    expect(async () => await fetch(url, { proxy: url, unix: "/tmp/abc.sock" })).toThrow(
       "cannot use a proxy with a unix socket",
     );
     // Give it a chance to possibly send the request.
@@ -429,7 +429,7 @@ describe("does not send a request when", () => {
 
   test("Invalid ca in tls", async () => {
     const prevCount = requestCount;
-    await expect(async () => await fetch(url, { tls: { ca: 123 as any } })).toThrow("TLSOptions.ca");
+    expect(async () => await fetch(url, { tls: { ca: 123 as any } })).toThrow("TLSOptions.ca");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -452,7 +452,7 @@ describe("does not send a request when", () => {
 
   test(`body on GET`, async () => {
     const prevCount = requestCount;
-    await expect(
+    expect(
       async () =>
         await fetch(url, {
           body: async function* () {
@@ -468,7 +468,7 @@ describe("does not send a request when", () => {
   for (const propertyName of propertyNamesToThrow) {
     test(`get "${propertyName}" throws (url, 1st arg)`, async () => {
       const prevCount = requestCount;
-      await expect(
+      expect(
         async () =>
           await fetch(url, {
             get [propertyName]() {
@@ -483,7 +483,7 @@ describe("does not send a request when", () => {
 
     test(`get "${propertyName}" throws (1st arg)`, async () => {
       const prevCount = requestCount;
-      await expect(
+      expect(
         async () =>
           await fetch({
             url,
@@ -499,7 +499,7 @@ describe("does not send a request when", () => {
 
     test(`get "${propertyName}" throws (Request object, 1st arg)`, async () => {
       const prevCount = requestCount;
-      await expect(
+      expect(
         async () =>
           await fetch(new Request(url), {
             get [propertyName]() {

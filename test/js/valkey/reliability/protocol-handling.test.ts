@@ -119,11 +119,11 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
     });
 
     test("should handle RESP3 Error type", async () => {
-      await expect(async () => await ctx.redis.send("GET", [])).toThrowErrorMatchingInlineSnapshot(
+      expect(async () => await ctx.redis.send("GET", [])).toThrowErrorMatchingInlineSnapshot(
         `"ERR wrong number of arguments for 'get' command"`,
       );
 
-      await expect(async () => await ctx.redis.send("SYNTAX-ERROR", [])).toThrowErrorMatchingInlineSnapshot(
+      expect(async () => await ctx.redis.send("SYNTAX-ERROR", [])).toThrowErrorMatchingInlineSnapshot(
         `"ERR unknown command 'SYNTAX-ERROR'"`,
       );
     });

@@ -1,0 +1,31 @@
+# const value = {}; value[typeof Bun.inspect] = function () { return "shown"; }; console.log(new Error("x", { cause: value }).cause)
+# The key is a text nobody knows, and no text is Symbol.for("nodejs.util.inspect.custom"). HostChoosesOperands (h7) stays down.
+# RUN: valueflow-why timeline
+# CHECK-NOT: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ErrorOptions" fields=[{key="cause" declared={type=anything}}] ownFieldCount=1
+layout L1 name="Printed"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = Builtin builtin=BunInspect
+    v3 = TypeOf v2
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    ElemSet v5, v3, v6
+    v8 = Builtin builtin=Error
+    v9 = String string="x"
+    v10 = NewObject -, v5 layout=L0 fields=[0]
+    v11 = FinishObject v10
+    v12 = Construct v8, -, v9, v11
+    v13 = PropGet v12 key="cause"
+    v14 = Call v1, v0, v13
+    Return v14
+}
+function f1 name="custom" module=m0 results=[{type=anything}] {
+    v0 = String string="shown"
+    Return v0
+}

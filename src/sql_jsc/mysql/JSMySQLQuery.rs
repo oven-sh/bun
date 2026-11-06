@@ -3,13 +3,13 @@ use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
+    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::query_ctor_args::QueryCtorArgs;
-use bun_jsc::JsCell;
+use crate::shared::query_ctor_args;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSArray, JsCell};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -52,28 +52,23 @@ impl JSMySQLQuery {
         self.this_value.with_mut(|v| v.finalize());
     }
 
-    // Reached from JS via `put_host_functions!` in `mysql.rs`.
-    pub(crate) fn create_instance(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn create_query<'a>(
+        cx: &mut JsScope<'a>,
+        query: bun_core::String,
+        values: JsLocal<'a, JSArray>,
+        pending_value: JsLocal<'a, JSArray>,
+        bigint: bool,
+        simple: bool,
     ) -> JsResult<JSValue> {
-        let QueryCtorArgs {
-            query,
-            values,
-            pending_value,
-            bigint,
-            simple,
-        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
+        let global_this = cx.global();
+        let (values, pending_value) = (values.to_js(), pending_value.to_js());
+        query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(
-                query.to_bun_string(global_this)?,
-                bigint,
-                simple,
-            )),
+            query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
             undescribed: JsCell::new(Undescribed::default()),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));

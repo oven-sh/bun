@@ -4,6 +4,30 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 const placeholder = "hey";
 
+const notBytes = [
+  null,
+  5,
+  true,
+  1n,
+  Symbol(),
+  {},
+  [],
+  () => {},
+  new Blob(["abc"]),
+  { toString: () => "abc" },
+  {
+    toString() {
+      throw new Error("toString() failed");
+    },
+  },
+];
+const mustBeBytes = (name: string) =>
+  expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `${name} must be a string, ArrayBuffer or ArrayBufferView`,
+  });
+
 // argon2id iterates so slowly under debug/ASAN that the 60 000 warm-up
 // iterations blow past the 90 s test timeout before the leak check even
 // starts. The leak numbers are only meaningful on release anyway — skip
@@ -67,28 +91,26 @@ describe.skipIf(isDebug)("does not leak", () => {
 describe("hash", () => {
   describe("arguments parsing", () => {
     for (let hash of [password.hash, password.hashSync]) {
-      test("no blank password allowed", async () => {
-        await expect(() => hash("")).toThrow("password must not be empty");
+      test("no blank password allowed", () => {
+        expect(() => hash("")).toThrow("password must not be empty");
       });
 
-      test("password is required", async () => {
+      test("password is required", () => {
         // @ts-expect-error
-        await expect(() => hash()).toThrow(
-          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
-        );
+        expect(() => hash()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
         // @ts-expect-error
-        await expect(() => hash(undefined)).toThrow("password must be a string");
+        expect(() => hash(undefined)).toThrow("password must be a string");
         // @ts-expect-error
-        await expect(() => hash(undefined, "bcrypt")).toThrow("password must be a string");
+        expect(() => hash(undefined, "bcrypt")).toThrow("password must be a string");
       });
 
-      test("invalid algorithm throws", async () => {
+      test("invalid algorithm throws", () => {
         // @ts-expect-error
-        await expect(() => hash(placeholder, "scrpyt")).toThrow();
+        expect(() => hash(placeholder, "scrpyt")).toThrow();
         // @ts-expect-error
-        await expect(() => hash(placeholder, 123)).toThrow();
+        expect(() => hash(placeholder, 123)).toThrow();
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             // @ts-expect-error
             toString() {
@@ -97,21 +119,21 @@ describe("hash", () => {
           }),
         ).toThrow();
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             // @ts-expect-error
             algorithm: "poop",
           }),
         ).toThrow();
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "bcrypt",
             cost: Infinity,
           }),
         ).toThrow();
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             memoryCost: -1,
@@ -122,7 +144,7 @@ describe("hash", () => {
         // `parallelism = 1`, so anything below 8 must throw rather than be
         // silently clamped (regression coverage for #30960).
         for (const invalid of [1, 3, 7]) {
-          await expect(() =>
+          expect(() =>
             hash(placeholder, {
               algorithm: "argon2id",
               memoryCost: invalid,
@@ -130,14 +152,14 @@ describe("hash", () => {
           ).toThrow("Memory cost must be at least 8");
         }
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             timeCost: -1,
           }),
         ).toThrow();
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "bcrypt",
             cost: -999,
@@ -145,45 +167,45 @@ describe("hash", () => {
         ).toThrow();
       });
 
-      test("cost values are range-checked before ToInt32 narrowing", async () => {
+      test("cost values are range-checked before ToInt32 narrowing", () => {
         // These used to wrap modulo 2^32 (cost: 2^32 + 4 hashed with cost 4)
         // or truncate (cost: 4.5 hashed with cost 4) instead of throwing.
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "bcrypt",
             cost: 2 ** 32 + 4,
           }),
         ).toThrow("Rounds must be an integer between 4 and 31");
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "bcrypt",
             cost: 4.5,
           }),
         ).toThrow("Rounds must be an integer between 4 and 31");
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             timeCost: 2 ** 32 + 2,
           }),
         ).toThrow("Time cost must be an integer between 1 and 4294967295");
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             timeCost: 1.5,
           }),
         ).toThrow("Time cost must be an integer between 1 and 4294967295");
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             memoryCost: 2 ** 32 + 4608,
           }),
         ).toThrow("Memory cost must be an integer between 8 and 4294967295");
 
-        await expect(() =>
+        expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
             memoryCost: 8.5,
@@ -193,34 +215,28 @@ describe("hash", () => {
         // Non-finite values: NaN and -Infinity fail the lower-bound check,
         // +Infinity fails the integer/upper-bound check.
         for (const timeCost of [NaN, -Infinity]) {
-          await expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
+          expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
             "Time cost must be greater than 0",
           );
         }
-        await expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
+        expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
           "Time cost must be an integer between 1 and 4294967295",
         );
         for (const memoryCost of [NaN, -Infinity]) {
-          await expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
+          expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
             "Memory cost must be at least 8",
           );
         }
-        await expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
           "Memory cost must be an integer between 8 and 4294967295",
         );
       });
 
-      test("coercion throwing doesn't crash", async () => {
-        // @ts-expect-error
-        await expect(() => hash(Symbol())).toThrow();
-        await expect(() =>
+      test("a password that is neither a string nor bytes throws", () => {
+        for (const value of notBytes) {
           // @ts-expect-error
-          hash({
-            toString() {
-              throw new Error("toString() failed");
-            },
-          }),
-        ).toThrow();
+          expect(() => hash(value, { algorithm: "bcrypt", cost: 4 })).toThrow(mustBeBytes("password"));
+        }
       });
 
       for (let ArrayBufferView of [
@@ -235,8 +251,8 @@ describe("hash", () => {
         Float64Array,
         ArrayBuffer,
       ]) {
-        test(`empty ${ArrayBufferView.name} throws`, async () => {
-          await expect(() => hash(new ArrayBufferView(0))).toThrow("password must not be empty");
+        test(`empty ${ArrayBufferView.name} throws`, () => {
+          expect(() => hash(new ArrayBufferView(0))).toThrow("password must not be empty");
         });
       }
     }
@@ -246,16 +262,16 @@ describe("hash", () => {
 describe("verify", () => {
   describe("arguments parsing", () => {
     for (let verify of [password.verify, password.verifySync]) {
-      test("minimum args", async () => {
+      test("minimum args", () => {
         const invalidArgument = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
         // @ts-expect-error
-        await expect(() => verify()).toThrow(invalidArgument);
+        expect(() => verify()).toThrow(invalidArgument);
         // @ts-expect-error
-        await expect(() => verify("")).toThrow(invalidArgument);
+        expect(() => verify("")).toThrow(invalidArgument);
         // @ts-expect-error
-        await expect(() => verify(undefined, "$")).toThrow("password must be a string");
+        expect(() => verify(undefined, "$")).toThrow("password must be a string");
         // @ts-expect-error
-        await expect(() => verify("$", undefined)).toThrow("hash must be a string");
+        expect(() => verify("$", undefined)).toThrow("hash must be a string");
       });
 
       test("empty values return false", async () => {
@@ -263,12 +279,12 @@ describe("verify", () => {
         expect(await verify("$", "")).toBeFalse();
       });
 
-      test("invalid algorithm throws", async () => {
+      test("invalid algorithm throws", () => {
         // @ts-expect-error
-        await expect(() => verify(placeholder, "$", "scrpyt")).toThrow();
+        expect(() => verify(placeholder, "$", "scrpyt")).toThrow();
         // @ts-expect-error
-        await expect(() => verify(placeholder, "$", 123)).toThrow();
-        await expect(() =>
+        expect(() => verify(placeholder, "$", 123)).toThrow();
+        expect(() =>
           // @ts-expect-error
           verify(placeholder, "$", {
             toString() {
@@ -278,28 +294,13 @@ describe("verify", () => {
         ).toThrow();
       });
 
-      test("coercion throwing doesn't crash", async () => {
-        // @ts-expect-error
-        await expect(() => verify(Symbol(), Symbol())).toThrow();
-        await expect(() =>
-          verify(
-            // @ts-expect-error
-            {
-              toString() {
-                throw new Error("toString() failed");
-              },
-            },
-            "valid",
-          ),
-        ).toThrow();
-        await expect(() =>
+      test("a password or a hash that is neither a string nor bytes throws", () => {
+        for (const value of notBytes) {
           // @ts-expect-error
-          verify("valid", {
-            toString() {
-              throw new Error("toString() failed");
-            },
-          }),
-        ).toThrow();
+          expect(() => verify(value, "$")).toThrow(mustBeBytes("password"));
+          // @ts-expect-error
+          expect(() => verify("$", value)).toThrow(mustBeBytes("hash"));
+        }
       });
 
       for (let ArrayBufferView of [
@@ -326,6 +327,68 @@ describe("verify", () => {
 // The async hashing tests below only await the thread-pooled password.hash /
 // password.verify on closure-local inputs (no shared mutable state, no RSS
 // assertions), so they can safely overlap.
+test.concurrent.each([
+  ["an ArrayBuffer", (bytes: Uint8Array<ArrayBuffer>) => bytes.buffer],
+  [
+    "a SharedArrayBuffer",
+    (bytes: Uint8Array<ArrayBuffer>) => {
+      const shared = new SharedArrayBuffer(bytes.length);
+      new Uint8Array(shared).set(bytes);
+      return shared;
+    },
+  ],
+  ["a DataView", (bytes: Uint8Array<ArrayBuffer>) => new DataView(bytes.buffer)],
+  ["a Uint16Array", (bytes: Uint8Array<ArrayBuffer>) => new Uint16Array(bytes.buffer)],
+  [
+    "a part of a larger buffer",
+    (bytes: Uint8Array<ArrayBuffer>) => {
+      const larger = new Uint8Array(bytes.length + 8).fill(0x61);
+      larger.set(bytes, 4);
+      return larger.subarray(4, 4 + bytes.length);
+    },
+  ],
+])("a password and a hash can be %s", async (_, wrap) => {
+  const bytesOf = (text: string) => wrap(new TextEncoder().encode(text)) as Bun.StringOrBuffer;
+  const options = { algorithm: "bcrypt", cost: 4 } as const;
+  const hashed = await password.hash(bytesOf("abcd"), options);
+  expect({
+    string: await password.verify("abcd", hashed),
+    password: await password.verify(bytesOf("abcd"), hashed),
+    hash: await password.verify("abcd", bytesOf(hashed)),
+    other: await password.verify(bytesOf("abce"), hashed),
+    sync: password.verifySync(bytesOf("abcd"), bytesOf(password.hashSync(bytesOf("abcd"), options))),
+  }).toEqual({ string: true, password: true, hash: true, other: false, sync: true });
+});
+
+test.concurrent("verifySync() takes a hash in memory that another thread is writing", async () => {
+  const script = `
+    const { Worker } = require("node:worker_threads");
+    // Of a version that is refused, so that each call only parses.
+    const text = "$argon2id$v=18$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA";
+    const hash = new Uint8Array(new SharedArrayBuffer(text.length));
+    hash.set(Buffer.from(text));
+    new Worker(
+      \`const hash = require("node:worker_threads").workerData;
+        for (;;) {
+          hash[10] = 0x80;
+          hash[10] = 0x76;
+        }\`,
+      { eval: true, workerData: hash },
+    );
+    while (Atomics.load(hash, 10) !== 0x80);
+    for (let i = 0; i < ${isDebug ? 1000 : 5000}; i++) {
+      try {
+        Bun.password.verifySync("password", hash);
+      } catch {}
+    }
+    console.log("done");
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
+});
+
 test.concurrent("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {
   const boop = Buffer.from("hey".repeat(100));
   const hashed = await password.hash(boop, "bcrypt");
@@ -434,7 +497,7 @@ for (let algorithmValue of algorithms) {
             const prefix = "$" + algorithm;
             expect(hashed).toStartWith(prefix);
             expect(await password.verify(input, hashed, algorithm)).toBeTrue();
-            await expect(() => password.verify(hashed, input, algorithm)).toThrow();
+            expect(() => password.verify(hashed, input, algorithm)).toThrow();
             expect(await password.verify(input + "\0", hashed, algorithm)).toBeFalse();
           }
 
@@ -447,7 +510,7 @@ for (let algorithmValue of algorithms) {
             expect(hashed).toContain("m=8");
             expect(hashed).toContain("p=1");
             expect(await password.verify(input, hashed, algorithmLabel)).toBeTrue();
-            await expect(() => password.verify(hashed, input, algorithmLabel)).toThrow();
+            expect(() => password.verify(hashed, input, algorithmLabel)).toThrow();
             expect(await password.verify(input + "\0", hashed, algorithmLabel)).toBeFalse();
           }
 
@@ -457,7 +520,7 @@ for (let algorithmValue of algorithms) {
             const prefix = "$" + "2b";
             expect(hashed).toStartWith(prefix);
             expect(await password.verify(input, hashed, "bcrypt")).toBeTrue();
-            await expect(() => password.verify(hashed, input, "bcrypt")).toThrow();
+            expect(() => password.verify(hashed, input, "bcrypt")).toThrow();
             expect(await password.verify(input + "\0", hashed, "bcrypt")).toBeFalse();
           }
 
@@ -479,7 +542,7 @@ for (let algorithmValue of algorithms) {
             const hashed = await hash(input);
             expect(hashed).toStartWith(prefix);
             expect(await verify(input, hashed)).toBeTrue();
-            await expect(() => verify(hashed, input)).toThrow();
+            expect(() => verify(hashed, input)).toThrow();
             expect(await verify(input + "\0", hashed)).toBeFalse();
           }
 

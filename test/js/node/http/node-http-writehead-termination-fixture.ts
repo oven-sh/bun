@@ -11,8 +11,10 @@
 // writes the head under a deadline, notes whether the deadline landed before
 // or after the call returned, and moves the call so that the deadline keeps
 // landing around the moment the native writeHead returns. Attempts alternate
-// between res.end() (handle.writeHeadAndEnd) and res.flushHeaders()
-// (handle.writeHead), the two entry points of the native writeHead.
+// between res.end("", "latin1") (handle.writeHeadAndEnd) and res.flushHeaders()
+// (handle.writeHead), the two entry points of the native writeHead. The
+// encoding matters: without one, end() writes the head and the end in a single
+// native step that never goes through the native writeHead.
 import http from "node:http";
 import net from "node:net";
 import vm from "node:vm";
@@ -34,10 +36,10 @@ const ctx = vm.createContext({
   t: [] as number[],
 });
 const run = (call: string) =>
-  new vm.Script(`t.push(1); { const u = armedAt + target; while (now() < u); } t.push(2); res.${call}(); t.push(3);`);
+  new vm.Script(`t.push(1); { const u = armedAt + target; while (now() < u); } t.push(2); res.${call}; t.push(3);`);
 const paths = [
-  { name: "end", script: run("end") },
-  { name: "flushHeaders", script: run("flushHeaders") },
+  { name: "end", script: run(`end("", "latin1")`) },
+  { name: "flushHeaders", script: run("flushHeaders()") },
 ].map(path => ({ ...path, target: 0, step: 0.1, lastDirection: 0, early: 0, inCall: 0, late: 0, cutAfterHead: 0 }));
 
 let timeout = 2;

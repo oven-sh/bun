@@ -4,6 +4,7 @@ use bun_jsc::{JSValue, JsResult};
 use super::{Expect, get_signature, throw};
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_include_repeated(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -12,7 +13,6 @@ impl Expect {
         count: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // Not `matcher_prelude`: the arguments are checked before the value is read.
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
@@ -37,8 +37,7 @@ impl Expect {
 
         let count_as_num = count.to_u32();
 
-        let expect_string =
-            this.get_value(global, this_value, "toIncludeRepeated", "<green>expected<r>")?;
+        let expect_string = this.get_value(global, this_value, "toIncludeRepeated", "<green>expected<r>")?;
 
         if !expect_string.is_string() {
             return Err(global.throw(format_args!(

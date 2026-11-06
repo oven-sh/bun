@@ -7,69 +7,69 @@ let server: Server;
 let url: URL;
 
 describe("WebSocketInspector", () => {
-  test("fails without a URL", async () => {
+  test("fails without a URL", () => {
     const ws = new WebSocketInspector();
     const fn = mock(error => {
       expect(error).toBeInstanceOf(Error);
     });
     ws.on("Inspector.error", fn);
-    await expect(ws.start()).resolves.toBeFalse();
+    expect(ws.start()).resolves.toBeFalse();
     expect(fn).toHaveBeenCalled();
   });
 
-  test("fails with invalid URL", async () => {
+  test("fails with invalid URL", () => {
     const ws = new WebSocketInspector("notaurl");
     const fn = mock(error => {
       expect(error).toBeInstanceOf(Error);
     });
     ws.on("Inspector.error", fn);
-    await expect(ws.start()).resolves.toBeFalse();
+    expect(ws.start()).resolves.toBeFalse();
     expect(fn).toHaveBeenCalled();
   });
 
-  test("fails with valid URL but no server", async () => {
+  test("fails with valid URL but no server", () => {
     const ws = new WebSocketInspector("ws://localhost:0/doesnotexist/");
     const fn = mock(error => {
       expect(error).toBeInstanceOf(Error);
     });
     ws.on("Inspector.error", fn);
-    await expect(ws.start()).resolves.toBeFalse();
+    expect(ws.start()).resolves.toBeFalse();
     expect(fn).toHaveBeenCalled();
   });
 
-  test("fails with invalid upgrade response", async () => {
+  test("fails with invalid upgrade response", () => {
     const ws = new WebSocketInspector(new URL("/", url));
     const fn = mock(error => {
       expect(error).toBeInstanceOf(Error);
     });
     ws.on("Inspector.error", fn);
-    await expect(ws.start()).resolves.toBeFalse();
+    expect(ws.start()).resolves.toBeFalse();
     expect(fn).toHaveBeenCalled();
   });
 
-  test("can connect to a server", async () => {
+  test("can connect to a server", () => {
     const ws = new WebSocketInspector(url);
     const fn = mock(() => {
       expect(ws.closed).toBe(false);
     });
     ws.on("Inspector.connected", fn);
-    await expect(ws.start()).resolves.toBeTrue();
+    expect(ws.start()).resolves.toBeTrue();
     expect(fn).toHaveBeenCalled();
     ws.close();
   });
 
-  test("can disconnect from a server", async () => {
+  test("can disconnect from a server", () => {
     const ws = new WebSocketInspector(url);
     const fn = mock(() => {
       expect(ws.closed).toBeTrue();
     });
     ws.on("Inspector.disconnected", fn);
-    await expect(ws.start()).resolves.toBeTrue();
+    expect(ws.start()).resolves.toBeTrue();
     ws.close();
     expect(fn).toHaveBeenCalled();
   });
 
-  test("can connect to a server multiple times", async () => {
+  test("can connect to a server multiple times", () => {
     const ws = new WebSocketInspector(url);
     const fn0 = mock(() => {
       expect(ws.closed).toBeFalse();
@@ -80,14 +80,14 @@ describe("WebSocketInspector", () => {
     });
     ws.on("Inspector.disconnected", fn1);
     for (let i = 0; i < 3; i++) {
-      await expect(ws.start()).resolves.toBeTrue();
+      expect(ws.start()).resolves.toBeTrue();
       ws.close();
     }
     expect(fn0).toHaveBeenCalledTimes(3);
     expect(fn1).toHaveBeenCalledTimes(3);
   });
 
-  test("can send a request", async () => {
+  test("can send a request", () => {
     const ws = new WebSocketInspector(url);
     const fn0 = mock(request => {
       expect(request).toStrictEqual({
@@ -108,14 +108,14 @@ describe("WebSocketInspector", () => {
       });
     });
     ws.on("Inspector.response", fn1);
-    await expect(ws.start()).resolves.toBeTrue();
-    await expect(ws.send("Debugger.setPauseOnAssertions", { enabled: true })).resolves.toMatchObject({ ok: true });
+    expect(ws.start()).resolves.toBeTrue();
+    expect(ws.send("Debugger.setPauseOnAssertions", { enabled: true })).resolves.toMatchObject({ ok: true });
     expect(fn0).toHaveBeenCalled();
     expect(fn1).toHaveBeenCalled();
     ws.close();
   });
 
-  test("can send a request before connecting", async () => {
+  test("can send a request before connecting", () => {
     const ws = new WebSocketInspector(url);
     const fn0 = mock(request => {
       expect(request).toStrictEqual({
@@ -136,14 +136,14 @@ describe("WebSocketInspector", () => {
     });
     ws.on("Inspector.response", fn1);
     const request = ws.send("Runtime.enable");
-    await expect(ws.start()).resolves.toBe(true);
-    await expect(request).resolves.toMatchObject({ ok: true });
+    expect(ws.start()).resolves.toBe(true);
+    expect(request).resolves.toMatchObject({ ok: true });
     expect(fn0).toHaveBeenCalledTimes(2);
     expect(fn1).toHaveBeenCalled();
     ws.close();
   });
 
-  test("can receive an event", async () => {
+  test("can receive an event", () => {
     const ws = new WebSocketInspector(url);
     const fn = mock(event => {
       expect(event).toStrictEqual({
@@ -154,8 +154,8 @@ describe("WebSocketInspector", () => {
       });
     });
     ws.on("Inspector.event", fn);
-    await expect(ws.start()).resolves.toBeTrue();
-    await expect(ws.send("Debugger.enable")).resolves.toMatchObject({ ok: true });
+    expect(ws.start()).resolves.toBeTrue();
+    expect(ws.send("Debugger.enable")).resolves.toMatchObject({ ok: true });
     expect(fn).toHaveBeenCalled();
     ws.close();
   });

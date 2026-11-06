@@ -9,9 +9,9 @@ describe("Bun.cron (in-process)", () => {
     expect(() => Bun.cron("60 * * * *", () => {})).toThrow(/Invalid cron expression/);
   });
 
-  test("validates schedule is a string", async () => {
+  test("validates schedule is a string", () => {
     // @ts-expect-error
-    await expect(() => Bun.cron(123, () => {})).toThrow(/string cron expression/);
+    expect(() => Bun.cron(123, () => {})).toThrow(/string cron expression/);
   });
 
   test("rejects expressions with no future occurrences", () => {

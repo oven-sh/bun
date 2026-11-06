@@ -420,7 +420,7 @@ body { color: blue; }`,
       "app.js": `console.log("test");`,
     });
 
-    await expect(() =>
+    expect(() =>
       Bun.build({
         entrypoints: [`${dir}/index.html`],
         compile: true,

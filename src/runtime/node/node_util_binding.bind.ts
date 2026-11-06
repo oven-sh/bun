@@ -9,7 +9,7 @@ export const internalErrorEntries = b.fn({ returns: b.array(UVError) });
 
 export const etimedoutErrorCode = b.fn({ returns: b.i32 });
 export const enobufsErrorCode = b.fn({ returns: b.i32 });
-export const ecanceledErrorCode = b.fn({ returns: b.i32 });
+export const ecanceledErrorCode = b.value({ returns: b.i32 });
 export const uvTranslateSysError = b.fn({ args: { errno: b.f64 }, returns: b.i32 });
 
 export const extractedSplitNewLinesFastPathStringsOnly = b.fn({

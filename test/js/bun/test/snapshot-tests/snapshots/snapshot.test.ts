@@ -2546,6 +2546,68 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
   });
 
+  test("of a module namespace leaves out an export that is not set yet and a hidden key, and an older Bun's passes", async () => {
+    const { log, stderr, exitCode } = await logOf({
+      // It throws halfway through its body, so `later` stays in its temporal dead zone.
+      "stops.mjs": `
+          import * as self from "./stops.mjs";
+          export function hoisted() {}
+          (() => {
+            throw Object.assign(new Error("stops here"), { namespace: self });
+          })();
+          export const later = 1;
+        `,
+      "required.mjs": `export const b = 1; export function a() {}`,
+      "a.test.js": `
+          import { test, expect } from "bun:test";
+          ${firstLine}
+          const unset = await import("./stops.mjs").catch(error => error.namespace);
+          // Script can define these two keys on the namespace that require() gives. An older Bun printed them and no export.
+          const required = require("./required.mjs");
+          Object.defineProperty(required, "__esModule", { value: true });
+          Object.defineProperty(required, Symbol("hidden"), { value: 1 });
+          test("now", () => {
+            expect({ unset, required }).toMatchInlineSnapshot(\`
+              {
+                "required": Module Module {
+                  "a": [Function: a],
+                  "b": 1,
+                },
+                "unset": Module Module {
+                  "hoisted": [Function: hoisted],
+                },
+              }
+            \`);
+          });
+          test("an older Bun", () => {
+            expect({ unset, required }).toMatchInlineSnapshot(\`
+              {
+                "required": Module Module {
+                  "__esModule": true,
+                  [Symbol(hidden)]: 1,
+                },
+                "unset": Module {},
+              }
+            \`);
+          });
+          test("another value", () => {
+            console.log(firstLine(() => expect({ unset }).toMatchInlineSnapshot(\`
+              {
+                "unset": Module Module {
+                  "hoisted": [Function: other],
+                },
+              }
+            \`)));
+          });
+        `,
+    });
+    expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+      log: ["expect(received).toMatchInlineSnapshot(expected)"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("of import.meta.env fails when a variable has another value", async () => {
     using dir = tempDir("snapshot-import-meta-env", {
       "a.test.js": `

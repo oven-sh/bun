@@ -6277,6 +6277,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
+// Listing only the enumerable keys of a module namespace reads every export, as Object.keys() does, and throws for one that is not initialized yet.
+static ALWAYS_INLINE bool listsEnumerableKeysByReadingThem(JSC::JSObject* object)
+{
+    JSC::JSType type = object->type();
+    if (type == JSC::ModuleNamespaceObjectType)
+        return true;
+    // The namespace of the ahead-of-time run time is an ObjectType cell. A compiled object has the same flag under another JSType, so it never makes the call.
+    return type == JSC::ObjectType && JSC::TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && JSC::AOT::isModuleNamespace(object);
+}
+
 static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -6288,6 +6298,8 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    // Asked for every key, a namespace reads no export (that of a mocked module still asks its mock). The loop below drops the non-enumerable keys and skips an export whose read throws.
+    const bool isNamespace = !withNonEnumerable && listsEnumerableKeysByReadingThem(object);
     {
 
         JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
@@ -6295,7 +6307,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         if (withNonEnumerable && !JSC::AOT::PropertyWalk::isCompiledObject(object))
             JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
         else
-            object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
+            object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable || isNamespace ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -6317,7 +6329,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         if (!hasProperty) {
             continue;
         }
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0 && (property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol))
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0 && (isNamespace || property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol))
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();

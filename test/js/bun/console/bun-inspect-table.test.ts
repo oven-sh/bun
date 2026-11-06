@@ -1,5 +1,7 @@
 import { inspect } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "path";
 
 const inputs = [
   { a: 1, b: 2 },
@@ -73,6 +75,25 @@ describe("inspect.table", () => {
     expect(out).toContain("[Object ...]");
     expect(out).toContain("[ [Array ...] ]");
     expect(out).toContain("Map(1) { 1: [Map ...] }");
+  });
+
+  it("with sorted, a cell prints a module namespace without an export that is not set yet", async () => {
+    // The module throws halfway through its body, so `later` stays in its temporal dead zone.
+    using dir = tempDir("inspect-table-namespace-unset-export", {
+      "stops.mjs": `
+        import * as self from "./stops.mjs";
+        export function hoisted() {}
+        (() => {
+          throw Object.assign(new Error("stops here"), { namespace: self });
+        })();
+        export const later = 1;
+      `,
+    });
+    const namespace = await import(join(String(dir), "stops.mjs")).catch(error => error.namespace);
+    const rows = [{ cell: namespace }];
+    const sorted = inspect.table(rows, { colors: false, sorted: true } as Bun.BunInspectOptions);
+    expect(sorted).toContain("│ 0 │ Module { hoisted: [Function: hoisted] } │");
+    expect(sorted).toBe(inspect.table(rows, { colors: false }));
   });
 });
 

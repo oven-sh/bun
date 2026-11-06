@@ -220,6 +220,11 @@ pub(super) fn format(
     let is_single = matches!(options.quote_style, QuoteStyle::Single);
     let use_tabs = matches!(options.indent_style, IndentStyle::Tab);
     let tab_width = options.indent_width.value() as usize;
+    // The long way makes the indentation of each line that could start in a group, and fails if that's too long for a
+    // string, whether or not a line starts there. What's open adds a few levels each.
+    if !use_tabs && crate::is_too_long(tab_width.saturating_mul(8 * MAX_DEPTH)) {
+        return false;
+    }
     let line_start = std::mem::take(&mut scratch.line_start);
     // White space at the end of a template isn't printed, and neither is white space at its start in front of a node.
     let source = text.trim_ascii_end();

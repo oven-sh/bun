@@ -3980,6 +3980,7 @@ describe("Handlebars", () => {
     ["--tab-width=4"],
     ["--tab-width=0"],
     ["--tab-width=5000", "--print-width=20"],
+    ["--tab-width=4294967295"],
     ["--use-tabs"],
     ["--use-tabs", "--tab-width=8", "--print-width=30"],
     ["--single-quote"],

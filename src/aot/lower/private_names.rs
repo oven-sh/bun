@@ -28,13 +28,34 @@ pub(in crate::lower) struct PrivateBinding {
     pub(in crate::lower) is_decorated: bool,
 }
 
+/// What an access through a private name reaches. Only a field has its value in the slot that says an object has the name.
+#[derive(Copy, Clone)]
+pub(in crate::lower) enum PrivateTarget {
+    Field(StoredValue),
+    /// The value lies elsewhere: `resolve_accessor_storage`.
+    AutoAccessor(MemberId),
+    Method(MemberId),
+    Accessor {
+        getter: Option<MemberId>,
+        setter: Option<MemberId>,
+    },
+}
+
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct StoredValue {
     class: ClassId,
     member: MemberId,
     holder: PrivateHolder,
-    /// The name, where the program writes an access to it: `o.#x`.
-    written: Option<Atom>,
+    written: Written,
+}
+
+/// How the program names a stored value where it writes an access to it: `o.#x`.
+#[derive(Copy, Clone)]
+enum Written {
+    Nowhere,
+    Field(Atom),
+    /// The brand of the class says which objects have an accessor.
+    Accessor,
 }
 
 #[derive(Copy, Clone)]

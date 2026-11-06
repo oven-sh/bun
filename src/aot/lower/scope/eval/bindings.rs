@@ -11,6 +11,7 @@ use super::EvalContext;
 use crate::ir::generated::{EvalBinding, EvalBindingKind, EvalScopeFlags, HomeObjectKind};
 use crate::ir::{ClassSlot, StringId, ValueId, VariableKey};
 use crate::lower::captures::Capture;
+use crate::lower::class::{self, AccessorFunction};
 use crate::lower::member::PropertyName;
 use crate::lower::private_names::{PrivateBinding, PrivateHolder};
 use crate::lower::scope::{
@@ -362,24 +363,14 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
             let text = written_name(file.queries.atom_bytes(name.name));
             let text = file.intern_bytes(text);
             let binding = create_binding(EvalBindingKind::PrivateName, Some(text), depth);
-            // Evaluated text reads and writes the value of an `accessor` field where it lies.
-            let slot = match resolved.members {
-                PrivateMembers::AutoAccessor(member) if !resolved.is_decorated => {
-                    file.resolve_accessor_storage(member).instance_slot()
-                }
-                _ => match resolved.presence {
-                    PrivateHolder::Instance { layout, field } => Some((layout, field)),
-                    PrivateHolder::ClassObject => None,
-                },
-            };
-            let binding = match slot {
-                Some((layout, field)) => EvalBinding {
+            let binding = match resolved.presence {
+                PrivateHolder::Instance { layout, field } => EvalBinding {
                     layout: Some(layout),
                     field: Some(field),
                     operand: token,
                     ..binding
                 },
-                None => EvalBinding {
+                PrivateHolder::ClassObject => EvalBinding {
                     operand: class_object,
                     ..binding
                 },
@@ -409,6 +400,18 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                     let function = self.lowering.emit_get(pair, PropertyName::Constant(key));
                     Some(self.add_value_operand(function))
                 });
+                (EvalBindingKind::PrivateAccessor, function, setter)
+            }
+            // The brand says which objects have the name. Evaluated text reads and stores the value through a getter and a setter, as it does under `bun run`.
+            PrivateMembers::AutoAccessor(member)
+                if matches!(resolved.presence, PrivateHolder::Instance { .. }) =>
+            {
+                let [function, setter] =
+                    [AccessorFunction::Getter, AccessorFunction::Setter].map(|half| {
+                        let id = class::declare_accessor_function(self.lowering.file, member, half);
+                        let closure = self.lowering.emit_closure(id, None);
+                        Some(self.add_value_operand(closure))
+                    });
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {

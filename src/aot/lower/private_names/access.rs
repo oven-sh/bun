@@ -2,28 +2,15 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{PrivateMembers, PrivateNameId};
 use bun_sema::hir::{ClassId, ExprId, ExprKind, MemberId};
 
-use super::{PrivateBinding, PrivateHolder, StoredValue};
+use super::{PrivateBinding, PrivateHolder, PrivateTarget, StoredValue, Written};
 use crate::ir::generated::{BlockFrequency, RuntimeErrorKind};
 use crate::ir::{ClassSlot, Edge, LayoutId, TypeTable, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::{FunctionLowering, call, class, convert, layouts};
 
 impl StoredValue {
-    /// A field: the slot of its value is what says that an object has the name.
-    pub(in crate::lower) fn of_name(binding: PrivateBinding, member: MemberId) -> StoredValue {
-        StoredValue {
-            class: binding.class,
-            member,
-            holder: binding.presence,
-            written: None,
-        }
-    }
-
-    fn written_as(self, name: Atom) -> StoredValue {
-        StoredValue {
-            written: Some(name),
-            ..self
-        }
+    fn written_as(self, written: Written) -> StoredValue {
+        StoredValue { written, ..self }
     }
 
     pub(in crate::lower) fn instance_slot(self) -> Option<(LayoutId, u32)> {
@@ -105,7 +92,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         object: ValueId,
         error: RuntimeErrorKind,
     ) -> ValueId {
-        self.emit_class_object_test(stored.class, object, error, stored.written);
+        let (error_of_another_object, field) = match stored.written {
+            Written::Nowhere => (error, None),
+            Written::Field(name) => (error, Some(name)),
+            Written::Accessor => (RuntimeErrorKind::InvalidPrivateBrand, None),
+        };
+        self.emit_class_object_test(stored.class, object, error_of_another_object, field);
         let slot = ClassSlot::StaticField(stored.member);
         let value = self.get_class_slot(stored.class, slot);
         let split = self.split_on_type(value, TypeTable::ABSENT);
@@ -187,29 +179,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let binding = self.file.resolve_private_name(name);
         let class = binding.class;
-        match binding.members {
-            PrivateMembers::AutoAccessor(member) if binding.is_decorated => {
+        match binding.target() {
+            PrivateTarget::AutoAccessor(member) if binding.is_decorated => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateRead);
                 let getter = self.get_decorated_accessor_function(class, member, known::get);
                 self.set_position(start_of_access);
                 call::emit_call(self, getter, Some(object), &[])
             }
-            PrivateMembers::Field(member) => {
-                let written = self.file.bound.private_name(name).name;
-                let stored = StoredValue::of_name(binding, member).written_as(written);
-                self.emit_stored_read(stored, object)
-            }
-            // `bun run` reads the field that its transpiler makes for the value.
-            PrivateMembers::AutoAccessor(member) => {
-                let written = self.file.bound.private_name(name).name;
-                let stored = self.file.resolve_accessor_storage(member);
+            PrivateTarget::Field(stored) => {
+                let written = Written::Field(self.file.bound.private_name(name).name);
                 self.emit_stored_read(stored.written_as(written), object)
             }
-            PrivateMembers::Method(member) => {
+            PrivateTarget::AutoAccessor(member) => {
+                let stored = self.file.resolve_accessor_storage(member);
+                self.emit_stored_read(stored.written_as(Written::Accessor), object)
+            }
+            PrivateTarget::Method(member) => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateBrand);
                 self.get_class_slot(class, ClassSlot::PrivateMethod(member))
             }
-            PrivateMembers::Accessor { getter, .. } => {
+            PrivateTarget::Accessor { getter, .. } => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateBrand);
                 let Some(getter) = getter else {
                     return self.emit_error(RuntimeErrorKind::PrivateAccessorWithoutGetter);
@@ -232,27 +221,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let binding = self.file.resolve_private_name(name);
         let class = binding.class;
-        match binding.members {
-            PrivateMembers::AutoAccessor(member) if binding.is_decorated => {
+        match binding.target() {
+            PrivateTarget::AutoAccessor(member) if binding.is_decorated => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateWrite);
                 let setter = self.get_decorated_accessor_function(class, member, known::set);
                 call::emit_call(self, setter, Some(object), &[value]);
             }
-            PrivateMembers::Field(member) => {
-                let written = self.file.bound.private_name(name).name;
-                let stored = StoredValue::of_name(binding, member).written_as(written);
-                self.emit_stored_write(stored, object, value, source);
-            }
-            PrivateMembers::AutoAccessor(member) => {
-                let written = self.file.bound.private_name(name).name;
-                let stored = self.file.resolve_accessor_storage(member);
+            PrivateTarget::Field(stored) => {
+                let written = Written::Field(self.file.bound.private_name(name).name);
                 self.emit_stored_write(stored.written_as(written), object, value, source);
             }
-            PrivateMembers::Method(_) => {
+            PrivateTarget::AutoAccessor(member) => {
+                let stored = self.file.resolve_accessor_storage(member);
+                self.emit_stored_write(stored.written_as(Written::Accessor), object, value, source);
+            }
+            PrivateTarget::Method(_) => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateBrand);
                 self.emit_error(RuntimeErrorKind::PrivateMethodWrite);
             }
-            PrivateMembers::Accessor { setter, .. } => {
+            PrivateTarget::Accessor { setter, .. } => {
                 self.emit_admission(binding, object, RuntimeErrorKind::InvalidPrivateBrand);
                 let Some(setter) = setter else {
                     self.emit_error(RuntimeErrorKind::PrivateAccessorWithoutSetter);
@@ -381,14 +368,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
     ) {
         let binding = self.file.resolve_private_name(name);
-        match binding.members {
-            PrivateMembers::Field(member) => {
-                let stored = StoredValue::of_name(binding, member);
-                self.emit_stored_definition(stored, object, value);
-            }
-            PrivateMembers::AutoAccessor(_)
-            | PrivateMembers::Method(_)
-            | PrivateMembers::Accessor { .. } => {
+        match binding.target() {
+            PrivateTarget::Field(stored) => self.emit_stored_definition(stored, object, value),
+            PrivateTarget::AutoAccessor(_)
+            | PrivateTarget::Method(_)
+            | PrivateTarget::Accessor { .. } => {
                 debug_assert!(false, "only a field is defined by its name");
             }
         }

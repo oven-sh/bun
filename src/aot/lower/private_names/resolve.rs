@@ -1,8 +1,26 @@
 use bun_sema::bind::{PrivateMembers, PrivateNameId};
 use bun_sema::hir::{Flags, MemberId};
 
-use super::{PrivateBinding, PrivateHolder, StoredValue};
+use super::{PrivateBinding, PrivateHolder, PrivateTarget, StoredValue, Written};
 use crate::lower::{FileLowering, class, layouts};
+
+impl PrivateBinding {
+    pub(in crate::lower) fn target(self) -> PrivateTarget {
+        match self.members {
+            PrivateMembers::Field(member) => PrivateTarget::Field(StoredValue {
+                class: self.class,
+                member,
+                holder: self.presence,
+                written: Written::Nowhere,
+            }),
+            PrivateMembers::AutoAccessor(member) => PrivateTarget::AutoAccessor(member),
+            PrivateMembers::Method(member) => PrivateTarget::Method(member),
+            PrivateMembers::Accessor { getter, setter } => {
+                PrivateTarget::Accessor { getter, setter }
+            }
+        }
+    }
+}
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn resolve_private_name(&mut self, name: PrivateNameId) -> PrivateBinding {
@@ -53,7 +71,7 @@ impl FileLowering<'_, '_, '_, '_> {
             class,
             member,
             holder,
-            written: None,
+            written: Written::Nowhere,
         }
     }
 }

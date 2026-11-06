@@ -425,6 +425,7 @@ impl<'a> AsyncHTTP<'a> {
             Options {
                 http_proxy,
                 proxy_settings,
+                tls_props,
                 ..Options::default()
             },
         )

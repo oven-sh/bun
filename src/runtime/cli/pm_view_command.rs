@@ -138,7 +138,7 @@ pub(crate) fn view(
         headers.entries,
         header_buf,
         b"",
-        npm::registry::registry_tls_config(scope),
+        manager.registry_tls_config(scope),
     );
 
     let res = match manager.send_with_retries(req, &mut response_buf) {

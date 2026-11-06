@@ -1730,6 +1730,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         );
         async_http.client.progress = Some(refresher);
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -1813,6 +1814,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         );
         async_http.client.progress = Some(refresher);
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();

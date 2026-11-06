@@ -250,7 +250,9 @@ Configure a client certificate and private key for registries that require mutua
 //my-registry.example.com/:keyfile=/path/to/client-key.pem
 ```
 
-These options can be combined with other authentication options like `_authToken`:
+Set both options in `.npmrc`; `bunfig.toml` has no equivalent certificate options. Relative paths are resolved against the directory containing the `.npmrc` file.
+
+You can combine the certificate pair with `_authToken`:
 
 ```ini .npmrc icon="npm"
 @myorg:registry=https://my-registry.example.com/

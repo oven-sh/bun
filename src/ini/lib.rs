@@ -1263,7 +1263,9 @@ mod draft {
         let truthy =
             |opt| Some(&lookup(configs, key, opt)?.value).filter(|value| !value.is_empty());
         let mut credentials = NpmRegistry::default();
-        if let (Some(certfile), Some(keyfile)) = (truthy(ConfigOpt::Certfile), truthy(ConfigOpt::Keyfile)) {
+        if let (Some(certfile), Some(keyfile)) =
+            (truthy(ConfigOpt::Certfile), truthy(ConfigOpt::Keyfile))
+        {
             credentials.certfile.clone_from(certfile);
             credentials.keyfile.clone_from(keyfile);
         }
@@ -1271,13 +1273,13 @@ mod draft {
             credentials.token.clone_from(token);
         } else if let Some(auth) = truthy(ConfigOpt::_Auth) {
             credentials.auth.clone_from(auth);
-        } else {
-            if let (Some(username), Some(password)) = (truthy(ConfigOpt::Username), truthy(ConfigOpt::_Password)) {
-                credentials.username.clone_from(username);
-                credentials.password = decode_password(password);
-            } else if credentials.certfile.is_empty() {
-                return None;
-            }
+        } else if let (Some(username), Some(password)) =
+            (truthy(ConfigOpt::Username), truthy(ConfigOpt::_Password))
+        {
+            credentials.username.clone_from(username);
+            credentials.password = decode_password(password);
+        } else if credentials.certfile.is_empty() {
+            return None;
         }
         Some(credentials)
     }

@@ -677,7 +677,7 @@ impl PublishCommand {
             headers.entries,
             headers.content.written_slice(),
             b"",
-            Npm::registry::registry_tls_config(registry),
+            manager.registry_tls_config(registry),
         );
 
         let Ok(res) = manager.send_with_retries(req, &mut response_buf) else {
@@ -805,7 +805,7 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            Npm::registry::registry_tls_config(registry),
+            manager.registry_tls_config(registry),
         );
         let res = Self::send_or_crash(req, &mut response_buf, "failed to publish package")?;
 
@@ -865,7 +865,7 @@ impl PublishCommand {
             otp_headers.entries,
             otp_headers.content.written_slice(),
             publish_req_body,
-            Npm::registry::registry_tls_config(registry),
+            manager.registry_tls_config(registry),
         );
         let otp_res = Self::send_or_crash(otp_req, &mut response_buf, "failed to publish package")?;
 
@@ -1011,7 +1011,10 @@ impl PublishCommand {
                     auth_headers.entries.clone()?,
                     auth_headers.content.written_slice(),
                     b"",
-                    None,
+                    manager
+                        .options
+                        .tarball_credentials(registry, &done_url, true)
+                        .and_then(|registry| manager.registry_tls_config(registry)),
                 );
                 let res = Self::send_or_crash(req, response_buf, "failed to send OTP request")?;
 

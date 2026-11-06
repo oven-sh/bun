@@ -65,7 +65,7 @@ function expectSame(name: string, texts: string[], options: string[][]) {
 async function cpuTimeOfShortCuts(name: string, text: string) {
   using dir = tempDir("format-short-cuts", { [name]: text });
   const cpu = async (own: string[]) => {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, name],
       cwd: String(dir),
       env: bunEnv,
@@ -82,7 +82,7 @@ async function cpuTimeOfShortCuts(name: string, text: string) {
 /** The most memory that formatting `text` takes at any time. */
 async function memoryInMegabytes(name: string, text: string, flags: string[]) {
   using dir = tempDir("format-short-cuts", { [name]: text });
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...flags, name],
     cwd: String(dir),
     env: bunEnv,
@@ -823,7 +823,7 @@ describe("GraphQL", () => {
 async function slowdownByShortCuts(name: string, text: string) {
   using dir = tempDir("format-short-cuts", { [name]: text });
   const cpu = async (own: string[]) => {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, name],
       cwd: String(dir),
       env: bunEnv,
@@ -3252,7 +3252,7 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
       [`${script}\n${style}`, ["--vue-indent-script-and-style"], 1, 1],
     ] as const) {
       using dir = tempDir("fmt-short-cuts", { "a.vue": text });
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [
           bunExe(),
           "fmt",
@@ -4320,7 +4320,7 @@ describe("JavaScript that is deep, long or full of comments", () => {
     "a chain of %d calls goes the quick way",
     async count => {
       using dir = tempDir("format-short-cuts", { "a.js": nest("", "a", ".b()", count) });
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", "a.js"],
         cwd: String(dir),
         env: bunEnv,
@@ -4398,7 +4398,7 @@ describe("JavaScript that is deep, long or full of comments", () => {
       "c.js": `function f() ${row}{}\n`.repeat(times),
     });
     const cpu = async (own: string[]) => {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [
           bunExe(),
           "fmt",
@@ -4483,7 +4483,7 @@ describe("JavaScript that is deep, long or full of comments", () => {
         [`4/${name}`]: textOf(shape, 4 * short),
       });
       const cpu = async (file: string) => {
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [
             bunExe(),
             "fmt",
@@ -4532,7 +4532,7 @@ describe("scripts that are too much for the quick way", () => {
   async function bothWays(name: string, text: string) {
     return await Promise.all(
       [[], ["--no-short-cuts"]].map(async own => {
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [bunExe(), "fmt", "--no-config", "--no-editorconfig", `--stdin-filepath=${name}`, ...own],
           cwd: "/",
           env: bunEnv,
@@ -7725,7 +7725,7 @@ describe("programs that are read as written", () => {
     const [short, long] = await Promise.all(
       [[], ["--no-short-cuts"]].map(async own => {
         using dir = tempDir("format-short-cuts", tree);
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--log-level=warn", ...own, "."],
           cwd: String(dir),
           env: bunEnv,

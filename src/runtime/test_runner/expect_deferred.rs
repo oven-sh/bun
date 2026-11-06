@@ -544,6 +544,74 @@ impl Pass {
     }
 }
 
+/// Must match `ExpectAnswerer` in bindings.cpp.
+#[derive(Copy, Clone)]
+pub(crate) enum Answerer {
+    EqualityTester,
+    AsymmetricMatch,
+    IsEqualNode,
+    SatisfyPredicate,
+    Contains,
+}
+
+impl Answerer {
+    const ALL: [Answerer; 5] = [
+        Answerer::EqualityTester,
+        Answerer::AsymmetricMatch,
+        Answerer::IsEqualNode,
+        Answerer::SatisfyPredicate,
+        Answerer::Contains,
+    ];
+
+    /// Calls a user function whose answer decides a comparison at once. A promise is no answer, so it throws.
+    #[inline]
+    pub(crate) fn ask(
+        self,
+        global: &JSGlobalObject,
+        function: JSValue,
+        this: JSValue,
+        arguments: &[JSValue],
+    ) -> JsResult<JSValue> {
+        let answer = function.call(global, this, arguments)?;
+        if answer.is_object() {
+            self.refuse_thenable(global, answer)?;
+        }
+        Ok(answer)
+    }
+
+    #[cold]
+    #[optimize(size)]
+    fn refuse_thenable(self, global: &JSGlobalObject, answer: JSValue) -> JsResult<()> {
+        let returned = if let Some(promise) = answer.as_any_promise() {
+            // The error below reports it. As an unhandled rejection it would also fail whichever test runs then.
+            promise.set_handled(global.vm());
+            "a promise"
+        } else if answer.get(global, "then")?.is_some_and(JSValue::is_callable) {
+            "a thenable"
+        } else {
+            return Ok(());
+        };
+        let who = match self {
+            Answerer::EqualityTester => "An equality tester",
+            Answerer::AsymmetricMatch => "asymmetricMatch()",
+            Answerer::IsEqualNode => "isEqualNode()",
+            Answerer::SatisfyPredicate => "The predicate of expect.toSatisfy()",
+            Answerer::Contains => "contains()",
+        };
+        Err(global.throw_type_error(format_args!(
+            "{who} returned {returned}. It has to return its answer synchronously"
+        )))
+    }
+
+    /// Called by C++ deep equality with an object that `who` returned. Leaves an exception pending if it is refused.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect__refuseThenable(global: &JSGlobalObject, answer: JSValue, who: u8) {
+        if let Err(error) = Self::ALL[usize::from(who)].refuse_thenable(global, answer) {
+            bun_jsc::host_fn::host_call_error_value(global, error);
+        }
+    }
+}
+
 /// A matcher call waiting on a promise. [`Pass::wait_for`] throws it and `Expect::matcher_threw` catches it.
 pub(crate) struct ExpectDeferred {
     held: JsCell<Option<RunningEntry>>,

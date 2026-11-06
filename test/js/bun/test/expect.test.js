@@ -5369,6 +5369,97 @@ describe("expect()", () => {
         expect(() => expect({ n: 1 }).toMatchObject({ n: throws })).toThrow(new RangeError("thrown by the matcher"));
       });
 
+      // Jest and Vitest take the promise itself for the answer, and don't call an async asymmetricMatch() at all.
+      test_skipIf(!isBun)("asymmetricMatch() that returns a promise or another thenable throws", async () => {
+        const refused = (/** @type {string} */ returned) =>
+          `asymmetricMatch() returned ${returned}. It has to return its answer synchronously`;
+        const rejectsLater = Promise.withResolvers();
+        class InheritsThen {
+          then() {}
+        }
+        const called = jest.fn();
+        called(5);
+        const cases = /** @type {const} */ ([
+          [{ asymmetricMatch: async () => true }, "a promise"],
+          [{ asymmetricMatch: async () => false }, "a promise"],
+          [{ asymmetricMatch: () => Promise.resolve(undefined) }, "a promise"],
+          [{ asymmetricMatch: () => Promise.reject(new Error("rejected before it was returned")) }, "a promise"],
+          [{ asymmetricMatch: () => rejectsLater.promise }, "a promise"],
+          [{ asymmetricMatch: () => ({ then() {} }) }, "a thenable"],
+          [{ asymmetricMatch: () => new InheritsThen() }, "a thenable"],
+        ]);
+        for (const [matcher, returned] of cases) {
+          for (const assertion of [
+            () => expect(5).toEqual(matcher),
+            () => expect(matcher).toEqual(5),
+            () => expect([5]).not.toEqual([matcher]),
+            () => expect({ n: 5 }).toStrictEqual({ n: matcher }),
+            () => expect({ n: 5, other: 1 }).toMatchObject({ n: matcher }),
+            () => expect([5]).toContainEqual(matcher),
+            () => expect(called).toHaveBeenCalledWith(matcher),
+            () => expect({ n: 5, other: 1 }).toEqual(expect.objectContaining({ n: matcher })),
+            () => expect([5]).toEqual(expect.arrayContaining([matcher])),
+          ]) {
+            expect(assertion).toThrow(TypeError);
+            expect(assertion).toThrow(new TypeError(refused(returned)));
+          }
+        }
+
+        // An unhandled rejection is reported once the microtasks have run, and fails the test that is running then.
+        rejectsLater.reject(new Error("rejected after the matcher threw"));
+        await new Promise(resolve => setImmediate(resolve));
+      });
+
+      test_skipIf(!isBun)(
+        "a promise from asymmetricMatch() is refused on the re-run of a matcher that waited",
+        async () => {
+          expect.extend({
+            async toPassLater() {
+              await 0;
+              return { pass: true, message: () => "" };
+            },
+          });
+          const asymmetricMatch = jest.fn(async () => true);
+          const assertion = expect([1, 5]).toEqual([ANY(expect).toPassLater(), { asymmetricMatch }]);
+          expect(asymmetricMatch).toHaveBeenCalledTimes(0);
+          await expect(assertion).rejects.toThrow(
+            new TypeError("asymmetricMatch() returned a promise. It has to return its answer synchronously"),
+          );
+          expect(asymmetricMatch).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      test_skipIf(!isBun)("an object from asymmetricMatch() is an answer unless its `then` is a function", () => {
+        const answering = (/** @type {unknown} */ answer) => ({ asymmetricMatch: () => answer });
+        for (const answer of [{}, { then: true }, [], () => {}]) {
+          expect([5]).toEqual([answering(answer)]);
+          expect(() => expect([5]).not.toEqual([answering(answer)])).toThrow("toEqual");
+        }
+
+        const then = jest.fn(() => undefined);
+        expect([5]).toEqual([answering(Object.defineProperty({}, "then", { get: then }))]);
+        expect(then).toHaveBeenCalledTimes(1);
+
+        const reason = new RangeError("then was read");
+        const throwingGetter = {
+          get then() {
+            throw reason;
+          },
+        };
+        const throwingTrap = new Proxy(
+          {},
+          {
+            get() {
+              throw reason;
+            },
+          },
+        );
+        for (const answer of [throwingGetter, throwingTrap]) {
+          expect(() => expect([5]).toEqual([answering(answer)])).toThrow(reason);
+          expect(() => expect({ n: 5 }).not.toMatchObject({ n: answering(answer) })).toThrow(reason);
+        }
+      });
+
       test("two matchers are compared as plain objects", () => {
         const never = () => false;
         expect({ asymmetricMatch: never }).toEqual({ asymmetricMatch: never });

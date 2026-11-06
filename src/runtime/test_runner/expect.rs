@@ -17,7 +17,7 @@ use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
-use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
+use self::expect_deferred::{Answerer, Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::pretty_format::JestPrettyFormat;
@@ -1504,9 +1504,8 @@ impl Expect {
         predicate: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let pass = predicate
-            .to_js()
-            .call(global_this, JSValue::UNDEFINED, &[received.to_js()])?
+        let pass = Answerer::SatisfyPredicate
+            .ask(global_this, predicate.to_js(), JSValue::UNDEFINED, &[received.to_js()])?
             .to_boolean();
         let result = JSValue::create_empty_object(global_this, 1);
         result.put(global_this, b"pass", JSValue::from(pass));

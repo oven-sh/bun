@@ -5,6 +5,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::Expect;
+use super::expect_deferred::Answerer;
 use super::get_signature;
 use super::throw;
 
@@ -68,7 +69,7 @@ impl Expect {
                 )));
             }
             let contains = value.get(global, "contains")?.unwrap_or(JSValue::UNDEFINED);
-            pass = contains.call(global, value, &[expected])?.to_boolean();
+            pass = Answerer::Contains.ask(global, contains, value, &[expected])?.to_boolean();
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
                 global,

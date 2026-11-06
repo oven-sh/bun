@@ -255,6 +255,35 @@ describe("jest-extended", () => {
         expect(make).toThrow("Expected a function");
       }
     });
+
+    test("expect.toSatisfy() throws if its predicate returns a promise or another thenable", async () => {
+      const refused = returned =>
+        `The predicate of expect.toSatisfy() returned ${returned}. It has to return its answer synchronously`;
+      const rejectsLater = Promise.withResolvers();
+      for (const [predicate, returned] of [
+        [async () => true, "a promise"],
+        [async () => false, "a promise"],
+        [() => Promise.reject(new Error("rejected before it was returned")), "a promise"],
+        [() => rejectsLater.promise, "a promise"],
+        [() => ({ then() {} }), "a thenable"],
+      ]) {
+        for (const assertion of [
+          () => expect(7).toEqual(expect.toSatisfy(predicate)),
+          () => expect(7).not.toEqual(expect.toSatisfy(predicate)),
+          () => expect({ a: 7 }).toEqual({ a: expect.not.toSatisfy(predicate) }),
+          () => expect([7]).toContainEqual(expect.toSatisfy(predicate)),
+          () => expect.toSatisfy(predicate).asymmetricMatch(7),
+        ]) {
+          expect(assertion).toThrow(TypeError);
+          expect(assertion).toThrow(new TypeError(refused(returned)));
+        }
+      }
+      expect(7).toEqual(expect.toSatisfy(() => ({ then: true })));
+
+      // An unhandled rejection is reported once the microtasks have run, and fails the test that is running then.
+      rejectsLater.reject(new Error("rejected after the matcher threw"));
+      await new Promise(resolve => setImmediate(resolve));
+    });
   }
 
   // Array

@@ -3,6 +3,7 @@ import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, tempDir, withoutAsanQuarantine } from "harness";
 import path from "node:path";
+import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   pgCommandComplete,
@@ -925,6 +926,60 @@ describe.concurrent("frames that a server cannot be made to send", () => {
       const failed = sql`copy t from stdin`.writable().getWriter();
       await failed.abort("why");
       expect(wire).toEqual(["Q copy t from stdin", "d 1\n", "d 2\n", "c ", "Q copy t from stdin", "f why"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // docs/runtime/sql.mdx, "For Node.js streams". A live server cannot be made to wait between two rows.
+  test.each([
+    ["destroy() ends the export like a complete one", undefined],
+    ["destroy(error) fails the export with that error", new Error("stop")],
+  ])("Readable.fromWeb(readable()) that waits for a row: %s, and the query rejects", async (_, error) => {
+    const { port, server, held } = await pgMockServer(type =>
+      type !== "Q"
+        ? undefined
+        : [
+            pgCopyOutResponse([0]),
+            pgCopyData(Buffer.from("1\n")),
+            pgHold,
+            pgCopyDone(),
+            pgCommandComplete("COPY 1"),
+            pgReadyForQuery(),
+          ],
+    );
+    try {
+      await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
+      const query = sql`copy t to stdout`;
+      // @types/node does not know that it takes the ReadableStream of Bun.
+      const readable = Readable.fromWeb(query.readable() as any);
+      const rows: string[] = [];
+      const firstRow = Promise.withResolvers<void>();
+      const exported = outcome(
+        pipeline(
+          readable,
+          new Writable({
+            write(chunk, encoding, callback) {
+              rows.push(String(chunk));
+              firstRow.resolve();
+              callback();
+            },
+          }),
+        ),
+      );
+      await firstRow.promise;
+      await held();
+      // The row is written, and the read of the next one waits.
+      expect({ rows, buffered: readable.readableLength }).toEqual({ rows: ["1\n"], buffered: 0 });
+      readable.destroy(error);
+      expect({ exported: await exported, query: failure(await outcome(query)) }).toEqual({
+        exported: error ?? "fulfilled",
+        query: {
+          code: "ERR_POSTGRES_QUERY_CANCELLED",
+          errno: undefined,
+          message: "COPY to stdout failed: Query cancelled",
+        },
+      });
     } finally {
       server.close();
     }

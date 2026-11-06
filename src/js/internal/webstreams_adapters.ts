@@ -113,7 +113,7 @@ class ReadableFromWeb extends Readable {
       chunk => {
         if (chunk.done) {
           if (!this.#closed) this.#handleDone(reader!);
-          // Node ends the stream when destroy() cancels a read that waits: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L688-L690
+          // As Node (https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L688-L690), end the stream when destroy() cancels a read that waits. Unlike Node, not once 'close' is due: the EOF could no longer become 'end'.
           else if (!this.#responseBody && !this.closed) this.push(null);
         } else {
           this.push(chunk.value);

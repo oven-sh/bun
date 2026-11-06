@@ -1588,7 +1588,7 @@ const { count } = await query; // 2
 - The connection runs nothing else until the `COPY` ends, so always close or abort the `WritableStream`.
 - Bun aborts a stream that is still open when its transaction, savepoint or reservation ends. Nothing of the `COPY` is stored, and `sql.begin` rolls back and rejects with the error of the `COPY`. Await `writer.close()` or `pipeTo()`, or read the stream to its end, before the callback returns or you call `release()`.
 - `query.cancel()`, `reader.cancel()` and leaving a `for await` loop end the `COPY`.
-- For Node.js streams, wrap them with `Readable.fromWeb()` and `Writable.fromWeb()`. To stop such a `Readable` early, call `destroy(error)`. As in Node.js, `destroy()` with no error can end it like a complete stream: the consumer gets no error, and only the query rejects.
+- For Node.js streams, wrap them with `Readable.fromWeb()` and `Writable.fromWeb()`. To stop such a `Readable` early, call `destroy(error)`. `pipeline()` and `for await` report that error, and a stream that you `pipe()` needs an `'error'` listener. Do not call `destroy()` with no error. As in Node.js, the stream then ends like a complete one, and a `pipeline()` whose destination is slower than the export can wait without end. Only the query rejects.
 
 ---
 

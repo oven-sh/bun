@@ -145,6 +145,20 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
+  test("notes about the options of files come in the order of the files", async () => {
+    const files: Record<string, string> = { ".prettierrc": "{}\n" };
+    for (let i = 10; i < 34; i++) {
+      files[`d${i}/.prettierrc`] = JSON.stringify({ [`unknownOption${i}`]: i }) + "\n";
+      for (let j = 0; j < 20; j++) files[`d${i}/f${j}.ts`] = ugly;
+    }
+    for (let run = 0; run < 4; run++) {
+      const { stdout } = await doctor(files, ["--threads", "8"]);
+      expect(stdout.split("\n").filter(line => line.includes("unknownOption"))).toEqual(
+        Array.from({ length: 24 }, (_, i) => `note: Ignored unknown option { unknownOption${i + 10}: ${i + 10} }.`),
+      );
+    }
+  });
+
   test("notes that classes aren't sorted when sortTailwindcss is on but tailwindcss isn't installed", async () => {
     const inWeb = Object.entries(installed("tailwindcss")).map(([name, text]) => [`web/${name}`, text]);
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "web/a.js": ugly, "api/a.js": ugly };

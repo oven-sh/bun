@@ -2,7 +2,7 @@
 //! configuration file, it's oxfmt's `ScopedWalker` instead.
 
 use super::cli::Options;
-use super::config::{Configs, Flavor, Scope, oxc_glob, prettier_glob};
+use super::config::{Configs, Flavor, Remarks, Scope, oxc_glob, prettier_glob};
 use crate::gitignore::{self, Chain, GitIgnores};
 use crate::run::{Fatal, Meanwhile, Pool};
 use crate::{fs, paths};
@@ -729,6 +729,12 @@ struct Directory {
     position: Vec<u32>,
 }
 
+/// The order in which one thread comes by the directories at these [positions](Directory::position): those closer to
+/// where the search starts first.
+fn order_of_search(a: &[u32], b: &[u32]) -> std::cmp::Ordering {
+    (a.len(), a).cmp(&(b.len(), b))
+}
+
 /// About what it takes to list a directory and then to format what is in it, in nanoseconds.
 const TIME_FOR_A_DIRECTORY: u64 = 100_000;
 
@@ -743,8 +749,13 @@ fn search(
     // Git's ignore files that apply in `base`, or `None` if they aren't read.
     git: Option<GitIgnores>,
 ) -> Result<Vec<Target>, Fatal> {
-    let mut failure = Guarded::new(None::<Fatal>);
+    // Of the directories whose configuration can't be used, the first in the order of the search: where it is, and why.
+    let failure = Guarded::new(None::<(Vec<u32>, Fatal)>);
     let has_failed = AtomicBool::new(false);
+    let is_before_failure = |position: &[u32]| {
+        let failure = failure.lock();
+        (failure.as_ref()).is_none_or(|(failed, _)| order_of_search(position, failed).is_lt())
+    };
     let reads_gitignore = git.is_some();
     let git = git.unwrap_or_default();
     let above = configs.for_directory(base)?;
@@ -777,7 +788,12 @@ fn search(
             let scope = match scope {
                 Ok(scope) => scope,
                 Err(error) => {
-                    failure.lock().get_or_insert(error);
+                    let mut failure = failure.lock();
+                    if (failure.as_ref())
+                        .is_none_or(|it| order_of_search(&directory.position, &it.0).is_lt())
+                    {
+                        *failure = Some((directory.position.clone(), error));
+                    }
                     has_failed.store(true, Ordering::Relaxed);
                     return;
                 }
@@ -850,11 +866,11 @@ fn search(
     // About what it takes to format the files that are found, in nanoseconds.
     let time_for_files = AtomicU64::new(0);
     let searchers = pool.threads();
-    type Warnings = Vec<(Vec<u32>, Vec<Vec<u8>>)>;
-    let mut found: Vec<Guarded<(Vec<Target>, Warnings)>> =
+    type AllRemarks = Vec<(Vec<u32>, Remarks)>;
+    let mut found: Vec<Guarded<(Vec<Target>, AllRemarks)>> =
         (0..searchers).map(|_| Default::default()).collect();
     let search_all = |searcher: usize| {
-        let (mut files, mut own, mut warnings) = (Vec::new(), VecDeque::new(), Vec::new());
+        let (mut files, mut own, mut remarks) = (Vec::new(), VecDeque::new(), Vec::new());
         loop {
             let Some(directory) = own.pop_front().or_else(|| given_away.lock().pop()) else {
                 idle_threads.fetch_add(1, Ordering::SeqCst);
@@ -870,11 +886,13 @@ fn search(
                 }
             };
             let (files_before, own_before) = (files.len(), own.len());
-            if !has_failed.load(Ordering::Relaxed) {
-                let held_back =
-                    Configs::holding_back_warnings(|| search_in(&directory, &mut files, &mut own));
-                if !held_back.is_empty() {
-                    warnings.push((directory.position, held_back));
+            // The error is that of the first directory that has one, whichever a thread finds first. What is above a
+            // directory comes before it, so everything that comes before the failure is still found.
+            if !has_failed.load(Ordering::Relaxed) || is_before_failure(&directory.position) {
+                let kept_back =
+                    Configs::keeping_back(|| search_in(&directory, &mut files, &mut own));
+                if !kept_back.is_empty() {
+                    remarks.push((directory.position, kept_back));
                 }
             }
             let left = unfinished.fetch_add(own.len() - own_before, Ordering::SeqCst)
@@ -899,22 +917,21 @@ fn search(
             // This thread, or the one that started the search, is one of them.
             pool.call_up(pool.threads_for(time.saturating_add(to_come)) - 1);
         }
-        *found[searcher].lock() = (files, warnings);
+        *found[searcher].lock() = (files, remarks);
     };
     let threads = pool.threads_for(TIME_FOR_A_DIRECTORY);
     pool.for_each_while(threads, searchers, 1, &search_all, Meanwhile::Helps);
-    // The order in which one thread comes by the directories: those closer to `base` first.
-    let mut warnings: Warnings = (found.iter_mut())
+    // Which of the directories after the failure were searched is a matter of chance.
+    let mut remarks: AllRemarks = (found.iter_mut())
         .flat_map(|it| std::mem::take(&mut it.get_mut().1))
+        .filter(|it| is_before_failure(&it.0))
         .collect();
-    index_sort::sort_slice_by(&mut warnings[..], |a, b| {
-        (a.0.len(), &a.0).cmp(&(b.0.len(), &b.0))
-    });
-    for warning in warnings.into_iter().flat_map(|it| it.1) {
-        configs.note_warning(warning);
+    index_sort::sort_slice_by(&mut remarks[..], |a, b| order_of_search(&a.0, &b.0));
+    for (_, remarks) in &remarks {
+        configs.pass_on(remarks);
     }
-    match failure.get_mut().take() {
-        Some(error) => Err(error),
+    match failure.lock().take() {
+        Some((_, error)) => Err(error),
         None => Ok((found.iter_mut())
             .flat_map(|it| std::mem::take(&mut it.get_mut().0))
             .collect()),

@@ -43,15 +43,15 @@ use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 pub(crate) use config::duplicated_mapping_key;
-use config::{Configs, Flavor, KnownOptions, Resolved};
+use config::{Configs, Flavor, KnownOptions, Remarks, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target};
 pub use for_rules::ForRules;
 use std::borrow::Cow;
 use std::cell::LazyCell;
 use std::io::Write;
 use std::mem::ManuallyDrop;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 macro_rules! pretty {
@@ -1287,6 +1287,8 @@ struct Worker {
     done: Vec<(usize, Done)>,
     /// Same key.
     warnings: Vec<(usize, Vec<Problem>)>,
+    /// Same key. What there is to say about the options of a file.
+    remarks: Vec<(usize, Arc<Remarks>)>,
 }
 
 /// Calls `work` with every index below `count`, in order, on at most `threads` threads. Each has one of `workers`, of
@@ -2079,14 +2081,16 @@ impl Run<'_> {
             let Worker {
                 scratch,
                 warnings,
+                remarks,
                 options: known,
                 text,
                 ..
             } = worker;
             let result = (|| {
-                let mut options = configs
-                    .options_for_one_of_many(known, &target.scope, &target.path)
-                    .map_err(|error| error.0)?;
+                let (options, said) =
+                    configs.options_for_one_of_many(known, &target.scope, &target.path);
+                remarks.extend(said.map(|said| (index, said)));
+                let mut options = options.map_err(|error| error.0)?;
                 if skips_class_sorting.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
                 }
@@ -2225,6 +2229,7 @@ impl Run<'_> {
         }
         // Keyed by the file's index in `expanded`.
         let mut warnings: Vec<(usize, Vec<Problem>)> = Vec::new();
+        let mut remarks: Vec<(usize, Arc<Remarks>)> = Vec::new();
         // Formats `work[at]` for each `at` in `which`, and returns those that are deferred.
         let mut format_all = |which: &[usize], meanwhile: &mut dyn FnMut()| -> Vec<usize> {
             let format_one = |worker: &mut Worker, at: usize| format_at(worker, which[at]);
@@ -2238,6 +2243,7 @@ impl Run<'_> {
                     results[index] = Some(done);
                 }
                 warnings.append(&mut worker.warnings);
+                remarks.append(&mut worker.remarks);
             }
             let is_deferred = |&at: &usize| matches!(results[work[at].0], Some(Done::Deferred));
             which.iter().copied().filter(is_deferred).collect()
@@ -2295,6 +2301,7 @@ impl Run<'_> {
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
         let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
         let mut warnings: FxHashMap<usize, Vec<Problem>> = warnings.into_iter().collect();
+        let remarks: FxHashMap<usize, Arc<Remarks>> = remarks.into_iter().collect();
         // It's a race which hard link gets formatted first and does the write, so report every link to a rewritten file
         // as changed.
         let linked = |it: &Expanded| match it {
@@ -2324,6 +2331,11 @@ impl Run<'_> {
                 }
                 Expanded::File(target) => target,
             };
+            if !remarks.is_empty()
+                && let Some(said) = remarks.get(&index)
+            {
+                configs.pass_on(said);
+            }
             let display_name = LazyCell::new(|| paths::relative(cwd, &target.path));
             if !warnings.is_empty()
                 && let Some(all) = warnings.remove(&index)

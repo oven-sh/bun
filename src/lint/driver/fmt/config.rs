@@ -940,9 +940,36 @@ struct OptionsKey {
     is_package_json: bool,
 }
 
-/// The options that a thread has resolved so far. Nearly all files of a project share a few sets of options.
+/// The options that a thread has resolved so far, each with what there was to say about them. Nearly all files of a
+/// project share a few sets of options.
 #[derive(Default)]
-pub(crate) struct KnownOptions(Vec<(OptionsKey, Resolved)>);
+pub(crate) struct KnownOptions(Vec<(OptionsKey, Resolved, Option<Arc<Remarks>>)>);
+
+/// What there is to say about the configuration of a directory or a file, apart from errors. Threads that work side by
+/// side come by it in any order, so each [keeps it back](Configs::keeping_back) until the order of the directories or
+/// files is known. Then it's [passed on](Configs::pass_on).
+#[derive(Default)]
+pub(crate) struct Remarks {
+    /// [`Configs::warnings`]
+    warnings: Vec<Vec<u8>>,
+    /// [`Configs::unsupported_options`]
+    unsupported_options: Vec<Vec<u8>>,
+    /// [`Configs::note`]
+    note: Option<Vec<u8>>,
+}
+
+impl Remarks {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.warnings.is_empty() && self.unsupported_options.is_empty() && self.note.is_none()
+    }
+
+    fn append(&mut self, mut later: Remarks) {
+        self.warnings.append(&mut later.warnings);
+        self.unsupported_options
+            .append(&mut later.unsupported_options);
+        self.note = self.note.take().or(later.note);
+    }
+}
 
 /// One bit for each of `overrides`, set if it matches `relative`. `None` if there are more of them than bits.
 fn matching(overrides: &[Override], relative: &[u8]) -> Option<u64> {
@@ -1036,8 +1063,8 @@ struct Listed {
 }
 
 thread_local! {
-    /// [`Configs::holding_back_warnings`]
-    static HELD_BACK: RefCell<Option<Vec<Vec<u8>>>> = const { RefCell::new(None) };
+    /// [`Configs::keeping_back`]
+    static KEPT_BACK: RefCell<Option<Remarks>> = const { RefCell::new(None) };
 }
 
 pub(crate) struct Configs<'c> {
@@ -1229,33 +1256,51 @@ impl<'c> Configs<'c> {
     }
 
     fn warn(&self, parts: &[&[u8]]) {
-        let warning = parts.concat();
-        let is_held_back = HELD_BACK.with_borrow_mut(|held_back| match held_back {
-            Some(held_back) => {
-                held_back.push(warning.clone());
-                true
-            }
-            None => false,
+        self.remark(Remarks {
+            warnings: vec![parts.concat()],
+            ..Default::default()
         });
-        if !is_held_back {
-            self.note_warning(warning);
+    }
+
+    fn remark(&self, remarks: Remarks) {
+        let said_now = KEPT_BACK.with_borrow_mut(|kept_back| match kept_back {
+            Some(kept_back) => {
+                kept_back.append(remarks);
+                None
+            }
+            None => Some(remarks),
+        });
+        if let Some(remarks) = said_now {
+            self.pass_on(&remarks);
         }
     }
 
-    /// Adds a warning that was [held back](Configs::holding_back_warnings).
-    pub(crate) fn note_warning(&self, warning: Vec<u8>) {
-        let mut warnings = self.warnings.lock();
-        if !warnings.contains(&warning) {
-            warnings.push(warning);
+    /// The user gets to read `remarks`, after what has been passed on before, and nothing twice.
+    pub(crate) fn pass_on(&self, remarks: &Remarks) {
+        for (all, new) in [
+            (&self.warnings, &remarks.warnings),
+            (&self.unsupported_options, &remarks.unsupported_options),
+        ] {
+            if new.is_empty() {
+                continue;
+            }
+            let mut all = all.lock();
+            for it in new {
+                if !all.contains(it) {
+                    all.push(it.clone());
+                }
+            }
+        }
+        if let Some(note) = &remarks.note {
+            self.note.get_or_init(|| note.clone());
         }
     }
 
-    /// Calls `work` and returns the warnings that it leads to on this thread. They aren't noted: threads that work side
-    /// by side would note them in any order.
-    pub(crate) fn holding_back_warnings(work: impl FnOnce()) -> Vec<Vec<u8>> {
-        HELD_BACK.set(Some(Vec::new()));
+    /// Calls `work` and returns what it leads to saying on this thread, which isn't passed on.
+    pub(crate) fn keeping_back(work: impl FnOnce()) -> Remarks {
+        let outer = KEPT_BACK.replace(Some(Remarks::default()));
         work();
-        HELD_BACK.take().unwrap_or_default()
+        KEPT_BACK.replace(outer).unwrap_or_default()
     }
 
     /// Prettier's `loadConfig`. `None` if the file has no configuration, like most `package.json` files.
@@ -1598,10 +1643,11 @@ impl<'c> Configs<'c> {
 
     /// Records that the oxfmt config at `used` won over the Prettier config `ignored` in the same directory.
     fn note_ignored(&self, used: &[u8], ignored: &[u8]) {
-        self.note.get_or_init(|| {
-            let used = paths::relative(&self.environment.cwd, used);
-            let end = b" is ignored. Use --config to pick it.";
-            [b"Using ", &used[..], b". ", ignored, end].concat()
+        let used = paths::relative(&self.environment.cwd, used);
+        let end = b" is ignored. Use --config to pick it.";
+        self.remark(Remarks {
+            note: Some([b"Using ", &used[..], b". ", ignored, end].concat()),
+            ..Default::default()
         });
     }
 
@@ -1992,27 +2038,32 @@ impl<'c> Configs<'c> {
         self.options_of(scope, Some(path))
     }
 
-    /// [`Configs::options_for`], which resolves the options that many files share once for `known`.
+    /// [`Configs::options_for`], which resolves the options that many files share once for `known`. What there is to
+    /// say about the options is returned for every file that has them, and not passed on: which of the files a thread
+    /// comes by first is a matter of chance.
     pub(crate) fn options_for_one_of_many(
         &self,
         known: &mut KnownOptions,
         scope: &Scope,
         path: &[u8],
-    ) -> Result<Resolved, Fatal> {
-        let Some(key) = self.options_key(scope, path) else {
-            return self.options_for(scope, path);
-        };
-        if let Some((_, resolved)) = known.0.iter().find(|it| it.0 == key) {
+    ) -> (Result<Resolved, Fatal>, Option<Arc<Remarks>>) {
+        let key = self.options_key(scope, path);
+        if let Some((_, resolved, remarks)) = known.0.iter().find(|it| Some(it.0) == key) {
             let mut resolved = resolved.clone();
             let _ = resolved.options.set(b"filepath", path);
-            return Ok(resolved);
+            return (Ok(resolved), remarks.clone());
         }
-        let resolved = self.options_for(scope, path)?;
+        let mut resolved = Err(Fatal(Vec::new()));
+        let remarks = Configs::keeping_back(|| resolved = self.options_for(scope, path));
+        let remarks = (!remarks.is_empty()).then(|| Arc::new(remarks));
         // They are looked through one by one.
-        if !resolved.depends_on_directory && known.0.len() < 32 {
-            known.0.push((key, resolved.clone()));
+        if let (Some(key), Ok(resolved)) = (key, &resolved)
+            && !resolved.depends_on_directory
+            && known.0.len() < 32
+        {
+            known.0.push((key, resolved.clone(), remarks.clone()));
         }
-        Ok(resolved)
+        (resolved, remarks)
     }
 
     /// `None` if the options depend on more than a key has.
@@ -2252,10 +2303,10 @@ impl<'c> Configs<'c> {
                 }
                 name if is_tailwind(name) && value != b"false" => {
                     resolved.has_unsupported_option = true;
-                    let mut unsupported = self.unsupported_options.lock();
-                    if !unsupported.iter().any(|it| it == name) {
-                        unsupported.push(name.to_vec());
-                    }
+                    self.remark(Remarks {
+                        unsupported_options: vec![name.to_vec()],
+                        ..Default::default()
+                    });
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
                     return Err(Fatal(match not_an_integer(name, value, false) {

@@ -9812,6 +9812,80 @@ try {
       }
     });
 
+    /** What `bun fmt --check` says in `dir` on one thread, after it has said the same on other numbers of threads. */
+    async function saysOnAnyNumberOfThreads(dir: string, args: string[] = []) {
+      const run = async (threads: string[]) => {
+        await using proc = spawn({
+          cmd: [...command, "--check", ...args, ...threads],
+          env,
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+      };
+      const one = await run(["--threads=1"]);
+      for (const threads of [["--threads=2"], ["--threads=5"], ["--threads=13"], [], [], [], []]) {
+        expect(await run(threads)).toEqual(one);
+      }
+      return one;
+    }
+
+    /** Directories with nothing to say about them, which keep the threads of a search busy. */
+    const plainDirectories = Object.fromEntries(
+      Array.from({ length: 300 }, (_, i) => [`plain${i >> 1}/f${i}.ts`, formatted]),
+    );
+
+    test("of two configuration files that cannot be read, the one closer to the start of the search is the error", async () => {
+      using dir = tempDir("bun-format", {
+        ".prettierrc": "{}",
+        "top/.prettierrc": "{ semi: tru",
+        "top/a.ts": formatted,
+        ...plainDirectories,
+        "deep/b/c/d/.prettierrc": "{ tabWidth: [[[",
+        "deep/b/c/d/a.ts": formatted,
+      });
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir));
+      expect(stderr).toContain("top/.prettierrc");
+      expect(stderr).not.toContain("deep");
+      expect(exitCode).toBe(2);
+    });
+
+    test("of two directories with a configuration file of each tool, the one closer to the start of the search is noted", async () => {
+      using dir = tempDir("bun-format", {
+        "top/.oxfmtrc.json": "{}\n",
+        "top/.prettierrc": "{}\n",
+        "top/a.ts": formatted,
+        ...plainDirectories,
+        "deep/b/c/d/.oxfmtrc.json": "{}\n",
+        "deep/b/c/d/.prettierrc": "{}\n",
+        "deep/b/c/d/a.ts": formatted,
+      });
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir));
+      expect(stderr).toContain("note: Using top/.oxfmtrc.json. .prettierrc is ignored.");
+      expect(exitCode).toBe(0);
+    });
+
+    test("warnings about the options of files come in the order of the files", async () => {
+      const files: Record<string, string> = { ".prettierrc": "{}" };
+      for (let i = 10; i < 22; i++) {
+        files[`d${i}/.prettierrc`] = JSON.stringify({
+          [`unknownOption${i}`]: i,
+          [i % 2 ? "sortTailwindcss" : "experimentalTailwindcss"]: true,
+        });
+        // The largest files, which are formatted first, are in the last directories.
+        for (let j = 0; j < 12; j++) files[`d${i}/f${j}.ts`] = formatted.repeat(1 + ((i * j) % 50) + (j ? 0 : i * 30));
+      }
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["**/*.ts"]);
+      expect(stderr.split("\n").filter(line => line.includes("unknownOption"))).toEqual(
+        Array.from({ length: 12 }, (_, i) => `warn: Ignored unknown option { unknownOption${i + 10}: ${i + 10} }.`),
+      );
+      expect(stderr).toContain("error: experimentalTailwindcss, sortTailwindcss are not supported yet");
+      expect(exitCode).toBe(2);
+    });
+
     test.each([2, 7])("%d threads write in different directories at the same time", async threads => {
       const text = ugly.repeat(50);
       const files: Record<string, string> = {};

@@ -206,7 +206,7 @@ impl Resolver<'_, '_> {
             let hir = self.input.hir;
             let mut reading = FunctionsReadingThis::default();
             for expr in (0..hir.exprs.len() as u32).map(ExprId) {
-                if !matches!(hir[expr].kind, ExprKind::This) {
+                if !matches!(hir[expr].kind, ExprKind::This | ExprKind::Super) {
                     continue;
                 }
                 match self.find_whose_this(expr) {

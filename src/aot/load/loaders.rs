@@ -123,6 +123,16 @@ pub(crate) fn gives_data(loader: Loader) -> bool {
     }
 }
 
+pub(crate) fn is_taken_by_written_type(own: Loader, written: Loader) -> bool {
+    match written {
+        Loader::Json | Loader::Jsonc | Loader::Json5 => {
+            matches!(own, Loader::Json | Loader::Jsonc | Loader::Json5)
+        }
+        Loader::Text => matches!(own, Loader::Text | Loader::File),
+        _ => own == written,
+    }
+}
+
 pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
     matches!(
         loader,

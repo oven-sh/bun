@@ -36,7 +36,7 @@ use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
-use bun_sema::util::{FxHashMap, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram, fit_threads_to_sources,
@@ -92,8 +92,14 @@ fn warn_of_files_left_out_by_patterns(
         b"Write the extension (`./${lang}.json`) or `with: { type: \"json\" }` to embed them",
         b"A path that isn't a constant never finds a file whose name begins with a dot. Import it by a constant path",
     ];
-    let left_out = host.files_left_out_by_patterns();
     let files = view.files();
+    let mut left_out = host.files_left_out_by_patterns();
+    if left_out.is_empty() {
+        return;
+    }
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    left_out.retain(|it| !held.contains(&it.path[..]));
     let compiled = files.compiled_files().iter();
     for &file in compiled.filter(|_| !left_out.is_empty()) {
         let (analysis, atoms) = (files.analysis(file), files.atoms());
@@ -113,25 +119,18 @@ fn warn_of_files_left_out_by_patterns(
             .filter(|site| site.kind.loads_module())
         {
             let written = analysis.alternatives_of(&site.specifier).iter();
-            let mut of_site: Vec<(bool, &[u8])> = written
-                .flat_map(left_out_by)
-                .filter(|it| files.by_path.get(&it.path[..]).is_none())
-                .map(|it| (it.needs_extension, &it.path[..]))
-                .collect();
-            of_site.sort_unstable();
-            of_site.dedup();
-            let (with_dot, data): (Vec<&[u8]>, Vec<&[u8]>) = (of_site.into_iter())
-                .map(|(_, path)| path)
-                .partition(|path| bun_paths::basename(path).starts_with(b"."));
-            for (paths, cure) in [data, with_dot].into_iter().zip(CURES) {
-                if paths.is_empty() {
-                    continue;
-                }
-                let spelled = paths.iter().take(NAMES_SPELLED);
-                let spelled: Vec<Box<[u8]>> = spelled.map(|it| host.display_path_of(it)).collect();
+            let by_cure = written.map(left_out_by).flat_map(|of_pattern| {
+                let data = of_pattern.partition_point(|it| !it.begins_with_dot);
+                let (data, with_dot) = of_pattern.split_at(data);
+                [data, with_dot].into_iter().zip(CURES)
+            });
+            for (left_out, cure) in by_cure.filter(|(left_out, _)| !left_out.is_empty()) {
+                let spelled = left_out.iter().take(NAMES_SPELLED);
+                let spelled: Vec<Box<[u8]>> =
+                    spelled.map(|it| host.display_path_of(&it.path)).collect();
                 let mut list = spelled.join(&b", "[..]);
-                if paths.len() > spelled.len() {
-                    let more = format!(" and {} more", paths.len() - spelled.len());
+                if left_out.len() > spelled.len() {
+                    let more = format!(" and {} more", left_out.len() - spelled.len());
                     list.extend_from_slice(more.as_bytes());
                 }
                 let node = NodeData::Expr(site.specifier_node);

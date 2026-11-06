@@ -66,7 +66,7 @@ test("what a request and a response are while a name lies on Object.prototype", 
   const lines = [];
   let laid = null,
     wasRead = false,
-    hostHeaderAsked = 0,
+    whoAsked = "nobody",
     finish;
   const lay = (name, way) => {
     const value = values[name]();
@@ -112,11 +112,11 @@ test("what a request and a response are while a name lies on Object.prototype", 
       );
     });
   });
-  // The road that reads everything asks the server for this name once a request. The short one never does: the line below says which was taken.
+  // Both roads ask the server for this name once a request, each from its own place in the library. Who asked says which road was taken.
   Object.defineProperty(server, "requireHostHeader", {
     configurable: true,
     get() {
-      hostHeaderAsked++;
+      whoAsked = new Error().stack.split("\n")[2] ?? "";
       return true;
     },
   });
@@ -124,17 +124,18 @@ test("what a request and a response are while a name lies on Object.prototype", 
   const client = net.connect(server.address().port, "127.0.0.1");
   await new Promise(resolve => client.once("connect", resolve));
   client.on("data", () => {});
+  const askers = [];
   const ask = async (label, name, way) => {
     called = [];
     wasRead = false;
-    hostHeaderAsked = 0;
+    whoAsked = "nobody";
     const seen = await new Promise(resolve => {
       finish = resolve;
       client.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 2\r\n\r\nqq");
       if (name !== null) lay(name, way);
     });
     lines.push(`${label}: ${seen}`);
-    lines.push(`road: ${label}: ${hostHeaderAsked === 0 ? "short" : "full"}`);
+    askers.push([label, whoAsked]);
   };
   await ask("nothing is laid", null, "");
   await ask("nothing is laid, once more", null, "");
@@ -144,5 +145,8 @@ test("what a request and a response are while a name lies on Object.prototype", 
   await ask("nothing is laid again", null, "");
   client.destroy();
   await new Promise(resolve => server.close(resolve));
+  // Once a name was laid on Object.prototype the short road is taken no more: the last request went the road that reads everything.
+  const full = askers.at(-1)[1];
+  for (const [label, asker] of askers) lines.push(`road: ${label}: ${asker === full ? "full" : "short"}`);
   console.log(lines.join("\n"));
 });

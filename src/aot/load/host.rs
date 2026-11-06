@@ -52,9 +52,9 @@ use crate::load::externals::{contains, is_external};
 use crate::load::import_meta_glob;
 use crate::load::is_host_path;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, gives_data, host_loader_kind, loader_by_name, loader_by_path,
-    loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
-    to_host_loader_of_attribute,
+    BY_NAME, HostLoaderKind, gives_data, host_loader_kind, is_taken_by_written_type,
+    loader_by_name, loader_by_path, loader_named_by_path, parses_text_as_data, script_kind_of,
+    to_host_loader, to_host_loader_of_attribute,
 };
 use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
@@ -150,6 +150,7 @@ pub(crate) struct FileLeftOutByPattern {
     pub folder_of_text: Vec<u8>,
     pub start: Vec<u8>,
     pub end: Vec<u8>,
+    pub begins_with_dot: bool,
     pub needs_extension: bool,
     pub path: Vec<u8>,
 }
@@ -1137,7 +1138,8 @@ impl CodeHost for LoadHost<'_> {
         !is_host_path(path)
             && !self.is_read_by_plugin(path)
             && gives_data(loader)
-            && type_attribute.and_then(Loader::from_string) != Some(loader)
+            && !(type_attribute.and_then(Loader::from_string))
+                .is_some_and(|written| is_taken_by_written_type(loader, written))
     }
 
     fn note_file_left_out(
@@ -1152,6 +1154,7 @@ impl CodeHost for LoadHost<'_> {
                 folder_of_text: request.site.folder.to_vec(),
                 start: request.prefix.to_vec(),
                 end: request.suffix.to_vec(),
+                begins_with_dot: bun_paths::basename(path).starts_with(b"."),
                 needs_extension,
                 path: path.to_vec(),
             });

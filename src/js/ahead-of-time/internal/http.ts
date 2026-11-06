@@ -79,6 +79,7 @@ const requestRoad: {
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
   beginDump?: (request: $Node.IncomingMessage) => boolean;
+  readsUnseen?: (request: $Node.IncomingMessage) => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
 } = {};
 const responseRoad: {

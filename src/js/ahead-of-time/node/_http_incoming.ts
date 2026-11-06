@@ -259,7 +259,7 @@ function IncomingMessage(
     this[noBodySymbol] = hasNoBody;
     this.socket = nativeSocket;
     this.client = nativeSocket;
-    this.upgrade = false;
+    this.upgrade = null;
     this._events = events;
     this._readableState = state;
     this[kShapeMode] = true;
@@ -1715,6 +1715,11 @@ function endUnseen(req: $Node.IncomingMessage): void {
   req._readableState[kState] = kFlagsClosed | kCloseEmitted;
 }
 
+// Whether a read of a field of the request runs no code of the program.
+function readsUnseen(req: $Node.IncomingMessage): boolean {
+  return IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(req, IncomingMessage) ? true : false;
+}
+
 http.requestRoad.endsUnseen = endsUnseen;
 http.requestRoad.endUnseen = endUnseen;
 http.requestRoad.beginUnseenDump = beginUnseenDump;
@@ -1723,6 +1728,7 @@ http.requestRoad.continueDump = continueDump;
 http.requestRoad.queueDump = queueDump;
 http.requestRoad.mayDumpInPlace = mayDumpInPlace;
 http.requestRoad.beginDump = beginDump;
+http.requestRoad.readsUnseen = readsUnseen;
 
 function onError(self: $Node.IncomingMessage, error: Error | null | undefined, cb: $Node.ErrorCallback) {
   // This is to keep backward compatible behavior.

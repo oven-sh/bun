@@ -273,6 +273,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             && name_prefix.is_empty()
             && (bun_paths::is_absolute(written) || !names_folder(written))
             && is_inside(folder_of_text, strings::without_trailing_slash(root))
+            && !is_in_node_modules(&self.resolver.host.realpath(folder_of_text))
     }
 
     fn lies_in_own_package(&self, root: &[u8]) -> bool {

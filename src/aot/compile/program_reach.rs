@@ -1064,7 +1064,7 @@ impl<'a, 's> FileScan<'a, 's> {
             }
             (None, _) => return false,
         }
-        interests.push(Interest::Export(module, known::then));
+        interests.push(Interest::CalledExport(module, known::then));
         true
     }
 

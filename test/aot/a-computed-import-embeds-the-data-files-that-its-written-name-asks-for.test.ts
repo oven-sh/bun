@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, test } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -32,10 +32,15 @@ const programs = {
   "an-alias-of-the-own-folder": programOf(`require("./src/by-alias.cjs")(name)`),
   "nothing-but-an-end": programOf(`require("./" + name + ".json")`),
   "nothing-but-a-type": programOf(`import("./" + name, { with: { type: "json" } })`),
+  "nothing-but-the-type-of-text": programOf(`import("./" + name, { with: { type: "text" } })`),
+  "nothing-beside-a-path-with-a-type": programOf(`require("./typed.cjs").load(name)`),
   "a-folder-given-to-create-require": programOf(
     `require("node:module").createRequire(__dirname + "/locales/")("./" + name)`,
   ),
   "its-own-folder-through-two-dots": programOf(`require("./locales/index.cjs")(name)`),
+  "nothing-in-an-installed-package": programOf(`require("installed")(name)`),
+  "nothing-in-a-package-of-the-workspace": programOf(`require("linked")(name)`),
+  "nothing-beside-a-file-whose-type-alone-is-imported": programOf(`require("./typed.ts").load(name)`),
   "a-scope-of-packages": programOf(`require("@acme/app")(name)`),
   "nothing-beside-many": programOf(`require("./" + name)`),
   "nothing-beside-a-file-imported-by-name": programOf(`(require("./table.json"), require("./" + name))`),
@@ -57,20 +62,28 @@ const data = [
   "locales/notes.txt",
   "locales/page.html",
   "node_modules/@acme/tables/data.json",
+  "node_modules/installed/node_modules/inner/table.json",
+  "node_modules/installed/rows/table.json",
+  "node_modules/installed/table.json",
+  "node_modules/sibling/table.json",
   "node_modules/tables/data/en.json",
   "notes.txt",
+  "packages/linked/table.json",
   "page.html",
   "run.log",
   "src/notes.txt",
   "table.json",
 ];
-const filesOf = (owner: string) => ({
-  ...Object.fromEntries(
-    data.map(file => {
+const dataOfSomePrograms = ["conf.jsonc", "query.sql"];
+const contentsOf = (owner: string, files: string[]) =>
+  Object.fromEntries(
+    files.map(file => {
       const said = `made-up mark of ${owner}: ${file}`;
-      return [`${owner}/${file}`, file.endsWith(".json") ? JSON.stringify({ said }) : said + "\n"];
+      return [`${owner}/${file}`, /\.jsonc?$/.test(file) ? JSON.stringify({ said }) : said + "\n"];
     }),
-  ),
+  );
+const filesOf = (owner: string) => ({
+  ...contentsOf(owner, data),
   [`${owner}/part.cjs`]: `exports.said = "made-up mark of ${owner}: part.cjs";\n`,
   [`${owner}/src/part.cjs`]: `exports.said = "made-up mark of ${owner}: src/part.cjs";\n`,
   [`${owner}/node_modules/tables/package.json`]: JSON.stringify({
@@ -80,6 +93,17 @@ const filesOf = (owner: string) => ({
   [`${owner}/node_modules/@acme/tables/package.json`]: JSON.stringify({ name: "@acme/tables", main: "data.json" }),
   [`${owner}/node_modules/@acme/app/package.json`]: JSON.stringify({ name: "@acme/app", main: "index.js" }),
   [`${owner}/node_modules/@acme/app/index.js`]: `module.exports = name => require("@acme/" + name);\n`,
+  ...Object.fromEntries(
+    [
+      "node_modules/installed",
+      "node_modules/installed/node_modules/inner",
+      "node_modules/sibling",
+      "packages/linked",
+    ].flatMap(folder => [
+      [`${owner}/${folder}/package.json`, JSON.stringify({ name: folder.split("/").at(-1), main: "index.cjs" })],
+      [`${owner}/${folder}/index.cjs`, `module.exports = name => require("./" + name);\n`],
+    ]),
+  ),
   [`${owner}/.hidden.cjs`]: `exports.said = "made-up mark of ${owner}: .hidden.cjs";\n`,
 });
 
@@ -99,6 +123,13 @@ const projectOf = (program: string, text: string) => ({
     "tool/.hidden.first.cjs": "",
     "tool/.hidden.first.json": "{}",
   }),
+  ...(program === "nothing-beside-a-file-whose-type-alone-is-imported" && {
+    "tool/typed.ts": `import type table from "./table.json";\nexport const load = (name: string): typeof table => require("./" + name);\n`,
+  }),
+  ...(program.startsWith("nothing-but-") && program.includes("-type") && contentsOf("tool", dataOfSomePrograms)),
+  ...(program === "nothing-beside-a-path-with-a-type" && {
+    "tool/typed.cjs": `exports.load = name => import("./" + name, { with: { type: "json" } });\nexports.other = name => import("./" + name);\n`,
+  }),
   ...(program === "nothing-beside-many" &&
     Object.fromEntries(["a", "b", "c", "d", "e", "f"].map(name => [`tool/many/${name}.json`, "{}"]))),
   "empty/nothing.txt": "",
@@ -113,6 +144,10 @@ const dir = tempDir(
 );
 afterAll(() => dir[Symbol.dispose]());
 const directory = String(dir);
+for (const owner of ["tool", "stranger"]) {
+  const project = join(directory, "nothing-in-a-package-of-the-workspace", owner);
+  symlinkSync(join(project, "packages/linked"), join(project, "node_modules/linked"), "junction");
+}
 
 const forms = { closed: [], withCodeFromDisk: ["--aot-allow-code-from-disk"] };
 type Form = keyof typeof forms;
@@ -130,7 +165,7 @@ function build(program: Program, form: Form = "closed") {
 }
 const dataHeldBy = (executable: string) => {
   const bytes = readFileSync(executable);
-  return data.filter(file => bytes.includes(`made-up mark of tool: ${file}`));
+  return [...data, ...dataOfSomePrograms].sort().filter(file => bytes.includes(`made-up mark of tool: ${file}`));
 };
 async function answersIn(program: Program, folder: string, command: string[]) {
   const { stdout } = await run([...command, "and catches"], join(directory, program, folder), bunEnv);
@@ -162,7 +197,16 @@ test.each([
   ["a-pattern-of-exports", ["en"], ["node_modules/tables/data/en.json"]],
   ["the-start-of-the-name-of-a-file", ["en", "en.json"], ["lang-en.json"]],
   ["nothing-but-an-end", ["table", "locales/en"], ["lang-en.json", "locales/en.json", "table.json"]],
-  ["nothing-but-a-type", ["table.json", "locales/en.json"], ["lang-en.json", "locales/en.json", "table.json"]],
+  [
+    "nothing-but-a-type",
+    ["table.json", "locales/en.json", "conf.jsonc"],
+    ["conf.jsonc", "lang-en.json", "locales/en.json", "table.json"],
+  ],
+  [
+    "nothing-but-the-type-of-text",
+    ["query.sql", "locales/notes.txt"],
+    ["id.pem", "locales/notes.txt", "notes.txt", "query.sql", "run.log", "src/notes.txt"],
+  ],
   [
     "its-own-folder-through-two-dots",
     ["en", "en.json"],
@@ -239,7 +283,41 @@ test("a start that names a scope of packages, written in one of them: the data f
   }
 }, 600_000);
 
+test("a start that names nothing, written in an installed package: the code and the data of that package and of no other", async () => {
+  const program = "nothing-in-an-installed-package";
+  for (const form of ["closed", "withCodeFromDisk"] as const) {
+    const { executable, said } = await build(program, form);
+    const held = ["node_modules/installed/rows/table.json", "node_modules/installed/table.json"];
+    expect({ form, held: dataHeldBy(executable) }).toEqual({ form, held });
+    expect(said).toContain(`These aren't code: node_modules/installed/package.json, ${held.join(", ")}\n`);
+    expect(said).not.toContain("TS100089");
+    for (const name of ["table", "rows/table.json"]) {
+      const plain = await plainAnswer(program, name);
+      expect(plain).toStartWith("made-up mark of tool: node_modules/installed/");
+      for (const folder of ["tool", "stranger", "empty"])
+        expect(await answersIn(program, folder, [executable, name])).toBe(plain);
+    }
+  }
+}, 600_000);
+
+test("a start that names nothing, written in a package of the workspace that is linked into node_modules: no data file", async () => {
+  const program = "nothing-in-a-package-of-the-workspace";
+  expect(await plainAnswer(program, "table")).toBe("made-up mark of tool: packages/linked/table.json");
+  const { executable, said } = await build(program);
+  expect(dataHeldBy(executable)).toEqual([]);
+  expect(said).toContain(
+    "The executable doesn't embed packages/linked/package.json, packages/linked/table.json, which",
+  );
+  for (const folder of ["tool", "stranger", "empty"])
+    expect(await answersIn(program, folder, [executable, "table"])).toBe("threw MODULE_NOT_FOUND");
+}, 600_000);
+
 test.each([
+  [
+    "nothing-beside-a-file-whose-type-alone-is-imported",
+    "lang-en.json, locales/en.json, table.json, deploy.sh, guide.md and 9 more, which",
+    "Write the extension",
+  ],
   [
     "nothing",
     "lang-en.json, locales/en.json, table.json, deploy.sh, guide.md and 9 more, which",
@@ -253,6 +331,11 @@ test.each([
   [
     "nothing-beside-a-file-imported-by-name",
     "lang-en.json, locales/en.json, deploy.sh, guide.md, id.pem and 8 more, which",
+    "Write the extension",
+  ],
+  [
+    "nothing-beside-a-path-with-a-type",
+    "deploy.sh, guide.md, id.pem, locales/deploy.sh, locales/guide.md and 6 more, which",
     "Write the extension",
   ],
   ["the-start-of-a-name-with-a-dot", ".hidden.cjs, which", "begins with a dot"],

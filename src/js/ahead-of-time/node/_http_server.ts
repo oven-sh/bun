@@ -206,6 +206,7 @@ const continueDump = http.requestRoad.continueDump!;
 const queueDump = http.requestRoad.queueDump!;
 const mayDumpInPlace = http.requestRoad.mayDumpInPlace!;
 const beginDump = http.requestRoad.beginDump!;
+const requestReadsUnseen = http.requestRoad.readsUnseen!;
 const makeExchange = http.responseRoad.makeExchange!;
 const storeHeader = http.responseRoad.storeHeader!;
 const settleLeniency = http.responseRoad.settleLeniency!;
@@ -1326,15 +1327,9 @@ Server.prototype[kRealListen] = function (
           socket.writableHighWaterMark ?? getDefaultHighWaterMark(),
           server.rejectNonStandardBodyWrites,
           server.keepAliveTimeout,
-          method !== "HEAD",
+          undefined,
         );
         http_res[kSocket] = null;
-        if (isAncientHTTP) {
-          http_res.useChunkedEncodingByDefault = chunkExpression.test(
-            (http_req.headers?.te as string | undefined) ?? "",
-          );
-          http_res.shouldKeepAlive = false;
-        }
       } else {
         http_res = new ResponseClass(http_req, {
           [kHandle]: handle,
@@ -1474,10 +1469,7 @@ Server.prototype[kRealListen] = function (
       let rejectMissingHost = false;
       let reachedRequestsLimit = false;
       // Node's parserOnIncoming counts requests and routes Expect for HTTP/1.1 only.
-      const isHttp11 =
-        RequestClass === IncomingMessage
-          ? !isAncientHTTP
-          : http_req.httpVersionMajor === 1 && http_req.httpVersionMinor === 1;
+      const isHttp11 = isOfHttp11(http_req);
       if (!is_upgrade) {
         const maxRequestsPerSocket = server.maxRequestsPerSocket;
         if (
@@ -1759,6 +1751,7 @@ function onNodeHTTPRequest(
   let parser = socket.parser;
   if (parser == null) parser = socket.parser = createServerParserShim(socket);
   parser.incoming = req;
+  const asksRequest = !requestReadsUnseen(req);
 
   const res: $Node.ServerResponse = new ServerResponse(
     req,
@@ -1768,7 +1761,7 @@ function onNodeHTTPRequest(
     writableMark,
     server.rejectNonStandardBodyWrites,
     server.keepAliveTimeout,
-    method !== "HEAD",
+    asksRequest ? undefined : method !== "HEAD",
   );
   if (hasBody) {
     const onData = onBodyData.bind(req);
@@ -1776,6 +1769,7 @@ function onNodeHTTPRequest(
     handle.ondata = onData;
   } else handle.onabort = socket[kBoundOnAbort]!;
   socket[kRequest] = req;
+  req.upgrade = false;
   socket._httpMessage = res;
   socket[kCloseCallback] = onServerResponseClose;
   const exchange = res.$exchange;
@@ -1787,11 +1781,19 @@ function onNodeHTTPRequest(
     res.emit("socket", socket);
   }
 
+  // The other text asks these here. Nothing hangs on the answers: the server has no limit of requests, and the request has a Host and no Expect.
+  if (asksRequest) isOfHttp11(req);
+  void server.requireHostHeader;
+
   try {
     const listener = server.$requestListener;
-    if (listener !== undefined && server.emit === eventEmitterEmit && server._events!.request === listener)
+    // Read once: an accessor may give another function at the next read.
+    const emitOfServer = server.emit;
+    if (listener !== undefined && emitOfServer === eventEmitterEmit && server._events!.request === listener)
       listener.$call(server, req, res);
-    else server.emit("request", req, res);
+    else if ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(server, "emit")) || typeof emitOfServer !== "function")
+      server.emit("request", req, res);
+    else emitOfServer.$call(server, "request", req, res);
   } catch (error) {
     if ((exchange.flags & ExchangeFlags.holds_chunk) !== 0) sendHeldChunk(res, exchange);
     throw error;
@@ -3315,7 +3317,7 @@ function ServerResponse(
     this.strictContentLength = false;
     this[kBytesWritten] = 0;
     this._contentLength = null;
-    this._hasBody = nativeHasBody!;
+    this._hasBody = true;
     this._trailer = "";
     this[kNeedDrain] = false;
     this.finished = false;
@@ -3341,6 +3343,8 @@ function ServerResponse(
     this[headerStateSymbol] = NodeHTTPHeaderState.none;
     this[kPendingCallbacks] = noCallbacks;
     this.finished = false;
+    if (nativeHasBody === undefined) takeMethodAndVersion(this, req);
+    else if (!nativeHasBody) this._hasBody = false;
     this[kHandle] = nativeHandle;
     this.statusCode = 200;
     this.statusMessage = undefined;
@@ -3388,7 +3392,7 @@ function ServerResponse(
   this.strictContentLength = false;
   this[kBytesWritten] = 0;
   this._contentLength = null;
-  this._hasBody = req.method !== "HEAD";
+  this._hasBody = true;
   this._trailer = "";
   this[kNeedDrain] = false;
   this.finished = false;
@@ -3404,8 +3408,7 @@ function ServerResponse(
   this._onPendingData = nop;
   this[kErrored] = null;
   this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
-  const rejectsByName = options?.rejectNonStandardBodyWrites;
-  this[kRejectNonStandardBodyWrites] = options?.[kRejectNonStandardBodyWrites] ?? rejectsByName ?? false;
+  this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
   this[kLenientValidation] = undefined;
   this.$exchange = exchange;
   this.useChunkedEncodingByDefault = true;
@@ -3416,16 +3419,36 @@ function ServerResponse(
   this[kPendingCallbacks] = [];
   this.finished = false;
 
+  if (req.method === "HEAD") this._hasBody = false;
+
   if (req.httpVersionMajor! < 1 || req.httpVersionMinor! < 1) {
     this.useChunkedEncodingByDefault = chunkExpression.test((req.headers?.te as string | undefined) ?? "");
     this.shouldKeepAlive = false;
   }
 
-  this[kHandle] = (options ? options[kHandle] : undefined) || req[kHandle];
+  if (options) {
+    this[kHandle] = options[kHandle] || req[kHandle];
+    const rejectNonStandardBodyWrites = options[kRejectNonStandardBodyWrites];
+    if (rejectNonStandardBodyWrites !== undefined) this[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
+  } else {
+    this[kHandle] = req[kHandle];
+  }
   this.statusCode = 200;
   this.statusMessage = undefined;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+
+// What the other text asks of every request, in its order.
+function takeMethodAndVersion(res: $Node.ServerResponse, req: $Node.IncomingMessage): void {
+  if (req.method === "HEAD") res._hasBody = false;
+  if (req.httpVersionMajor! < 1 || req.httpVersionMinor! < 1) {
+    res.useChunkedEncodingByDefault = chunkExpression.test((req.headers?.te as string | undefined) ?? "");
+    res.shouldKeepAlive = false;
+  }
+}
+function isOfHttp11(req: $Node.IncomingMessage): boolean {
+  return req.httpVersionMajor === 1 && req.httpVersionMinor === 1;
+}
 
 // A class that extends ServerResponse may have an accessor under any of these names, so each store is made, in this order.
 // Only what `new ServerResponse()` makes has an exchange. An instance of a class below, and an object that ServerResponse is called on, keeps all of its state on itself.
@@ -4372,7 +4395,8 @@ const responseSetHeader = function setHeader(this: $Node.ServerResponse, name: s
   if (!IS_COMPILED_AHEAD_OF_TIME || !isItself || !outgoingSetHeaderIsOurs()) {
     return OutgoingMessagePrototype.setHeader.$call(this, name, value);
   }
-  if (this._header !== null && this._header) throw $ERR_HTTP_HEADERS_SENT("set");
+  const header = this._header;
+  if (header !== null && header) throw $ERR_HTTP_HEADERS_SENT("set");
   if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(this, exchange, name);
   storeHeader(exchange, name, value);
   return this;

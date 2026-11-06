@@ -938,6 +938,35 @@ static void us_internal_iocp_fetch_ready_polls(struct us_loop_t *loop, ULONG max
     loop->current_ready_poll = 0;
 }
 
+/* Long enough for a thread that sleeps to wake up and do a short piece of work. */
+#define LIBUS_POLL_NS 20000
+/* A wait that was over this soon, waking up included, would have been over within LIBUS_POLL_NS without the sleep. */
+#define LIBUS_SHORT_WAIT_NS 30000
+
+/* Instead of sleeping at once, asks for LIBUS_POLL_NS whether a packet or a wake-up has come: an answer from another
+ * thread or process that is on its way is there sooner than this thread would be awake again. Each time nothing
+ * comes, twice as many waits go without. Returns whether there is something, with the packets fetched. */
+static int us_internal_iocp_poll(struct us_loop_t *loop, uint64_t start_ns) {
+    if (loop->polls_to_skip) {
+        loop->polls_to_skip--;
+        return 0;
+    }
+    do {
+        if (__atomic_load_n(&loop->wake_state, __ATOMIC_RELAXED) != LIBUS_WAKE_NOTIFIED) {
+            us_internal_iocp_fetch_ready_polls(loop, LIBUS_FIRST_READY_POLLS, 0);
+            if (loop->num_ready_polls == 0) {
+                YieldProcessor();
+                continue;
+            }
+        }
+        loop->polls_skipped_last = 0;
+        return 1;
+    } while (us_internal_monotonic_ns() - start_ns < LIBUS_POLL_NS);
+    loop->polls_skipped_last = loop->polls_skipped_last < 127 ? loop->polls_skipped_last * 2 + 1 : 255;
+    loop->polls_to_skip = loop->polls_skipped_last;
+    return 0;
+}
+
 void us_loop_free(struct us_loop_t *loop) {
     AcquireSRWLockExclusive(&us_internal_resume_lock);
     if (loop->resume_prev) {
@@ -1050,6 +1079,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     if (has_ready_polls || loop->ready_head || loop->ready_now) {
         timeout_100ns = 0;
     }
+    const uint64_t wait_start_ns = timeout_100ns != 0 ? us_internal_monotonic_ns() : 0;
+    if (wait_start_ns && loop->last_wait_was_short && us_internal_iocp_poll(loop, wait_start_ns)) {
+        timeout_100ns = 0;
+    }
     if (timeout_100ns != 0) {
         unsigned int expected = LIBUS_WAKE_AWAKE;
         if (!__atomic_compare_exchange_n(&loop->wake_state, &expected, LIBUS_WAKE_SLEEPING, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
@@ -1072,9 +1105,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     if (will_idle_inside_event_loop)
         us_internal_loop_before_wait(loop, now_ns, &wait_state);
 
-    /* Fetch ready polls */
-    if (!has_ready_polls) {
+    /* Fetch ready polls, unless there are some left or us_internal_iocp_poll() did. */
+    if (loop->current_ready_poll == loop->num_ready_polls) {
         us_internal_iocp_fetch_ready_polls(loop, LIBUS_FIRST_READY_POLLS, timeout_100ns);
+    }
+    if (wait_start_ns) {
+        loop->last_wait_was_short = us_internal_monotonic_ns() - wait_start_ns < LIBUS_SHORT_WAIT_NS;
     }
 
     if (will_idle_inside_event_loop)

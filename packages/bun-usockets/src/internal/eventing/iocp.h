@@ -97,6 +97,9 @@ struct us_loop_t {
     /* This tick sent again a socket poll that was cancelled to ask for more. */
     int has_resent_polls;
 
+    /* See us_internal_iocp_poll(). */
+    unsigned char last_wait_was_short, polls_to_skip, polls_skipped_last;
+
     /* A port wait is only as precise as the system clock interrupt (15.6 ms). A finite timeout is
      * a high resolution timer whose expiry arrives as a packet. NULL if the system has no such timer. */
     HANDLE timer;

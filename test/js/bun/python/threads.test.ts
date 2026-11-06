@@ -595,6 +595,228 @@ print(got)
   expect(exitCode).toBe(0);
 });
 
+it("a thread that ran Python in a realm that is gone starts it again with a state of its own", async () => {
+  // The states of the threads go with the last runtime of the VM. Here strings get their memory before Python starts again.
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "lib.py": `
+import threading, time
+
+def look():
+    time.sleep(0.001)
+    lock = threading.RLock()
+    with lock, lock:
+        return threading.current_thread() is threading.main_thread()
+`,
+      "main.js": `
+let realm = new ShadowRealm();
+console.log("in the realm:", (await realm.importValue("./lib.py", "look"))());
+realm = null;
+for (let i = 0; i < 5; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+const strings = [];
+for (let round = 0; round < 512; round++) {
+  for (let length = 8; length <= 1024; length += 8) strings.push("a".repeat(length));
+}
+const { look } = await import("./lib.py");
+console.log("behind it:", look());
+console.log("strings that have changed:", strings.filter(string => string !== "a".repeat(string.length)).length);
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("in the realm: true\nbehind it: true\nstrings that have changed: 0\n");
+  expect(exitCode).toBe(0);
+});
+
+it("the signals of a realm that is gone are for the next that asks", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "lib.py": `
+import os, signal
+
+def look():
+    seen = []
+    before = signal.signal(signal.SIGUSR1, lambda number, frame: seen.append(number))
+    os.kill(os.getpid(), signal.SIGUSR1)
+    for _ in range(1000000):
+        if seen:
+            break
+    # (Before the handler is taken away again: that looks at what has arrived, too.)
+    result = seen == [signal.SIGUSR1]
+    signal.signal(signal.SIGUSR1, before)
+    return result
+`,
+      "main.js": `
+let realm = new ShadowRealm();
+console.log("in the realm:", (await realm.importValue("./lib.py", "look"))());
+realm = null;
+for (let i = 0; i < 5; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+const { look } = await import("./lib.py");
+console.log("behind it:", look());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("in the realm: true\nbehind it: true\n");
+  expect(exitCode).toBe(0);
+});
+
+it("faulthandler lets go of a realm that is gone", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "lib.py": `
+import faulthandler
+
+def enable():
+    faulthandler.enable()
+    return faulthandler.is_enabled()
+
+def is_enabled():
+    return faulthandler.is_enabled()
+`,
+      "main.js": `
+let realm = new ShadowRealm();
+const weak = new WeakRef(realm);
+console.log("in the realm:", (await realm.importValue("./lib.py", "enable"))());
+realm = null;
+for (let i = 0; i < 50 && (i < 5 || weak.deref()); i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.log("the realm is gone:", !weak.deref());
+const { is_enabled } = await import("./lib.py");
+console.log("behind it:", is_enabled());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("in the realm: true\nthe realm is gone: true\nbehind it: false\n");
+  expect(exitCode).toBe(0);
+});
+
+it("the lock of imports that a realm that is gone has left held is free for the next", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "first.py": `
+import _imp, threading
+
+def take():
+    thread = threading.Thread(target=lambda: None)
+    thread.start()
+    thread.join()
+    _imp.acquire_lock()
+    return _imp.lock_held()
+`,
+      "second.py": `
+import _imp, threading
+
+def look():
+    held = _imp.lock_held()
+    imported = []
+    def work():
+        import colorsys  # Not imported so far.
+        imported.append(colorsys.__name__)
+    thread = threading.Thread(target=work, daemon=True)
+    thread.start()
+    thread.join(30)
+    return "held: %s; a thread has imported: %s" % (held, imported)
+`,
+      "main.js": `
+let realm = new ShadowRealm();
+console.log("held in the realm:", (await realm.importValue("./first.py", "take"))());
+realm = null;
+for (let i = 0; i < 5; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.log((await new ShadowRealm().importValue("./second.py", "look"))());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("held in the realm: true\nheld: False; a thread has imported: ['colorsys']\n");
+  expect(exitCode).toBe(0);
+});
+
+it("the main thread is got out of a system call behind a realm that is gone, too", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "first.py": `
+import signal, threading
+
+def run():
+    # It has the signals, and there has been a second thread.
+    signal.signal(signal.SIGUSR1, lambda number, frame: None)
+    thread = threading.Thread(target=lambda: None)
+    thread.start()
+    thread.join()
+    return True
+`,
+      "second.py": `
+import os, signal, threading, time
+
+class Writes:
+    def __init__(self, fd): self.fd = fd
+    def __del__(self): os.write(self.fd, b"x\\n")
+
+def drop(fd):
+    Writes(fd)
+
+def run():
+    # SIGURG is the program's to block. What gets the main thread out of a system call is a signal that is nobody else's.
+    signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGURG])
+    r, w = os.pipe()
+    child = os.posix_spawn("/bin/sh", ["sh", "-c", "read x"], os.environ, file_actions=[(os.POSIX_SPAWN_DUP2, r, 0)])
+    waits = []
+    stop = []
+    def work():
+        while not waits:
+            pass
+        limit = time.monotonic() + 60
+        while not stop:
+            [[i] for i in range(1000)]
+            if time.monotonic() > limit:
+                # So that a run in which the main thread is not got out of the call ends too, and says so.
+                os.kill(child, signal.SIGKILL)
+                break
+    thread = threading.Thread(target=work, daemon=True)
+    thread.start()
+    drop(w)
+    # With reference counts the line is written by now. Here the finalizer is owed by this thread, which hears of it in the middle of a call that cannot be made piece by piece.
+    waits.append(1)
+    pid, status = os.wait()
+    stop.append(1)
+    thread.join()
+    return pid == child and status == 0
+`,
+      "main.js": `
+let realm = new ShadowRealm();
+console.log("the realm has had a thread:", (await realm.importValue("./first.py", "run"))());
+realm = null;
+for (let i = 0; i < 5; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.log("the child has ended:", (await new ShadowRealm().importValue("./second.py", "run"))());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("the realm has had a thread: true\nthe child has ended: true\n");
+  expect(exitCode).toBe(0);
+}, 180_000);
+
 it("JS cannot take away memory that a thread is using", async () => {
   const { stdout, stderr, exitCode } = await run({
     "main.py": `

@@ -1,0 +1,8 @@
+status: 0
+script: cb44b7b88848bccd
+---
+modules that are data only: status 0: main m1 m2
+modules with functions: status 0: main m1 m2
+the object of the program is made before the imports: status 0: main m1 m2
+a module that is data only imports another: status 0: main m1.before m2 m1.after
+the program takes names out of the modules: status 0: main m1 m2

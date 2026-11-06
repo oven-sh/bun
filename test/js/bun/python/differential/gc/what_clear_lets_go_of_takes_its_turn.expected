@@ -1,0 +1,10 @@
+status: 0
+script: a28c7417daccf9de
+---
+both_cleared: p shared q
+both_cleared_and_the_shared_one_made_last: p q shared
+both_dropped: p shared q
+one_dropped_and_one_cleared: p shared q
+two_namespaces: own1 shared own2
+filled_in_another_order_grown_and_cleared: 11 10 9 8 7 6 5 4 3 2 1 0
+a_set_that_has_grown_is_dropped: x in the set y

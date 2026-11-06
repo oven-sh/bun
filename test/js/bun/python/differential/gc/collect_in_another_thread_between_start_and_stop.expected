@@ -1,0 +1,5 @@
+status: 0
+script: 2be1d309d8574d17
+---
+a collection that was asked for: [('start', 'main'), ('stop', 'main')]
+one that nobody has asked for: [('start', 'main'), ('stop', 'main')]

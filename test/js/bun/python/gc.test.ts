@@ -645,3 +645,191 @@ print(orders)
   expect(stdout).toBe("{(3, 2, 1)}\n");
   expect(exitCode).toBe(0);
 });
+
+// Each realm in which Python runs has a runtime of its own, and they share the heap.
+test.concurrent("a collection is counted and told once, whatever another realm has to finalize", async () => {
+  using dir = tempDir("python-gc-realms", {
+    "m.py": `
+import gc
+
+told = []
+class Child:
+    def __del__(self): pass
+class Parent:
+    def __init__(self): self.child = Child()
+    def __del__(self): pass
+def listen():
+    gc.callbacks.append(lambda phase, info: told.append(phase))
+def collections(): return gc.get_stats()[2]["collections"]
+def take():
+    phases = " ".join(told); told.clear(); return phases
+def garbage(n):
+    for i in range(n): Parent()
+def tick():
+    for i in range(100): pass
+`,
+    "main.js": `
+const here = await import("./m.py");
+const realm = new ShadowRealm();
+const garbage = await realm.importValue("./m.py", "garbage"), tickThere = await realm.importValue("./m.py", "tick");
+function settle() { for (let i = 0; i < 3; i++) { Bun.gc(true); here.tick(); tickThere(); } here.take(); }
+here.listen(); settle();
+for (const n of [0, 50]) {
+  garbage(n);
+  const before = here.collections();
+  Bun.gc(true);
+  here.tick();
+  console.log(n, here.collections() - before, here.take());
+  settle();
+}
+`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("0 1 start stop\n50 1 start stop\n");
+  expect(exitCode).toBe(0);
+});
+
+(isWindows ? test.skip : test.concurrent)("a realm with Python that has died and has not been swept yet", async () => {
+  // The first eight global objects of a VM are destroyed in the collection that finds them dead. The ninth lies in a block, which is swept when its memory is wanted.
+  using dir = tempDir("python-gc-dead-realm", {
+    "realm.py": `
+import signal
+
+def install():
+    signal.signal(signal.SIGUSR1, lambda number, frame: None)
+    return "installed"
+`,
+    "m.py": `
+import os, signal
+
+def work(megabytes):
+    # Collections come by themselves. Nothing is swept for the sake of sweeping, and the event loop does not turn.
+    keep = []
+    for _ in range(megabytes * 5 // 2):
+        keep.append([(i, str(i), [i]) for i in range(2000)])
+        if len(keep) > 20:
+            keep.clear()
+    # The signals were the realm's.
+    seen = []
+    signal.signal(signal.SIGUSR1, lambda number, frame: seen.append(number))
+    os.kill(os.getpid(), signal.SIGUSR1)
+    for _ in range(1000000):
+        if seen:
+            break
+    return seen == [signal.SIGUSR1]
+`,
+    "main.js": `
+const realms = [];
+for (let i = 0; i < 9; i++) {
+  const realm = new ShadowRealm();
+  realm.evaluate("1");
+  realms.push(realm);
+}
+async function withRealm() {
+  console.log("the realm:", (await new ShadowRealm().importValue("./realm.py", "install"))());
+}
+await withRealm();
+const { work } = await import("./m.py");
+await new Promise(resolve => setImmediate(resolve));
+console.log("the main realm has the signals:", work(60), realms.length);
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("the realm: installed\nthe main realm has the signals: true 9\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a realm is dropped that still has several objects with finalizers", async () => {
+  using dir = tempDir("python-gc-dropped-realm", {
+    "m.py": `
+import os
+
+kept = []
+class Tells:
+    def __init__(self, name): self.name = name
+    def __del__(self): os.write(1, ("finalized: " + self.name + "\\n").encode())
+def make():
+    kept.append(Tells("the first"))
+    kept.append(Tells("the second"))
+    return len(kept)
+`,
+    "main.js": `
+async function withRealm() {
+  console.log("made:", (await new ShadowRealm().importValue("./m.py", "make"))());
+}
+await withRealm();
+for (let i = 0; i < 6; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.log("done");
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("made: 2\nfinalized: the first\nfinalized: the second\ndone\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a realm dies while the streams of another are flushed", async () => {
+  // The host has Python's standard streams flushed before it writes, runtime by runtime. To flush is to run code.
+  using dir = tempDir("python-gc-realm-dies-in-flush", {
+    "m.py": `
+import gc, sys
+
+original = sys.stdout.flush
+calls = []
+def flush():
+    calls.append(gc.collect())
+    return original()
+def arm():
+    sys.stdout.flush = flush
+    sys.stdout.write("pending; ")
+def report():
+    return len(calls) > 0
+`,
+    "realm.py": `
+def hello():
+    return "hello"
+`,
+    "main.js": `
+const { arm, report } = await import("./m.py");
+async function withRealm() {
+  return (await new ShadowRealm().importValue("./realm.py", "hello"))();
+}
+const said = await withRealm();
+await new Promise(resolve => setImmediate(resolve));
+arm();
+console.log("from JS");
+console.log("the realm said", said + "; the flush has collected:", report());
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("pending; from JS\nthe realm said hello; the flush has collected: true\n");
+  expect(exitCode).toBe(0);
+});

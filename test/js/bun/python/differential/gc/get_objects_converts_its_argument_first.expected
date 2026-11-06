@@ -1,0 +1,16 @@
+status: 0
+script: 32c725d0818adce2
+---
+Index() -> list | ['__index__', ('gc.get_objects', [('int', 1)])]
+'x' -> TypeError: argument should be integer or None, not 'str' | []
+1.5 -> TypeError: argument should be integer or None, not 'float' | []
+True -> list | [('gc.get_objects', [('int', 1)])]
+None -> list | [('gc.get_objects', [('int', -1)])]
+2 -> list | [('gc.get_objects', [('int', 2)])]
+1099511627776 -> ValueError: generation parameter must be less than the number of available generations (3) | [('gc.get_objects', [('int', 1099511627776)])]
+-1099511627776 -> ValueError: generation parameter cannot be negative | [('gc.get_objects', [('int', -1099511627776)])]
+1180591620717411303424 -> OverflowError: cannot fit 'int' into an index-sized integer | []
+-1180591620717411303424 -> OverflowError: cannot fit 'int' into an index-sized integer | []
+-1 -> list | [('gc.get_objects', [('int', -1)])]
+-2 -> ValueError: generation parameter cannot be negative | [('gc.get_objects', [('int', -2)])]
+3 -> ValueError: generation parameter must be less than the number of available generations (3) | [('gc.get_objects', [('int', 3)])]

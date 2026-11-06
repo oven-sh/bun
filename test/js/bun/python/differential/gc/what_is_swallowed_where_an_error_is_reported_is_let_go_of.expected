@@ -1,0 +1,5 @@
+status: 0
+script: 537ac460be265598
+---
+sys.stderr.write() has raised while an exception was printed: True
+its variable is gone: True

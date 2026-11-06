@@ -1,6 +1,6 @@
 # Threads raise exceptions some calls deep and catch them without looking at them, while the main thread walks the heap. Whatever gc gives of that is whole: a frame has the caller it had, by
 # whichever way it is reached. (A runtime that puts off part of the work for an exception until somebody looks at it must not hand out what it has not finished.)
-import gc, threading, types
+import gc, threading, time, types
 
 over = []
 def deep(n):
@@ -24,8 +24,10 @@ def walk(frame, way):
         caller = frame.f_back
         if caller is None and frame.f_code.co_name in ('deep', 'catches'): without_caller[way] += 1
         frame = caller
+# (Six looks, or as many as there is time for, two at the least: a build with assertions is slow.)
+looks = 0; deadline = time.monotonic() + 10
 try:
-    for look in range(6):
+    while looks < 6 and (looks < 2 or time.monotonic() < deadline):
         objects = gc.get_objects()
         for o in objects:
             if type(o) is types.FrameType: walk(o, 'frames')
@@ -37,7 +39,7 @@ try:
         objects = o = None
         for o in gc.get_referrers(deep):
             if type(o) is types.FrameType: walk(o, 'frames')
-        o = None
+        o = None; looks += 1
 finally:
     over.append(1)
 for thread in threads: thread.join()

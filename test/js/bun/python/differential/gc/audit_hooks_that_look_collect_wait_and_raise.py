@@ -18,10 +18,13 @@ thread = threading.Thread(target=lambda: next(gen)); thread.start()
 sys.setswitchinterval(0.0001)
 
 held = []; shown = []; raised = set()
-state = {'listens': True, 'is inside': False, 'calls': 0}
+state = {'listens': True, 'is inside': False, 'calls': 0, 'exceptions': False}
 class HookError(Exception): pass
 def keep(objects):
-    held.extend(x for x in objects if isinstance(x, (KeyError, types.TracebackType, types.FrameType)))
+    # (Noted here: of what is held only the last 4,000 stay, and one large look gives more frames than that.)
+    new = [x for x in objects if isinstance(x, (KeyError, types.TracebackType, types.FrameType))]
+    state['exceptions'] |= any(isinstance(x, KeyError) for x in new)
+    held.extend(new)
 def hook(event, args):
     if not state['listens'] or state['is inside'] or not event.startswith('gc.'): return
     state['is inside'] = True
@@ -69,6 +72,6 @@ for x in held:
         if names[:1] != ['g']: wrong.add('a traceback of ' + ' '.join(names))
     elif isinstance(x, types.TracebackType): walk(x.tb_frame)
     else: walk(x)
-print('exceptions were handed out:', any(isinstance(x, KeyError) for x in held))
+print('exceptions were handed out:', state['exceptions'])
 print('a hook has raised out of gc.get_referents():', 'gc.get_referents' in raised)
 print('wrong:', sorted(wrong))

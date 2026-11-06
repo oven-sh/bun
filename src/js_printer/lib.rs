@@ -4289,7 +4289,9 @@ pub(crate) mod __gated_printer {
                             did_print = true;
                             self.add_source_mapping(expr.loc);
                             self.print_global_with_fallback(namespace);
-                        } else if (namespace.import_record_index as usize) < self.import_records.len() {
+                        } else if (namespace.import_record_index as usize)
+                            < self.import_records.len()
+                        {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {

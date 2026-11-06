@@ -2172,12 +2172,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `bun test` makes a free test global an import item, so that a read of it can print as a read of `globalThis`.
     /// A write, a `delete` and a name inside `with` stay as the file has them.
     #[inline]
-    fn keeps_free_test_global_as_written(&self, ident: E::Identifier, opts: IdentifierOpts) -> bool {
+    fn keeps_free_test_global_as_written(
+        &self,
+        ident: E::Identifier,
+        opts: IdentifierOpts,
+    ) -> bool {
         (opts.assign_target() != js_ast::AssignTarget::None
             || opts.is_delete_target()
             || ident.must_keep_due_to_with_stmt())
-            && self.symbols[ident.ref_.inner_index() as usize].kind
-                == js_ast::symbol::Kind::Unbound
+            && self.symbols[ident.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
     }
 
     /// This function is very very hot.

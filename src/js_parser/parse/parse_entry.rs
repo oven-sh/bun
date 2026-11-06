@@ -2217,7 +2217,8 @@ impl<'a> Parser<'a> {
             // name of its own for when nothing is there.
             if imports_test_module {
                 for (name, global) in used.iter_mut() {
-                    let export = p.declare_generated_symbol(js_ast::symbol::Kind::Other, name.as_bytes());
+                    let export =
+                        p.declare_generated_symbol(js_ast::symbol::Kind::Other, name.as_bytes());
                     let symbol = &mut p.symbols[global.inner_index() as usize];
                     symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
                         namespace_ref: export,

@@ -4165,12 +4165,9 @@ console.log(resolve.length)
     expectPrinted_("new (a?.b().c).d()", "new (a?.b().c).d");
     expectPrinted_("new ((a?.b)[c])()", "new (a?.b)[c]");
     expectPrinted_("new ((a?.()).b)()", "new (a?.()).b");
-    expectPrinted_("new a()?.b", "new a()?.b");
-    expectPrinted_("new a()?.[b]", "new a()?.[b]");
-    expectPrinted_("new a()?.(b)", "new a()?.(b)");
-    expectPrinted_("new a.b()?.c", "new a.b()?.c");
-    expectPrinted_("new a.b()?.[c]", "new a.b()?.[c]");
-    expectPrinted_("new a.b()?.(c)", "new a.b()?.(c)");
+    expectPrinted_("new ((a?.[b]).c)()", "new (a?.[b]).c");
+    expectPrinted_("new ((a?.[b])[c])()", "new (a?.[b])[c]");
+    expectPrinted_("new (a?.[b][c]).d()", "new (a?.[b][c]).d");
   });
 
   it("tagged template as new callee", () => {
@@ -4184,7 +4181,6 @@ console.log(resolve.length)
     expectPrinted_("new ((a?.b)`x`.c)()", "new (a?.b)`x`.c");
     expectPrinted_("new (import(x)`y`)()", "new (import(x))`y`");
     expectPrinted_('new (require("m")`y`)()', 'new (require("m"))`y`');
-    expectPrinted_("(new foo)`bar`()", "new foo()`bar`()");
     expectPrinted_("a()`x`", "a()`x`");
   });
 
@@ -4200,23 +4196,93 @@ console.log(resolve.length)
     }
   });
 
+  it("optional chain that a fold leaves as a new callee or a template tag", () => {
+    expectPrinted_("new (true && a?.b)()", "new (a?.b)");
+    expectPrinted_("new (null ?? a?.b)()", "new (a?.b)");
+    expectPrinted_("new (1 ? a?.b : 0)()", "new (a?.b)");
+    expectPrintedMin_("new (0, a?.b)()", "new (a?.b)");
+    expectPrinted_("new (true && a()`x`)()", "new (a())`x`");
+    // The parentheses are what this pins. The receiver of such a tag is https://github.com/oven-sh/bun/issues/44578.
+    expect(parsed("(true && a?.b)`x`")).toEndWith("a?.b)`x`");
+    expect(parsed("(0, a?.b)`x`", true, false, transpilerMinifySyntax)).toEndWith("a?.b)`x`");
+  });
+
+  // The rows of esbuild's TestTemplate at e0755b4692 that have a tag or `new`.
+  // bun prints `new x` where esbuild prints `new x()`.
+  it("esbuild: template tags and new", () => {
+    expectPrinted_("new foo`bar`()", "new foo`bar`");
+    expectPrinted_("new (foo`bar`)()", "new foo`bar`");
+    expectPrinted_("(new foo)`bar`()", "new foo()`bar`()");
+    expectPrinted_("new foo()`bar`()", "new foo()`bar`()");
+    expectPrinted_("(new foo())`bar`()", "new foo()`bar`()");
+    expectPrinted_("new (foo()`bar`)()", "new (foo())`bar`");
+
+    expectPrinted_("tag``", "tag``");
+    for (const chain of ["a?.b", "a?.(b)", "a?.[b]", "a?.b.c", "a?.(b).c", "a?.[b].c"]) {
+      expectPrinted_("(" + chain + ")``", "(" + chain + ")``");
+      for (const template of ["``", "`${d}`", "\n``", "\n`${d}`"]) {
+        expectParseError(chain + template, "Template literals cannot have an optional chain as a tag");
+      }
+    }
+  });
+
+  // esbuild's TestPreserveOptionalChainParentheses at e0755b4692.
+  it("esbuild: optional chain parentheses", () => {
+    expectPrinted_("a?.b.c", "a?.b.c");
+    expectPrinted_("(a?.b).c", "(a?.b).c");
+    expectPrinted_("a?.b.c.d", "a?.b.c.d");
+    expectPrinted_("(a?.b.c).d", "(a?.b.c).d");
+    expectPrinted_("a?.b[c]", "a?.b[c]");
+    expectPrinted_("(a?.b)[c]", "(a?.b)[c]");
+    expectPrinted_("a?.b(c)", "a?.b(c)");
+    expectPrinted_("(a?.b)(c)", "(a?.b)(c)");
+    expectPrinted_("new (a?.b)", "new (a?.b)");
+
+    expectPrinted_("a?.[b][c]", "a?.[b][c]");
+    expectPrinted_("(a?.[b])[c]", "(a?.[b])[c]");
+    expectPrinted_("a?.[b][c][d]", "a?.[b][c][d]");
+    expectPrinted_("(a?.[b][c])[d]", "(a?.[b][c])[d]");
+    expectPrinted_("a?.[b].c", "a?.[b].c");
+    expectPrinted_("(a?.[b]).c", "(a?.[b]).c");
+    expectPrinted_("a?.[b](c)", "a?.[b](c)");
+    expectPrinted_("(a?.[b])(c)", "(a?.[b])(c)");
+    expectPrinted_("new (a?.[b])", "new (a?.[b])");
+
+    expectPrinted_("a?.(b)(c)", "a?.(b)(c)");
+    expectPrinted_("(a?.(b))(c)", "(a?.(b))(c)");
+    expectPrinted_("a?.(b)(c)(d)", "a?.(b)(c)(d)");
+    expectPrinted_("(a?.(b)(c))(d)", "(a?.(b)(c))(d)");
+    expectPrinted_("a?.(b).c", "a?.(b).c");
+    expectPrinted_("(a?.(b)).c", "(a?.(b)).c");
+    expectPrinted_("a?.(b)[c]", "a?.(b)[c]");
+    expectPrinted_("(a?.(b))[c]", "(a?.(b))[c]");
+    expectPrinted_("new (a?.(b))", "new (a?.(b))");
+
+    expectPrinted_("new a()?.b", "new a()?.b");
+    expectPrinted_("new a()?.[b]", "new a()?.[b]");
+    expectPrinted_("new a()?.(b)", "new a()?.(b)");
+    expectPrinted_("new a.b()?.c", "new a.b()?.c");
+    expectPrinted_("new a.b()?.[c]", "new a.b()?.[c]");
+    expectPrinted_("new a.b()?.(c)", "new a.b()?.(c)");
+
+    const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
+    for (const code of ["new a?.b", "new a?.[b]", "new a?.(b)", "new a.b?.c", "new a.b?.[c]", "new a.b?.(c)"]) {
+      expectParseError(code, message);
+    }
+  });
+
   it("rejects an unparenthesized optional chain in the target of new", () => {
     const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
-    for (const code of [
-      "new a?.b",
-      "new a?.[b]",
-      "new a?.(b)",
-      "new a.b?.c",
-      "new a.b?.[c]",
-      "new a.b?.(c)",
-      "new (a)?.b()",
-      "new new a?.b()()",
-      "new new a()?.b()",
-    ]) {
+    for (const code of ["new a?.b", "new a?.[b]", "new a?.(b)", "new a.b?.c", "new a.b?.[c]", "new a.b?.(c)"]) {
+      ts.expectParseError(code, message);
+    }
+    for (const code of ["new (a)?.b()", "new new a?.b()()", "new new a()?.b()", "new {y: C}?.y()", "new {}?.()"]) {
       expectParseError(code, message);
       ts.expectParseError(code, message);
     }
-    ts.expectParseError("new a!?.b()", message);
+    for (const code of ["new a!?.b()", "new a?.<T>()", "new a<T>?.b()"]) {
+      ts.expectParseError(code, message);
+    }
     expect(() => transpiler.scan("new a?.b()")).toThrow(message);
 
     // One error for each target, not one for each `?.`. Two errors throw an AggregateError.
@@ -4227,6 +4293,8 @@ console.log(resolve.length)
     expectPrinted_("new a(b?.c)", "new a(b?.c)");
     expectPrinted_("new a`${b?.c}`", "new a`${b?.c}`");
     expectPrinted_("new class { x = a?.b }", "new class {\n  x = a?.b;\n}");
+    expectPrinted_("function f() { return new.target?.b; }", "function f() {\n  return new.target?.b;\n}");
+    ts.expectPrinted_("new a<T>()?.b", "new a()?.b");
   });
 
   // https://github.com/oven-sh/bun/issues/31812

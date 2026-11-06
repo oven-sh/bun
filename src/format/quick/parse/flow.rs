@@ -1477,9 +1477,10 @@ impl Quick {
         }
         self.next()?;
         let mut value: i32 = 0;
-        if self.lexer.tok == tk::ParenL && self.lexer.tok_nl == 0 {
+        // (on whatever line the `(` stands)
+        if self.lexer.tok == tk::ParenL {
             self.next()?;
-            value = self.parse_expression()?;
+            value = self.parse_maybe_assign()?;
             self.expect(tk::ParenR)?;
         }
         return Ok(self.node1(k::Predicate, start, self.lexer.prev_end, value));

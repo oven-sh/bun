@@ -6622,10 +6622,41 @@ describe("JavaScript and Flow that the long way rejects", () => {
       "export type as = a;\n",
     ].map(text => `// @flow\n${text}`),
   );
+  expectRejected("a.js.flow, what only Flow has", "a.js.flow", [
+    // two expressions behind `%checks`
+    "declare function f(x: mixed): boolean %checks(a, b);\n",
+    "function f(x: mixed): boolean %checks(a, b) {}\n",
+  ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared
     "await /a/;\n",
   ]);
+});
+
+// What the quick way's parser takes for another program than the long way's, or reads alike and the long way prints in a way of its
+// own: the result is the long way's.
+describe("programs that are read as written", () => {
+  describe("Flow", () =>
+    expectSame(
+      "a.js.flow",
+      [
+        // the `(` behind `%checks` stands on another line
+        'declare function f(x: mixed): boolean %checks\n  (typeof x === "string");\n',
+        "declare export function f(x: mixed): boolean %checks\n(!!x);\n",
+        "declare function f(x: mixed): boolean %checks\n\n(x);\n",
+        "declare function f(x: mixed): boolean %checks // c\n(x);\n",
+      ],
+      [[], ["--print-width=10"]],
+    ));
+  describe("Flow, read by Babel", () =>
+    expectSame(
+      "a.js",
+      [
+        // the `(` behind `%checks` stands on another line
+        "declare function f(x: mixed): boolean %checks\n(!!x);\n",
+      ].map(text => `// @flow\n${text}`),
+      [[]],
+    ));
 });
 
 describe("an `if` with a statement that is no block on its line", () => {

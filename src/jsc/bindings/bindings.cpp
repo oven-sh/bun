@@ -6426,6 +6426,16 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
     return 0;
 #endif
 }
+// Everything the mutator has allocated so far, the cycle in progress included. JS thread only.
+extern "C" uint64_t JSC__VM__totalBytesAllocated(JSC::VM* vm)
+{
+    return vm->heap.totalBytesAllocated();
+}
+// How much the mutator may allocate before the heap collects on its own: what the last collection decided. JS thread only.
+extern "C" size_t JSC__VM__allocationBudgetThisCycle(JSC::VM* vm)
+{
+    return vm->heap.allocationBudgetThisCycle();
+}
 
 extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue3, JSC::EncodedJSValue JSValue4)
 {

@@ -425,6 +425,12 @@ describe("own properties of a thrown ResolveMessage", () => {
       expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual(data("a stack"));
     });
 
+    it("has a stack that is defined again before anything reads it", async () => {
+      const error = await thrown();
+      Object.defineProperty(error, "stack", { value: "a stack", enumerable: true, configurable: true, writable: true });
+      expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual(data("a stack"));
+    });
+
     it("is assigned on an object that is not extensible", async () => {
       const error = Object.preventExtensions(await thrown());
       error.code = "E_WRAPPED";

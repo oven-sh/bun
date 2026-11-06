@@ -1,6 +1,7 @@
 # import Module from "node:module"; copy = {}; copy[globalThis.key] = Module[globalThis.key]; copy[globalThis.other]("/app/main.js")(globalThis.name)
 # The import names the module that is read, so what the read answers may be createRequire, wherever it goes.
 # The call of what that call returns loads code by name, and no other call does.
+# TODO: nobody: with one entry fewer in the table of built-ins, this order of the rules finds no createRequire behind the read, so no call is seen to load code by name. The order that fails goes by the table.
 # OPTIONS: testing=DelayFlowRules
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsCodeByName ModuleRequire f0:v11

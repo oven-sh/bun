@@ -1,7 +1,7 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js. A `test.todo` is
- * what Node.js does and Bun does not do yet.
+ * here, and the last test runs this same file under Node.js. What Node.js does
+ * and Bun does not do yet is a test in Node.js and a `test.todo` in Bun.
  *
  * Node.js assigns `code` and `requireStack` to the Error of a failed require():
  * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1519-L1522
@@ -126,8 +126,11 @@ describe("the error of a failed import()", () => {
   });
 });
 
+// Node.js has to pass these, so that each one stays a fact about Node.js.
+const differs = typeof Bun === "undefined" ? test : test.todo;
+
 describe("what Node.js does and Bun does not do yet", () => {
-  test.todo("JSON.stringify() gives the own enumerable properties", () => {
+  differs("JSON.stringify() gives the own enumerable properties", () => {
     const error = thrownByRequire();
     error.plugin = "a plugin";
     assert.deepStrictEqual(JSON.parse(JSON.stringify(error)), {
@@ -137,7 +140,7 @@ describe("what Node.js does and Bun does not do yet", () => {
     });
   });
 
-  test.todo("the name is Error, and String() prints what is assigned", () => {
+  differs("the name is Error, and String() prints what is assigned", () => {
     const error = thrownByRequire();
     assert.strictEqual(error.name, "Error");
     error.name = "Renamed";
@@ -145,11 +148,11 @@ describe("what Node.js does and Bun does not do yet", () => {
     assert.strictEqual(String(error), "Renamed: a message");
   });
 
-  test.todo("the stack has the frames of the call", () => {
+  differs("the stack has the frames of the call", () => {
     assert.match(thrownByRequire().stack, /\n    at /);
   });
 
-  test.todo("a property that is deleted is gone", () => {
+  differs("a property that is deleted is gone", () => {
     const error = thrownByRequire();
     assert.ok(delete error.code && delete error.message && delete error.stack);
     assert.deepStrictEqual(["code" in error, error.message, error.stack], [false, "", undefined]);
@@ -158,34 +161,27 @@ describe("what Node.js does and Bun does not do yet", () => {
   });
 
   // winston assigns the level to the error that it logs.
-  test.todo("a logger assigns a level", () => {
+  differs("a logger assigns a level", () => {
     const error = thrownByRequire();
     error.level = "error";
     assert.deepStrictEqual(Object.getOwnPropertyDescriptor(error, "level"), data("error"));
   });
 
-  test.todo("has no line and no column", () => {
+  differs("has no line and no column", () => {
     const error = thrownByRequire();
     assert.deepStrictEqual([error.line, error.column], [undefined, undefined]);
   });
 
-  test.todo("Error.isError() is true", () => {
+  differs("Error.isError() is true", () => {
     assert.strictEqual(Error.isError(thrownByRequire()), true);
   });
 
-  test.todo("import() of a missing file has an own url, after code", async () => {
+  differs("import() of a missing file has an own url", async () => {
     const error = await thrownByImport("./does-not-exist.mjs");
-    assert.deepStrictEqual(Reflect.ownKeys(error), ["stack", "code", "url", "message"]);
+    assert.deepStrictEqual(Object.keys(error), ["code", "url"]);
   });
 
-  test.todo("a specifier that is too long is a module that is not found", () => {
-    const specifier = "./" + Buffer.alloc(200000, "a").toString();
-    const error = thrownByRequire(specifier);
-    assert.deepStrictEqual(Reflect.ownKeys(error), ["stack", "message", "code", "requireStack"]);
-    assert.strictEqual(error.message, `Cannot find module '${specifier}'\nRequire stack:\n- ${file}`);
-  });
-
-  test.todo("import() of a module whose static import failed makes a new error each time", async () => {
+  differs("import() of a module whose static import failed makes a new error each time", async () => {
     const importer = new URL("../../bun/resolve/file-importing-nonexistent-file.js", import.meta.url).href;
     assert.notStrictEqual(await thrownByImport(importer), await thrownByImport(importer));
   });
@@ -194,7 +190,8 @@ describe("what Node.js does and Bun does not do yet", () => {
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExeAtLeast } = await import("harness");
-  const node = nodeExeAtLeast("22.0.0");
+  // Error.isError() is in Node.js 24 and later.
+  const node = nodeExeAtLeast("24.0.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

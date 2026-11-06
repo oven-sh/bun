@@ -1,5 +1,5 @@
 # Several threads, and nobody asks for a collection. Each finalizes what it has made and dropped, and what dies of that.
-import collections, queue, threading, time, weakref
+import collections, gc, queue, threading, time, weakref
 
 # For each maker: (kind, the thread that finalized). No lock: a finalizer may come on top of whatever its thread is doing.
 said = collections.defaultdict(list)
@@ -92,9 +92,12 @@ def makes_children():
 
 
 def makes_parents():
-    for i in range(10):
-        parent = A("parent", children.get())
-        del parent
+    parents = [A("parent", children.get()) for i in range(10)]
+    # Nothing is garbage yet. It is so that parents and children are of one generation where there are generations: that the child follows its parent is worked out among
+    # what one collection finds dead, and a collection of the young that takes a young parent does not look at an old child, which then comes up alone, later, and is its maker's.
+    # (A thread that waits for the queue collects, and so the children were old by then on a machine under load.)
+    gc.collect()
+    del parents
     print(expected["maker of children"][1].wait(60))
     go.set()
 

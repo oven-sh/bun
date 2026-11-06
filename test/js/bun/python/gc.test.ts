@@ -611,3 +611,37 @@ print(whole > 0, broken)
   },
   30_000,
 );
+
+// It finds what has just been dropped, so it is the one that orders the finalizers.
+test.concurrent.each([
+  ["with generations", {}],
+  ["without generations", { BUN_JSC_useGenerationalGC: "0" }],
+])("a collection that gc.collect() has to finish first goes by the order of reference counts too, %s", async (_, env) => {
+  const { stdout, stderr, exitCode } = await run(
+    `
+import gc
+import bun
+
+log = []
+class A:
+    def __init__(self, n):
+        self.n = n
+    def __del__(self):
+        log.append(self.n)
+
+orders = set()
+for r in range(30):
+    x = [A(1), A(2), A(3)]
+    del x
+    bun.gc(False)   # Asked for, not waited for.
+    gc.collect()
+    orders.add(tuple(log))
+    del log[:]
+print(orders)
+`,
+    env,
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("{(3, 2, 1)}\n");
+  expect(exitCode).toBe(0);
+});

@@ -2310,29 +2310,25 @@ impl Quick {
     pub(crate) fn merge_nestled_jsdoc_comments(&mut self) {
         let mut i = self.lexer.c_count - 2;
         while i >= self.lexer.c_base {
-            'c1: {
-                let at = i * C_STRIDE;
-                if self.lexer.c.at(at + C_END) != self.lexer.c.at(at + C_STRIDE + C_START) {
-                    break 'c1;
+            let at = i * C_STRIDE;
+            let mut this = None;
+            if self.lexer.c.at(at + C_END) == self.lexer.c.at(at + C_STRIDE + C_START) {
+                let is_indentable = self.is_indentable_block(i);
+                this = Some(is_indentable);
+                if is_indentable && behind.unwrap_or_else(|| self.is_indentable_block(i + 1)) {
+                    self.lexer
+                        .c
+                        .put(at + C_END, self.lexer.c.at(at + C_STRIDE + C_END));
+                    let v0 = at + C_FLAGS;
+                    self.lexer.c.put(
+                        v0,
+                        self.lexer.c.at(v0)
+                            & (self.lexer.c.at(at + C_STRIDE + C_FLAGS)
+                                | !(CF_PLAIN | CF_INDENTABLE)),
+                    );
+                    self.lexer.c.put(at + C_STRIDE + C_START, GONE);
+                    any_gone = true;
                 }
-                if !self.is_indentable_block(i) || !self.is_indentable_block(i + 1) {
-                    break 'c1;
-                }
-                self.lexer
-                    .c
-                    .put(at + C_END, self.lexer.c.at(at + C_STRIDE + C_END));
-                let v0 = at + C_FLAGS;
-                self.lexer.c.put(
-                    v0,
-                    self.lexer.c.at(v0)
-                        & (self.lexer.c.at(at + C_STRIDE + C_FLAGS) | !(CF_PLAIN | CF_INDENTABLE)),
-                );
-                self.lexer.c.move_within(
-                    at + C_STRIDE,
-                    at + 2 * C_STRIDE,
-                    self.lexer.c_count * C_STRIDE,
-                );
-                self.set_comment_count(self.lexer.c_count - 1);
             }
             i -= 1;
         }
@@ -2452,3 +2448,25 @@ impl Quick {
         Ok(())
     }
 }
+        const GONE: i32 = -1;
+        let mut any_gone = false;
+        // Whether the comment behind the one at hand is indentable, if that is known. Two that are make one that is.
+        let mut behind: Option<bool> = None;
+            behind = this;
+        if !any_gone {
+            return;
+        }
+        let mut to = self.lexer.c_base;
+        let mut from = self.lexer.c_base;
+        while from < self.lexer.c_count {
+            if self.lexer.c.at(from * C_STRIDE + C_START) != GONE {
+                if to != from {
+                    self.lexer
+                        .c
+                        .move_within(to * C_STRIDE, from * C_STRIDE, (from + 1) * C_STRIDE);
+                }
+                to += 1;
+            }
+            from += 1;
+        }
+        self.set_comment_count(to);

@@ -2747,9 +2747,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        #[allow(unused_labels)]
         let wrote: i32 = 'brk: {
-            #[cfg(unix)]
             if !SSL {
                 // fast-ish path: use writev() to avoid cloning to another buffer.
                 if let uws::InternalSocket::Connected(connected) = socket.socket {

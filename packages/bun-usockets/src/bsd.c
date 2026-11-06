@@ -1111,33 +1111,42 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
         return written;
     }
 }
+#else
+#define LIBUS_MAX_WSABUFS 64
+
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    /* The result has to fit the callers' int. A "short" rule lowers it. */
+    ssize_t injected = 0; int left = INT_MAX;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, left)) return injected;
+
+    ssize_t total = 0;
+    while (count > 0 && left > 0) {
+        WSABUF chunks[LIBUS_MAX_WSABUFS];
+        DWORD used = 0, wanted = 0, sent = 0;
+        for (; used < LIBUS_MAX_WSABUFS && (int) used < count && left > 0; used++) {
+            chunks[used].buf = (CHAR *) iov[used].iov_base;
+            chunks[used].len = iov[used].iov_len < (size_t) left ? (ULONG) iov[used].iov_len : (ULONG) left;
+            wanted += chunks[used].len;
+            left -= (int) chunks[used].len;
+        }
+        if (WSASend(fd, chunks, used, &sent, BSD_SEND_FLAGS, NULL, NULL) == SOCKET_ERROR) {
+            return total > 0 ? total : -1;
+        }
+        total += sent;
+        if (sent != wanted) {
+            break;
+        }
+        iov += used;
+        count -= (int) used;
+    }
+    return total;
+}
+#endif
 
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     struct us_iovec_t chunks[2] = {{(void *)header, (size_t)header_length}, {(void *)payload, (size_t)payload_length}};
     return bsd_writev(fd, chunks, 2);
 }
-#else
-ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
-    ssize_t total = 0;
-    for (int i = 0; i < count; i++) {
-        ssize_t written = bsd_send(fd, (const char *)iov[i].iov_base, (int)iov[i].iov_len);
-        if (written > 0) total += written;
-        if (written != (ssize_t)iov[i].iov_len) break;
-    }
-    return total > 0 ? total : -1;
-}
-
-ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t written = bsd_send(fd, header, header_length);
-    if (written == header_length) {
-        ssize_t second_write = bsd_send(fd, payload, payload_length);
-        if (second_write > 0) {
-            written += second_write;
-        }
-    }
-    return written;
-}
-#endif
 
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     ssize_t injected = 0;

@@ -42,6 +42,16 @@ impl Quick {
         return size;
     }
 
+    /// has_newline_in_range(). A template can stand in the `${}` of a template, and so on: what is looked through for the one around it is not looked through
+    /// again.
+    fn has_newline_in_interpolation(&mut self, start: i32, end: i32) -> bool {
+        if !(self.print.line_break_from <= start && start <= self.print.line_break_at) {
+            self.print.line_break_from = start;
+            self.print.line_break_at = self.index_of_byte_in_range(b'\n', start, self.text.src_end);
+        }
+        self.print.line_break_at < end
+    }
+
     /// `indent_size` < 0: the indentation of the line it stands on is not kept.
     pub(crate) fn print_template_expression(
         &mut self,
@@ -51,7 +61,7 @@ impl Quick {
         indent_size: i32,
     ) -> R<()> {
         let interpolation_has_newline =
-            self.has_newline_in_range(self.n.at(quasi + 2), self.n.at(next_quasi + 1));
+            self.has_newline_in_interpolation(self.n.at(quasi + 2), self.n.at(next_quasi + 1));
         if !interpolation_has_newline && self.is_plain_expression(expression) {
             self.text(DOLLAR_BRACE);
             self.print(expression)?;

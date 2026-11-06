@@ -118,6 +118,7 @@ impl Quick {
         self.reset_embed();
         self.print_member.known = 0;
         self.print_ternary.known = 0;
+        self.print.line_break_at = -1;
         self.lang.lang = language;
         self.lang.depth = 0;
         self.lang.guest_column = 0;

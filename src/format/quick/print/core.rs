@@ -21,10 +21,17 @@ pub(crate) struct Print {
     /// A printer that finds that its node cannot be printed the way it was asked to sets this and returns at once
     /// (ArgExpansionBailout). Whoever asked resets it.
     pub(crate) bailout: bool,
+    /// The first line break at or behind the one is at the other (the end of the text if there is none): see has_newline_in_interpolation().
+    pub(crate) line_break_from: i32,
+    pub(crate) line_break_at: i32,
 }
 impl Print {
     pub(crate) fn new() -> Self {
-        Self { bailout: false }
+        Self {
+            bailout: false,
+            line_break_from: 0,
+            line_break_at: -1,
+        }
     }
 }
 

@@ -485,6 +485,14 @@ impl ResolveMessage {
         }
     }
 
+    /// As `get_code`: a thrown error has its own `requireStack`, or none.
+    pub fn get_require_stack(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        if self.thrown {
+            return None;
+        }
+        self.require_stack()
+    }
+
     // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
     // requiring files; Bun tracks only the direct referrer). CJS kinds only.
     fn require_stack(&self) -> Option<impl Iterator<Item = &[u8]>> {

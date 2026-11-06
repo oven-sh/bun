@@ -364,7 +364,7 @@ describe("own properties of a thrown ResolveMessage", () => {
       });
     });
 
-    // Not as in Node.js: ResolveMessage.prototype has accessors for `stack`, `message` and `code`, which then answer.
+    // Not as in Node.js: ResolveMessage.prototype has an accessor for each of the four, which then answers.
     it("is deleted", async () => {
       const error = await thrown();
       for (const key of ["stack", "message", "code", "requireStack"]) expect(delete error[key]).toBe(true);
@@ -384,16 +384,17 @@ describe("own properties of a thrown ResolveMessage", () => {
       });
       error.stack = "a stack";
       error.message = "a message";
-      error.requireStack = [];
-      expect(() => {
-        error.code = "E_WRAPPED";
-      }).toThrow(TypeError);
+      for (const key of ["code", "requireStack"]) {
+        expect(() => {
+          error[key] = "assigned";
+        }).toThrow(TypeError);
+      }
       expect(read()).toEqual({
         stack: "a stack",
         message: "a message",
         code: undefined,
-        requireStack: [],
-        keys: ["requireStack"],
+        requireStack: undefined,
+        keys: [],
       });
     });
 

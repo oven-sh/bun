@@ -27,6 +27,7 @@ export const ResolveMessage = b.class({
     message: { ...text, writable: true },
     position,
     referrer: text,
+    requireStack: { getter: b.array(b.string.utf8).optional, cache: true },
     specifier: text,
     stack: { ...text, writable: true },
     ...methods,

@@ -680,8 +680,6 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new BuildMessage().line is not published",
       "resolve_message.bind.ts: new BuildMessage().notes is not published",
       "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
-      // An own property of one that is thrown, which C++ adds and no schema describes.
-      "resolve_message.bind.ts: new ResolveMessage() has no requireStack",
       "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
       // `undefined` for a message whose metadata is not that of a resolution.
       "resolve_message.bind.ts: new ResolveMessage().code is string | undefined, not string",

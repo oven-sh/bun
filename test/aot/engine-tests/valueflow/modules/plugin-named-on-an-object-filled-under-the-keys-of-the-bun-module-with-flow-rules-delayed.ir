@@ -1,6 +1,5 @@
 # bun = require("bun"); copy = {}; copy[globalThis.key] = bun[globalThis.key]; copy.plugin(globalThis.options)
 # The module was loaded under a constant name, so a read that names plugin on what was filled under its keys finds Bun.plugin.
-# TODO: nobody: with one entry fewer in the table of built-ins, this order of the rules finds no member of Bun behind the read, so the call is not seen to be one of Bun.plugin. The order that fails goes by the table: with the entry it is testing=DelayFlowRules:250.
 # OPTIONS: testing=DelayFlowRules
 # RUN: valueflow-solve unseen
 # CHECK: unseen RunsUnseenCode BunPlugin f0:v8

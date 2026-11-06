@@ -1509,7 +1509,7 @@ describe("gc entries", () => {
       observer.disconnect();
       observer.observe({ type: "gc" });
       observer.disconnect();
-      expect(() => observer.observe({ entryTypes: PerformanceObserver.supportedEntryTypes })).not.toThrow();
+      expect(() => observer.observe({ entryTypes: [...PerformanceObserver.supportedEntryTypes] })).not.toThrow();
     } finally {
       observer.disconnect();
     }

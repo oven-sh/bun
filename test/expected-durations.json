@@ -16,6 +16,22 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/engine/answers-5.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/answers-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/answers-7.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/answers-8.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-build-without-a-tsconfig-checks-under-the-defaults-of-tsc.test.ts": {
     "default": 60000,
     "asan": 240000

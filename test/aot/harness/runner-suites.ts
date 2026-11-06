@@ -134,9 +134,11 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
         const ends = [...new Set([...readFileSync(stopped, "utf8").split("\n").filter(Boolean), ...said])];
         if (ends.length) console.error(`${part}: child runs were stopped:\n${ends.slice(0, 30).join("\n")}`);
         const withoutCommandLine = canTrim ? named("trims ") : [];
-        expect(names.filter(name => !named("~ ").includes(name)).sort()).toEqual(
-          [...named(""), ...named("! "), ...named(process.arch + " "), ...withoutCommandLine].sort(),
-        );
+        const awaited = [...named(""), ...named("! "), ...named(process.arch + " "), ...withoutCommandLine];
+        // The names alone do not say what went wrong: of a test that fails and is not named, what the suite printed in front of its result.
+        for (const result of failed.filter(result => ![...awaited, ...named("~ ")].includes(nameOf(result))))
+          console.error([result, ...saidBefore(result).filter(Boolean).slice(0, 60)].join("\n"));
+        expect(names.filter(name => !named("~ ").includes(name)).sort()).toEqual(awaited.sort());
         for (const result of failed.filter(result => withoutCommandLine.includes(nameOf(result)))) {
           const said = saidBefore(result).join("\n");
           expect(said).toContain("is damaged. Its embedded program can't be read.");

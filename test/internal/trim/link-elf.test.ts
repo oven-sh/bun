@@ -143,7 +143,7 @@ describeLink("a trimmable link", () => {
     expect(sizeOf("program") - sizeOf("trimmed")).toBe(summary.fileBytesSaved);
     expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
     expect(await exitCodeOf(folder, "program", guardedArguments)).toBeLessThan(64);
-  });
+  }, 240_000);
 
   test("retains a constant folded into an equal one of the feature", async () => {
     using dir = tempDir("trim-elf", sources);

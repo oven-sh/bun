@@ -315,9 +315,9 @@ test(
   timeout,
 );
 
-// It grows to 512 MB, twice its limit, and stays there. The watcher polls every tenth of a second on this test's
+// It grows to 1 GB, twice its limit, and stays there. The watcher polls every tenth of a second on this test's
 // thread, and a program that grew forever would use all of the machine's memory while that thread is busy.
-const holdsTwiceWhatItMay = `const kept = []; while (kept.length < 4096) kept.push(new Array(1 << 14).fill(kept.length)); for (;;);`;
+const holdsTwiceWhatItMay = `const kept = []; while (kept.length < 8192) kept.push(new Array(1 << 14).fill(kept.length)); for (;;);`;
 
 // Runs programs like Bun; each of its builds grows to twice its memory limit.
 function everyBuildHoldsTooMuch(folder: string): string {
@@ -335,7 +335,8 @@ one.skipIf(isWindows)(
   "a run over its memory limit is skipped, a build over it is a finding",
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {});
-    const runner = new ProductRunner(everyBuildHoldsTooMuch(String(folder)), { ...options, memory: 256 * 2 ** 20 });
+    // A Bun with AddressSanitizer takes 256 MB to print one line: under a limit of 256 MB that run, too, was now and then over it.
+    const runner = new ProductRunner(everyBuildHoldsTooMuch(String(folder)), { ...options, memory: 512 * 2 ** 20 });
     const judge = async (text: string) => (await runner.judge(String(folder), [{ text, extension: "js" }], []))[0];
     expect((await judge(holdsTwiceWhatItMay)).verdict).toEqual({
       kind: "skipped",

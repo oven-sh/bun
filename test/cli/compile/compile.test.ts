@@ -125,6 +125,7 @@ describe.concurrent("bun compile", () => {
     120_000,
   );
 
+  // Each of the two cases below builds twice, beside every other build of this file: the cases above have two minutes for one build.
   const doubledNumbers = { "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());` };
 
   function builderIn(dir: string) {
@@ -150,7 +151,7 @@ describe.concurrent("bun compile", () => {
       expect(compiled).toMatchObject({ stdout: "2,4,6\n", exitCode: 0 });
       expect(compiled).toEqual(await build("build", "--compile", "--aot"));
     },
-    60_000,
+    240_000,
   );
 
   test.skipIf(!!unsupported)(
@@ -162,7 +163,7 @@ describe.concurrent("bun compile", () => {
       expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--trim"));
       expect(await build("build", "--trim")).toEqual({ stderr: "error: --trim requires --compile\n", exitCode: 1 });
     },
-    60_000,
+    240_000,
   );
 
   test.skipIf(!!unsupported).each([[["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"]])(

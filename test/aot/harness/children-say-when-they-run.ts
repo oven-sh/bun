@@ -2,6 +2,8 @@
 // expectation of the file asks: in a copy of the child's project every source file says, as its first statement, that it runs and in which realm. Is the list under
 // `--aot` the list of a plain run: the same files, as often, in the same order? If not, the child's `exited` rejects (Bun.spawnSync throws), and the test that
 // started it fails. A byte in the file AOT_CHILDREN_STARTED counts each compiled run. A child that the `$` shell starts is not asked yet.
+// A run that was cut off, by a limit of time or by its death, ran fewer files than it would have: it is no list, plain or compiled. The test fails by what cut the run off, and a line
+// in the file AOT_CHILDREN_STOPPED says so.
 import {
   appendFileSync,
   cpSync,
@@ -52,7 +54,19 @@ function copyOf({ cmd, cwd, env }: Options, bun: number, flags: string[]) {
   };
 }
 
-function listRuns(stderr: string) {
+type Ended = { exitCode: number | null; signalCode?: unknown };
+
+function listRuns(flags: string[], stderr: string, { exitCode, signalCode }: Ended) {
+  const cutOffBy = signalCode
+    ? `was ended by ${signalCode}`
+    : (exitCode ?? 128) >= 128
+      ? `ended with the code ${exitCode}`
+      : /\btimed out after \d+ms/.exec(stderr)?.[0];
+  if (cutOffBy) {
+    const says = `the ${flags.length ? "compiled" : "plain"} copy ${cutOffBy}: what it ran is no list of runs`;
+    appendFileSync(process.env.AOT_CHILDREN_STOPPED!, says + "\n");
+    throw new Error(says + "\n" + stderr.slice(-2000));
+  }
   const realms = new Map<string, number>();
   const numberOf = (realm: string) => realms.get(realm) ?? realms.set(realm, realms.size + 1).size;
   return [...stderr.matchAll(/^RUNS (.*) (\w+)$/gm)]
@@ -83,12 +97,12 @@ Bun.spawn = function (this: unknown, first: string[] | Options, second?: Omit<Op
   if (bun < 0) return spawn.call(this, first as never, second as never);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   // Both copies are made before the child can write into its project.
-  const copies = [copyOf(options, bun, []), copyOf(options, bun, ["--aot"])];
-  const lists = copies.map(async copy => {
+  const lists = [[], ["--aot"]].map(async flags => {
+    const copy = copyOf(options, bun, flags);
     const child = spawn(copy);
     const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
     rmSync(copy.cwd, { recursive: true, force: true });
-    return listRuns(stderr);
+    return listRuns(flags, stderr, child);
   });
   const child = spawn.call(this, first as never, second as never);
   const exited = Promise.all([child.exited, ...lists]).then(([code, plain, compiled]) => (hold(plain, compiled), code));
@@ -102,9 +116,9 @@ Bun.spawnSync = function (this: unknown, first: string[] | Options, second?: Omi
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   const [plain, compiled] = [[], ["--aot"]].map(flags => {
     const copy = copyOf(options, bun, flags);
-    const { stderr } = spawnSync(copy);
+    const ended = spawnSync(copy);
     rmSync(copy.cwd, { recursive: true, force: true });
-    return listRuns(stderr.toString());
+    return listRuns(flags, ended.stderr.toString(), ended);
   });
   hold(plain, compiled);
   return spawnSync.call(this, first as never, second as never);

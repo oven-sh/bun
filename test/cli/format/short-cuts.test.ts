@@ -5190,6 +5190,11 @@ describe("TypeScript that the long way rejects", () => {
     "<T extends U>a</T>",
     "<a<> />",
   ]);
+  expectRejected("a.ts", [
+    // an arrow function as a decorator
+    "@async () => 1 class A {}\n",
+    "class A { @async () => 1 m() {} }\n",
+  ]);
   describe("what looks like it and is printed", () =>
     expectSame(
       "a.ts",
@@ -6622,6 +6627,15 @@ describe("JavaScript and Flow that the long way rejects", () => {
       "export type as = a;\n",
     ].map(text => `// @flow\n${text}`),
   );
+  expectRejected("a.js, words and keys", "a.js", [
+    // an arrow function as a decorator
+    "@(a) => b class A {}\n",
+    "@() => {} class A {}\n",
+    "class A { @() => {} m() {} }\n",
+    "class A { m(@(a) => b c) {} }\n",
+    // a decorator in front of `static constructor`
+    "class A { @a static constructor() {} }\n",
+  ]);
   expectRejected("a.js.flow, what only Flow has", "a.js.flow", [
     // two expressions behind `%checks`
     "declare function f(x: mixed): boolean %checks(a, b);\n",
@@ -6681,6 +6695,9 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "for (;;) record A {}\n",
     "do record A {} while (a)\n",
     "label: record A {}\n",
+    // an arrow function as a decorator
+    "@(a) => b class A {}\n",
+    "async () => { class a { b(@(await(x)) c) {} } };\n",
   ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared
@@ -6735,6 +6752,8 @@ describe("programs that are read as written", () => {
         "declare component A(...{\n  a: T,\n});\n",
         "declare module 'a' { 'use strict' }\n",
         "declare namespace N { 'a'; b }\n",
+        // a cast as a decorator
+        "@(a: c) class D {}\n",
       ],
       [[], ["--print-width=10"]],
     ));
@@ -6747,6 +6766,8 @@ describe("programs that are read as written", () => {
         // `proto`, `static`, `+` and `get` in front of a member that has no place for them
         "declare class A { proto(): T }\n",
         "type A = { +[[a]]: T };\n",
+        // a cast as a decorator
+        "@(a ?? b: c) class D {}\n",
       ].map(text => `// @flow\n${text}`),
       [[]],
     ));

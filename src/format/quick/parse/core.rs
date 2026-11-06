@@ -2734,7 +2734,13 @@ impl Quick {
         let start = self.lexer.tok_start;
         let decorators = if self.lexer.tok == tk::At {
             self.check_place_of_decorated_parameter()?;
-            self.parse_decorators()?
+            let await_names = self.parse.await_names;
+            let decorators = self.parse_decorators()?;
+            // an operator there for some, if it is one around the function
+            if self.parse.await_names != await_names && self.parse.typed != TYPED_TS {
+                return Err(self.text_refuse());
+            }
+            decorators
         } else {
             0
         };
@@ -3231,12 +3237,21 @@ impl Quick {
                 self.parse.in_decorator = 1;
                 expression = self.parse_subscripts(atom, expr_start, false)?;
                 self.parse.in_decorator = 0;
+                if self.is_bare_arrow(expression) {
+                    return Err(self.text_refuse());
+                }
                 if self.parse.await_names != await_names {
                     // `await` is the operator in a decorator
                     return Err(self.text_refuse());
                 }
             } else if self.lexer.tok == tk::ParenL {
                 expression = self.parse_paren_and_distinguish()?;
+                // (a cast brings its parentheses along, and gets another pair)
+                if self.is_bare_arrow(expression)
+                    || (self.n.at(expression) & 0xff) == k::TypeCastExpression
+                {
+                    return Err(self.text_refuse());
+                }
             } else {
                 let expr_start = self.lexer.tok_start;
                 expression = self.parse_ident()?;
@@ -3487,12 +3502,12 @@ impl Quick {
         if !is_method {
             return false;
         }
-        if is_static {
-            return true;
-        }
-        // no decorators
+        // no decorators, static or not
         if self.n.at(n + 7) != 0 {
             return false;
+        }
+        if is_static {
+            return true;
         }
         if !counts {
             return true;

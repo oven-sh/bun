@@ -27,7 +27,7 @@ try: CLAUSE = {
  'try if 0': 'try:\n    if 0:\n        a = 1\nexcept ValueError:\n    pass',
  'try finally': 'try:\n    a = 1\nfinally:\n    a = 2', 'try finally if': 'try:\n    a = 1\nfinally:\n    if a:\n        a = 2', 'try else': 'try:\n    a = 1\nexcept ValueError:\n    pass\nelse:\n    a = 3',
  'try star': 'try:\n    a = 1\nexcept* ValueError:\n    pass', 'with': 'with CM():\n    a = 1', 'with if': 'with CM():\n    if a:\n        a = 1', 'while': 'while a:\n    a -= 1', 'for': 'for k in (1, 2):\n    a = k',
- 'match': 'match a:\n    case 1:\n        a = 2\n    case 2:\n        a = 3', 'assert': 'assert a or True', 'and': 'a = (a and\n     1)', 'call': 'len(\n    "")',
+ 'match': 'match a:\n    case 1:\n        a = 2\n    case 2:\n        a = 3', 'match seq': 'match a:\n    case [1, 2]:\n        a = 2', 'assert': 'assert a or True', 'and': 'a = (a and\n     1)', 'call': 'len(\n    "")',
 }
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: CLAUSE = { 'assign': 'a = 1', 'pass': 'pass', 'if': 'if a:\\n a = 1', ...")
 try: LEAVE = {

@@ -440,7 +440,7 @@ fn message_with_type_and_level_(
     // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
-    with_console_sink(global, use_stderr, &mut |writer| {
+    with_console_sink(global, use_stderr, |writer| {
         write_message(
             message_type,
             level,
@@ -485,47 +485,27 @@ fn is_stdio_write_replaced(global: &JSGlobalObject, use_stderr: bool) -> bool {
         && Bun__Process__isStdioWriteReplaced(global, stdio_fd(use_stderr))
 }
 
-/// The native writer of one stream under its lock, and whether a replaced `write` gets the message instead.
-struct ConsoleSink<'a> {
-    lock: ConsoleStreamLock,
-    native: &'a mut bun_core::io::Writer,
-    routed: bool,
-}
-
-fn console_sink<'a>(global: &JSGlobalObject, use_stderr: bool) -> ConsoleSink<'a> {
-    let lock = ConsoleStreamLock::acquire(use_stderr);
+/// Runs `f` on the native writer, or on a buffer handed to a replaced `process.std{out,err}.write`.
+fn with_console_sink(
+    global: &JSGlobalObject,
+    use_stderr: bool,
+    f: impl FnOnce(&mut dyn bun_io::Write) -> JsResult<()>,
+) -> JsResult<()> {
+    let stream_lock = ConsoleStreamLock::acquire(use_stderr);
     // The bun test reporter's `onBeforePrint`, through `RuntimeHooks` (a forward dep).
     if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
         (hooks.console_on_before_print)();
     }
     let routed = is_stdio_write_replaced(global, use_stderr);
     let console: *mut ConsoleObject = vm_console(global);
-    // SAFETY: see [`vm_console`]. A raw deref: the caller's formatting can re-enter JS.
-    let native: &'a mut bun_core::io::Writer = unsafe {
+    // SAFETY: see [`vm_console`]. A raw deref: `f` can re-enter JS.
+    let native: &mut bun_core::io::Writer = unsafe {
         if use_stderr {
             (*console).error_writer()
         } else {
             (*console).writer()
         }
     };
-    ConsoleSink {
-        lock,
-        native,
-        routed,
-    }
-}
-
-/// Runs `f` on the native writer, or on a buffer handed to a replaced `process.std{out,err}.write`.
-fn with_console_sink(
-    global: &JSGlobalObject,
-    use_stderr: bool,
-    f: &mut dyn FnMut(&mut dyn bun_io::Write) -> JsResult<()>,
-) -> JsResult<()> {
-    let ConsoleSink {
-        lock,
-        native,
-        routed,
-    } = console_sink(global, use_stderr);
     if !routed {
         let result = f(native);
         let _ = native.flush();
@@ -535,7 +515,7 @@ fn with_console_sink(
     let _ = native.flush();
     let mut captured: Vec<u8> = Vec::new();
     f(&mut captured)?;
-    drop(lock);
+    drop(stream_lock);
     deliver_to_replaced_write(global, use_stderr, captured)
 }
 
@@ -5852,7 +5832,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
-    let _ = with_console_sink(global_this, false, &mut |writer| {
+    let _ = with_console_sink(global_this, false, |writer| {
         if Output::enable_ansi_colors_stdout() {
             let _ = writeln!(
                 writer,
@@ -5935,7 +5915,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
         return;
     };
     let Some(value) = prev else { return };
-    let _ = with_console_sink(global, true, &mut |writer| {
+    let _ = with_console_sink(global, true, |writer| {
         write_elapsed(writer, &value, slice);
         let _ = writer.write_all(b"\n");
         Ok(())
@@ -5976,7 +5956,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     };
     // SAFETY: caller passes a valid (args, args_len) pair.
     let args = unsafe { bun_core::ffi::slice(args, args_len) };
-    let _ = with_console_sink(global, true, &mut |writer| {
+    let _ = with_console_sink(global, true, |writer| {
         write_elapsed(writer, &value, slice);
 
         let mut fmt = Formatter::new(global);

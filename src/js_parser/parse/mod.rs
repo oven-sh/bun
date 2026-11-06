@@ -1290,23 +1290,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
 
         loop {
-            // Forbid "let let" and "const let" but not "var let"
-            if (kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant)
-                && p.lexer.is_contextual_keyword(b"let")
-            {
-                p.log().add_range_error(
-                    Some(p.source),
-                    p.lexer.range(),
-                    b"Cannot use \"let\" as an identifier here",
-                );
-            }
-
             let mut value: Option<js_ast::Expr> = None;
-            let mut local = p.parse_binding(ParseBindingOptions {
-                is_using_statement: opts.is_using_statement,
-            })?;
-            p.declare_binding(kind, &mut local, opts)
+            let mut local;
+            // Two arms, so that a "var" declarator tests `kind` once.
+            if kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant {
+                // Forbid "let let" and "const let" but not "var let"
+                if p.lexer.token == T::TIdentifier && p.lexer.identifier == b"let" {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        p.lexer.range(),
+                        b"Cannot use \"let\" as an identifier here",
+                    );
+                }
+                local = p.parse_binding(ParseBindingOptions {
+                    is_using_statement: opts.is_using_statement,
+                })?;
+                // The test above covers a plain name. A pattern can bind "let" at any depth,
+                // unless a TypeScript "declare" erases it.
+                if matches!(local.data, B::B::BIdentifier(_))
+                    || (Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare)
+                {
+                    p.declare_binding(kind, &mut local, opts)
+                } else {
+                    p.declare_lexical_binding(kind, &mut local, opts)
+                }
                 .expect("unreachable");
+            } else {
+                local = p.parse_binding(ParseBindingOptions {
+                    is_using_statement: opts.is_using_statement,
+                })?;
+                p.declare_binding(kind, &mut local, opts)
+                    .expect("unreachable");
+            }
 
             // Skip over types
             if Self::IS_TYPESCRIPT_ENABLED {

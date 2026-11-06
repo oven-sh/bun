@@ -3922,6 +3922,242 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
+    describe('"let" as a name that a let, const or using declaration binds', () => {
+      const message = 'Cannot use "let" as an identifier here';
+
+      // Every error of a source, in order, with the byte offset it points at.
+      const errorsOf = (code, loader = "js") => {
+        try {
+          transpiler.transformSync(code, loader);
+        } catch (er) {
+          const errors = er instanceof AggregateError ? er.errors : [er];
+          return errors.map(e => ({ message: e.message, offset: e.position?.offset }));
+        }
+        return [];
+      };
+
+      // Each source has one error. It points at the last `name` of the source: the bound name.
+      const expectRefused = (sources, loader, name = "let") => {
+        const actual = {};
+        const expected = {};
+        for (const code of sources) {
+          actual[code] = errorsOf(code, loader);
+          expected[code] = [{ message, offset: code.lastIndexOf(name) }];
+        }
+        expect(actual).toEqual(expected);
+      };
+
+      const expectAccepted = (sources, loader) => {
+        const actual = {};
+        const expected = {};
+        for (const code of sources) {
+          actual[code] = errorsOf(code, loader);
+          expected[code] = [];
+        }
+        expect(actual).toEqual(expected);
+      };
+
+      it("is an error inside a pattern, at any depth", () => {
+        expectRefused([
+          "let [let] = [1]",
+          "let {let} = {}",
+          "let {a: let} = {}",
+          "let {a: [let]} = {}",
+          "let [{let}] = [{}]",
+          "let [...let] = []",
+          "let {...let} = {}",
+          "let [let = 1] = []",
+          "let {let = 1} = {}",
+          "let {let: let} = {}",
+          "let [x, let] = [1, 2]",
+          "const [let] = [1]",
+          "const {let} = {}",
+          "const {a: let} = {}",
+          "const [...let] = []",
+          "const {...let} = {}",
+          // a later declarator
+          "let a = 1, [let] = [1]",
+          "const a = 1, {let} = {}",
+          // the head of a for loop
+          "for (let [let] of []) ;",
+          "for (let {let} in {}) ;",
+          "for (let [let] = []; ; ) break;",
+          "for (const [let] of []) ;",
+          "for (const {let} in {}) ;",
+          "for (const [let] = []; ; ) break;",
+          // other places
+          "let\n[let] = [1]",
+          "if (0) { let {let} = {}; }",
+          "function f() { let [let] = [1]; }",
+          "class C { static { const {let} = {}; } }",
+          "export let [let] = [1]",
+          "export const {let} = {}",
+          "export {}; let {let} = {}",
+        ]);
+      });
+
+      it("is an error when the name is written with an escape", () => {
+        expectRefused(
+          [
+            "let l\\u0065t = 1",
+            "const l\\u0065t = 1",
+            "let a = 1, l\\u0065t = 2",
+            "for (let l\\u0065t of []) ;",
+            "for (const l\\u0065t in {}) ;",
+            "{ using l\\u0065t = null; }",
+            "async function f() { await using l\\u0065t = null; }",
+            "let [l\\u0065t] = [1]",
+            "let {l\\u0065t} = {}",
+            "let {a: l\\u0065t} = {}",
+            "let [...l\\u0065t] = []",
+            "let {...l\\u0065t} = {}",
+            "const [l\\u0065t] = [1]",
+          ],
+          "js",
+          "l\\u0065t",
+        );
+      });
+
+      it("is an error in TypeScript, in a namespace too", () => {
+        expectRefused(
+          [
+            "let [let]: number[] = [1]",
+            "let [let]!: number[] = [1]",
+            "const {let}: any = {}",
+            "namespace N { export let [let] = [1] }",
+            "namespace N { const {let} = {} }",
+          ],
+          "ts",
+        );
+        // A declare statement with a plain name is an error, as "declare let let" is.
+        expectRefused(["declare let l\\u0065t: any"], "ts", "l\\u0065t");
+      });
+
+      it("stays valid in a pattern that a TypeScript declare erases", () => {
+        expectAccepted(
+          [
+            "declare let [let]: any",
+            "declare const {let}: any",
+            "declare const [l\\u0065t]: any",
+            "declare global { let [let]: any }",
+            "declare namespace N { let [let]: any }",
+            "declare namespace N { export let [let]: any }",
+            "declare module 'm' { export const {let}: any }",
+            "declare var let: any",
+            "declare var [let]: any",
+            // Such a pattern declares no symbol.
+            "declare const {a}: any; const a = 1",
+            "declare let [x]: any; let x = 1",
+          ],
+          "ts",
+        );
+      });
+
+      it("stays valid for var, a parameter, a catch parameter, a key and a default value", () => {
+        expectAccepted([
+          "var let = 1",
+          "var [let] = [1]",
+          "var {let} = {}",
+          "var l\\u0065t = 1",
+          "for (var let of []) ;",
+          "for (var [let] in {}) ;",
+          // a key or a default value is not a bound name
+          "let {let: x} = {}",
+          "let {'let': x} = {}",
+          "let {[let]: x} = {}",
+          "let [x = let] = []",
+          "let {x = let} = {}",
+          "let [x = function ([let]) {}] = []",
+          "let {x = ({let}) => 0} = {}",
+          "function f(let) {}",
+          "function f([let]) {}",
+          "function f({let}) {}",
+          "([let]) => 0",
+          "({let}) => 0",
+          "(let) => 0",
+          // ECMA-262 has no such rule for a catch parameter
+          "try {} catch (let) {}",
+          "try {} catch ([let]) {}",
+          "try {} catch ({let}) {}",
+        ]);
+
+        expectPrinted_("var [let] = [1]", "var [let] = [1]");
+        expectPrinted_("try {} catch ({let}) {}", "try {} catch ({ let }) {}");
+      });
+
+      it("reports a plain name once", () => {
+        expect(errorsOf("let let = 1")).toEqual([{ message, offset: 4 }]);
+        expect(errorsOf("const let = 1")).toEqual([{ message, offset: 6 }]);
+        expect(errorsOf("let a = 1, let = 2")).toEqual([{ message, offset: 11 }]);
+        expect(errorsOf("for (let let of []) ;")).toEqual([{ message, offset: 9 }]);
+        expect(errorsOf("{ using let = null; }")).toEqual([{ message, offset: 8 }]);
+        expect(errorsOf("declare let let: any", "ts")).toEqual([{ message, offset: 12 }]);
+        // The name is reported before the lexer fails on the token after it.
+        expect(errorsOf('let let "x')).toEqual([
+          { message, offset: 4 },
+          { message: "Unterminated string literal", offset: 8 },
+        ]);
+      });
+
+      it("adds no error for a binding that is not a name", () => {
+        // The parser names such a binding after the previous identifier token, here the "let" keyword.
+        expect(errorsOf("let {...1} = {}")).toEqual([{ message: 'Expected identifier but found "1"', offset: 8 }]);
+        expect(errorsOf("let {+} = {}")).toEqual([
+          { message: 'Expected identifier but found "+"', offset: 5 },
+          { message: 'Expected "}" but found end of file', offset: 12 },
+        ]);
+      });
+
+      it("is an error from every Bun.Transpiler API", async () => {
+        const thrown = { name: "BuildMessage", message, line: 1, column: 6 };
+        const actual = {};
+        for (const api of ["scan", "scanImports", "transformSync", "transform"]) {
+          try {
+            await transpiler[api]("let [let] = [1]", "js");
+            actual[api] = "did not throw";
+          } catch (e) {
+            actual[api] = { name: e.name, message: e.message, line: e.position?.line, column: e.position?.column };
+          }
+        }
+        expect(actual).toEqual({ scan: thrown, scanImports: thrown, transformSync: thrown, transform: thrown });
+      });
+
+      it("bun run and bun build print the located error", async () => {
+        using dir = tempDir("let-lexically-bound-name", {
+          "pattern.js": 'let [let] = [2];\nconsole.log("ran", let);\n',
+          // The declaration is dead code: no later pass sees it.
+          "dead.cjs": 'if (0) { let {let} = {}; }\nconsole.log("ran");\n',
+        });
+        const results = await Promise.all(
+          [
+            ["run", "pattern.js"],
+            ["build", "pattern.js"],
+            ["run", "dead.cjs"],
+            ["build", "dead.cjs"],
+          ].map(async args => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: { ...bunEnv, NO_COLOR: "1" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const lines = stderr.split("\n").map(l => l.trim());
+            return {
+              stdout,
+              error: lines.find(l => l.startsWith("error: ")),
+              at: lines.find(l => l.startsWith("at "))?.split(/[\\/]/).pop(),
+              exitCode,
+            };
+          }),
+        );
+        const pattern = { stdout: "", error: `error: ${message}`, at: "pattern.js:1:6", exitCode: 1 };
+        const dead = { stdout: "", error: `error: ${message}`, at: "dead.cjs:1:15", exitCode: 1 };
+        expect(results).toEqual([pattern, pattern, dead, dead]);
+      });
+    });
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

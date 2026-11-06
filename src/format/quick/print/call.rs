@@ -1503,6 +1503,7 @@ impl Quick {
             st = self.state_open();
             let mut gi: i32 = 0;
             while gi < groups {
+                self.reserve();
                 self.call(self.print_call.ch.at(docs + gi));
                 gi += 1;
             }
@@ -1522,6 +1523,7 @@ impl Quick {
             self.indent_open();
             let mut gi = first_indented;
             while gi < groups {
+                self.reserve();
                 self.hardline();
                 self.call(self.print_call.ch.at(docs + gi));
                 gi += 1;

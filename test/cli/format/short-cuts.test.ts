@@ -4300,6 +4300,20 @@ describe("JavaScript that is deep, long or full of comments", () => {
       [["--use-tabs"]],
     ));
 
+  // Whoever writes in a loop makes room in it. What is written where there is none is lost, and the file goes the long way after all.
+  test.skipIf(!hasFlag).concurrent.each([4000, 4300, 32000])("a chain of %d calls goes the quick way", async count => {
+    using dir = tempDir("format-short-cuts", { "a.js": nest("", "a", ".b()", count) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", "a.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("the quick way: 1 scripts");
+  });
+
   // Where a comment belongs is asked of what stands next to it, comments aside, whatever separates them.
   const ascii = [" ", "\t", "\n", "\r\n", "\r", "\x0b", "\x0c", "", ",", ";", " , "];
   const beyondAscii = ["\u00a0", "\u2028", "\u2029", "\ufeff", "\u3000"];

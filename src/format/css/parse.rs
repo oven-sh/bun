@@ -466,11 +466,18 @@ impl<'a> Context<'a> {
             // To compute the value's offset in the file it also counts `raws.afterName` instead of the colon. Comment
             // text is read from that offset, so `@a:b(c)/* d */e` becomes `@a: b(c) )/* d * e`.
             let after_colon = raw.name.start + colon as u32 + 1;
-            let value = match clean_params.is_empty() {
-                true => rest,
-                false => self.of(Range::new(after_colon, raw.params.end)),
+            node.value = match clean_params.is_empty() {
+                true => parse(Cow::Borrowed(rest), after_colon, parsed)?,
+                // `@a:: b`: `postcss-less` has taken the first colon out of the name, which is no part of the text now.
+                false if raw.variable => {
+                    let value = [rest, &clean_params[..]].concat();
+                    parse(Cow::Owned(value), raw.params.start, parsed)?
+                }
+                false => {
+                    let value = self.of(Range::new(after_colon, raw.params.end));
+                    parse(Cow::Borrowed(value), after_colon, parsed)?
+                }
             };
-            node.value = parse(Cow::Borrowed(value), after_colon, parsed)?;
         }
         // `@color :blue;`
         if !matches!(node.name, b"page" | b"nest" | b"keyframes") && clean_params.starts_with(b":")

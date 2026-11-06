@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 3eaf4e8f8c6937b0b82f55e090f0820e87b312a9c946005f0fc783f92542f773.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -124,7 +124,7 @@ const http1ServerPipeline: {
   lastPipelinedResponse?: (socket: $Node.HttpSocket) => $Node.PipelinedResponse | undefined;
   maybePauseFallbackReads?: (socket: $Node.HttpSocket) => void;
   resumeFallbackReadsOnDrain?: (socket: $Node.HttpSocket) => void;
-  finishDrainedResponse?: (res: $Node.ServerResponse) => void;
+  finishDrainedResponse?: (res: $Node.ServerResponse, err?: Error | null) => void;
   mustCloseConnection?: (res: $Node.ServerResponse) => boolean;
 } = {};
 
@@ -398,6 +398,55 @@ const STATUS_CODES: Record<number, string | undefined> = {
   511: "Network Authentication Required",
 };
 
+function rethrowUncaught(err: unknown) {
+  throw err;
+}
+
+// Deliver end() callbacks, mirroring Writable: null on successful finish,
+// otherwise the error that prevented all data from being flushed.
+function flushEndCallbacks(msg: $Node.OutgoingMessage, err: Error | null) {
+  const callbacks = msg[kEndCallbacks];
+  if (callbacks === null) return;
+  msg[kEndCallbacks] = null;
+  for (let i = 0; i < callbacks.length; i++) {
+    try {
+      callbacks[i](err);
+    } catch (e) {
+      // An uncaught exception, as in Node.js. There it also skips the other
+      // callbacks and 'finish', which leaves the connection stuck on this message.
+      process.nextTick(rethrowUncaught, e);
+    }
+  }
+}
+
+function getEndCallbackError(msg: $Node.OutgoingMessage): Error {
+  return msg[kErrored] ?? msg[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("end");
+}
+
+function queueEndCallback(msg: $Node.OutgoingMessage, callback: $Node.HttpWriteCallback) {
+  if (msg[kWritableFinished]) {
+    callback($ERR_STREAM_ALREADY_FINISHED("end"));
+    return;
+  }
+  if (msg[kFlushError] !== null) {
+    process.nextTick(callback, msg[kFlushError]);
+    return;
+  }
+  $arrayPush((msg[kEndCallbacks] ??= []), callback);
+}
+
+function onFinish(outmsg: $Node.OutgoingMessage, err?: Error | null) {
+  if (err || outmsg[kErrored] || outmsg[kSocket]?.errored || outmsg[kSocket]?._hadError) {
+    const flushError = (outmsg[kFlushError] = err ?? getEndCallbackError(outmsg));
+    flushEndCallbacks(outmsg, flushError);
+    return;
+  }
+
+  outmsg[kWritableFinished] = true;
+  flushEndCallbacks(outmsg, null);
+  outmsg.emit("finish");
+}
+
 function hasServerResponseFinished(
   self: $Node.ServerResponse,
   chunk: $Node.HttpChunk | null | undefined,
@@ -431,11 +480,7 @@ function hasServerResponseFinished(
     }
   } else if (finished) {
     if ($isCallable(callback)) {
-      if (!self.writableFinished) {
-        self.on("finish", callback);
-      } else {
-        callback($ERR_STREAM_ALREADY_FINISHED("end"));
-      }
+      queueEndCallback(self, callback);
     }
 
     return true;
@@ -462,6 +507,9 @@ const kNeedDrain = Symbol("kNeedDrain");
 const kErrored = Symbol("errored");
 const kHighWaterMark = Symbol("kHighWaterMark");
 const kSocket = Symbol("kSocket");
+const kWritableFinished = Symbol("kWritableFinished");
+const kEndCallbacks = Symbol("kEndCallbacks");
+const kFlushError = Symbol("kFlushError");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kUniqueHeaders = Symbol("kUniqueHeaders");
 // Cache slot for the server dispatcher's keep-alive decision (stamped once per request in _http_server.ts); declared in the constructor of IncomingMessage so the stamp never shape-transitions the request.
@@ -563,6 +611,9 @@ declare global {
       [kErrored]: Error | null | undefined;
       [kHighWaterMark]: number;
       [kSocket]: HttpSocket | null;
+      [kWritableFinished]: boolean;
+      [kEndCallbacks]: HttpWriteCallback[] | null;
+      [kFlushError]: Error | null;
       [kRejectNonStandardBodyWrites]: boolean | undefined;
       [kUniqueHeaders]?: Set<string> | null;
       /** Of a `ServerResponse`. */
@@ -779,6 +830,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  getEndCallbackError,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -791,7 +843,9 @@ export {
   kCloseCallback,
   kClosedWithUnsentData,
   kCorked,
+  kEndCallbacks,
   kErrored,
+  kFlushError,
   kHandle,
   kHandoffResponse,
   kHasQueuedReads,
@@ -815,15 +869,19 @@ export {
   kSocket,
   kUniqueHeaders,
   kWaitForProxyTunnel,
+  kWritableFinished,
   loadAllOfNodeHttp,
   noBodySymbol,
   onDataIncomingMessage,
+  onFinish,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
+  queueEndCallback,
   redactInvalidProxyUrl,
   requestRoad,
   responseRoad,
+  rethrowUncaught,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

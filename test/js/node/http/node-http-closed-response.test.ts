@@ -76,12 +76,17 @@ test("a response frozen between write() and end() keeps its socket, and the next
 
 test("each step behind the end() of a response that is then frozen reports the store it could not make", async () => {
   expect(await run("freeze", "after")).toEqual([
-    ...fourAnswersOnOneConnection,
+    '200 0 "first last"',
+    '200 1 "first last"',
+    '200 null ""',
+    '200 2 "first last"',
+    "connections 2",
     `uncaught in onNodeHTTPRequest: ${readonly}`,
     `uncaught in flushWriteAccountingNT < processTicksAndRejections: ${readonly}`,
     `uncaught in markResponseEndedNT < processTicksAndRejections: ${notExtensible}`,
-    `uncaught in set < <anonymous> < emitResponseFinish < emit < emitResponseFinished < processTicksAndRejections: ${readonly}`,
-    `uncaught in emitCloseNT < processTicksAndRejections: ${readonly}`,
+    `uncaught in onFinish < finishResponse < processTicksAndRejections: ${readonly}`,
+    "uncaught in unknown < assignSocketInternal < onNodeHTTPRequest: ServerResponse has an already assigned socket",
+    `uncaught in emitCloseNT < emit < emitCloseNT < processTicksAndRejections: ${readonly}`,
   ]);
 });
 

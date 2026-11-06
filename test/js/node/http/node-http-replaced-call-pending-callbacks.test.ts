@@ -88,8 +88,8 @@ replaced on the response, which has listeners, write() and end() with callbacks:
     prefinish
     _callPendingCallbacks(), finished true, headersSent true
     the callback of write()
-    finish
     the callback of end()
+    finish
     close
 `);
   expect(exitCode).toBe(0);

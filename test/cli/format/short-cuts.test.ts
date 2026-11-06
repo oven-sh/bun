@@ -4347,6 +4347,10 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.ts", "x = /a/", "ysmig", ";\n", 5000],
     // the line on which a template starts
     ["a.js", "x = [", `html\`<a></a>\`, "${"a".repeat(200)}", `, "];\n", 3000],
+    // conditionals in the test of a conditional (on one line: broken, each is indented by one level more)
+    ["a.js", "x = ", "(¦a¦ ? b : c)", ";\n", 3000, ["--print-width=10000000"]],
+    ["a.jsx", "x = ", "(¦<a />¦ ? b : c)", ";\n", 3000, ["--print-width=10000000"]],
+    ["a.jsx", "x = ", "(¦a¦ ? b : c)", " ? <b /> : c;\n", 3000, ["--print-width=10000000"]],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

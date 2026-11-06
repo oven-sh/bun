@@ -13,7 +13,8 @@ pub(crate) struct PrintTernary {
     last_conditional_parent: i32,
     /// The node above that one, or 0.
     above: i32,
-    chain_contains_jsx: bool,
+    /// A conditional of the chain with an element of JSX among its parts, or 0 if the chain has none.
+    jsx_in: i32,
 }
 impl PrintTernary {
     pub(crate) fn new() -> Self {
@@ -21,28 +22,31 @@ impl PrintTernary {
             known: 0,
             last_conditional_parent: 0,
             above: 0,
-            chain_contains_jsx: false,
+            jsx_in: 0,
         }
     }
 }
 
 impl Quick {
-    pub(crate) fn chain_contains_jsx(&self, n: i32) -> R<bool> {
+    /// conditionalExpressionChainContainsJsx(): the first conditional in `n`, with nothing but conditionals between the two, that has an element of JSX among
+    /// its parts, or 0.
+    pub(crate) fn chain_contains_jsx(&self, n: i32) -> R<i32> {
         self.stack()?;
         let mut f: i32 = 4;
         while f <= 6 {
             let child = self.n.at(n + f);
             if self.is_jsx_element(child) {
-                return Ok(true);
+                return Ok(n);
             }
-            if (self.n.at(child) & 0xff) == k::ConditionalExpression
-                && self.chain_contains_jsx(child)?
-            {
-                return Ok(true);
+            if (self.n.at(child) & 0xff) == k::ConditionalExpression {
+                let found = self.chain_contains_jsx(child)?;
+                if found != 0 {
+                    return Ok(found);
+                }
             }
             f += 1;
         }
-        return Ok(false);
+        return Ok(0);
     }
 
     pub(crate) fn should_extra_indent(&self, n: i32) -> bool {
@@ -158,16 +162,28 @@ impl Quick {
             parent
         };
         let last_conditional_parent = previous_parent;
-        let chain_contains_jsx = if is_known {
-            self.print_ternary.chain_contains_jsx
+        let known_jsx_in = self.print_ternary.jsx_in;
+        let jsx_in = if is_known {
+            known_jsx_in
+        } else if !is_expression {
+            0
+        } else if is_parent_test
+            && parent == self.print_ternary.known
+            && (known_jsx_in == 0
+                || (self.n.at(n + 1) <= self.n.at(known_jsx_in + 1)
+                    && self.n.at(known_jsx_in + 2) <= self.n.at(n + 2)))
+        {
+            // A test starts a chain of its own, which is part of what was looked through for the chain around it.
+            known_jsx_in
         } else {
-            is_expression && self.chain_contains_jsx(last_conditional_parent)?
+            self.chain_contains_jsx(last_conditional_parent)?
         };
+        let chain_contains_jsx = jsx_in != 0;
         let own = PrintTernary {
             known: n,
             last_conditional_parent,
             above: current_parent,
-            chain_contains_jsx,
+            jsx_in,
         };
         let jsx_mode = is_expression
             && (self.is_jsx_element(test)

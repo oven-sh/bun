@@ -356,9 +356,12 @@ impl Quick {
                         let mut value: i32 = 0;
                         while is_hex(self.t.at(q)) {
                             value = value * 16 + print_embed_hex_value(self.t.at(q));
+                            if value > 0x10ffff {
+                                return true;
+                            }
                             q += 1;
                         }
-                        if q == p + 2 || self.t.at(q) != 125 || value > 0x10ffff {
+                        if q == p + 2 || self.t.at(q) != 125 {
                             return true;
                         }
                     } else if !is_hex(self.t.at(p + 1))

@@ -4507,6 +4507,22 @@ describe("JavaScript that is deep, long or full of comments", () => {
   });
 });
 
+describe("scripts that are too much for the quick way", () => {
+  describe("escapes beyond the last character", () =>
+    expectSame(
+      "a.js",
+      ["100000041", "FFFFFFFFF", "110000", "10FFFF", "00000000000041", "7FFFFFFF", "80000000"].flatMap(digits => [
+        `x = html\`<div>\\u{${digits}}</div>\`;\n`,
+        `x = css\`a { content: "\\u{${digits}}" }\`;\n`,
+        `x = gql\`{ a(b: "\\u{${digits}}") }\`;\n`,
+        `x = markdown\`\\u{${digits}}\`;\n`,
+        `x = "\\u{${digits}}";\n`,
+        `a\\u{${digits}} = 1;\n`,
+      ]),
+      [[]],
+    ));
+});
+
 describe("JavaScript and TypeScript in a host", () => {
   // A script or a code block is formatted to a text of its own, which the host puts between two of its lines.
   const statements = [

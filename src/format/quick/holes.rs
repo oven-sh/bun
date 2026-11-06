@@ -216,7 +216,7 @@ impl Quick {
         let mut n: i32 = 0;
         let digits = q;
         while q < end && self.t.at(q) >= 48 && self.t.at(q) <= 57 {
-            n = n.wrapping_mul(10) + (self.t.at(q) - 48);
+            n = n.saturating_mul(10).saturating_add(self.t.at(q) - 48);
             q += 1;
         }
         if q == digits || q + self.holes.suffix_length > end {

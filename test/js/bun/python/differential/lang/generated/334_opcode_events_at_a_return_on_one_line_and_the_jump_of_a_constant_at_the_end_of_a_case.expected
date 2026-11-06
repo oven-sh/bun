@@ -1,0 +1,32 @@
+status: 0
+script: e15bdcd18d5dc801
+source: 02a4c6b487ea7faa
+---
+two clauses | 4 inner outer | raised E
+a clause in a try with a handler | 4 inner caught | returned 'handled'
+a clause in a with | enter 4 inner exit:E | raised E
+a clause | 3 inner | raised E
+two ways through the value | 4 inner outer | raised E ;; 4 | raised E
+a while loop in a clause | 4 outer | raised E ;; 4 | raised E
+a call | 4 inner outer | raised E
+a method call | 4 inner outer | raised E
+a conditional | 4 inner outer | raised E ;; 4 | raised E
+or | 4 inner outer | raised E ;; 4 | raised E
+and | 4 inner outer | raised E ;; 4 | raised E
+a chain of comparisons | 4 inner outer | raised E ;; 4 | raised E
+a comprehension | 4 inner outer | raised E
+a conditional that is assigned | 4 inner outer | raised E
+not | 4 inner outer | raised E
+a conditional in a tuple | 4 inner outer | raised E
+a conditional in a call | 4 inner outer | raised E
+an attribute | 4 inner outer | raised E
+a conditional in a conditional | 4 inner outer | raised E ;; 4 | raised E
+a dict comprehension | 4 inner outer | raised E
+a name | 4 inner outer | raised E
+a sum | 4 inner outer | raised E
+else guard | L2 L3 L7 L8 L9 L10 L11 J11>13 L13 L14 L15 L16
+else if | L2 L3 L7 L8 L9 L10 J10>12 L12 L13 L14 L15
+else while | L2 L3 L7 L8 L9 L10 J10>12 L12 L13 L14 L15
+finally guard | L2 L3 L5 L6 L7 L8 L9 J9>11 L11 L12 L13 L14
+finally if | L2 L3 L5 L6 L7 L8 J8>10 L10 L11 L12 L13
+finally while | L2 L3 L5 L6 L7 L8 J8>10 L10 L11 L12 L13

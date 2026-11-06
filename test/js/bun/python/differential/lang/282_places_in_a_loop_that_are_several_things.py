@@ -45,8 +45,6 @@ DISABLED = {
 }
 WAYS = [('LR and lines', 'nothing'), ('R', 'nothing'), ('L', 'nothing'), ('LRJ', 'nothing'), ('LR', 'everything'), ('LRJ', 'everything')]
 WAYS += [('LR', 'left'), ('LR', 'right'), ('LRJ', 'every other')]
-# Not as in CPython yet: a branch to the end of a `while` loop that is the end of the function, behind `continue` and in front of `break`.
-LEFT_OUT = {('while', 'end'): range(145, 176, 2)}
 
 
 log = []
@@ -78,8 +76,6 @@ def main():
             exec(''.join('def f%d(xs):\n    t = 0\n    i = 0\n%s\n%s\n' % (number, indented(loop % indented(body)), indented(after))
                          for number, body in enumerate(BODIES)), namespace)
             for number in range(len(BODIES)):
-                if number in LEFT_OUT.get((loop_name, after_name), ()):
-                    continue
                 f = namespace['f%d' % number]
                 lines.clear()
                 for start, end, line in f.__code__.co_lines():

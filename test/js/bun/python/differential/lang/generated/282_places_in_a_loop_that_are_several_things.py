@@ -64,9 +64,6 @@ try: WAYS = [('LR and lines', 'nothing'), ('R', 'nothing'), ('L', 'nothing'), ('
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: WAYS = [('LR and lines', 'nothing'), ('R', 'nothing'), ('L', 'nothing...")
 try: WAYS += [('LR', 'left'), ('LR', 'right'), ('LRJ', 'every other')]
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: WAYS += [('LR', 'left'), ('LR', 'right'), ('LRJ', 'every other')]")
-# Not as in CPython yet: a branch to the end of a `while` loop that is the end of the function, behind `continue` and in front of `break`.
-try: LEFT_OUT = {('while', 'end'): range(145, 176, 2)}
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: LEFT_OUT = {('while', 'end'): range(145, 176, 2)}")
 
 
 try: log = []
@@ -104,8 +101,6 @@ try:
                 exec(''.join('def f%d(xs):\n    t = 0\n    i = 0\n%s\n%s\n' % (number, indented(loop % indented(body)), indented(after))
                              for number, body in enumerate(BODIES)), namespace)
                 for number in range(len(BODIES)):
-                    if number in LEFT_OUT.get((loop_name, after_name), ()):
-                        continue
                     f = namespace['f%d' % number]
                     lines.clear()
                     for start, end, line in f.__code__.co_lines():

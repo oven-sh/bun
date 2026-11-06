@@ -1435,8 +1435,9 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
   });
 });
 
-// Node gives `syscall: "spawn"` to the errno errors that spawn() throws. An ERR_* error from
-// the validation of an option is not one of them, though it has an own `code` too.
+// Node gives `syscall: "spawn"` to the errno errors that spawn() throws:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L440
+// An ERR_* error from the validation of an option is not one of them, though it has an own `code` too.
 describe("errors that spawn() throws", () => {
   function thrownBy(stdio: StdioOptions): any {
     try {

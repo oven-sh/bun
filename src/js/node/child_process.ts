@@ -1563,7 +1563,7 @@ class ChildProcess extends EventEmitter {
           this.#stdioOptions[2] = "undefined";
         }
       } else {
-        // An ERR_* validation error has an own `code` too, and Node gives it no `syscall`.
+        // Only an errno error is an ErrnoException(err, "spawn") in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L440. An ERR_* validation error has an own `code` too.
         if (exCode !== undefined && Object.hasOwn(ex as SystemError, "errno")) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).

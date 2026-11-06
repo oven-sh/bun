@@ -1024,8 +1024,8 @@ impl FileLowering<'_, '_, '_, '_> {
         match hir.member_key(inner) {
             Some((_, MemberKey::Name(name))) => Some(self.intern_atom(name)),
             Some((_, MemberKey::PrivateName(name))) => {
-                let text = written_name(self.queries.atom_bytes(name));
-                Some(self.intern_bytes(text))
+                let text = self.printed_member_name(inner, name).to_vec();
+                Some(self.intern_bytes(&text))
             }
             Some((_, MemberKey::Computed(_))) | None => None,
         }
@@ -1115,7 +1115,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     return false;
                 }
                 path.extend_from_slice(if chain == Chain::Start { b"?." } else { b"." });
-                path.extend_from_slice(written_name(self.queries.atom_bytes(name)));
+                path.extend_from_slice(self.printed_member_name(inner, name));
             }
             ExprKind::Index { obj, index, chain } => {
                 if self.is_literal_operand(obj) || !self.append_written_path(obj, path) {
@@ -1175,6 +1175,13 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => return false,
         }
         path.len() <= LONGEST_PATH
+    }
+
+    // `o.#x` of an `accessor #x` field is printed with the name of the field that holds its value.
+    fn printed_member_name(&self, access: ExprId, name: Atom) -> &[u8] {
+        let transpiled = self.transpiled.as_ref();
+        let printed = transpiled.and_then(|it| it.find_printed_private_name(access));
+        printed.unwrap_or_else(|| written_name(self.queries.atom_bytes(name)))
     }
 
     // Bun's transpiler prints an initializer in place of the name.

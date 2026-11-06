@@ -183,6 +183,7 @@ impl RuntimeTranspiler<'_> {
                 initializers: &walker.initializers,
                 computed_keys: &walker.computed_keys,
                 calls: &walker.calls,
+                accessed_private_names: &walker.accessed_private_names,
                 import_paths: &import_paths,
             };
             Alignment::new(parsed, printed).find_rewrites()
@@ -360,6 +361,18 @@ impl TranspiledFile {
         &self.rewrites.keys_printed_as_names
     }
 
+    /// Each `o.#x` that is printed under another name, with that name.
+    pub(super) fn private_names_printed_otherwise(&self) -> &[(ExprId, Box<[u8]>)] {
+        &self.rewrites.private_names_printed_otherwise
+    }
+
+    /// The name that is printed for the `#x` of `o.#x`, where that is another.
+    pub(super) fn find_printed_private_name(&self, access: ExprId) -> Option<&[u8]> {
+        let names = &self.rewrites.private_names_printed_otherwise;
+        let index = names.binary_search_by_key(&access, |entry| entry.0);
+        index.ok().map(|index| &*names[index].1)
+    }
+
     pub(super) fn has_statement_at(&self, position: u32) -> bool {
         self.statements.contains(position)
     }
@@ -459,6 +472,7 @@ struct Walker<'a> {
     initializers: Vec<(u32, Expr)>,
     computed_keys: Vec<(u32, Expr)>,
     calls: Vec<(u32, Expr)>,
+    accessed_private_names: Vec<(u32, &'a [u8])>,
     pending_expressions: Vec<Expr>,
     pending_statements: Vec<Stmt>,
     pending_bindings: Vec<Binding>,
@@ -523,6 +537,7 @@ impl<'a> Walker<'a> {
             initializers: Vec::new(),
             computed_keys: Vec::new(),
             calls: Vec::new(),
+            accessed_private_names: Vec::new(),
             pending_expressions: Vec::new(),
             pending_statements: Vec::new(),
             pending_bindings: Vec::new(),
@@ -652,6 +667,8 @@ impl<'a> Walker<'a> {
         self.initializers.sort_unstable_by_key(|entry| entry.0);
         self.computed_keys.sort_unstable_by_key(|entry| entry.0);
         self.calls.sort_unstable_by_key(|entry| entry.0);
+        self.accessed_private_names
+            .sort_unstable_by_key(|entry| entry.0);
     }
 
     /// After `walk`. Those of the classes, then those of the functions.
@@ -1054,6 +1071,13 @@ impl<'a> Walker<'a> {
             }
             ExprData::EDot(access) => self.walk_read_from(access.target),
             ExprData::EIndex(access) => {
+                if let ExprData::EPrivateIdentifier(name) = access.index.data
+                    && let Ok(position) = u32::try_from(access.index.loc.start)
+                {
+                    let name = follow_symbols(self.symbols, name.ref_).inner_index();
+                    let name = self.symbols[name as usize].original_name.slice();
+                    self.accessed_private_names.push((position, name));
+                }
                 self.walk_read_from(access.target);
                 self.pending_expressions.push(access.index);
             }

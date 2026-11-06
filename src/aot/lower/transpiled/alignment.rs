@@ -2,11 +2,12 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{AssignTarget, E, Expr, Loc, OpCode, Stmt, StmtOrExpr};
 use bun_core::strings;
-use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::atom::{Atom, Interner, known, written_name};
 use bun_sema::bind::{Binding, Bound, Decl, PatParent};
 use bun_sema::fold::{Constant, TreeNode, push_children};
 use bun_sema::hir::{
-    self, BinOp, ExprId, ExprKind, FnBody, IdList, PatId, PropKey, StmtId, StmtKind, UnOp,
+    self, BinOp, ExprId, ExprKind, FnBody, IdList, MemberKey, PatId, PropKey, StmtId, StmtKind,
+    UnOp,
 };
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -40,6 +41,8 @@ pub(super) struct Rewrites {
     pub(super) replaced_names: FxHashMap<ExprId, ExprId>,
     /// Each `a[key]` that is printed `a.name`. Sorted.
     pub(super) keys_printed_as_names: Vec<ExprId>,
+    /// Each `o.#x` that is printed under another name, with that name: an `accessor #x` field is read and stored in the field that holds its value. Sorted.
+    pub(super) private_names_printed_otherwise: Vec<(ExprId, Box<[u8]>)>,
 }
 
 pub(super) struct PrintedTree<'a> {
@@ -50,6 +53,8 @@ pub(super) struct PrintedTree<'a> {
     pub(super) computed_keys: &'a [(u32, Expr)],
     /// Calls by the position of their `)`, and `new` expressions by their own.
     pub(super) calls: &'a [(u32, Expr)],
+    /// The name of each `o.#x`, by its position.
+    pub(super) accessed_private_names: &'a [(u32, &'a [u8])],
     pub(super) import_paths: &'a [&'a [u8]],
 }
 
@@ -72,6 +77,7 @@ pub(super) struct Alignment<'a, 's> {
     returned_initializers: FxHashMap<ExprId, u32>,
     replaced_names: FxHashMap<ExprId, ExprId>,
     keys_printed_as_names: Vec<ExprId>,
+    private_names_printed_otherwise: Vec<(ExprId, Box<[u8]>)>,
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
@@ -250,6 +256,7 @@ impl<'a, 's> Alignment<'a, 's> {
             returned_initializers: FxHashMap::default(),
             replaced_names: FxHashMap::default(),
             keys_printed_as_names: Vec::new(),
+            private_names_printed_otherwise: Vec::new(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
             searches: RefCell::default(),
@@ -280,6 +287,11 @@ impl<'a, 's> Alignment<'a, 's> {
         for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
             self.align_call(expression);
         }
+        if !self.printed.accessed_private_names.is_empty() {
+            for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
+                self.align_private_name(expression);
+            }
+        }
         self.keys_printed_as_names.sort_unstable();
         self.keys_printed_as_names.dedup();
         Rewrites {
@@ -287,6 +299,7 @@ impl<'a, 's> Alignment<'a, 's> {
             returned_initializers: self.returned_initializers,
             replaced_names: self.replaced_names,
             keys_printed_as_names: self.keys_printed_as_names,
+            private_names_printed_otherwise: self.private_names_printed_otherwise,
         }
     }
 
@@ -318,6 +331,20 @@ impl<'a, 's> Alignment<'a, 's> {
         {
             self.push(expression, printed);
             self.align_pending();
+        }
+    }
+
+    fn align_private_name(&mut self, access: ExprId) {
+        let hir = self.hir;
+        let Some((_, MemberKey::PrivateName(name))) = hir.member_key(access) else {
+            return;
+        };
+        let names = self.printed.accessed_private_names;
+        if let Some(printed) = find_by_position(names, hir.name_pos(access))
+            && printed != written_name(self.atoms.bytes(name))
+        {
+            let names = &mut self.private_names_printed_otherwise;
+            names.push((access, printed.into()));
         }
     }
 

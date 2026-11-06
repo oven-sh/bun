@@ -1,10 +1,10 @@
-// `#name in value` for a `static accessor` field: a static field and a static block ask before its value. A subclass, an object of no class, a number and undefined are asked, read and stored to. The getter and the setter are on the class as soon as the class is. A read or a store that fails quotes another name than plain Bun: errors/places-throw-with-another-text-or-column.js
+// `#name in value` for a `static accessor` field: a static field and a static block ask before its value. A subclass, an object of no class, a number and undefined are asked, read and stored to. The getter and the setter are on the class as soon as the class is. A read or a store that fails is worded as that of a static field, with the name of the field that Bun's transpiler prints for the value.
 const lines = [];
-function attempt(label, run, words = false) {
+function attempt(label, run) {
   try {
     lines.push(label + ": " + String(run()));
   } catch (error) {
-    lines.push(label + ": " + error.name + (words ? ": " + error.message : ""));
+    lines.push(label + ": " + error.name + ": " + error.message);
   }
 }
 class Registry {
@@ -35,7 +35,7 @@ const values = [
   ["undefined", undefined],
 ];
 for (const [label, value] of values) {
-  attempt("has, " + label, () => Registry.has(value), true);
+  attempt("has, " + label, () => Registry.has(value));
   attempt("read, " + label, () => Registry.read(value));
   attempt("store, " + label, () => Registry.store(value));
 }

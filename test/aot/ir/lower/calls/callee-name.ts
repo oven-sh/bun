@@ -42,6 +42,11 @@
 // CHECK: = Call {{*}}calleeName="super.m"
 // CHECK-LABEL: function {{*}}name="thisMember"
 // CHECK: = Call {{*}}calleeName="this.inner.m"
+// The value of an `accessor #x` field: the callee as Bun's transpiler prints it, which names the field that holds the value.
+// CHECK-LABEL: function {{*}}name="accessorField"
+// CHECK: = Call {{*}}calleeName="this.#held_accessor_storage"
+// CHECK-LABEL: function {{*}}name="memberOfAccessorField"
+// CHECK: = Call {{*}}calleeName="this.#held_accessor_storage.m"
 
 export function callResult(f: any) {
   f()();
@@ -118,5 +123,12 @@ export class Derived extends Base {
   }
   thisMember() {
     this.inner.m();
+  }
+  accessor #held: any = null;
+  accessorField() {
+    this.#held(1);
+  }
+  memberOfAccessorField() {
+    this.#held.m();
   }
 }

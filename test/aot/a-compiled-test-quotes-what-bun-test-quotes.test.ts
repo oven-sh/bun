@@ -35,6 +35,10 @@ function deleted(o: any) {
   delete o[k];
 }
 function tested(o: any) { const k = "e"; return k in o; }
+class Cache {
+  accessor #store: Map<string, number> | null = null;
+  size() { return this.#store!.size; }
+}
 test("quotes", () => {
   tell("initializer", () => initializer(null));
   tell("initializerOnLines", () => initializerOnLines(null));
@@ -48,6 +52,7 @@ test("quotes", () => {
   tell("stored", () => stored(null));
   tell("deleted", () => deleted(null));
   tell("tested", () => tested(null));
+  tell("accessorField", () => new Cache().size());
   console.log(told.join("\\n"));
 });
 `,
@@ -61,6 +66,9 @@ test("a compiled test quotes what bun test quotes where the transpiler prints so
   expect(plain.stdout).toContain("initializer: null is not an object (evaluating 'lookup(x).value')");
   expect(plain.stdout).toContain("base: null is not an object (evaluating 'null.value')");
   expect(plain.stdout).toContain("parameterKey: undefined is not an object (evaluating 'o[k]')");
+  expect(plain.stdout).toContain(
+    "accessorField: null is not an object (evaluating 'this.#store_accessor_storage.size')",
+  );
   const lines = (output: string) => output.split("\n").filter(line => line.includes(": "));
   expect(lines(compiled.stdout)).toEqual(lines(plain.stdout));
   expect(compiled.exitCode).toBe(0);

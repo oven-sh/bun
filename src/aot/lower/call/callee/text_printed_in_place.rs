@@ -395,6 +395,19 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprId::NONE,
             ))
         }));
+        let private_names = transpiled.private_names_printed_otherwise().iter();
+        replaced.extend(private_names.map(|(access, printed)| {
+            let printed = PrintedText::Bytes(printed.to_vec());
+            let (start, end) = (hir.name_pos(*access), hir[*access].end);
+            (
+                ReplacedText {
+                    start,
+                    end,
+                    printed,
+                },
+                *access,
+            )
+        }));
         let functions = self.find_text_from_printer().into_iter();
         replaced.extend(functions.map(|text| (text, ExprId::NONE)));
         replaced.sort_unstable_by_key(|(text, of)| (text.start, Reverse(text.end), *of));

@@ -1080,6 +1080,43 @@ impl Scan<'_> {
 
     // ───────────────────────────── the long way for one item ─────────────────────────────
 
+    /// True if `text[..end]` ends with what can be the header of a block scalar: `|` or `>` with its indicators, after
+    /// whitespace or directly after a property.
+    fn ends_with_block_scalar_header(&self, mut end: usize) -> bool {
+        while matches!(self.at(end.wrapping_sub(1)), b'-' | b'+' | b'0'..=b'9') {
+            end -= 1;
+        }
+        if !matches!(self.at(end.wrapping_sub(1)), b'|' | b'>') {
+            return false;
+        }
+        let before = self.text.get(..end - 1).unwrap_or_default();
+        let word = before
+            .iter()
+            .rposition(|&byte| byte <= 32)
+            .map_or(0, |it| it + 1);
+        matches!(before.get(word), None | Some(b'!' | b'&'))
+    }
+
+    /// True if the line `text[start..end]` can have the header of a block scalar in it: at its end, or in front of a
+    /// comment. Which `#` after whitespace starts the comment depends on the quotes before it, so each of them counts.
+    fn can_have_block_scalar_header(&self, start: usize, mut end: usize) -> bool {
+        loop {
+            if self.ends_with_block_scalar_header(self.trim_end(end)) {
+                return true;
+            }
+            loop {
+                let line = self.text.get(start..end).unwrap_or_default();
+                match strings::last_index_of_char(line, b'#') {
+                    Some(hash) if hash > 0 => end = start + hash,
+                    _ => return false,
+                }
+                if self.at(end - 1) <= 32 {
+                    break;
+                }
+            }
+        }
+    }
+
     /// The item that starts at `start`, in `column` of its line, reaches as far as the lines are indented further.
     /// Returns where its last line ends. `None`: it has a comment on a line of its own, which could belong to something
     /// outside, or a block scalar, whose printing depends on what's around it.
@@ -1101,37 +1138,12 @@ impl Scan<'_> {
                 return None;
             }
             let line_end = self.end_of_line(at);
-            // What can be the start of a comment.
-            let mut hash = (at.max(1)..line_end)
-                .find(|&it| self.text[it] == b'#' && self.text[it - 1] <= 32)
-                .unwrap_or(NONE);
-            let mut header_end = self.trim_end(line_end);
-            let end = header_end;
+            let end = self.trim_end(line_end);
             if self.ends_with_line_separator(end) {
                 return None;
             }
-            loop {
-                while header_end > 0
-                    && matches!(self.text[header_end - 1], b'-' | b'+' | b'0'..=b'9')
-                {
-                    header_end -= 1;
-                }
-                if header_end >= 1 && matches!(self.text[header_end - 1], b'|' | b'>') {
-                    // It's after whitespace, or directly after a property.
-                    let before = &self.text[..header_end - 1];
-                    let word = before
-                        .iter()
-                        .rposition(|&byte| byte <= 32)
-                        .map_or(0, |it| it + 1);
-                    if matches!(before.get(word), None | Some(b'!' | b'&')) {
-                        return None;
-                    }
-                }
-                if hash == NONE {
-                    break;
-                }
-                header_end = self.trim_end(hash);
-                hash = NONE;
+            if self.can_have_block_scalar_header(at, end) {
+                return None;
             }
             let mut empty_line = NONE;
             let mut next = line_end + 1;

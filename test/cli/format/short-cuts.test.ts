@@ -57,6 +57,15 @@ function expectSame(name: string, texts: string[], options: string[][]) {
 }
 
 describe("YAML", () => {
+  // An item with a block scalar in it doesn't go the long way by itself, whichever `#` starts the comment behind the header.
+  const headersBehindQuotes = [
+    'defaults: &defaults\n  "step #1": |+ # keep\n    echo hello\njobs: 1\n',
+    "a: &b\n  'c #d': >+ # e\n    f\n\ng: 1\n",
+    'a: &b\n  "c #d #e": |+ # f # g\n    h\ni: 1\n',
+    'a: !!map\n  "c #d": &e |+ # f\n    g\nh: 1\n',
+    'a: &b\n  "c #d": "|+ # e"\nf: 1\n',
+    "- &a\n  - 'b #c': |+ #d\n      e\n- f\n",
+  ];
   const texts = [
     // The common shapes.
     "a: 1\nb:\n  c: d\n  e:\n    - f\n    - g: h\n      i: j\n",
@@ -112,6 +121,7 @@ describe("YAML", () => {
     "\ufeffa: b",
     "a: 1\n\u00a0\nb: 2\n \u3000\nc: 3\n",
     "a: \u00a0\nb: ✅ c\n- \u3042\n",
+    ...headersBehindQuotes,
     // The ends of a text.
     "a: 1",
     "a: 1\n\n\n",
@@ -183,6 +193,7 @@ describe("YAML", () => {
   describe("in Markdown", () => {
     const hosts = texts
       .slice(0, 60)
+      .concat(headersBehindQuotes)
       .flatMap(text => [
         `---\n${text}\n---\n\ntext\n`,
         `- item\n\n  \`\`\`yaml\n${text.replace(/^/gm, "  ")}\n  \`\`\`\n`,

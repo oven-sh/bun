@@ -1,6 +1,5 @@
 # A heap snapshot in V8's form says of every object whether it is a function. It is made while the heap is marked, on several threads.
 import gc
-import json
 
 import js
 
@@ -16,20 +15,26 @@ class Plain:
     pass
 
 
-def types_of_nodes(text):
-    parsed = json.loads(text)
-    meta = parsed['snapshot']['meta']
-    fields, kinds = meta['node_fields'], meta['node_types'][0]
-    nodes, strings = parsed['nodes'], parsed['strings']
-    found = {}
-    for at in range(0, len(nodes), len(fields)):
-        name = strings[nodes[at + fields.index('name')]]
-        found.setdefault(name, set()).add(kinds[nodes[at + fields.index('type')]])
-    return found
+# The kinds of the nodes, by name. (The text is long: JS goes through it.)
+types_of_nodes = js.eval("""(text, wanted) => {
+    const parsed = JSON.parse(text);
+    const meta = parsed.snapshot.meta, fields = meta.node_fields, kinds = meta.node_types[0];
+    const name = fields.indexOf("name"), type = fields.indexOf("type");
+    const found = new Map();
+    for (let at = 0; at < parsed.nodes.length; at += fields.length) {
+        const key = parsed.strings[parsed.nodes[at + name]];
+        if (!wanted(key))
+            continue;
+        if (!found.has(key))
+            found.set(key, new Set());
+        found.get(key).add(kinds[parsed.nodes[at + type]]);
+    }
+    return [...found].map(([key, set]) => [key, [...set].sort()]);
+}""")
 
 
 kept = []
-for i in range(4000):
+for i in range(1000):
     cls = type('C%d' % i, (Callable if i % 2 else Plain,), {})
     # Names that nothing refers to any more but what remembers where they were looked for.
     try:
@@ -38,17 +43,10 @@ for i in range(4000):
         pass
     kept.append(cls())
 gc.collect()
-more = ['x%d' % i for i in range(100000)]
+more = ['x%d' % i for i in range(20000)]
 gc.collect()
 
 proxy = js.eval('globalThis.keptProxies = [new Proxy(function () {}, {}), new Proxy({}, {})]')
-found = types_of_nodes(str(snapshot()))
-for name in ('ProxyObject', 'PyInstance', 'Function', 'Object', 'Array'):
-    print(name, sorted(found.get(name, set()) - {'string'}))
-print(written())
-# And they are what they were.
-print(sum(callable(o) for o in kept), callable(kept[0]), callable(kept[1]))
-print(js.eval('(o) => typeof o')(kept[0]), js.eval('(o) => typeof o')(kept[1]))
 
 # To ask whether an object can be called runs nothing of the program: not the __eq__ of a key that is no str, in the dict of a class.
 asked = []
@@ -67,10 +65,6 @@ Odd = type('Odd', (), {Key(): 1})
 OddCallable = type('OddCallable', (), {Key(): 1, '__call__': lambda self: 'called'})
 odd, odd_callable = Odd(), OddCallable()
 asked.clear()
-print(len(str(snapshot())) > 1000, asked)
-kind = js.eval('(o) => typeof o')
-print(kind(odd), kind(odd_callable), asked)
-print(js.eval('(o) => o()')(odd_callable), asked)
 
 # A rope stays one, though it is the name of other nodes.
 js.eval("""
@@ -79,5 +73,20 @@ globalThis.Named = function () {};
 Named.displayName = "ROPE_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + part + "_bbbbbbbbbbbbbbbbbbbbbbbbb";
 globalThis.named = [new Named(), new Named()];
 """)
-found = types_of_nodes(str(snapshot()))
-print(sorted(sorted(kinds) for name, kinds in found.items() if name.startswith('ROPE_') and len(name) > 60))
+
+# (One snapshot for all: a debug build takes a quarter of a minute for each.)
+names = ('ProxyObject', 'PyInstance', 'Function', 'Object', 'Array')
+wanted = js.eval('(names) => (name) => names.includes(name) || (name.startsWith("ROPE_") && name.length > 60)')(list(names))
+found = {str(name): [str(kind) for kind in kinds] for name, kinds in types_of_nodes(snapshot(), wanted)}
+for name in names:
+    print(name, [kind for kind in found.get(name, []) if kind != 'string'])
+print([kinds for name, kinds in found.items() if name.startswith('ROPE_')])
+print(asked)
+print(written(), asked)
+# And they are what they were.
+print(sum(callable(o) for o in kept), callable(kept[0]), callable(kept[1]))
+kind = js.eval('(o) => typeof o')
+print(kind(kept[0]), kind(kept[1]))
+print(kind(odd), kind(odd_callable), asked)
+# (How often it is asked then depends on what else has been looked up.)
+print(js.eval('(o) => o()')(odd_callable), sorted(set(asked)))

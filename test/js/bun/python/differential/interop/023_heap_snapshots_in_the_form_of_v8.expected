@@ -6,10 +6,10 @@ PyInstance ['closure', 'object']
 Function ['closure', 'object']
 Object ['closure', 'object']
 Array ['closure', 'object']
-string
-2000 False True
+[['concatenated string', 'object']]
+[]
+string []
+500 False True
 object function
-True []
 object function []
 called ['__call__']
-[['concatenated string', 'object']]

@@ -69,8 +69,7 @@ struct us_loop_t {
     /* Number of polls owned by bun */
     unsigned int bun_polls;
 
-    /* Incremented atomically by wakeup(), swapped to 0 before the wait.
-     * If non-zero, the event loop will return immediately so we can skip the GC safepoint. */
+    /* Unused: wake_state says whether another thread has woken the loop. */
     unsigned int pending_wakeups;
 
     HANDLE iocp;

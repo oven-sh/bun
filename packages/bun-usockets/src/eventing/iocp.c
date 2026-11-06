@@ -1033,8 +1033,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     struct timespec timeout_storage;
     timeout = us_internal_loop_bound_timeout(loop, timeout, &timeout_storage);
 
-    const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
-
     us_internal_iocp_flush_updates(loop);
 
     /* Rounded up: rounding down turns the last fraction of a wait into a busy loop. */
@@ -1049,7 +1047,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     }
     /* This tick was started by a handler of a tick that has packets left. They are gone from the port, so they are this tick's. */
     const int has_ready_polls = loop->current_ready_poll < loop->num_ready_polls;
-    if (had_wakeups || has_ready_polls || loop->ready_head || loop->ready_now) {
+    if (has_ready_polls || loop->ready_head || loop->ready_now) {
         timeout_100ns = 0;
     }
     if (timeout_100ns != 0) {

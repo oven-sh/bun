@@ -1049,6 +1049,9 @@ comments/that-looks-like-a-type-cast-after-a-type.ts
 592 608 T TSTypeReference 590 591 -
 620 636 T Identifier 618 619 -
 651 667 T Identifier 649 650 -
+comments/two-blanks-behind-the-start-of-a-nestled-comment.js
+0 26 L ExpressionStatement 27 28 -
+30 62 L ExpressionStatement 63 64 -
 comments/two-in-member-accesses-and-calls.js
 2 6 L MemberExpression 0 9 -
 10 14 L MemberExpression 0 17 -

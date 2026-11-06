@@ -42,10 +42,10 @@ try: PLACE = {'only': '%s', 'last of two': 'case 99:\n    x = 9\n%s', 'first of 
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: PLACE = {'only': '%s', 'last of two': 'case 99:\\n x = 9\\n%s', 'first ...")
 try: SUBJECTS = [1, 5, [1, 0], [2]]
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: SUBJECTS = [1, 5, [1, 0], [2]]')
-# Not as in CPython yet: where a `for` loop is said to lead when it runs out in front of a jump to a short end of the function, at the end of a `case _:`
-# as at the end of an `else`; and the line of `x = 1`, which CPython tells of here although the test has failed.
-try: LEFT_OUT = {(w, 'last of two', 'case _:', 'for') for w in ('arm', 'try', 'finally', 'case')} | {('with', 'only', 'case _:', 'for'), ('with', 'only', 'case _:', 'if')}
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: LEFT_OUT = {(w, 'last of two', 'case _:', 'for') for w in ('arm', 'tr...")
+# Not as in CPython yet: where a `for` loop is said to lead when it runs out at the end of the statements of a `with`, in a `case _:` that is the only one; and the line of `x = 1`,
+# which CPython tells of here although the test has failed.
+try: LEFT_OUT = {('with', 'only', 'case _:', 'for'), ('with', 'only', 'case _:', 'if')}
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: LEFT_OUT = {('with', 'only', 'case _:', 'for'), ('with', 'only', 'cas...")
 try:
     def rows(places):
         for wname in places:

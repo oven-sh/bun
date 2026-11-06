@@ -26,9 +26,9 @@ WHERE = {
 }
 PLACE = {'only': '%s', 'last of two': 'case 99:\n    x = 9\n%s', 'first of two': '%s\ncase 98:\n    x = 9'}
 SUBJECTS = [1, 5, [1, 0], [2]]
-# Not as in CPython yet: where a `for` loop is said to lead when it runs out in front of a jump to a short end of the function, at the end of a `case _:`
-# as at the end of an `else`; and the line of `x = 1`, which CPython tells of here although the test has failed.
-LEFT_OUT = {(w, 'last of two', 'case _:', 'for') for w in ('arm', 'try', 'finally', 'case')} | {('with', 'only', 'case _:', 'for'), ('with', 'only', 'case _:', 'if')}
+# Not as in CPython yet: where a `for` loop is said to lead when it runs out at the end of the statements of a `with`, in a `case _:` that is the only one; and the line of `x = 1`,
+# which CPython tells of here although the test has failed.
+LEFT_OUT = {('with', 'only', 'case _:', 'for'), ('with', 'only', 'case _:', 'if')}
 def rows(places):
     for wname in places:
         where = WHERE[wname]

@@ -277,9 +277,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // Called in a Bun.ModuleGraph's context: that graph's require().
     JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)));
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::didCreateRequire(vm, callFrame, require);
-    return JSValue::encode(require);
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::didCreateRequire(vm, callFrame, require);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(require));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,

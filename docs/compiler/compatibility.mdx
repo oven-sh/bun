@@ -156,7 +156,7 @@ const folder = path.join(import.meta.dir, "commands");
 for (const file of fs.readdirSync(folder)) require(path.join(folder, file));
 ```
 
-This also works for a folder above your entry point: through `__dirname` however far up it is, and through `import.meta.dir` or `import.meta.url` one folder up. Two folders up, `path.join(import.meta.dir, "../../commands")` is `/commands` in an executable, which `fs` can't tell from a path on disk. Use `__dirname` there.
+This also works for a folder above your entry point: through `__dirname` however far up it is, and through `import.meta.dir` or `import.meta.url` one folder up, if the file that loads the path lies in your entry point's folder or below it. A file above it, like a package in a `node_modules` beside `src`, doesn't find such a path: hand it one made from `__dirname`. Two folders up, `path.join(import.meta.dir, "../../commands")` is `/commands` in an executable, which `fs` can't tell from a path on disk. Use `__dirname` there.
 
 `require.resolve()` and `import.meta.resolve()` return a path and nothing more. A file that's only named that way isn't embedded, and an HTML page isn't bundled. `require.resolve()` returns where the file was when you ran the build, so reading that path works while the file is still there and fails with `ENOENT` on another machine. To embed a file, import it: `import icon from "./icon.png" with { type: "file" }`.
 

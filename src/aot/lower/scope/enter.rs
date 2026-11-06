@@ -8,7 +8,9 @@ use super::state::{EnteredScope, EnvironmentPutOff};
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
 };
-use crate::ir::{BlockId, LocalVariable, PositionFlags, Type, TypeTable, ValueId, VariableKey};
+use crate::ir::{
+    BlockId, ClassSlot, LocalVariable, PositionFlags, Type, TypeTable, ValueId, VariableKey,
+};
 use crate::lower::captures::Capture;
 use crate::lower::{FunctionLowering, convert, function};
 
@@ -48,6 +50,16 @@ impl<'i> ScopeEntry<'i> {
 }
 
 type EntryValues = SmallVec<[(BindingRef, Option<ValueId>); 8]>;
+
+fn is_born_undefined(binding: BindingRef) -> bool {
+    matches!(
+        binding,
+        BindingRef::Slot(
+            _,
+            ScopeSlot::Class(ClassSlot::PrivateMethod(_) | ClassSlot::DecoratorState)
+        )
+    )
+}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(in crate::lower) enum MakerOfScope {
@@ -361,7 +373,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if dead_zone::has_dead_zone(self.file, binding) {
                 continue;
             }
-            let Some(value) = find_by_key(values, binding).flatten() else {
+            let value = match find_by_key(values, binding).flatten() {
+                None if is_born_undefined(binding) => Some(self.builder.undefined()),
+                value => value,
+            };
+            let Some(value) = value else {
                 debug_assert!(
                     !self.file.is_listed_at_allocation(binding),
                     "a required field has a value when its scope is entered"

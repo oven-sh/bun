@@ -1,6 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: [[environment]] = NewObject layout=[[layout]]
+// CHECK: [[born]] = Undefined
+// CHECK: [[environment]] = NewObject -, [[born]] layout=[[layout]] fields=[0]
 // CHECK: = NewClosure [[environment]], [[token]] function=
 // CHECK: [[method]] = NewClosure function=
 // CHECK: PutEnvironmentField [[environment]], [[method]] layout=[[layout]]

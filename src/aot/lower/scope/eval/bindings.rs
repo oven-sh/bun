@@ -229,8 +229,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 record.add_symbol(symbol, depth);
             }
         }
+        let mut from = ScopeKind::Block;
         for &(scope, depth) in &depths {
-            record.add_scope_bindings(scope, depth);
+            record.add_scope_bindings(scope, depth, from);
+            from = bound.scopes[scope.idx()].kind;
         }
         record.bindings.shared_sort_by_key(|binding| binding.depth);
         (record.bindings, record.operands)
@@ -322,7 +324,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         }
     }
 
-    fn add_scope_bindings(&mut self, scope: ScopeId, depth: u32) {
+    fn add_scope_bindings(&mut self, scope: ScopeId, depth: u32, from: ScopeKind) {
         if !self.entered_from_parameters.contains(&scope) {
             let binding = create_binding(EvalBindingKind::EvalVariables, None, depth);
             self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::EvalVariables));
@@ -338,6 +340,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 let binding = create_binding(EvalBindingKind::WithObject, None, depth);
                 self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::WithObject));
             }
+            ScopeKind::Class(_) if from == ScopeKind::BaseExpression => {}
             ScopeKind::Class(class) => self.add_class_bindings(class, depth),
             ScopeKind::File => self.add_commonjs_bindings(depth),
             ScopeKind::Module(_)

@@ -220,7 +220,7 @@ fn segments_below_public_root<'p>(
     base: &'p [u8],
     written: &'p [u8],
 ) -> Option<Vec<&'p [u8]>> {
-    let mut segments = split_path(base).peekable();
+    let mut segments = split_path(base);
     let root = root.strip_suffix(b"/").unwrap_or(root);
     let (above_root, name_of_root) =
         root.split_at(bun_core::strings::last_index_of_char(root, b'/')? + 1);
@@ -229,6 +229,9 @@ fn segments_below_public_root<'p>(
             return None;
         }
     }
+    // A slash too many and a `.` name nothing: a mount is known by the first name behind them.
+    let names = segments.filter(|name| !name.is_empty() && *name != b".");
+    let mut segments = names.peekable();
     let mut kept = Vec::new();
 
     if segments.next_if_eq(&name_of_root).is_none() {
@@ -316,7 +319,34 @@ fn join_below_public_root<'p>(
     if !is_bun_standalone_file_path(base) {
         return None;
     }
+    // `path.join()` has taken the `..` out of such a path. From the root, one step up leads beside the root. From the mount of what lay above the root, a way that leaves it leads above everything that the executable holds.
+    if written.is_empty()
+        && find_mount_of_public_path(public_root, source_dir) == Some(PARENT_OF_ROOT)
+        && find_mount_of_public_path(public_root, base)
+            .is_some_and(|mount| mount != PARENT_OF_ROOT && !is_name_of_root(public_root, mount))
+    {
+        return None;
+    }
     segments_below_public_root(public_root, levels_above_root, base, written)
+}
+
+fn is_name_of_root(public_root: &[u8], name: &[u8]) -> bool {
+    let root = public_root.strip_suffix(b"/").unwrap_or(public_root);
+    split_path(root).last() == Some(name)
+}
+
+/// The first name of a public path behind what the mounts share: that of the root, `_.._`, or the name of what lies beside the root.
+fn find_mount_of_public_path<'p>(public_root: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
+    let root = public_root.strip_suffix(b"/").unwrap_or(public_root);
+    let shared = split_path(root).count().checked_sub(1)?;
+    let mut segments = split_path(path);
+    if !split_path(root)
+        .take(shared)
+        .all(|segment| segments.next() == Some(segment))
+    {
+        return None;
+    }
+    segments.find(|name| !name.is_empty() && *name != b".")
 }
 
 /// Where to search from for what a module in `source_dir`, a directory of public paths, names outside the executable, when `base` stands for the root directory of the build: the directory itself, then each of its parents below the root.
@@ -1595,6 +1625,23 @@ mod tests {
                 resolve(b"/$bunfs/_.._/_.._/other/", joined),
                 Some(MODULES[8])
             );
+            // `path.join(import.meta.dir, "../../../shared/util.js")` in that folder leaves the mount: it leads above everything, not beside the root.
+            assert_eq!(
+                resolve(b"/$bunfs/_.._/_.._/other/", b"/$bunfs/shared/util.js"),
+                None
+            );
+            for spelled in [
+                &b"/$bunfs//shared/util.js"[..],
+                b"/$bunfs/./shared/util.js",
+                b"/$bunfs/.//shared/util.js",
+            ] {
+                assert_eq!(resolve(b"/$bunfs/_.._/_.._/other/", spelled), None);
+                assert_eq!(resolve(ROOT, spelled), Some(MODULES[8]));
+            }
+            assert_eq!(
+                resolve(b"/$bunfs/_.._/_.._/other/", b"/$bunfs/root/lib.cjs"),
+                Some(MODULES[0])
+            );
             // One folder further up there is nothing, and what lies in the root under the rest of the path does not answer.
             assert_eq!(resolve(ROOT, b"/$bunfs/_.._/lib.cjs"), None);
             assert_eq!(resolve(ROOT, b"/$bunfs/_.._/shared/util.js"), None);
@@ -1603,6 +1650,21 @@ mod tests {
                 resolve(ROOT, b"/$bunfs/_.._/_.._/_.._/lib.cjs"),
                 Some(MODULES[0])
             );
+            for own in [
+                &b"/$bunfs//root/lib.cjs"[..],
+                b"/$bunfs/./root/lib.cjs",
+                b"/$bunfs/.//root//lib.cjs",
+            ] {
+                assert_eq!(resolve(ROOT, own), Some(MODULES[0]));
+                assert_eq!(resolve(b"/$bunfs/_.._/_.._/other/", own), Some(MODULES[0]));
+            }
+            for above in [
+                &b"/$bunfs//_.._/_.._/shared/util.js"[..],
+                b"/$bunfs/_.._//_.._/shared/util.js",
+                b"/$bunfs/./_.._/./_.._/shared/util.js",
+            ] {
+                assert_eq!(resolve(ROOT, above), Some(MODULES[8]));
+            }
             // A folder of that name in the root is a folder like any other.
             assert_eq!(resolve(ROOT, b"/$bunfs/root/_.._/shared/util.js"), None);
             let nothing_above = program_with_lookup(false).with_levels_above_root(0);

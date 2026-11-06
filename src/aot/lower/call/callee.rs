@@ -2,7 +2,7 @@
 mod tests;
 
 use bun_sema::atom::{Atom, known, written_name};
-use bun_sema::bind::CommonJsVariable;
+use bun_sema::bind::{CommonJsVariable, Parent};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::import_sites::find_module_printed_as_require;
@@ -13,6 +13,7 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
 use crate::load::test_runner_names::skip_to_written_use;
 use crate::lower::commonjs::BodyForm;
+use crate::lower::expression::is_link_in_brackets;
 use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::quoted_text::{append_printed_name, append_printed_number, append_printed_text};
 use crate::lower::{FileLowering, FunctionLowering};
@@ -304,7 +305,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let mut path = std::mem::take(&mut self.written_path);
         path.clear();
-        let written = match self.append_written_path(inner, &mut path) {
+        let is_called_outside_chain = self.is_called_outside_chain(inner);
+        let written = match self.append_written_path(inner, is_called_outside_chain, &mut path) {
             true => Some(self.intern_bytes(&path)),
             false => None,
         };
@@ -322,10 +324,39 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn append_written_path(&self, expression: ExprId, path: &mut Vec<u8>) -> bool {
+    fn is_called_outside_chain(&self, callee: ExprId) -> bool {
+        let hir = self.hir;
+        let mut operand = callee;
+        while let Parent::Expr(around) = self.bound.parent_of_expr(operand) {
+            match hir[around].kind {
+                _ if hir.type_assertion_operand(around) == Some(operand) => operand = around,
+                ExprKind::Call(site) => {
+                    return hir[site].callee == operand && hir[site].chain == Chain::No;
+                }
+                _ => break,
+            }
+        }
+        false
+    }
+
+    fn append_written_path(
+        &self,
+        expression: ExprId,
+        has_parent_outside_chain: bool,
+        path: &mut Vec<u8>,
+    ) -> bool {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
+        let wraps = match hir[inner].kind {
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
+                is_link_in_brackets(chain, has_parent_outside_chain)
+            }
+            _ => false,
+        };
+        if wraps {
+            path.push(b'(');
+        }
         match hir[inner].kind {
             ExprKind::Ident(name) => self.append_identifier(inner, name, path),
             ExprKind::This => path.extend_from_slice(b"this"),
@@ -337,7 +368,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     path.extend_from_slice(b"await ");
                     awaited = next;
                 }
-                if !self.append_written_path(awaited, path) {
+                if !self.append_written_path(awaited, false, path) {
                     return false;
                 }
                 path.push(b')');
@@ -345,7 +376,7 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                if !self.append_written_path(obj, path) {
+                if !self.append_written_path(obj, chain == Chain::No, path) {
                     return false;
                 }
                 let name = self.queries.atom_bytes(name);
@@ -359,7 +390,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
             ExprKind::Index { obj, index, chain } => {
-                if !self.append_written_path(obj, path) {
+                if !self.append_written_path(obj, chain == Chain::No, path) {
                     return false;
                 }
                 path.extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
@@ -376,6 +407,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 path.push(b']');
             }
             _ => return false,
+        }
+        if wraps {
+            path.push(b')');
         }
         path.len() <= LONGEST_PATH
     }

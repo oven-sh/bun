@@ -13,6 +13,7 @@ use bun_sort_by_number::SortByNumber;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use super::expression::is_link_in_brackets;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedText;
 use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local};
@@ -464,7 +465,7 @@ impl Printer<'_, '_, '_, '_, '_> {
     }
 
     fn begin_link(&mut self, chain: Chain, around: &mut Around) -> bool {
-        let wraps = chain != Chain::No && around.has_parent_outside_chain;
+        let wraps = is_link_in_brackets(chain, around.has_parent_outside_chain);
         if wraps {
             self.text.push(b'(');
             around.start_of_new = None;
@@ -545,7 +546,7 @@ impl Printer<'_, '_, '_, '_, '_> {
 
     fn call(&mut self, site: Call, mut around: Around, level: Level) -> (usize, bool) {
         let mut wraps = level >= Level::New || around.forbids_call;
-        wraps |= site.chain != Chain::No && around.has_parent_outside_chain;
+        wraps |= is_link_in_brackets(site.chain, around.has_parent_outside_chain);
         if wraps {
             self.text.push(b'(');
         }

@@ -33,7 +33,6 @@ const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
 const kSocketFlowMask = kFlowing | kHasPaused | kPaused | (1 << 1) | (1 << 4) | (1 << 10);
 const kSocketFlows = kFlowing | kHasPaused;
-const kResumeScheduled = 1 << 16;
 const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
@@ -1703,7 +1702,7 @@ Server.prototype[kRealListen] = function (
 function prepareSocket(socket: $Node.HttpServerSocket): boolean {
   if (socket[kStreamingEnabled] || socket[kHandedOff] || !socket.$isOpen) return false;
   if (socket.parser === null) socket.parser = createServerParserShim(socket);
-  if (socket[kBoundOnAbort] === null) socket[kBoundOnAbort] = onServerRequestEvent.bind(socket);
+  if (socket[kBoundOnAbort] == null) socket[kBoundOnAbort] = onServerRequestEvent.bind(socket);
   if (!socket[kStopParsingOnCloseListener]) {
     socket[kRequest] = undefined;
     socket[kStopParsingOnCloseListener] = true;
@@ -1766,9 +1765,9 @@ function onNodeHTTPRequest(
   );
   if (hasBody) {
     const onData = onBodyData.bind(req);
-    handle.onabort = socket[kBoundOnAbort]!;
+    handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
     handle.ondata = onData;
-  } else handle.onabort = socket[kBoundOnAbort]!;
+  } else handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
   socket[kRequest] = req;
   req.upgrade = false;
   socket._httpMessage = res;
@@ -3825,9 +3824,8 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
 };
 
 function isResumeScheduled(state: $Node.ReadableState | null | undefined) {
-  if (state == null) return false;
-  const flags = flagsOf(state);
-  return typeof flags === "number" ? (flags & kResumeScheduled) !== 0 : state.resumeScheduled;
+  // By name, as the other text reads it: what a program has laid under the name is asked and honored.
+  return state != null && state.resumeScheduled;
 }
 
 // Runs when a response has finished, like the transport-related half of

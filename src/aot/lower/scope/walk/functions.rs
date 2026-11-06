@@ -271,10 +271,15 @@ impl Walker<'_, '_> {
         };
         self.record_scope_objects(context.function, search);
         let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
+        let mut from = ScopeKind::Block;
         for scope in std::iter::successors(eval.scope.some(), parent_of) {
-            let ScopeKind::Class(class) = bound.scopes[scope.idx()].kind else {
+            let inside = std::mem::replace(&mut from, bound.scopes[scope.idx()].kind);
+            let ScopeKind::Class(class) = from else {
                 continue;
             };
+            if inside == ScopeKind::BaseExpression {
+                continue;
+            }
             let compiled = self.input.compiled;
             let signed = self.input.fields_under_signed_members;
             for slot in class::class_slots(hir, bound, compiled, signed, class) {

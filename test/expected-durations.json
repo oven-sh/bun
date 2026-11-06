@@ -16,6 +16,18 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-path-made-by-one-climb-out-of-the-root-is-for-the-files-in-the-root.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-path-that-climbs-above-all-that-an-executable-holds-names-nothing.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-build-that-succeeds-says-nothing-of-its-own-faults.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-spread-of-an-instance-lays-undefined-or-null-under-a-name-that-the-literal-writes-behind-it.test.ts": {
     "default": 60000,
     "asan": 240000

@@ -3185,7 +3185,7 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath" | "cppS
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. */
   passThis?: boolean;
-  /** It returns its receiver: where the Rust function does not fail, the thunk hands back the wrapper that `passThis` passes, whatever the function returned. */
+  /** It returns its receiver: every arm of the Rust function hands back the wrapper that `passThis` passes. The thunk hands that on and holds it to nothing. */
   answersThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";

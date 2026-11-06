@@ -2243,7 +2243,7 @@ ${
                   `<${rustPath}>::${type.protoCaller}(${[...leading("ref", true, "js"), ...args.map(rustArgumentName)].join(", ")}, |this, cx, ${method.args.length ? "all_arguments" : "_"}| ${call})`
                 : infallible(call, method.throws, method.returns)
             };
-${rustReturnKeepingStringsAlive(method, rustHoldResult(method.answersThis ? unit : method.returns, { member: `${type.name}.${method.name}`, receiver: isStatic ? undefined : "receiver" }, `bindgen::host_fn_return(cx, result, |heap, ${method.answersThis ? "_" : "value"}| ${method.returns.rustToJS(method.answersThis ? "this" : "value", scope)})`))}`,
+${rustReturnKeepingStringsAlive(method, rustHoldResult(method.answersThis ? unit : method.returns, { member: `${type.name}.${method.name}`, receiver: isStatic ? undefined : "receiver" }, `bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`))}`,
           ]) as [string, string]),
     );
   }

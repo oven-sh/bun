@@ -985,7 +985,9 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 counted.map(Constant::Number)
             };
             counted = match value {
-                Some(Constant::Number(number)) => Some(number + 1.0),
+                Some(Constant::Number(number)) if known_to.get() != KnownTo::BuildAlone => {
+                    Some(number + 1.0)
+                }
                 _ => None,
             };
             let holds_number = matches!(value, Some(Constant::Number(_)));

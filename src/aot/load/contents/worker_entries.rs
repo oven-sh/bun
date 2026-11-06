@@ -581,7 +581,7 @@ impl ContentsScan<'_, '_> {
                 | ImportSiteKind::GetBuiltinModule(_)
                     if is_certain =>
                 {
-                    bound_at.get_or_insert(self.find_node_of_site(site.kind));
+                    bound_at.get_or_insert_with(|| self.find_node_of_site(site.kind));
                 }
                 ImportSiteKind::ExportFrom(export) if is_certain => {
                     let escapes = hir[export].items.iter().any(|item| {
@@ -591,7 +591,7 @@ impl ContentsScan<'_, '_> {
                         !item.type_only && leads_to_constructor
                     });
                     if escapes {
-                        escapes_at.get_or_insert(self.find_node_of_site(site.kind));
+                        escapes_at.get_or_insert_with(|| self.find_node_of_site(site.kind));
                     }
                 }
                 ImportSiteKind::RequireResolve(_)
@@ -611,7 +611,7 @@ impl ContentsScan<'_, '_> {
                 | ImportSiteKind::RequireByTestRunner(_)
                     if is_certain =>
                 {
-                    escapes_at.get_or_insert(self.find_node_of_site(site.kind));
+                    escapes_at.get_or_insert_with(|| self.find_node_of_site(site.kind));
                 }
                 _ => is_loaded_by_uncertain_name = true,
             }

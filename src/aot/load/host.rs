@@ -406,7 +406,7 @@ impl<'a> LoadHost<'a> {
     }
 
     pub(crate) fn display_path_of(&self, path: &[u8]) -> Box<[u8]> {
-        compute_display_path(&self.input.options.load.project_root, &to_native(path))
+        compute_display_path(&self.input.options.load.project_root, to_native(path))
     }
 
     pub(crate) fn background_reads(&self) -> Vec<Vec<u8>> {

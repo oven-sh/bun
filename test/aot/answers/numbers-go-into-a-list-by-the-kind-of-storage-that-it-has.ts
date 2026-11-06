@@ -9,7 +9,7 @@
 // # FILLROW: PutDoubleIndex
 // # RUN(FILLINT32): emit f4 mechanisms=all-Inlining
 // # FILLINT32-LABEL: unit f4:Body
-// # FILLINT32: = Store({{*}}indexedInt32Properties
+// # FILLINT32: = Store({{*}}indexedContiguousProperties
 // # RUN(FILLDOUBLE): emit f4 mechanisms=all-Inlining
 // # FILLDOUBLE-LABEL: unit f4:Body
 // # FILLDOUBLE: = Store({{*}}indexedDoubleProperties
@@ -20,13 +20,11 @@
 // # Outside of loops: storage for int32 and for doubles.
 // # RUN(ONEINT32): emit f6 mechanisms=all-Inlining
 // # ONEINT32-LABEL: unit f6:Body
-// # ONEINT32: = Store({{*}}indexedInt32Properties
+// # ONEINT32-COUNT-2: = Store({{*}}indexedContiguousProperties
+// # ONEINT32-NOT: = Store({{*}}indexedContiguousProperties
 // # RUN(ONEDOUBLE): emit f6 mechanisms=all-Inlining
 // # ONEDOUBLE-LABEL: unit f6:Body
 // # ONEDOUBLE: = Store({{*}}indexedDoubleProperties
-// # RUN(ONENOT): emit f6 mechanisms=all-Inlining
-// # ONENOT-LABEL: unit f6:Body
-// # ONENOT-NOT: = Store({{*}}indexedContiguousProperties
 // # The position and the number come as they are held.
 // # RUN(FORMS): walk f4 mechanisms=all-Inlining
 // # FORMS-LABEL: code f4:Body
@@ -35,7 +33,7 @@
 // # The push of a number that is held as a double.
 // # RUN(PUSHINT32): emit f7 mechanisms=all-Inlining
 // # PUSHINT32-LABEL: unit f7:Body
-// # PUSHINT32: = Store({{*}}indexedInt32Properties
+// # PUSHINT32: = Store({{*}}indexedContiguousProperties
 // # RUN(PUSHDOUBLE): emit f7 mechanisms=all-Inlining
 // # PUSHDOUBLE-LABEL: unit f7:Body
 // # PUSHDOUBLE: = Store({{*}}indexedDoubleProperties

@@ -140,6 +140,8 @@ export interface BinaryExpectations {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
     dllCharacteristics: string[];
     subsystem: string;
+    /** Require the Repro marker and no CodeView record with a PDB GUID. */
+    reproducible?: boolean;
   };
   macho?: {
     /** MH_* flags that must be present. */
@@ -422,6 +424,7 @@ export function shimExpectations(): BinaryExpectations {
     pe: {
       dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
       subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
+      reproducible: true,
     },
   };
 }

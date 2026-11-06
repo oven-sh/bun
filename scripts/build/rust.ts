@@ -707,6 +707,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
  *   - `/Brepro`                 — the link time and the PDB signature in the PE headers come from the contents
  *                                 instead of the clock, so the same inputs give the same bytes, and with them
  *                                 the same bun_install, which embeds this file.
+ *   - `/DEBUG:NONE`             — override rustc's /DEBUG. The CodeView record would embed a PDB GUID that
+ *                                 varies with the build path even with /Brepro.
  *
  * (`-Cforce-unwind-tables=no` would drop `.pdata`, but the `*-windows-msvc` target spec sets
  * `requires_uwtable: true` so rustc rejects it. The section is ~3 KiB; not worth a custom target JSON.)
@@ -739,6 +741,7 @@ function shimCargoInvocation(
     "-Clink-arg=/SUBSYSTEM:CONSOLE",
     "-Clink-arg=/NODEFAULTLIB",
     "-Clink-arg=/Brepro",
+    "-Clink-arg=/DEBUG:NONE",
     "-Clink-arg=kernel32.lib",
     "-Clink-arg=ntdll.lib",
     // Cross-compiling from a unix host: this is the only rustc-driven link of a *target* artifact, and the linker

@@ -1397,6 +1397,13 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     // 0.16 in a release build, and 0.84 when all that follows the comment went the long way.
     expect(await cpuTimeOfShortCuts("a.less", `// the url of the font\n${rules.join("")}`)).toBeLessThan(0.6);
   });
+
+  test("at-rules with many names take linear time", async () => {
+    const count = isDebug ? 4_000 : 40_000;
+    const text = Array.from({ length: count }, (_, index) => `@a${index}{b{c:d e}}\n`).join("");
+    // 0.7 in a release build, and 24 when each at-rule was looked for among all that came before it.
+    expect(await cpuTimeOfShortCuts("a.css", text)).toBeLessThan(4);
+  });
 });
 
 /** Formats `files` with `options`, with and without short cuts, and returns what differs. */

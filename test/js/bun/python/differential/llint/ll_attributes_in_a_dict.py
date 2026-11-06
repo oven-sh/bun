@@ -390,3 +390,88 @@ mixed[4].v = 'MyDict v'
 thrice('v', read_v, *mixed)
 thrice('k', read_k, *mixed)
 thrice('m()', call_m, *mixed)
+
+print('--- __slots__ and a __dict__')
+
+
+class Both:
+    __slots__ = ('s', '__dict__')
+    k = 'Both.k'
+
+    def __init__(self, tag):
+        self.s = ('slot', tag)
+        self.v = ('v', tag)
+
+    def m(self, x):
+        return ('Both.m', x)
+
+
+class BothDerived(Both):
+    __slots__ = ('t',)
+
+
+both = [Both(1), asked(Both(2)), BothDerived(3), asked(BothDerived(4))]
+thrice('s', lambda o: o.s, *both)
+thrice('v', read_v, *both)
+thrice('k', read_k, *both)
+thrice('m()', call_m, *both)
+thrice('t', lambda o: o.t, *both)
+for o in both:
+    o.__dict__['s'] = 'in the dict, behind the slot'
+    o.__dict__['k'] = 'in the dict, before the class'
+thrice('s', lambda o: o.s, *both)
+thrice('k', read_k, *both)
+for o in both:
+    del o.s
+thrice('s', lambda o: o.s, *both)
+print([sorted(o.__dict__) for o in both])
+
+print('--- another thread changes the dict between two reads')
+import threading
+
+
+def in_a_thread(function):
+    thread = threading.Thread(target=function)
+    thread.start()
+    thread.join()
+
+
+shared = asked(C('first'))
+replacement = {'v': 'replaced by a thread'}
+steps = [
+    lambda: shared.__dict__.__setitem__('v', 'set by a thread'),
+    lambda: setattr(shared, '__dict__', replacement),
+    lambda: replacement.__setitem__('v', 'the new dict changed by a thread'),
+    lambda: replacement.pop('v'),
+    lambda: setattr(C, 'v', property(lambda self: 'a property given by a thread')),
+    lambda: delattr(C, 'v'),
+    lambda: setattr(shared, 'v', 'last'),
+    lambda: replacement.__setitem__(1, 'a key that is no str'),
+    lambda: setattr(shared, '__class__', D),
+]
+for step in steps:
+    show('v', read_v, shared)
+    show('m()', call_m, shared)
+    in_a_thread(step)
+show('v', read_v, shared)
+show('m()', call_m, shared)
+
+stop = False
+seen = set()
+
+
+def swap():
+    one, two = {'v': 1}, {'v': 2}
+    while not stop:
+        shared.__dict__ = one
+        shared.__dict__ = two
+
+
+swapper = threading.Thread(target=swap)
+shared.__dict__ = {'v': 1}
+swapper.start()
+for turn in range(20000):
+    seen.add(read_v(shared))
+stop = True
+swapper.join()
+print(seen <= {1, 2})

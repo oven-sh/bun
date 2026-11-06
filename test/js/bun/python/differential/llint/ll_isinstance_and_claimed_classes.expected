@@ -1,0 +1,239 @@
+status: 0
+script: fbfc2c4e1be34d18
+---
+--- nothing is claimed
+A [True, False, False, False, False, False, False, False, False, False, True, False, True, False]
+B [True, True, False, False, False, False, False, False, False, False, True, False, True, True]
+Unrelated [False, False, True, False, False, False, False, False, False, False, True, False, False, False]
+int [False, False, False, True, False, False, False, False, False, False, True, False, True, False]
+float [False, False, False, False, True, False, False, False, False, False, True, False, False, False]
+bool [False, False, False, True, False, True, False, False, False, False, True, False, True, False]
+NoneType [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+str [False, False, False, False, False, False, True, False, False, False, True, False, False, True]
+bytes [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+list [False, False, False, False, False, False, False, True, False, False, True, False, False, True]
+tuple [False, False, False, False, False, False, False, False, True, False, True, False, False, False]
+dict [False, False, False, False, False, False, False, False, False, True, True, False, False, False]
+set [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+builtin_function_or_method [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+function [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+type [False, False, False, False, False, False, False, False, False, False, True, True, False, False]
+type [False, False, False, False, False, False, False, False, False, False, True, True, False, False]
+object [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+int [False, False, False, True, False, False, False, False, False, False, True, False, True, False]
+complex [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+range [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+ellipsis [False, False, False, False, False, False, False, False, False, False, True, False, False, False]
+--- a property of the class
+asked
+asked
+asked
+property 0 [True, False, False, True, True]
+asked
+asked
+asked
+property 1 [True, False, False, True, True]
+asked
+asked
+asked
+property 2 [True, False, False, True, True]
+asked
+Claims A
+no class 0 [False, False, True]
+no class 1 [False, False, True]
+no class 2 [False, False, True]
+raises 0 ('ValueError', 'not telling')
+raises 1 ('ValueError', 'not telling')
+raises 2 ('ValueError', 'not telling')
+raises AttributeError 0 [False, True]
+raises AttributeError 1 [False, True]
+raises AttributeError 2 [False, True]
+--- a plain value in the class
+value 0 [True, False, True]
+value 1 [True, False, True]
+value 2 [True, False, True]
+deleted from the class ('TypeError', "can't delete __class__ attribute")
+set in the class ('TypeError', "__class__ must be set to a class, not 'property' object")
+value 0 [True, False, True]
+value 1 [True, False, True]
+value 2 [True, False, True]
+--- given later, by other bases
+before 0 [False, True, True]
+before 1 [False, True, True]
+before 2 [False, True, True]
+a base has a property 0 [True, True, True]
+a base has a property 1 [True, True, True]
+a base has a property 2 [True, True, True]
+a nearer base has one 0 [False, True, True, True]
+a nearer base has one 1 [False, True, True, True]
+a nearer base has one 2 [False, True, True, True]
+the nearer one is gone 0 [True, False, True, True]
+the nearer one is gone 1 [True, False, True, True]
+the nearer one is gone 2 [True, False, True, True]
+both are gone 0 [False, True, True, True]
+both are gone 1 [False, True, True, True]
+both are gone 2 [False, True, True, True]
+--- __getattribute__
+__getattribute__ __class__
+__getattribute__ __class__
+own 0 [True, False, True]
+__getattribute__ __class__
+__getattribute__ __class__
+own 1 [True, False, True]
+__getattribute__ __class__
+__getattribute__ __class__
+own 2 [True, False, True]
+before 0 [False]
+before 1 [False]
+before 2 [False]
+given to a base 0 [True, True]
+given to a base 1 [True, True]
+given to a base 2 [True, True]
+taken away 0 [False, True]
+taken away 1 [False, True]
+taken away 2 [False, True]
+object's own, set by hand 0 [False, True]
+object's own, set by hand 1 [False, True]
+object's own, set by hand 2 [False, True]
+--- what is not asked
+__getattr__ 0 [False, True]
+__getattr__ 1 [False, True]
+__getattr__ 2 [False, True]
+in the dict of the object 0 [False, True]
+in the dict of the object 1 [False, True]
+in the dict of the object 2 [False, True]
+Unrelated
+--- the class of the object is changed
+before 0 [False, True]
+before 1 [False, True]
+before 2 [False, True]
+after 0 [True, True, False]
+after 1 [True, True, False]
+after 2 [True, True, False]
+back 0 [False, False, True]
+back 1 [False, False, True]
+back 2 [False, False, True]
+--- proxies and mocks
+weakref.proxy 0 [True, True, False, True]
+weakref.proxy 1 [True, True, False, True]
+weakref.proxy 2 [True, True, False, True]
+ProxyType B
+dead proxy 0 ('ReferenceError', 'weakly-referenced object no longer exists')
+dead proxy 1 ('ReferenceError', 'weakly-referenced object no longer exists')
+dead proxy 2 ('ReferenceError', 'weakly-referenced object no longer exists')
+Mock(spec=B) 0 [True, True, False, True]
+Mock(spec=B) 1 [True, True, False, True]
+Mock(spec=B) 2 [True, True, False, True]
+Mock() 0 [False, True]
+Mock() 1 [False, True]
+Mock() 2 [False, True]
+MagicMock(spec=a list) 0 [False, False]
+MagicMock(spec=a list) 1 [False, False]
+MagicMock(spec=a list) 2 [False, False]
+mappingproxy 0 [False, True, True]
+mappingproxy 1 [False, True, True]
+mappingproxy 2 [False, True, True]
+--- metaclasses
+__instancecheck__ WithMeta int
+metaclass 0 [True]
+__instancecheck__ WithMeta int
+metaclass 1 [True]
+__instancecheck__ WithMeta int
+metaclass 2 [True]
+__instancecheck__ WithMeta str
+metaclass 0 [False]
+__instancecheck__ WithMeta str
+metaclass 1 [False]
+__instancecheck__ WithMeta str
+metaclass 2 [False]
+the very type: not asked 0 [True]
+the very type: not asked 1 [True]
+the very type: not asked 2 [True]
+__instancecheck__ WithMeta str
+__instancecheck__ WithMeta str
+in a tuple 0 [True, True, False]
+__instancecheck__ WithMeta str
+__instancecheck__ WithMeta str
+in a tuple 1 [True, True, False]
+__instancecheck__ WithMeta str
+__instancecheck__ WithMeta str
+in a tuple 2 [True, True, False]
+__instancecheck__ WithMeta Claims
+claims, and a metaclass 0 [False]
+__instancecheck__ WithMeta Claims
+claims, and a metaclass 1 [False]
+__instancecheck__ WithMeta Claims
+claims, and a metaclass 2 [False]
+asked
+a metaclass without the method 0 [False]
+asked
+a metaclass without the method 1 [False]
+asked
+a metaclass without the method 2 [False]
+a metaclass without the method 0 [True, False]
+a metaclass without the method 1 [True, False]
+a metaclass without the method 2 [True, False]
+given later 0 [True]
+given later 1 [True]
+given later 2 [True]
+taken away 0 [False]
+taken away 1 [False]
+taken away 2 [False]
+registered 0 [True]
+registered 1 [True]
+registered 2 [True]
+not registered 0 [False]
+not registered 1 [False]
+not registered 2 [False]
+claims a registered class 0 [True]
+claims a registered class 1 [True]
+claims a registered class 2 [True]
+abc 0 [True, False, True]
+abc 1 [True, False, True]
+abc 2 [True, False, True]
+--- what is no class
+an object with __bases__ 0 [False]
+an object with __bases__ 1 [False]
+an object with __bases__ 2 [False]
+asked
+an object with __bases__ 0 [False]
+asked
+an object with __bases__ 1 [False]
+asked
+an object with __bases__ 2 [False]
+not a class 0 ('TypeError', 'isinstance() arg 2 must be a type, a tuple of types, or a union')
+not a class 1 ('TypeError', 'isinstance() arg 2 must be a type, a tuple of types, or a union')
+not a class 2 ('TypeError', 'isinstance() arg 2 must be a type, a tuple of types, or a union')
+not a class 0 [True]
+not a class 1 [True]
+not a class 2 [True]
+not a class 0 ('TypeError', 'isinstance() arg 2 must be a type, a tuple of types, or a union')
+not a class 1 ('TypeError', 'isinstance() arg 2 must be a type, a tuple of types, or a union')
+not a class 2 ('TypeError', 'isinstance() arg 2 must be a type, a tuple of types, or a union')
+union 0 ('TypeError', 'isinstance() argument 2 cannot be a parameterized generic')
+union 1 ('TypeError', 'isinstance() argument 2 cannot be a parameterized generic')
+union 2 ('TypeError', 'isinstance() argument 2 cannot be a parameterized generic')
+union 0 [True]
+union 1 [True]
+union 2 [True]
+generic alias 0 ('TypeError', 'isinstance() argument 2 cannot be a parameterized generic')
+generic alias 1 ('TypeError', 'isinstance() argument 2 cannot be a parameterized generic')
+generic alias 2 ('TypeError', 'isinstance() argument 2 cannot be a parameterized generic')
+--- issubclass goes by the classes
+issubclass True
+issubclass False
+issubclass False
+issubclass False
+issubclass True
+issubclass True
+--- object's getter in a class that object is no base of any more
+in line 0 [False, True, True]
+in line 1 [False, True, True]
+in line 2 [False, True, True]
+(<class '__main__.Cut'>,)
+cut off TypeError
+cut off True
+cut off TypeError
+in line again 0 [False, True, True, True]
+in line again 1 [False, True, True, True]
+in line again 2 [False, True, True, True]

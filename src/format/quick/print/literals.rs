@@ -160,17 +160,14 @@ impl Quick {
             self.slice_any(start, end);
             return;
         }
-        self.text(if self.options.single_quote {
+        let quote = if self.options.single_quote_as_set {
             SQUOTE
         } else {
             DQUOTE
-        });
+        };
+        self.text(quote);
         self.slice_any(start + 1, end - 1);
-        self.text(if self.options.single_quote {
-            SQUOTE
-        } else {
-            DQUOTE
-        });
+        self.text(quote);
     }
 }
 pub(crate) fn print_literals_is_digit(c: i32) -> bool {

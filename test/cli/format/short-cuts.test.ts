@@ -5129,6 +5129,36 @@ describe("JavaScript and TypeScript in a host", () => {
         options,
       ));
   });
+
+  describe("what a host has around the code", () => {
+    const template = (...lines: string[]) => `<template>\n${lines.map(line => `  ${line}\n`).join("")}</template>\n`;
+    // The value of an attribute has no double quote in it, and what is printed for it has one.
+    describe("double quotes in an attribute of Vue", () =>
+      expectSame(
+        "a.vue",
+        [
+          template(`<div :a="<b c='d' />"></div>`),
+          template(`<div :a="<b c='d'>e</b>"></div>`),
+          template(`<div @a="function () { 'use strict'; b(); }"></div>`),
+          template(`<div @a="() => { 'use strict' }"></div>`),
+          template(`<div :a="<b>c{' '}<d />{' '}\n</b>"></div>`),
+          template(`<div :a="f('b', \`c\`)"></div>`),
+        ],
+        [[], ["--single-quote"], ["--jsx-single-quote"], ["--single-quote", "--jsx-single-quote"]],
+      ));
+    // Names aren't as wide as they are long.
+    describe("the width of a name", () =>
+      expectSame(
+        "a.vue",
+        [
+          template(`<div :a\x7f\x7f\x7f\x7f\x7f\x7f="bbbbbbbbbbbbbbbbbb + ccccc"></div>`),
+          template(`<div :\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9="bbbbbbbbbbbbbbbbbb + ccccc"></div>`),
+          template(`<a\u0301\u0301\u0301 :x="foo(aaaa, bbbb)">text</a\u0301\u0301\u0301>`),
+          template(`<a\u0301\u0301\u0301 :x="[aaaa, bbbb, cccc]">text</a\u0301\u0301\u0301>`),
+        ],
+        [["--print-width=40"], ["--tab-width=4", "--print-width=27"], ["--tab-width=4", "--print-width=30"]],
+      ));
+  });
 });
 
 describe("TypeScript that the long way rejects", () => {

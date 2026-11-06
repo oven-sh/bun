@@ -7,7 +7,10 @@ pub(crate) struct Options {
     pub(crate) tab_width: i32,
     pub(crate) use_tabs: bool,
     pub(crate) semi: bool,
+    /// What printString() prefers: the option, and in the value of an attribute of HTML always single quotes.
     pub(crate) single_quote: bool,
+    /// The option, for what asks for it by itself: a directive, the blank between braces of JSX.
+    pub(crate) single_quote_as_set: bool,
     pub(crate) jsx_single_quote: bool,
     pub(crate) quote_props: i32,
     pub(crate) trailing_comma: i32,
@@ -57,6 +60,7 @@ impl Options {
             use_tabs: false,
             semi: true,
             single_quote: false,
+            single_quote_as_set: false,
             jsx_single_quote: false,
             quote_props: 0,
             trailing_comma: 2,

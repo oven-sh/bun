@@ -332,6 +332,9 @@ pub struct Expression<'a> {
     pub is_typescript: bool,
     /// `a | b` at its top is a filter of Vue.
     pub has_vue_filters: bool,
+    /// It is the value of an attribute: strings get single quotes. What else asks for `single_quote` (a directive, the blank
+    /// between braces of JSX) gets what the option says.
+    pub is_in_attribute: bool,
     /// It is `<$>`, JSX of MDX and `</$>`: Prettier's `rootMarker: "mdx"`. What is between the two is printed.
     pub is_mdx_jsx: bool,
     pub wrap: Wrap,
@@ -391,10 +394,12 @@ pub fn format_expression(
     scratch.host.after.clear();
     scratch.host.after.extend_from_slice(expression.after);
     scratch.host.has_vue_filters = expression.has_vue_filters;
+    scratch.host.is_in_attribute = expression.is_in_attribute;
     scratch.host.is_mdx_jsx = expression.is_mdx_jsx;
     let done = scratch.format_expression_buffer(expression, dialect, options);
     scratch.host.wrap = WRAP_NONE;
     scratch.host.has_vue_filters = false;
+    scratch.host.is_in_attribute = false;
     scratch.host.is_mdx_jsx = false;
     match done {
         Ok(()) => {
@@ -441,7 +446,8 @@ impl Quick {
         to.tab_width = o.tab_width;
         to.use_tabs = o.use_tabs;
         to.semi = o.semi;
-        to.single_quote = o.single_quote;
+        to.single_quote = o.single_quote || self.host.is_in_attribute;
+        to.single_quote_as_set = o.single_quote;
         to.jsx_single_quote = o.jsx_single_quote;
         to.quote_props = match o.quote_props {
             QuoteProps::AsNeeded => QUOTE_PROPS_AS_NEEDED,

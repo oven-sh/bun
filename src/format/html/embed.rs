@@ -449,7 +449,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         if is_written && strings::contains_char(&formatted, b'\n') {
             // What has no room on a line of its own has none behind `<`, the name of the element and a blank either, if
             // that is at least as wide as a level of indentation. So the start tag is broken.
-            is_written = format.indent_width.value() as usize <= self.tree[element].name.len() + 2;
+            let name = crate::ir::width::string_width(&self.tree[element].name);
+            is_written = format.indent_width.value() <= name + 2;
             if is_written {
                 self.out.break_parent();
                 self.out.lines(&formatted);

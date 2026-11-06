@@ -171,7 +171,7 @@ impl Quick {
                     return Ok(());
                 }
                 let h = self.if_break_open(0);
-                self.text(if self.options.single_quote {
+                self.text(if self.options.single_quote_as_set {
                     RAW_WHITESPACE_SINGLE
                 } else {
                     RAW_WHITESPACE_DOUBLE
@@ -499,7 +499,7 @@ impl Quick {
         top: i32,
         use_fill: bool,
     ) -> R<()> {
-        let raw = if self.options.single_quote {
+        let raw = if self.options.single_quote_as_set {
             RAW_WHITESPACE_SINGLE
         } else {
             RAW_WHITESPACE_DOUBLE

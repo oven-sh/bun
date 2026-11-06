@@ -328,6 +328,7 @@ fn format_mdx_jsx(
         text,
         is_typescript: false,
         has_vue_filters: false,
+        is_in_attribute: false,
         is_mdx_jsx: true,
         wrap: quick::Wrap::Bare,
         before: b"",
@@ -479,17 +480,19 @@ pub(crate) fn format_expression(
         return Err(scratch.refuse(Reason::Options, text));
     };
     // A comment, which the long way has rules of its own for. In an attribute: a quote that is written as an entity (no
-    // other entity is decoded there), and a string whose quotes may have to change. Between braces: what may end with `}}`.
-    // Which keys get quotes together with the others depends on the name of the parser.
+    // other entity is decoded there), a string whose quotes may have to change, and a name that may not be as wide as it
+    // is long. Between braces: what may end with `}}`. Which keys get quotes together with the others depends on the name
+    // of the parser.
     let is_plain = of_host.quote_props != quick::QuoteProps::Consistent
         && !strings::contains(text, b"//")
         && !strings::contains(text, b"/*")
         && !strings::contains_char(text, 0)
         && match expression.attribute {
-            Some(_) => {
+            Some(before) => {
                 strings::index_of_any(text, b"\"\\").is_none()
                     && !strings::contains(text, b"&quot;")
                     && !strings::contains(text, b"&apos;")
+                    && before.iter().all(|byte| matches!(byte, b' '..=b'~'))
             }
             None => !strings::contains_char(text, b'{'),
         };
@@ -502,13 +505,13 @@ pub(crate) fn format_expression(
     let quick_options = quick::Options {
         end_of_line: quick::EndOfLine::Lf,
         indentation: i32::try_from(expression.indentation).unwrap_or(i32::MAX),
-        single_quote: expression.attribute.is_some() || of_host.single_quote,
         ..of_host
     };
     let how = quick::Expression {
         text,
         is_typescript: expression.is_typescript,
         has_vue_filters: expression.has_filters,
+        is_in_attribute: expression.attribute.is_some(),
         is_mdx_jsx: false,
         wrap: match expression.attribute {
             Some(_) if expression.hugs => quick::Wrap::Group,
@@ -530,6 +533,14 @@ pub(crate) fn format_expression(
             _ => Reason::Rare,
         };
         return Err(scratch.refuse(reason, text));
+    }
+    // The text has no double quote, but what is printed for it can have one: around the value of an attribute of JSX,
+    // around a directive. The long way writes it as an entity.
+    if let Some(before) = expression.attribute
+        && strings::count_char(out, b'"') != strings::count_char(before, b'"') + 1
+    {
+        out.clear();
+        return Err(scratch.refuse(Reason::InHtml, text));
     }
     if let Some(counts) = &mut scratch.counts {
         counts.printed.add(text);

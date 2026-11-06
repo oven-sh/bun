@@ -191,11 +191,16 @@ fn is_dom_exception(value: JSValue) -> bool {
 }
 
 /// The name and the message of a `DOMException` are accessors of its prototype, which the object printer does not read.
+/// Returns false if a getter of a subclass threw, so the object printer prints the value as before.
 #[cold]
 #[inline(never)]
 fn print_dom_exception(global: &JSGlobalObject, writer: &mut dyn bun_io::Write, value: JSValue) -> JsResult<bool> {
     let mut text = Vec::new();
-    write_error(global, &mut text, value)?;
+    match write_error(global, &mut text, value) {
+        Ok(()) => {}
+        Err(JsError::Thrown) if global.clear_exception_except_termination() => return Ok(false),
+        Err(error) => return Err(error),
+    }
     let _ = writer.write_all(&text);
     Ok(true)
 }

@@ -3190,9 +3190,15 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             try { expect({ error: error(), n: 1 }).toEqual({ error: new DOMException("b", "AbortError"), n: 2 }); } catch (error) { message = error.message; }
             expect(message).toContain('"error": DOMException {},');
           });
+          test("a getter that throws leaves what an older Bun printed", () => {
+            class Throws extends DOMException {
+              get name() { throw new RangeError("from the getter"); }
+            }
+            expect(new Throws("a")).toMatchSnapshot();
+          });
           test("a property matcher for its message is checked and not stored", () => {
             expect(error()).toMatchSnapshot({ message: expect.any(String) });
-            expect(() => expect(error()).toMatchSnapshot({ message: expect.any(Number) })).toThrow();
+            expect(() => expect(error()).toMatchSnapshot({ message: expect.any(Number) })).toThrow("to match properties from received object");
           });
           test("a serializer is asked first", () => {
             expect.addSnapshotSerializer({ test: value => value instanceof DOMException, serialize: value => "serialized " + value.name });
@@ -3206,6 +3212,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
         "\nexports[`as Error.prototype.toString() joins the two 1`] = `\n[\n  [Error],\n  [Error: a],\n  [AbortError],\n]\n`;\n" +
         "\nexports[`its own properties are not printed, as for an Error 1`] = `[DataError: a]`;\n" +
         "\nexports[`its prototype is no DOMException 1`] = `other`;\n" +
+        "\nexports[`a getter that throws leaves what an older Bun printed 1`] = `Throws {}`;\n" +
         "\nexports[`a property matcher for its message is checked and not stored 1`] = `[DataError: a]`;\n" +
         '\nexports[`a serializer is asked first 1`] = `\n{\n  "error": serialized DataError,\n}\n`;\n',
     });

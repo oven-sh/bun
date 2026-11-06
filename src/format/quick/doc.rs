@@ -305,12 +305,6 @@ impl Quick {
         self.doc.pass_mask = mask;
     }
 
-    /// Would T[start, end), which has no line break, be written as it is? For those who write it with fitted_text(), which no filter sees.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn passes_filter(&self, start: i32, end: i32) -> bool {
-        return self.doc.narrow_filter == 0 || self.passes(start, end);
-    }
-
     pub(crate) fn passes(&self, start: i32, end: i32) -> bool {
         let mask = self.doc.pass_mask;
         if mask < 0 {
@@ -410,17 +404,6 @@ impl Quick {
     /// with the `behind` (0 or 1) columns of text that follow it. `length` is not 0. Whoever writes this has guessed that it will. The printer knows: if it does not fit,
     /// it gives up (Redo), and the file is formatted again with `short_cuts` off.
     pub(crate) fn fitted(&mut self, start: i32, length: i32, behind: i32) {
-        let p = self.doc.d_pos;
-        self.d
-            .put_several(p, [op::Nop | (behind << 5) | (length << 6), start]);
-        self.doc.d_pos = p + 2;
-        self.doc.acc_w = self.doc.acc_w + length + self.doc.pending;
-        self.doc.pending = 0;
-    }
-
-    /// fitted() for callers that are not hot.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn fitted_text(&mut self, start: i32, length: i32, behind: i32) {
         let p = self.doc.d_pos;
         self.d
             .put_several(p, [op::Nop | (behind << 5) | (length << 6), start]);
@@ -676,7 +659,6 @@ impl Quick {
 }
 // ---------------------------------------------------------------------------------------------------------- lines
 pub(crate) const S_SPACE: i32 = 262207; // S(" ")
-pub(crate) const SPACES_64: i32 = 1; // staticText(" ".repeat(64))
 impl Quick {
     pub(crate) fn softline(&mut self) {
         if self.doc.remove_lines_depth != 0 {
@@ -774,13 +756,6 @@ impl Quick {
         self.doc.impure_count += 1;
     }
 
-    /// Hides the forced breaks since `prop_count` had the value `saved` from the groups that are open, as a conditional group does
-    /// with those in it. For a printer that leaves out a conditional group which cannot make any other difference.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn shield_breaks(&mut self, saved: i32) {
-        self.doc.prop_count = saved;
-    }
-
     pub(crate) fn hardline(&mut self) {
         self.d.put(self.doc.d_pos, op::Line | (LINE_HARD << 5));
         self.doc.d_pos += 1;
@@ -807,27 +782,6 @@ impl Quick {
         self.doc.d_pos += 1;
         self.doc.wb_count += 1;
         self.doc.impure_count += 1;
-    }
-
-    /// replaceEndOfLine(text, literalline or hardline): T[start, end) with a line command for every "\n" in it.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn slice_lines(&mut self, start: i32, end: i32, hard: bool) {
-        let mut from = start;
-        let mut p = start;
-        while p < end {
-            if self.t.at(p) == 10 {
-                self.reserve();
-                self.slice_any(from, p);
-                if hard {
-                    self.hardline();
-                } else {
-                    self.literalline();
-                }
-                from = p + 1;
-            }
-            p += 1;
-        }
-        self.slice_any(from, end);
     }
 
     /// `cursor`: at most two in a doc.
@@ -1001,21 +955,6 @@ impl Quick {
             .put(self.doc.d_pos, op::AlignTextOpen | (length << 5));
         self.d.put(self.doc.d_pos + 1, start);
         self.doc.d_pos += 2;
-    }
-
-    /// align(" ".repeat(n), ..), which is not align(n, ..): with tabs for indentation these stay spaces. It may replace T, if n > 64.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn align_spaces_open(&mut self, n: i32) {
-        if n <= 64 {
-            self.align_text_open(SPACES_64, n);
-            return;
-        }
-        // (a tab width of 300, say)
-        self.reserve_gen(n);
-        let at = self.text.gen_pos;
-        self.t.fill_range(32, at, at + n);
-        self.set_gen_pos(at + n);
-        self.align_text_open(at, n);
     }
 
     pub(crate) fn mark_as_root_open(&mut self) {
@@ -1425,12 +1364,6 @@ impl Quick {
         self.d.put(p + 2, op::Ret);
         self.doc.d_pos = p + 3;
         return p + 1;
-    }
-
-    /// Forgets everything written since `at`. The counters are the caller's business: see Checkpoint.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn truncate(&mut self, at: i32) {
-        self.doc.d_pos = at;
     }
 
     // A printer that may have to start over samples the state with checkpoint() and goes back with rollback().

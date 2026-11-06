@@ -229,29 +229,6 @@ impl Quick {
         return q + self.holes.suffix_length;
     }
 
-    /// Does T[start, end) hold a placeholder?
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn has_placeholder(&mut self, start: i32, end: i32) -> bool {
-        if self.holes.hole_count == 0 {
-            return false;
-        }
-        let first = self.t.at(self.holes.prefix_at);
-        let mut p = start;
-        while p < end {
-            if self.t.at(p) == first && self.placeholder_at(p, end) != 0 {
-                return true;
-            }
-            p += 1;
-        }
-        return false;
-    }
-
-    /// Not needed any more: every text goes through the filter. Kept for callers that say what they mean.
-    #[expect(dead_code, reason = "for code in other languages")]
-    pub(crate) fn slice_with_holes(&mut self, start: i32, end: i32) {
-        self.slice_any(start, end);
-    }
-
     // ---- the filter itself. It runs with the level below as the current one, so that what it writes goes through the outer filter.
     pub(crate) fn is_script_end(&self, p: i32, end: i32) -> bool {
         // </(?=script\b) without regard to case

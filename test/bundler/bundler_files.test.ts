@@ -699,4 +699,25 @@ describe("bundler files option", () => {
       });
     });
   });
+
+  // A log has the place of the specifier in its text as two 16-bit numbers, so it has the first 65535 bytes of a longer one.
+  test.each([65535, 65536, 65537, 70000])("a log for a node: specifier of %d bytes has its start", async length => {
+    const specifier = "node:" + Buffer.alloc(length - 5, "a").toString();
+    const { logs } = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: { "/entry.js": `import ${JSON.stringify(specifier)};` },
+      target: "browser",
+      throw: false,
+    });
+    expect(logs).toHaveLength(1);
+    const log: any = logs[0];
+    const start = specifier.slice(0, 65535);
+    expect({ code: log.code, isStart: log.specifier === start, jsonIsStart: log.toJSON().specifier === start }).toEqual(
+      {
+        code: "ERR_UNKNOWN_BUILTIN_MODULE",
+        isStart: true,
+        jsonIsStart: true,
+      },
+    );
+  });
 });

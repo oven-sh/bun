@@ -544,6 +544,32 @@ describe("own properties of a thrown ResolveMessage", () => {
     expect(error).not.toEqual(await thrownBy(() => import(missing.builtin)));
   });
 
+  // The message has the place of the specifier in it as two 16-bit numbers, so it has the first 65535 bytes of a longer one.
+  describe.each([65536, 65537, 200000])("a node: specifier of %d bytes", length => {
+    const specifier = "node:" + Buffer.alloc(length - 5, "a").toString();
+    it.each<[string, () => unknown]>([
+      ["require()", () => require(specifier)],
+      ["import()", () => import(specifier)],
+      ["Bun.resolveSync()", () => Bun.resolveSync(specifier, import.meta.dir)],
+    ])("%s", async (_, load) => {
+      const error = await thrownBy(load);
+      expect({ code: error.code, specifier: error.specifier.length }).toEqual({
+        code: "ERR_UNKNOWN_BUILTIN_MODULE",
+        specifier: 65535,
+      });
+    });
+  });
+
+  it("the specifier of a long one ends where a character ends", async () => {
+    // The two bytes of "é" are the bytes 65535 and 65536.
+    const start = "node:" + Buffer.alloc(65534 - 5, "a").toString();
+    const error = await thrownBy(() => require(start + "é"));
+    expect({ code: error.code, isStart: error.specifier === start }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      isStart: true,
+    });
+  });
+
   // Vite does this to the error of a PostCSS config that fails to load (resolvePostcssConfig).
   describe.each(["ResolveMessage", "BuildMessage"])("a thrown %s", kind => {
     async function thrown() {

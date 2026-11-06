@@ -4557,6 +4557,25 @@ describe("scripts that are too much for the quick way", () => {
         ].map(text => `// @flow\n${text}`),
         [[]],
       ));
+    // An element on one line is read from the bytes. If that fails, its opening tag is, which has a name and attributes of its own.
+    const children = [
+      "<Foo>text {<b><i /></b>}</F>",
+      "<Foo>text {<b><i /></b>}</Foo>",
+      "<ab>text {<c d:e />}</a>",
+      '<Foo a="1">text {<b c="1" d="2" e="3"><i /></b>}</Foo>',
+      '<Foo a="1">text {<b c="1" d="2" e="3"><i /></b>}</F>',
+      "<Foo>text {<b c={() => {}}><i /></b>}</Foo>",
+      "<Foo>text {a(() => {\n      b;\n    })}</Foo>",
+      "<Foo>text {a(<b><i /></b>, `c`)}</Fo>",
+      "<Foo>{<Foooo>{<b><i /></b>}</Foooo>}</Foooo>",
+    ];
+    describe.each(["a.jsx", "a.tsx"])("an element in %s", name =>
+      expectSame(
+        name,
+        children.map(child => `x = (\n  <div>\n    ${child}\n  </div>\n);\n`),
+        [[], ["--print-width=40"]],
+      ),
+    );
   });
 
   // One trial can hold another. What is given up is read again, but not tried again, and not without end.

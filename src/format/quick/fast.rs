@@ -28,6 +28,7 @@ use crate::options::{QUOTE_PROPS_AS_NEEDED, TRAILING_COMMA_ALL, TRAILING_COMMA_N
 use crate::parse::core::{SCOPE_DERIVED_CONSTRUCTOR, SCOPE_FUNCTION, SCOPE_TOP};
 use crate::{Bytes, Quick, R, Words, bytes_before, div, where_byte_is, where_not_printable};
 
+#[derive(Clone, Copy)]
 pub(crate) struct Fast {
     // ---- what read_statement() found
     /// the kind of node the parser would have made
@@ -171,6 +172,8 @@ pub(crate) struct Fast {
     pub(crate) in_parameters: i32,
     /// `export { if }`: `from` has to follow
     pub(crate) needs_from: bool,
+    /// Since read_jsx_tag() cleared this, jsx_leaf() has come to code between braces, and `Quick::fast_before_code` is what all of this was in front of it.
+    pub(crate) has_read_code: bool,
 }
 impl Fast {
     pub(crate) fn new() -> Self {
@@ -257,6 +260,7 @@ impl Fast {
             jsx_is_on: false,
             in_parameters: 0,
             needs_from: false,
+            has_read_code: false,
         }
     }
 }
@@ -6584,6 +6588,10 @@ impl Quick {
                 if d == 34 || d == 39 {
                     return Ok(self.no(refusal::JsxText));
                 }
+                if !self.fast.has_read_code {
+                    self.fast_before_code = self.fast;
+                    self.fast.has_read_code = true;
+                }
                 q = self.jsx_container(q)?;
                 if q < 0 {
                     return Ok(-1);
@@ -6689,6 +6697,7 @@ impl Quick {
             let out_here = self.fast.out;
             let run_here = self.fast.run;
             let too_long_here = self.fast.too_long;
+            self.fast.has_read_code = false;
             let e = self.jsx_leaf(p, start)?;
             if e >= 0 && !self.fast.too_long && self.jsx_line_ends(e) {
                 self.fast.ready_end = e;
@@ -6696,6 +6705,10 @@ impl Quick {
                     return Ok(JSX_ELEMENT);
                 }
                 // it may break, and its opening tag fit
+            }
+            // Text between the tags leaves nothing behind but what follows. Code does: the name of an element in it, its attributes, a block that opens.
+            if self.fast.has_read_code {
+                self.fast = self.fast_before_code;
             }
             self.fast.out = out_here;
             self.fast.run = run_here;

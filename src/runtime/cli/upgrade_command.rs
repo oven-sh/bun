@@ -265,6 +265,7 @@ impl UpgradeCommand {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -646,6 +647,7 @@ impl UpgradeCommand {
                 http_proxy,
                 HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
+                None,
             ));
             // `refresher` is intentionally leaked (process-lifetime), so the
             // untracked NonNull stored in `progress_node` can never dangle.

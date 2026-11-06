@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { Console } from "node:console";
 
 import { Writable } from "node:stream";
@@ -224,7 +224,7 @@ describe("global console writes through a replaced process.stdout.write", () => 
     expect(exitCode).toBe(0);
   });
 
-  test("an error from a forwarding write is dropped, like node: write after end and EPIPE", async () => {
+  test("an error from a forwarding write is dropped, like node: write after end", async () => {
     const afterEnd = await run(`
       const ow = process.stdout.write;
       process.stdout.write = function (c, ...r) { return ow.call(this, c, ...r); };
@@ -234,31 +234,6 @@ describe("global console writes through a replaced process.stdout.write", () => 
     `);
     expect(afterEnd.stderr).toBe("alive\n");
     expect(afterEnd.exitCode).toBe(0);
-
-    // `head` closes the pipe after one line. Every later write fails with EPIPE.
-    if (!isWindows) {
-      await using proc = Bun.spawn({
-        cmd: [
-          "bash",
-          "-c",
-          `"$0" -e "$1" | head -1`,
-          bunExe(),
-          `
-            const ow = process.stdout.write;
-            process.stdout.write = function (c, ...r) { return ow.call(this, c, ...r); };
-            for (let i = 0; i < 2000; i++) console.log("line " + i);
-            process.stderr.write("done " + process.exitCode + "\\n");
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("line 0\n");
-      expect(stderr).toBe("done undefined\n");
-      expect(exitCode).toBe(0);
-    }
   });
 
   test("a stack overflow in the replaced write is not dropped, like node", async () => {

@@ -3746,14 +3746,29 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
       });
     });
 
-    test("with another test: both fail, and their afterEach runs, before a third test starts", async () => {
-      const { stdout } = await run({
-        flags: ["--max-concurrency=2"],
-        source: `
+    // `c` waits for a free slot. Each overdue test fails, and its afterEach runs, before `c` starts.
+    test.each(
+      Object.entries({
+        "at the same fire as another test": `
           afterEach(() => console.log("afterEach"));
           test.concurrent("a", never, ${short});
-          test.concurrent("b", never, ${short});
-          test.concurrent("c", () => console.log("c starts"));`,
+          test.concurrent("b", () => {
+            hold(${short + 50});
+            return never();
+          }, ${short});`,
+        "while the afterEach of another test runs": `
+          let hooks = 0;
+          afterEach(() => {
+            console.log("afterEach");
+            if (++hooks === 1) hold(${2 * short});
+          });
+          test.concurrent("a", never, ${short});
+          test.concurrent("b", never, ${2 * short});`,
+      }),
+    )("%s, before a third test starts", async (_, source) => {
+      const { stdout } = await run({
+        flags: ["--max-concurrency=2"],
+        source: `${source} test.concurrent("c", () => console.log("c starts"));`,
         results: ["(fail) a", "(fail) b", "(pass) c"],
       });
       expect(stdout.split(/\r?\n/).filter(line => /^(afterEach|c starts)$/.test(line))).toEqual([

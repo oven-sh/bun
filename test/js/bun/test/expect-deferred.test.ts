@@ -1070,8 +1070,8 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 });
 
-// A matcher that settles asks the runner for a step, which can run after other code of the same callback. The step reads
-// no clock: only the runner's timer, by the clock of its fire, times out a test or a wait of the runner.
+// A matcher that settles asks the runner for a step, and runs again itself. Both can happen after other code of the
+// same callback. Neither times out what still runs: the runner's timer does, by the clock of its fire.
 describe.concurrent("a matcher that settles does not time out what still runs", () => {
   // Milliseconds. The files hold the thread with Bun.sleepSync(), as slow synchronous code does.
   const short = 250; // the limit of an earlier test
@@ -1080,6 +1080,7 @@ describe.concurrent("a matcher that settles does not time out what still runs", 
   const [due1, due2] = [300, 350]; // timers that are due in this order, both after `short`
   const body = 450; // a body holds the thread this long, so that `short` and the timers are all due in one timer pass
   const holds = `
+    import { beforeEach } from "bun:test";
     const holdUntil = end => {
       while (performance.now() < end) Bun.sleepSync(Math.max(1, end - performance.now()));
     };
@@ -1097,6 +1098,53 @@ describe.concurrent("a matcher that settles does not time out what still runs", 
       exitCode,
     }).toEqual({ results, errors: [], exitCode: 0 });
   };
+
+  // The promise settles in time, in a timer callback that then holds the thread until the limit has passed.
+  const awaitsMatcher = `async () => {
+    start = performance.now();
+    const settlesInTime = new Promise(settle => {
+      setTimeout(() => {
+        settle(1);
+        holdUntil(start + ${over});
+      }, 50);
+    });
+    await expect(settlesInTime).resolves.toBe(1);
+  }`;
+
+  test.each(
+    Object.entries({
+      "a test": [["(pass) t"], `test("t", ${awaitsMatcher}, ${limit});`],
+      "a beforeEach": [["(pass) t"], `beforeEach(${awaitsMatcher}, ${limit}); test("t", () => {});`],
+      "an afterEach": [["(pass) t"], `afterEach(${awaitsMatcher}, ${limit}); test("t", () => {});`],
+    } as Record<string, [string[], string]>),
+  )("%s that awaits the matcher, and the callback that settles its promise holds the thread", async (_, row) => {
+    await passes(...row);
+  });
+
+  test("a test that awaits the matcher, and an earlier timer holds the thread, as with a plain await", async () => {
+    await passes(
+      ["(pass) t"],
+      `
+      test("t", async () => {
+        start = performance.now();
+        setTimeout(() => holdUntil(start + ${over}), 50);
+        await expect(later(1, 60)).resolves.toBe(1);
+      }, ${limit});`,
+    );
+  });
+
+  // The loop runs in one turn of the event loop, after a timer. The runner's timer fires after the test has ended.
+  test("a test that awaits matchers in a loop which ends after its limit, as with plain awaits", async () => {
+    await passes(
+      ["(pass) t"],
+      `
+      test("t", async () => {
+        await later();
+        const end = performance.now() + ${over};
+        while (performance.now() < end) await expect(Promise.resolve(1).then(value => value)).resolves.toBe(1);
+      }, ${limit});`,
+    );
+  });
 
   test("a concurrent test whose own code holds the thread after it awaited the matcher", async () => {
     await passes(

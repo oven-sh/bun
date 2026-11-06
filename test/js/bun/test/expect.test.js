@@ -5084,38 +5084,66 @@ describe("expect()", () => {
     });
 
     test_skipIf(!isBun)("failure messages print the name of a matcher on the first line of its sample", () => {
-      const diffOf = (/** @type {() => unknown} */ fails) => {
+      // The lines that differ, and the two counts. The other lines depend on how much context the run prints.
+      const marked = (/** @type {() => unknown} */ fails) => {
         try {
           fails();
         } catch (error) {
-          const message = stripVTControlCharacters(ANY(error).message);
-          return message.slice(message.indexOf("\n\n") + 2, message.indexOf("\n\n- Expected"));
+          return stripVTControlCharacters(ANY(error).message)
+            .split("\n")
+            .filter(line => /^[-+] /.test(line));
         }
       };
+      const counts = (/** @type {number} */ expected, /** @type {number} */ received) => [
+        `- Expected  - ${expected}`,
+        `+ Received  + ${received}`,
+      ];
       const sample = () => expect.objectContaining({ b: 2 });
 
-      expect(diffOf(() => expect({ a: 1 }).toEqual(sample()))).toBe(
-        `- ObjectContaining {\n-   "b": 2,\n+ {\n+   "a": 1,\n  }`,
-      );
-      expect(diffOf(() => expect({ a: 1 }).toStrictEqual(expect.not.objectContaining({ a: 1 })))).toBe(
-        `- ObjectNotContaining {\n+ {\n    "a": 1,\n  }`,
-      );
-      expect(diffOf(() => expect({ a: 1 }).toEqual(expect.resolvesTo.objectContaining({ a: 1 })))).toBe(
-        `- promise resolved to ObjectContaining {\n+ {\n    "a": 1,\n  }`,
-      );
-      expect(diffOf(() => expect({ p: { a: 1 } }).toHaveProperty("p", sample()))).toBe(
-        `- ObjectContaining {\n-   "b": 2,\n+ {\n+   "a": 1,\n  }`,
-      );
-      expect(diffOf(() => expect("a\nc").toEqual(expect.stringContaining("a\nb")))).toBe(
-        `- StringContaining "a\n- b"\n+ "a\n+ c"`,
-      );
-      expect(diffOf(() => expect("a\nc").toEqual(expect.not.stringMatching("a\nc")))).toBe(
-        `- StringNotMatching "a\n+ "a\n  c"`,
-      );
+      expect(marked(() => expect({ a: 1 }).toEqual(sample()))).toEqual([
+        "- ObjectContaining {",
+        '-   "b": 2,',
+        "+ {",
+        '+   "a": 1,',
+        ...counts(2, 2),
+      ]);
+      expect(marked(() => expect({ a: 1 }).toStrictEqual(expect.not.objectContaining({ a: 1 })))).toEqual([
+        "- ObjectNotContaining {",
+        "+ {",
+        ...counts(1, 1),
+      ]);
+      expect(marked(() => expect({ a: 1 }).toEqual(expect.resolvesTo.objectContaining({ a: 1 })))).toEqual([
+        "- promise resolved to ObjectContaining {",
+        "+ {",
+        ...counts(1, 1),
+      ]);
+      expect(marked(() => expect({ p: { a: 1 } }).toHaveProperty("p", sample()))).toEqual([
+        "- ObjectContaining {",
+        '-   "b": 2,',
+        "+ {",
+        '+   "a": 1,',
+        ...counts(2, 2),
+      ]);
+      expect(marked(() => expect("a\nc").toEqual(expect.stringContaining("a\nb")))).toEqual([
+        '- StringContaining "a',
+        '- b"',
+        '+ "a',
+        '+ c"',
+        ...counts(2, 2),
+      ]);
+      expect(marked(() => expect("a\nc").toEqual(expect.not.stringMatching("a\nc")))).toEqual([
+        '- StringNotMatching "a',
+        '+ "a',
+        ...counts(1, 1),
+      ]);
       // The matcher is the received value.
-      expect(diffOf(() => expect(sample()).toEqual({ a: 1 }))).toBe(
-        `- {\n-   "a": 1,\n+ ObjectContaining {\n+   "b": 2,\n  }`,
-      );
+      expect(marked(() => expect(sample()).toEqual({ a: 1 }))).toEqual([
+        "- {",
+        '-   "a": 1,',
+        "+ ObjectContaining {",
+        '+   "b": 2,',
+        ...counts(2, 2),
+      ]);
     });
 
     test("StringContaining matches string against string", () => {

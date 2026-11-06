@@ -2680,6 +2680,7 @@ describe.concurrent("an asymmetric matcher that is the whole value of a snapshot
       .filter(line => /^\((pass|fail)\) /.test(line))
       .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
   const extend = `expect.extend({ toBeFoo() { return { pass: true, message: () => "" }; } });`;
+  const noName = `expect.extend({ toBeAnon: (() => () => ({ pass: true, message: () => "" }))() });`;
 
   async function storedBy(setup: string[], rows: Row[]) {
     using dir = tempDir("snapshot-whole-value-matcher", { "a.test.js": fileOf(setup, rows) });
@@ -2696,6 +2697,7 @@ describe.concurrent("an asymmetric matcher that is the whole value of a snapshot
   test("has its name on the first line of its sample, and the line breaks are around the two", async () => {
     const setup = [
       extend,
+      noName,
       `class Foo { a = 1; }`,
       `class Text { nodeType = 3; data = "words"; }`,
       `class HTMLSpanElement { nodeType = 1; tagName = "SPAN"; attributes = []; childNodes = [new Text()]; }`,
@@ -2733,6 +2735,12 @@ describe.concurrent("an asymmetric matcher that is the whole value of a snapshot
         `expect.objectContaining({ a: expect.objectContaining({ b: 1 }) })`,
         `\nObjectContaining {\n  "a": ObjectContaining {\n    "b": 1,\n  },\n}\n`,
       ],
+      // The string in the sample is not the whole value. It keeps its own line breaks.
+      [
+        "two lines, in its sample",
+        `expect.objectContaining({ s: "a\\nb" })`,
+        `\nObjectContaining {\n  "s": \n"a\nb"\n,\n}\n`,
+      ],
       // A sample on one line has no line breaks around it.
       ["no properties", `expect.objectContaining({})`, `ObjectContaining {}`],
       ["no arguments", `expect.toBeFoo()`, `toBeFoo []`],
@@ -2760,6 +2768,13 @@ describe.concurrent("an asymmetric matcher that is the whole value of a snapshot
         `expect.objectContaining({ [Symbol.toStringTag]: "Tagged", a: 1 })`,
         `ObjectContaining Tagged \nTagged {\n  [Symbol(Symbol.toStringTag)]: "Tagged",\n  "a": 1,\n}\n`,
       ],
+      [
+        "a function for a prototype",
+        `expect.objectContaining(Object.setPrototypeOf({ a: 1 }, function Proto() {}))`,
+        `ObjectContaining Proto \nFunction {\n  "a": 1,\n}\n`,
+      ],
+      // The name is the name of the function, and this function has none.
+      ["of expect.extend(), a function with no name", `expect.toBeAnon(1)`, ` \n[\n  1,\n]\n`],
     ];
     expect(await storedBy(setup, rows)).toEqual(storedFor(rows));
   });
@@ -2809,6 +2824,24 @@ describe.concurrent("an asymmetric matcher that is the whole value of a snapshot
     expect(resultsOf(read.stderr)).toEqual(["(pass) t"]);
     expect(readFileSync(path, "utf8")).toBe(source);
     expect([written.exitCode, read.exitCode]).toEqual([0, 0]);
+  });
+
+  // With the line break before it, the first line would start with the space that follows the name.
+  // The indentation of an inline snapshot is read from that line.
+  test("an inline snapshot of a matcher whose function has no name passes when it is read again", async () => {
+    using dir = tempDir("snapshot-whole-value-matcher-no-name", {
+      "a.test.js": [noName, `test("t", () => { expect(expect.toBeAnon(1)).toMatchInlineSnapshot(); });`, ``].join("\n"),
+    });
+    const path = join(String(dir), "a.test.js");
+    const written = await runTests(String(dir), { CI: "false" });
+    const source = readFileSync(path, "utf8");
+    expect(source.match(/`[^`]*`/g)).toEqual(["` \n[\n  1,\n]\n`"]);
+
+    const read = await runTests(String(dir), { CI: "true" });
+    const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    expect(resultsOf(read.stderr)).toEqual(["(pass) t"]);
+    expect(readFileSync(path, "utf8")).toBe(source);
+    expect([written.exitCode, read.exitCode, updated.exitCode]).toEqual([0, 0, 0]);
   });
 
   test("what an older Bun wrote for it still passes, and --update-snapshots rewrites it once", async () => {

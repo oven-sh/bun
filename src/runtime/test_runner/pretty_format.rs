@@ -3592,7 +3592,10 @@ impl JestPrettyFormat {
             let mut bridge = AsFmt::new(out);
             formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
             if formatter.owes_leading_line_break {
-                out.insert(start, b'\n');
+                // A matcher of `expect.extend()` whose function has no name prints a space for the name. The line
+                // break stays after that space, as before: an inline snapshot cannot start with white space.
+                let has_no_name = out.get(start) == Some(&b' ');
+                out.insert(start + usize::from(has_no_name), b'\n');
             }
             return Ok(formatter.same_as_older_bun && formatter.serializers.is_none());
         }

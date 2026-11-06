@@ -4,8 +4,7 @@ import { test } from "./supported";
 
 // Under `bun run` a mock stands in place of a built-in module that no import has loaded, and no import runs the real module from then on.
 // It runs when the library itself needs it, or a require() of its `node:` name, which no mock reaches.
-// A replaced Object.keys tells whether it ran: what node:zlib, node:stream and node:http load throws on one that answers undefined (a loop over the
-// keys of Writable.prototype in internal/streams/duplex), and calls one that counts.
+// A replaced Object.keys tells whether it ran: what node:zlib, node:stream and node:http load throws on one that answers nonsense, and calls one that counts.
 const project = casesOfOneRun("a-mock-of-a-built-in-module-keeps-the-real-module-from-running", {
   "package.json": `{ "name": "p", "type": "module" }`,
   "tsconfig.json": "{}",
@@ -17,7 +16,7 @@ function runsAsPlain(title: string, body: string, files: Record<string, string> 
       import { mock, test } from "bun:test";
       ${sayOf(name)}
       const keys = Object.keys;
-      const nonsense = () => undefined;
+      const nonsense = () => ["nonsense"];
       function mocked() { return "mocked"; }
       class Mocked { say() { return "mocked"; } }
       test("${name}", async () => {

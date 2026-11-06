@@ -98,29 +98,30 @@ const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ elem
 // `process` has no listener methods of its own.
 const nativeEmitter = b.union(b.builtin("process"), b.instance("EventEmitter"));
 
-const findsOrMakesEmitter = [
-  ...handedOver,
-  b.runs(b.named("_events")),
-  b.definesName(["_events"], b.instance("EventEmitter").fresh),
-];
+// The methods that assign to `this` in Node make the emitter of a receiver that has none. The other methods only look for one.
+const findsEmitter = [...handedOver, b.runs(b.named("_events"))];
+const findsOrMakesEmitter = [...findsEmitter, b.definesName(["_events"], b.instance("EventEmitter").fresh)];
 
-const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
+const onOtherReceiver = (firstParameter: string, emitterOfReceiver: readonly b.UseSpec[]): b.FunctionField => ({
   this: b.any,
   args: { [firstParameter]: b.any.optional, operands: b.any.rest },
   returns: b.any,
   capability: "js",
   throws: true,
   uses: {
-    this: findsOrMakesEmitter,
+    this: emitterOfReceiver,
     [firstParameter]: [...handedOver, b.runsTransitively("ToPrimitive")],
     operands: handedOver,
   },
   implementation: b.generic,
 });
 
-const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] => [
+const methodOfEventEmitter = (
+  signature: b.SignatureOptions,
+  emitterOfReceiver: readonly b.UseSpec[] = findsEmitter,
+): b.FunctionField[] => [
   { ...signature, this: nativeEmitter, implementation: b.generic },
-  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
+  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event", emitterOfReceiver),
 ];
 
 const addsListener = [
@@ -133,17 +134,20 @@ const addsListener = [
     this: nativeEmitter,
     implementation: b.generic,
   },
-  ...methodOfEventEmitter({
-    args: { event: b.any, listener: b.any },
-    returns: self,
-    capability: "js",
-    throws: true,
-    uses: {
-      this: b.inspected,
-      event: [b.retained, b.runs("ToPrimitive")],
-      listener: [b.retained, calledWithEvents],
+  ...methodOfEventEmitter(
+    {
+      args: { event: b.any, listener: b.any },
+      returns: self,
+      capability: "js",
+      throws: true,
+      uses: {
+        this: b.inspected,
+        event: [b.retained, b.runs("ToPrimitive")],
+        listener: [b.retained, calledWithEvents],
+      },
     },
-  }),
+    findsOrMakesEmitter,
+  ),
 ] satisfies b.FunctionField[];
 
 const removesListener = methodOfEventEmitter({
@@ -165,14 +169,17 @@ const removesAllListeners = methodOfEventEmitter({
   writes: listenerLists,
 });
 
-const setsMaxListeners = methodOfEventEmitter({
-  args: { count: b.union(b.f64, b.notPassed) },
-  returns: b.undefined,
-  capability: "heap",
-  throws: true,
-  uses: { this: b.inspected },
-  writes: listenerLists,
-});
+const setsMaxListeners = methodOfEventEmitter(
+  {
+    args: { count: b.union(b.f64, b.notPassed) },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    uses: { this: b.inspected },
+    writes: listenerLists,
+  },
+  findsOrMakesEmitter,
+);
 
 const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "returns">) =>
   methodOfEventEmitter({
@@ -192,7 +199,7 @@ const emitsEvent = {
   returns: b.bool,
   capability: "js",
   throws: true,
-  uses: { this: findsOrMakesEmitter, event: [b.retained, b.runsTransitively("ToPrimitive")], values: handedOver },
+  uses: { this: findsEmitter, event: [b.retained, b.runsTransitively("ToPrimitive")], values: handedOver },
   implementation: b.generic,
 } satisfies b.FunctionField;
 

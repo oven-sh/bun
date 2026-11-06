@@ -396,19 +396,16 @@ impl Quick {
         let count = end - flags_start;
         self.reserve_gen(count);
         let from = self.text.gen_pos;
-        let mut p = flags_start;
-        while p < end {
-            // insertion sort
-            let c = self.t.at(p);
-            let mut w = self.text.gen_pos;
-            while w > from && self.t.at(w - 1) > c {
-                self.t.put(w, self.t.at(w - 1));
-                w -= 1;
-            }
-            self.t.put(w, c);
-            self.set_gen_pos(self.text.gen_pos + 1);
-            p += 1;
+        let mut how_many = [0i32; 256];
+        for &c in self.t.sub(flags_start, end) {
+            how_many[c as usize] += 1;
         }
-        self.slice(from, self.text.gen_pos);
+        let mut to = from;
+        for (c, &times) in how_many.iter().enumerate() {
+            self.t.fill_range(c as i32, to, to + times);
+            to += times;
+        }
+        self.set_gen_pos(to);
+        self.slice(from, to);
     }
 }

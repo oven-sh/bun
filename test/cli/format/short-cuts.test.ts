@@ -4343,6 +4343,8 @@ describe("JavaScript that is deep, long or full of comments", () => {
     // separators between children that go
     ["a.jsx", "x = <a>", "{b} c ", "</a>;\n", 3000],
     ["a.jsx", "x = <a>\n", "word {a} <b /> text\n", "</a>;\n", 1500],
+    // the flags of a regular expression
+    ["a.ts", "x = /a/", "ysmig", ";\n", 5000],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

@@ -110,6 +110,46 @@ devTest("onResolve + onLoad virtual file", {
     ]);
   },
 });
+// A file that an onResolve plugin declines is a module of each graph that imports it, like a file that no plugin sees.
+devTest("onResolve that declines a file of the server and the client", {
+  framework: {
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+    serverComponents: minimalFramework.serverComponents,
+  },
+  pluginFile: `
+    export default [
+      {
+        name: 'a',
+        setup(build) {
+          build.onResolve({ filter: /[.]json$/ }, () => undefined);
+        },
+      }
+    ];
+  `,
+  files: {
+    "data.json": `{ "value": 1 }`,
+    "routes/index.ts": `
+      import data from "../data.json";
+      export default function (req, meta) {
+        return new Response(
+          "<!doctype html><html><body><p>server " + data.value + "</p>" +
+            meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("") +
+            "</body></html>",
+          { headers: { "content-type": "text/html" } },
+        );
+      }
+    `,
+    "client.ts": `
+      import data from "./data.json";
+      console.log("client " + data.value);
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toContain("server 1");
+    await using c = await dev.client("/");
+    await c.expectMessage("client 1");
+  },
+});
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

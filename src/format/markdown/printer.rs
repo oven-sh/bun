@@ -51,10 +51,53 @@ pub(crate) struct Printer<'a, 'e> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Ignore {
+pub(crate) enum Ignore {
     Next,
     Start,
     End,
+}
+
+/// Prettier's `isPrettierIgnore`
+pub(crate) fn prettier_ignore(
+    tree: &Tree,
+    text: &[u8],
+    is_mdx: bool,
+    flavor: crate::options::Flavor,
+    id: NodeId,
+) -> Option<Ignore> {
+    let node = tree.get(id)?;
+    let comment = match node.kind {
+        Kind::Html => {
+            let comment = (tree.str(text, node.value))
+                .strip_prefix(b"<!--")?
+                .strip_suffix(b"-->")?;
+            bun_core::strings::trim_js_whitespace_end(bun_core::strings::trim_js_whitespace_start(
+                comment,
+            ))
+        }
+        Kind::EsComment => tree.str(text, node.value),
+        Kind::Paragraph if is_mdx && node.first_child == node.last_child => tree.str(
+            text,
+            tree.get(node.first_child)
+                .filter(|child| child.kind == Kind::EsComment)?
+                .value,
+        ),
+        _ => return None,
+    };
+    let is_ignore = |suffix: &[u8]| {
+        comment
+            .strip_suffix(suffix)
+            .is_some_and(|it| flavor.is_ignore_comment(it))
+    };
+    if is_ignore(b"") {
+        Some(Ignore::Next)
+    } else if is_ignore(b"-start") {
+        Some(Ignore::Start)
+    } else if is_ignore(b"-end") {
+        Some(Ignore::End)
+    } else {
+        None
+    }
 }
 
 fn literalline<'a>() -> Doc<'a> {
@@ -448,42 +491,8 @@ impl<'a> Printer<'a, '_> {
         self.start_line(node) != self.end_line(node)
     }
 
-    /// Prettier's `isPrettierIgnore`
     fn prettier_ignore(&self, id: NodeId) -> Option<Ignore> {
-        let node = self.node(id)?;
-        let comment = match node.kind {
-            Kind::Html => {
-                let comment = self
-                    .str(node.value)
-                    .strip_prefix(b"<!--")?
-                    .strip_suffix(b"-->")?;
-                bun_core::strings::trim_js_whitespace_end(
-                    bun_core::strings::trim_js_whitespace_start(comment),
-                )
-            }
-            Kind::EsComment => self.str(node.value),
-            Kind::Paragraph if self.is_mdx && node.first_child == node.last_child => self.str(
-                self.node(node.first_child)
-                    .filter(|child| child.kind == Kind::EsComment)?
-                    .value,
-            ),
-            _ => return None,
-        };
-        let flavor = self.options.flavor;
-        let is_ignore = |suffix: &[u8]| {
-            comment
-                .strip_suffix(suffix)
-                .is_some_and(|it| flavor.is_ignore_comment(it))
-        };
-        if is_ignore(b"") {
-            Some(Ignore::Next)
-        } else if is_ignore(b"-start") {
-            Some(Ignore::Start)
-        } else if is_ignore(b"-end") {
-            Some(Ignore::End)
-        } else {
-            None
-        }
+        prettier_ignore(self.tree, self.text, self.is_mdx, self.options.flavor, id)
     }
 
     /// Prettier's `isAutolink`

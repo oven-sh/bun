@@ -755,6 +755,12 @@ describe("Markdown", () => {
     "<!-- prettier-ignore -->\n| a | b |\n|--|--|\n\n| a | b |\n|--|--|\n",
     "<!--prettier-ignore-->\ns\n\n\ne\n\n<!--prettier-ignore-->\n# N\ns\n\n<!--prettier-ignore-->\n*a*  b\n- s\n",
     "<!-- prettier-ignore-start -->\n*a*\n\n| a |\n|-|\n<!-- prettier-ignore-end -->\n\n*b*\n",
+    // Only the block behind such a comment is left to the parser. One that says something else is like any other.
+    "<!-- prettier-ignore -->\n\n*a*  b\n\n*c*  d\n\n* e\n\n<!-- prettier-ignore -->\n* f\n\n* g\n\n*h*\n",
+    "<!--\nprettier-ignore\n-->\n*a*  b\n\n*c*\n\n<!--\u00a0prettier-ignore\u00a0-->\n*a*  b\n\n*c*\n\n<!--prettier-ignore\n\n-->\n\n\n*a*  b\n\n*c*\n",
+    "<!-- prettier-ignore -->  \n*a*  b\n\n<!-- prettier-ignore --> c\n\n*a*  b\n\ntext prettier-ignore -->\n\n*a*  b\n\n- <!-- prettier-ignore -->\n\n*a*  b\n",
+    "<!-- please ignore -->\n\n*a*\n\n* b\n\n<!-- eslint-disable ignore -->\n| a |\n|-|\n\n<!-- prettier-ignore-next -->\n\n*a*  b\n",
+    "<!-- prettier-ignore-end -->\n\n*a*\n\n<!-- prettier-ignore-start -->\n\n*b*\n\n* c\n",
     // Lists.
     "- a\n- b\n  c\n- d\n\n- e\n\n- f\n  - g\n    - h\n  - i\n\n  - j\n- k\n",
     "* a\n* b\n  + c\n  + d\n\ntext\n\n+ e\n",
@@ -784,6 +790,16 @@ describe("Markdown", () => {
     "| b       |\n| ------- |\n| \u2014     |\n| default |\n\n| b       |\n| ------- |\n| \u2014       |\n| default |\n\n| \u4e2d\u6587 |\n| ---- |\n| a    |\n\n| \u4e2d\u6587 |\n| ------ |\n| a      |\n",
   ];
   expectSame("a.md", texts, markdownOptions);
+
+  // 0.15 in a release build and 0.5 in a debug build, which takes long to start. 1 and more when all of the text was parsed on
+  // account of a comment.
+  test.skipIf(!hasFlag)("a comment that says to leave a block alone is about that block", async () => {
+    const blocks = "Some *text* with `code` and a [link](http://a.b/c).\n\n- item one\n- item two\n\n".repeat(
+      isDebug || isASAN ? 4_000 : 8_000,
+    );
+    const text = `<!-- please ignore -->\n\n${blocks}<!-- prettier-ignore -->\n\n${blocks}`;
+    expect(await slowdownByShortCuts("a.md", text)).toBeLessThan(0.8);
+  });
 
   test.skipIf(!hasFlag).concurrent("bytes that aren't UTF-8", async () => {
     const inputs = [
@@ -821,6 +837,7 @@ describe("MDX", () => {
     "import a from  'a'\nexport const b = 1\n\nimportant text\n\nexports\n\ntext\nimport c from 'c'\n",
     "{/* a */}\n\n{/* a */}\n```js\nb\n```\n\n{/* a */}\ntext\n\n{/*a*/}\n\n{/*  a  */}\n\n{/* a */} b\n\n{/* a */} b {/* c */}\n\n{/* é */}\n\n# {/* a */}\n",
     "{/* prettier-ignore */}\n| a | b |\n|--|--|\n\n{/* prettier-ignore */}\n*a*  b\n\n*c*\n",
+    "{/* prettier-ignore */}\n\n*a*  b\n\n*c*  d\n\n* e\n\n{/* please ignore */}\n\n*a*\n\n<!-- prettier-ignore -->\n\n*a*  b\n\n*c*\n\ntext prettier-ignore */}\n\n*a*  b\n",
     '<A />\n\n<A>\n\ntext\n\n</A>\n\n<A b="c">\n  <B>\n\n<A>b</A>\n\n<A.B c>\n\n<a-b>\n\n<pre>\n\n<A>\n  \n</A>\n\n<A>\n<!-- b -->\n\n<A b={c}>\n\n<>\n\n<A>\u00a0\n',
     // JSX that's formatted already, and nearly so.
     '<Note>You cannot use both.</Note>\n\n<ParamField path="--config" type="string">\n  Specify path to config file (<code>bunfig.toml</code>). Alias: <code>-c</code>\n</ParamField>\n\n<ParamField path="--elide-lines" type="number" default="0">\n  Truncate each script\'s output to its last N lines when using --filter. Default 0 shows all lines\n</ParamField>\n',

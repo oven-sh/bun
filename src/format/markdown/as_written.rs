@@ -668,6 +668,10 @@ impl<'t> Reader<'t> {
             self.memory.found.push(lines);
             return Some(lines.end as usize);
         }
+        if self.follows_ignore_comment(start) {
+            self.refused_at = start;
+            return None;
+        }
         (self.start, self.copied) = (start, None);
         let rewritten_start = self.memory.rewritten.len();
         let mut at = start;
@@ -746,6 +750,18 @@ impl<'t> Reader<'t> {
             },
         });
         Some(end)
+    }
+
+    /// True if the block in front of the one at `start` may be `<!-- prettier-ignore -->`, or the same in the braces of
+    /// MDX. The block at `start` is printed as it's written then, so it has to be a node of its own.
+    #[inline(never)]
+    fn follows_ignore_comment(&self, start: usize) -> bool {
+        let before = self.text.get(..start).unwrap_or_default().trim_ascii_end();
+        let Some(comment) = (before.strip_suffix(b"-->")).or_else(|| before.strip_suffix(b"*/}"))
+        else {
+            return false;
+        };
+        bun_core::strings::trim_js_whitespace_end(comment).ends_with(b"prettier-ignore")
     }
 
     /// `lines` is where the text is on each line of a paragraph or a heading that the parser has found. If it's known what

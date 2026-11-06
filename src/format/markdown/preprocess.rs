@@ -4,6 +4,7 @@
 //! other things that file records on nodes are computed on demand here.
 
 use super::ast::{Kind, NodeId, Str, Tree};
+use super::printer::{Ignore, prettier_ignore};
 use super::strings::is_in;
 use super::unicode_tables::{CJK, HANGUL, PUNCTUATION, VARIATION_SELECTORS};
 use crate::text::{first_char, last_char};
@@ -453,24 +454,19 @@ impl Preprocessor<'_> {
                 }
             }
             Kind::AsWritten => {
+                // There is none in the flavor of oxfmt.
+                let flavor = crate::options::Flavor::Prettier;
                 self.is_wrong_as_written |= self.tree.get(node.previous).is_some_and(|previous| {
                     match previous.last_kind() {
                         Kind::List => {
                             node.first_kind() == Kind::List
                                 && previous.is_last_ordered() == node.is_first_ordered()
                         }
-                        Kind::Html if previous.kind == Kind::Html => bun_core::strings::contains(
-                            self.tree.str(self.text, previous.value),
-                            b"ignore",
-                        ),
-                        Kind::Paragraph if self.is_mdx => {
-                            self.tree.get(previous.first_child).is_some_and(|child| {
-                                child.kind == Kind::EsComment
-                                    && bun_core::strings::contains(
-                                        self.tree.str(self.text, child.value),
-                                        b"ignore",
-                                    )
-                            })
+                        // The `Reader` leaves a block behind such a comment to the parser: `follows_ignore_comment`.
+                        Kind::Html | Kind::Paragraph => {
+                            let (tree, previous) = (&*self.tree, node.previous);
+                            prettier_ignore(tree, self.text, self.is_mdx, flavor, previous)
+                                == Some(Ignore::Next)
                         }
                         _ => false,
                     }

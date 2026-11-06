@@ -994,6 +994,8 @@ impl<'a> Direct<'a, '_> {
         let end = self.path(head)?;
         self.copy(open, open + 1);
         self.copy(head, end);
+        // Before what is in it is read: it can be as deep as it's long.
+        self.check(mode)?;
         self.at = self.skip_space(end);
         if !self.ends_params(self.at) {
             if self.at == end {

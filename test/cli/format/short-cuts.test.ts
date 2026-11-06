@@ -4063,6 +4063,13 @@ describe("Handlebars", () => {
     expect(said).toEqual(expected);
   });
 
+  test.skipIf(!hasFlag)("expressions in expressions take linear time", async () => {
+    const nest = (open: string) => `{{a ${open.repeat(120)}c${")".repeat(120)}}}\n`;
+    // 0.6 in a release build, and 3 when each one read all that are in it to find that they don't fit.
+    const text = (nest("(b ") + nest("(b d=")).repeat(isDebug ? 20 : 400);
+    expect(await cpuTimeOfShortCuts("a.hbs", text)).toBeLessThan(1.8);
+  });
+
   test("a text that is formatted stays as it is", async () => {
     const formatted = [
       '<div class="a">\n  <p>Some text {{this.name}}</p>\n  {{#if this.b}}\n    <Foo @a={{this.c}} @d="e" />\n  {{else}}\n    {{yield (hash f=this.g)}}\n  {{/if}}\n\n  {{! h }}\n  <!-- i -->\n</div>',

@@ -3035,7 +3035,7 @@ impl<'a> Transpiler<'a> {
         };
 
         let mut opts = bun_css::ParserOptions::default(Some(self.log_mut()));
-        let enable_css_modules = crate::is_css_module_path(file_path_text);
+        let enable_css_modules = bun_css::css_modules::is_module_path(file_path_text);
         if enable_css_modules {
             opts.filename = file_path_pretty;
             opts.css_modules = Some(bun_css::CssModuleConfig::default());

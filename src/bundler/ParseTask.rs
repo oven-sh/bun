@@ -823,6 +823,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         source: &'static Source<'static>,
         loader: Loader,
+        target: options::Target,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
@@ -1278,11 +1279,15 @@ pub mod parse_worker {
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
 
-                let enable_css_modules = crate::is_css_module_path(source.path.pretty);
+                let enable_css_modules = bun_css::css_modules::is_module_path(source.path.pretty);
                 let parser_options = {
                     let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
                     if enable_css_modules {
-                        parseropts.filename = source.path.pretty;
+                        parseropts.filename = crate::css_module_name_path(
+                            source.path.pretty,
+                            target,
+                            topts.has_dev_server(),
+                        );
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
                     parseropts
@@ -2650,6 +2655,7 @@ pub mod parse_worker {
                     resolver,
                     source,
                     loader,
+                    target,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,

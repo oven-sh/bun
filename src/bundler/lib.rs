@@ -91,10 +91,10 @@ pub(crate) use bun_ast::UseDirective;
 pub(crate) use bun_ast::{Part, Ref};
 pub use bun_js_printer::MangledProps;
 pub use options_impl::PathTemplate;
-pub(crate) use options_impl::{is_client_css_module, is_css_module_path};
 
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
+pub(crate) use bundle_v2::css_module_name_path;
 pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,

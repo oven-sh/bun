@@ -921,7 +921,6 @@ impl<'a> LinkerContext<'a> {
         {
             let loaders = self.parse_graph().input_files.items_loader();
             let sources = self.parse_graph().input_files.items_source();
-            let targets = self.graph.ast.items_target();
             let is_bake_dev =
                 self.options.output_format == crate::options::OutputFormat::InternalBakeDev;
             let parts_col = self.graph.ast.items_parts();
@@ -937,11 +936,11 @@ impl<'a> LinkerContext<'a> {
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
                     bits.set(1);
                 }
-                // Likewise for a client CSS module's stub: the dev format links imports at runtime.
+                // Likewise for a CSS module's stub: the dev format links imports at runtime.
                 if is_bake_dev
                     && parts.len() > 1
                     && loaders.get(i).is_some_and(|l| l.is_css())
-                    && crate::is_client_css_module(targets[i], sources[i].path.pretty)
+                    && crate::bun_css::css_modules::is_module_path(sources[i].path.pretty)
                 {
                     bits.set(1);
                 }
@@ -2435,6 +2434,8 @@ impl<'a> LinkerContext<'a> {
         }
 
         let all_css_asts = self.graph.ast.items_css();
+        let all_targets = self.graph.ast.items_target();
+        let has_dev_server = self.dev_server.is_some();
         let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref; raw deref because `all_sources` is held
         // across `&mut self.mangled_props` below (split borrow).
@@ -2480,7 +2481,11 @@ impl<'a> LinkerContext<'a> {
                         let scratch = ::bun_alloc::Arena::new();
                         let final_generated_name = crate::bun_css::css_modules::scoped_name(
                             &scratch,
-                            source.path.pretty,
+                            crate::css_module_name_path(
+                                source.path.pretty,
+                                all_targets[r#ref.source_index() as usize],
+                                has_dev_server,
+                            ),
                             original_name,
                         );
                         // The map owns its boxed values (freed with `mangled_props`).

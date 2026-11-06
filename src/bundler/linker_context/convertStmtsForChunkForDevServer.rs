@@ -59,7 +59,6 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
     let sources = input_files.items_source();
     // A CSS file's own records belong to the CSS chunk (another thread); its stub imports nothing.
     if ast.css.is_none() {
-        let targets = c.graph.ast.items_target();
         for record in ast.import_records.as_mut_slice() {
             if record.path.is_disabled {
                 continue;
@@ -69,10 +68,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
                 let is_css = loaders[imported] == Loader::Css;
                 // A plain stylesheet reaches the page through a <link> tag, not the module registry.
                 if is_css
-                    && !crate::is_client_css_module(
-                        targets[imported],
-                        sources[imported].path.pretty,
-                    )
+                    && !crate::bun_css::css_modules::is_module_path(sources[imported].path.pretty)
                 {
                     record.path.is_disabled = true;
                     continue;

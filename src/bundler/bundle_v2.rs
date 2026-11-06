@@ -14,6 +14,7 @@ use bun_core::ThreadLock;
 // the outer `BundleV2` struct see exactly the same types as the impl bodies.
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
+pub(crate) use bv2_impl::css_module_name_path;
 pub use bv2_impl::dispatch;
 pub(crate) use bv2_impl::write_metafile_output;
 pub use bv2_impl::{
@@ -2965,7 +2966,11 @@ pub mod bv2_impl {
                 // For non-javascript files, make all of these files share indices.
                 // For example, it is silly to bundle index.css depended on by client+server twice.
                 // It makes sense to separate these for JS because the target affects DCE
-                if self.transpiler.options.server_components && !loader.is_javascript_like() {
+                // The dev server keeps a copy per graph, as `process_resolve_queue` does.
+                if self.transpiler.options.server_components
+                    && !loader.is_javascript_like()
+                    && self.dev_server.is_none()
+                {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
                     let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
@@ -5861,8 +5866,7 @@ pub mod bv2_impl {
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
                                     if loaders[index] != Loader::Html
-                                        && crate::is_client_css_module(
-                                            target,
+                                        && bun_css::css_modules::is_module_path(
                                             sources[failed].path.pretty,
                                         )
                                     {
@@ -5911,16 +5915,13 @@ pub mod bv2_impl {
                     }
                 }
 
-                // A client CSS module also ships a module with its class-name map in the JS chunk.
+                // A CSS module also ships a module with its class-name map, in the JS chunk of its graph.
                 for entry_point in start.css_entry_points.keys() {
                     let idx = entry_point.get() as usize;
                     // SAFETY: `idx < ast.len()`; see the column aliasing note above.
                     let part_count = unsafe { (*parts_col.add(idx)).len() };
                     if part_count > 1
-                        && crate::is_client_css_module(
-                            asts.items_target()[idx],
-                            sources[idx].path.pretty,
-                        )
+                        && bun_css::css_modules::is_module_path(sources[idx].path.pretty)
                     {
                         js_files.push(*entry_point);
                         css_module_stubs.push(*entry_point);
@@ -8151,6 +8152,21 @@ pub mod bv2_impl {
         None
     }
 
+    const SSR_PRETTY_PREFIX: &[u8] = b"ssr:";
+
+    /// The path that CSS module names hash. Under the dev server, the SSR graph's copy of a stylesheet gets the names of the other copies.
+    pub(crate) fn css_module_name_path(
+        pretty: &[u8],
+        target: options::Target,
+        has_dev_server: bool,
+    ) -> &[u8] {
+        if has_dev_server && target == options::Target::ServerComponentsSsr {
+            pretty.strip_prefix(SSR_PRETTY_PREFIX).unwrap_or(pretty)
+        } else {
+            pretty
+        }
+    }
+
     pub fn generic_path_with_pretty_initialized<'b>(
         path: &bun_paths::fs::Path<'_>,
         target: options::Target,
@@ -8170,7 +8186,7 @@ pub mod bv2_impl {
 
         // `pretty` is only displayed, never opened, so it can be longer than MAX_PATH_BYTES.
         let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
-            b"ssr:"
+            SSR_PRETTY_PREFIX
         } else {
             b""
         };

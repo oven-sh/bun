@@ -756,5 +756,29 @@ describe("bundler", async () => {
         expect(css).toContain(`.${scoped} {`);
       },
     });
+
+    // A server-side graph links to the same kind of module.
+    itBundled("bake-dev/loader-css-module-import-server", {
+      format: "internal_bake_dev",
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import styles from "./styles.module.css";
+          console.log(styles.foo);
+          export const lazy = () => require("./styles.module.css");
+        `,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        const js = api.readFile(join("/out", jsFile));
+        expect(js).toContain('"styles.module.css", 1, "default"');
+        expect(js).toContain('"styles.module.css"(hmr, module, exports)');
+        expect(js).toContain('hmr.require("styles.module.css")');
+        expect(js).toMatch(/foo: "foo_[A-Za-z0-9_-]+"/);
+        expect(js).not.toContain("default: {}");
+      },
+    });
   });
 });

@@ -763,11 +763,12 @@ impl<'t, 'o> Lines<'t, 'o> {
         let keyword = self.text.get(start..at)?;
         let (block, is_block_needed) = match keyword {
             b"query" | b"mutation" | b"subscription" if !is_extension => {
-                if self.at(at) == b' ' && self.at(at + 1) != b'{' && self.at(at + 1) != b'@' {
-                    at = match self.at(at + 1) {
-                        b'(' => at + 1,
-                        _ => self.name(at + 1)?,
-                    };
+                // Without a name there's a blank in front of the variables.
+                match (self.at(at), self.at(at + 1)) {
+                    (b' ', b'{' | b'@') => {}
+                    (b' ', b'(') => at += 1,
+                    (b' ', _) => at = self.name(at + 1)?,
+                    _ => return None,
                 }
                 if self.at(at) == b'(' {
                     if self.at(at + 1) == b'\n' {

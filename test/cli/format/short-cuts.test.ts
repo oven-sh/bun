@@ -596,6 +596,12 @@ describe("GraphQL", () => {
       ),
     ),
     `type A {\n${" ".repeat(60)}"""\n${" ".repeat(60)}a\n${" ".repeat(60)}"""\n  b: C\n}\n`,
+    // An operation without a name has a blank in front of its variables.
+    "query($a: Int) {\n  a\n}\n",
+    "{\n  a\n}\n\nmutation($id: ID!) {\n  a(id: $id)\n}\n",
+    "subscription($a: Int) @b {\n  a\n}\n",
+    "query(\n  $someLongVariable: SomeLongType\n  $anotherLongVariable: AnotherLongType\n  $c: D\n) {\n  a\n}\n",
+    "query ($a: Int) {\n  a\n}\n\nquery A($a: Int) {\n  a\n}\n\nquery A ($a: Int) {\n  a\n}\n",
     // Errors.
     "{ a",
     "{ a }}",

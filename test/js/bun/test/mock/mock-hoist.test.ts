@@ -952,13 +952,14 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     [`const [fake] = "fake";`, "fake"],
     [`const undefined = String("local"), fake = undefined;`, "fake"],
     [`const local = "local"; const fake = local;`, "fake"],
-    // A `let` is never hoisted: its writes would stay below the imports, and the factory would read the first value.
+    // A `let` is never hoisted: the plan can't tell whether a write to it stays below the imports. babel-jest hoists the first row.
     [`let fake = "fake";`, "fake"],
     [`let fake = "first"; fake = "second";`, "fake"],
     [`let fake = 1; fake++;`, "fake"],
     [`let fake = "first"; [fake] = ["second"];`, "fake"],
     [`let fake = "first"; for (fake of ["second"]) {}`, "fake"],
     [`let fake = "first"; function set() { fake = "second"; } set();`, "fake"],
+    [`let fake = "first"; beforeEach(() => { fake = "second"; });`, "fake"],
     [`let mockFake = "first"; mockFake = "second";`, "mockFake"],
     [`export let fake = "first"; fake = "second";`, "fake"],
   ])("stays in its place: %s", async (declaration, name) => {
@@ -985,19 +986,63 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     expect(exitCode).toBe(1);
   });
 
-  test("a factory reads the same value from a let whether or not an earlier file loaded the module", async () => {
+  // If the module is already loaded, the call at the top of the file runs the factory. It reads `fake` too early and runs again at the import.
+  test.each([
+    [["2.test.ts"], ["factory", "second"]],
+    [
+      ["1.test.ts", "2.test.ts"],
+      ["load mod", "factory", "factory", "second"],
+    ],
+    [
+      ["--preload", "./preload.ts", "2.test.ts"],
+      ["load mod", "factory", ...(api === "jest" ? ["factory"] : []), "second"],
+    ],
+    [
+      ["--preload", "./preload.ts", "--isolate", "2.test.ts"],
+      ["load mod", "factory", ...(api === "jest" ? ["factory"] : []), "second"],
+    ],
+  ])("a factory reads the assigned value of a let, whatever loaded the module first: %j", async (args, expected) => {
     const files = {
+      "preload.ts": `import "./mod";`,
       "1.test.ts": `import { value } from "./mod"; test("loads mod", () => { value; });`,
       "2.test.ts": `
         let fake = "first";
         fake = "second";
-        ${api}.mock("./mod", () => ({ value: fake }));
-        test("print", async () => console.log(JSON.stringify([(await import("./mod")).value])));
+        ${api}.mock("./mod", () => ((globalThis.events ??= []).push("factory"), { value: fake }));
+        test("print", async () => {
+          const { value } = await import("./mod");
+          console.log(JSON.stringify([...events, value]));
+        });
       `,
     };
-    expect(await events(files, ["2.test.ts"])).toEqual([["second"]]);
-    expect(await events(files, ["1.test.ts", "2.test.ts"])).toEqual([["second"]]);
+    expect(await events(files, args)).toEqual([expected]);
   });
+
+  // The call at the top of the file runs the factory, because the module is loaded. Its ReferenceError is kept for the module's next import, and none comes.
+  test.each([
+    [`let fake = "mocked";`, "real"],
+    // vi.mock() leaves what a preload imported as it is.
+    [`const fake = "mocked";`, api === "jest" ? "mocked" : "real"],
+  ])(
+    "a preload loaded the importer of the module: with %s the importer reads the %s module",
+    async (declaration, expected) => {
+      expect(
+        await events(
+          {
+            "preload.ts": `import "./reader";`,
+            "reader.ts": `import { value } from "./mod"; export const read = () => value;`,
+            "hoist.test.ts": `
+            import { read } from "./reader";
+            ${declaration}
+            ${api}.mock("./mod", () => ({ value: fake }));
+            test("print", () => console.log(JSON.stringify([read()])));
+          `,
+          },
+          ["--preload", "./preload.ts", "hoist.test.ts"],
+        ),
+      ).toEqual([[expected]]);
+    },
+  );
 
   test("the same variable with a literal and with a call", async () => {
     expect(await events(file(`const fake = "x";`, `fake`, `value`))).toEqual([["x"]]);
@@ -1070,6 +1115,60 @@ describe.concurrent("a let with a primitive literal stays in its place", () => {
     const { stderr, exitCode } = await run(files, args);
     expect(stderr).toContain(expected);
     expect(exitCode).toBe(1);
+  });
+
+  // These imports stay static, so the call at the top of the file runs the factory. Its ReferenceError is kept for an import that never comes.
+  test.each(
+    (
+      [
+        [
+          "the file exports its import",
+          declaration => ({
+            "hoist.test.ts": `
+              import { value } from "./mod";
+              export { value };
+              ${declaration}
+              vi.mock("./mod", () => ({ value: fake }));
+              test("print", () => console.log(JSON.stringify([value])));
+            `,
+          }),
+        ],
+        [
+          "the import has attributes",
+          declaration => ({
+            "data.json": `{ "value": "real" }`,
+            "hoist.test.ts": `
+              import data from "./data.json" with { type: "json" };
+              ${declaration}
+              vi.mock("./data.json", () => ({ default: { value: fake } }));
+              test("print", () => console.log(JSON.stringify([data.value])));
+            `,
+          }),
+        ],
+        [
+          "a helper makes the mock",
+          declaration => ({
+            "mocks.ts": `
+              import { vi } from "bun:test";
+              ${declaration}
+              vi.mock("./mod", () => ({ value: fake }));
+            `,
+            "reader.ts": `import { value } from "./mod"; export const read = () => value;`,
+            "hoist.test.ts": `
+              import { test } from "bun:test";
+              import "./mocks";
+              import { read } from "./reader";
+              test("print", () => console.log(JSON.stringify([read()])));
+            `,
+          }),
+        ],
+      ] as [string, (declaration: string) => Record<string, string>][]
+    ).flatMap(([layout, files]) => [
+      [layout, `let fake = "mocked";`, "real", files] as const,
+      [layout, `const fake = "mocked";`, "mocked", files] as const,
+    ]),
+  )("%s: with %s the module is %s", async (_, declaration, expected, files) => {
+    expect(await events(files(declaration))).toEqual([[expected]]);
   });
 
   test("in a Vitest file that has no hoisted call and runs its imports in turn", async () => {

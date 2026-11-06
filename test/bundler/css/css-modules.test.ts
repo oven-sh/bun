@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -646,72 +647,74 @@ describe("css", () => {
   });
 });
 
-// `bun build --no-bundle` prints a module file with no link step. Class
-// symbols have no final name there, so the printer hashes the original name
-// like it does for keyframes.
-test("css-module/NoBundleHashesClassSymbols", async () => {
-  using dir = tempDir("css-module-no-bundle", {
-    "styles.module.css": `
-      .card { view-transition-class: slide; animation-name: spin }
-      @keyframes spin { to { opacity: 0 } }
-      ::view-transition-old(.slide) { opacity: 0 }
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const card = stdout.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
-  expect(card, ".card should be scoped").not.toBeNull();
-  const hash = card![1];
-  expect(stdout).toEqualIgnoringWhitespace(`
-    .card_${hash} {
-      view-transition-class: slide_${hash};
-      animation-name: spin_${hash};
-    }
+// `bun build --no-bundle` does not link, so it cannot scope a CSS module or build its exports.
+describe.concurrent("css-module/NoBundle", () => {
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
 
-    @keyframes spin_${hash} {
-      to {
-        opacity: 0;
-      }
-    }
+  const rejected = {
+    stdout: "",
+    stderr:
+      `error: CSS module "styles.module.css" is not supported with --no-bundle\n\n` +
+      `note: --no-bundle transpiles each file alone, so it cannot scope the class names of a CSS module or build its exports. Remove --no-bundle to get the scoped stylesheet, or copy the file unchanged for its importer to scope.\n`,
+    exitCode: 1,
+  };
 
-    ::view-transition-old(.slide_${hash}) {
-      opacity: 0;
-    }
-  `);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-});
+  test("a CSS module beside the script that imports it is an error, and nothing is written", async () => {
+    using dir = tempDir("css-module-no-bundle", {
+      "app.ts": `import styles from "./styles.module.css";\nconsole.log(styles.card);\n`,
+      "styles.module.css": `.card { color: red }\n`,
+    });
+    const built = await run(String(dir), "build", "--no-bundle", "app.ts", "styles.module.css", "--outdir", "out");
+    expect(built).toEqual(rejected);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  });
 
-// The hash comes from the path relative to the project root, as in a bundled
-// build, so two module files with the same basename get different names.
-test("css-module/NoBundleHashesByRelativePath", async () => {
-  using dir = tempDir("css-module-no-bundle-nested", {
-    "a/styles.module.css": `.card { color: red }`,
-    "b/styles.module.css": `.card { color: blue }`,
+  test("a CSS module to stdout is an error", async () => {
+    using dir = tempDir("css-module-no-bundle-stdout", { "styles.module.css": `.card { color: red }\n` });
+    expect(await run(String(dir), "build", "--no-bundle", "styles.module.css")).toEqual(rejected);
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--no-bundle", "a/styles.module.css", "b/styles.module.css", "--outdir", "out"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+
+  test("a stylesheet that is not a CSS module prints its names as written", async () => {
+    using dir = tempDir("css-no-bundle-plain", {
+      "styles.css": `
+        .card { view-transition-class: slide; animation-name: spin }
+        @keyframes spin { to { opacity: 0 } }
+        ::view-transition-old(.slide) { opacity: 0 }
+      `,
+    });
+    const [pretty, minified] = await Promise.all([
+      run(String(dir), "build", "--no-bundle", "styles.css"),
+      run(String(dir), "build", "--no-bundle", "styles.css", "--minify"),
+    ]);
+    expect(pretty).toEqual({
+      stdout: `.card {
+  view-transition-class: slide;
+  animation-name: spin;
+}
+
+@keyframes spin {
+  to {
+    opacity: 0;
+  }
+}
+
+::view-transition-old(.slide) {
+  opacity: 0;
+}
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(minified).toEqual({
+      stdout: `.card{view-transition-class:slide;animation-name:spin}@keyframes spin{to{opacity:0}}::view-transition-old(.slide){opacity:0}`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-  const a = await Bun.file(`${dir}/out/a/styles.module.css`).text();
-  const b = await Bun.file(`${dir}/out/b/styles.module.css`).text();
-  const hashA = a.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
-  const hashB = b.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
-  expect(hashA).toBeDefined();
-  expect(hashB).toBeDefined();
-  expect(hashA).not.toBe(hashB);
 });
 
 test("a resolve error in CSS covers the whole url() and composes path", async () => {

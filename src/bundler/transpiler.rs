@@ -2916,6 +2916,21 @@ impl<'a> Transpiler<'a> {
                 );
                 return Ok(None);
             }
+            options::Loader::Css if crate::bun_css::css_modules::is_module_path(file_path_text) => {
+                self.log_mut().add_range_error_fmt_with_notes(
+                    None,
+                    Default::default(),
+                    Box::new([bun_ast::Data {
+                        text: b"--no-bundle transpiles each file alone, so it cannot scope the class names of a CSS module or build its exports. Remove --no-bundle to get the scoped stylesheet, or copy the file unchanged for its importer to scope."[..].into(),
+                        ..Default::default()
+                    }]),
+                    format_args!(
+                        "CSS module {} is not supported with --no-bundle",
+                        bun_core::fmt::quote(file_path.pretty),
+                    ),
+                );
+                return Ok(None);
+            }
             options::Loader::Css => {
                 match self.build_css_output(
                     file_path_text,
@@ -3008,7 +3023,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         file_path_text: &'static [u8],
         dirname_fd: FD,
-        file_path_pretty: &'static [u8],
+        file_path_pretty: &[u8],
     ) -> Option<crate::output_file::Value> {
         use crate::bun_css;
 
@@ -3034,17 +3049,7 @@ impl<'a> Transpiler<'a> {
             }
         };
 
-        let mut opts = bun_css::ParserOptions::default(Some(self.log_mut()));
-        const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
-        let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
-            && strings::eql_comptime(
-                &file_path_text[file_path_text.len() - CSS_MODULE_SUFFIX.len()..],
-                CSS_MODULE_SUFFIX,
-            );
-        if enable_css_modules {
-            opts.filename = file_path_pretty;
-            opts.css_modules = Some(bun_css::CssModuleConfig::default());
-        }
+        let opts = bun_css::ParserOptions::default(Some(self.log_mut()));
 
         // SAFETY: `self.arena` is the per-transpile arena;
         // the CSS AST it backs is dropped before this fn returns
@@ -3079,7 +3084,7 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let symbols = bun_ast::symbol::Map::init_list(vec![extra.symbols]);
+        let symbols = bun_ast::symbol::Map::init_list(Default::default());
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {

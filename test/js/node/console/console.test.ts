@@ -302,7 +302,7 @@ describe.concurrent("global console writes through a replaced process.stdout.wri
       for (let i = 0; i < 2000; i++) console.log("x");
     `);
     expect(stderr).toBe("");
-    expect(stdout).toBe("W:x\n".repeat(2000));
+    expect(stdout).toBe(Buffer.alloc(2000 * "W:x\n".length, "W:x\n").toString());
     expect(exitCode).toBe(0);
   });
 

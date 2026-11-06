@@ -13,7 +13,7 @@ test.skipIf(isWindows)("EPIPE from a forwarding process.stdout.write is dropped,
       `
         const ow = process.stdout.write;
         process.stdout.write = function (c, ...r) { return ow.call(this, c, ...r); };
-        const pad = "x".repeat(80);
+        const pad = Buffer.alloc(80, "x").toString();
         for (let i = 0; i < 1000; i++) console.log("line " + i + pad);
         process.stderr.write("done " + process.exitCode + "\\n");
       `,
@@ -23,7 +23,7 @@ test.skipIf(isWindows)("EPIPE from a forwarding process.stdout.write is dropped,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("line 0" + "x".repeat(80) + "\n");
+  expect(stdout).toBe("line 0" + Buffer.alloc(80, "x").toString() + "\n");
   expect(stderr).toBe("done undefined\n");
   expect(exitCode).toBe(0);
 });

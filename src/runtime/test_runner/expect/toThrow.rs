@@ -48,8 +48,6 @@ impl Expect {
                         break 'brk inner_constructor_value;
                     }
                 }
-                // `thrown instanceof fn` throws a bare TypeError when `fn` has no
-                // `prototype` (arrow, method, async, bound function).
                 if value.is_callable() && !value.is_constructor() {
                     let mut fmt = Formatter::new(global).with_quote_strings(true);
                     return Err(global.throw(format_args!(

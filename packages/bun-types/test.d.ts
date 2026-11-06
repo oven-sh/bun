@@ -644,6 +644,9 @@ declare module "bun:test" {
      *
      * The wait uses the real clock. While fake timers are on, `vi.advanceTimersByTime(interval)` runs before each call.
      *
+     * `timeout` and `interval` go up to `2147483647`. A larger value, `Infinity` or `NaN` becomes 1, and so does a
+     * `timeout` below 1. With `timeout: Infinity`, `callback` runs once.
+     *
      * @param options the timeout, or `{ timeout = 1000, interval = 50 }`
      *
      * @example
@@ -661,6 +664,9 @@ declare module "bun:test" {
      * milliseconds.
      *
      * The wait uses the real clock. While fake timers are on, `vi.advanceTimersByTime(interval)` runs before each call.
+     *
+     * `timeout` and `interval` go up to `2147483647`. A larger value, `Infinity` or `NaN` becomes 1, and so does a
+     * `timeout` below 1. With `timeout: Infinity`, `callback` runs once.
      *
      * @param options the timeout, or `{ timeout = 1000, interval = 50 }`
      *
@@ -1616,12 +1622,13 @@ declare module "bun:test" {
       fn: () => T,
       options?: {
         /**
-         * Milliseconds between attempts.
+         * Milliseconds between attempts, up to `2147483647`. A larger value, `Infinity` or `NaN` becomes 1.
          * @default 50
          */
         interval?: number;
         /**
-         * Milliseconds before the matcher gives up and fails.
+         * Milliseconds before the matcher gives up and fails, up to `2147483647`. A larger value, `Infinity`, `NaN` or
+         * a value below 1 becomes 1, so `timeout: Infinity` gives the matcher one attempt.
          * @default 1000
          */
         timeout?: number;

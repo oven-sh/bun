@@ -433,12 +433,13 @@ declare module "vitest" {
       fn: () => T,
       options?: {
         /**
-         * Milliseconds between attempts.
+         * Milliseconds between attempts, up to `2147483647`. A larger value, `Infinity` or `NaN` becomes 1.
          * @default 50
          */
         interval?: number | undefined;
         /**
-         * Milliseconds before the matcher gives up and fails.
+         * Milliseconds before the matcher gives up and fails, up to `2147483647`. A larger value, `Infinity`, `NaN` or
+         * a value below 1 becomes 1, so `timeout: Infinity` gives the matcher one attempt.
          * @default 1000
          */
         timeout?: number | undefined;

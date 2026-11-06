@@ -245,6 +245,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 namespace_ref: id.ref_,
                                                 alias: js_ast::StoreStr::new(name),
                                                 import_record_index,
+                                                is_global_with_fallback: false,
                                                 was_originally_property_access: true,
                                             }));
                                     }

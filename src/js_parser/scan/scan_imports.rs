@@ -430,6 +430,7 @@ impl<'a> ImportScanner<'a> {
                                         namespace_ref,
                                         alias: js_ast::StoreStr::new(*alias),
                                         import_record_index: st.import_record_index,
+                                        is_global_with_fallback: false,
                                         was_originally_property_access: !st
                                             .star_name_loc
                                             .is_empty()
@@ -551,6 +552,7 @@ impl<'a> ImportScanner<'a> {
                                         namespace_ref,
                                         alias: item.alias,
                                         import_record_index: st.import_record_index,
+                                        is_global_with_fallback: false,
                                         was_originally_property_access: !st
                                             .star_name_loc
                                             .is_empty()
@@ -570,6 +572,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref,
                                 alias: js_ast::StoreStr::EMPTY,
                                 import_record_index: st.import_record_index,
+                                is_global_with_fallback: false,
                                 was_originally_property_access: false,
                             }));
                         }

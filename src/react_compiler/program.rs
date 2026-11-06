@@ -84,6 +84,12 @@ pub trait Host {
         None
     }
 
+    /// Whether a read of the free name `ref_` has to be an `E::ImportIdentifier`, because the parser prints it as
+    /// something other than the name. `bun test` does that to the names of the test runner.
+    fn reads_free_name_as_import(&self, _ref: Ref) -> bool {
+        false
+    }
+
     /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()

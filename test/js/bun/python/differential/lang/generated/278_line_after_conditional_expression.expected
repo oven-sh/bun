@@ -1,0 +1,2999 @@
+status: 0
+script: 75a98a4691f8011e
+source: 4d6b17a1514371af
+---
+x = (a or b) if c else d
+    8 8 9
+    8 9
+x = (a and b) if c else d
+    8 8 9
+    8 9
+x = (a or b or d) if c else d
+    8 8 9
+    8 9
+x = (a and b or d) if c else d
+    8 8 9
+    8 9
+x = (not (a or b)) if c else d
+    8 9
+x = (a < b < c) if c else d
+    8 9
+x = ((a or b) if b else c) if c else d
+    8 8 9
+    8 9
+x = (a if b else (c or d)) if c else d
+    8 9
+x = ((a or b) if b else (c or d)) if c else d
+    8 8 9
+    8 9
+x = a if not c else ((a or b) if c else d)
+    8 8 9
+    8 9
+x = a if not c else (a or b)
+    8 9
+x = (0 or b) if c else d
+    8 9
+x = (1 or b) if c else d
+    8 9
+x = (a or 1) if c else d
+    8 8 9
+    8 9
+x = (1 and b) if c else d
+    8 9
+x = (a or b) if 1 else d
+    8 9
+x = (a or b) if 0 else d
+    8 9
+x = (w := a or b) if c else d
+    8 9
+n((w := (a or b) if c else d))
+    8 8 9
+    8 9
+x = n((a or b) if c else d)
+    8 8 9
+    8 9
+x = ((a or b) if c else d, 1)
+    8 8 9
+    8 9
+o.x = (a or b) if c else d
+    8 8 9
+    8 9
+l[0] = (a or b) if c else d
+    8 8 9
+    8 9
+G = (a or b) if c else d
+    8 8 9
+    8 9
+y += (a or b) if c else d
+    8 8 9
+    8 9
+x: int = (a or b) if c else d
+    8 8 9
+    8 9
+(a or b) if c else d
+    8 9
+x = z = (a or b) if c else d
+    8 8 9
+    8 9
+x, z = (a or l2) if c else l2
+    8 8 9
+    8 8 TypeError
+    8 9
+x = ((a or b) if c else d) + 1
+    8 8 9
+    8 9
+x = ((a or b) if c else d) or b
+    8 8 9
+    8 9
+if (a or b) if c else d:
+    x = 1
+    8 9 10
+    8 10
+while (a or b) if c else d:
+    break
+    8 9 10
+    8 10
+assert (a or b) if c else 1
+    8 9
+x = [(i or b) if c else d for i in (0, 1)]
+    8 8 8 8 8 9
+    8 8 8 9
+x = list((i or b) if c else d for i in (0, 1))
+    8 8 8 8 8 8 8 8 9
+    8 8 8 8 8 8 9
+x = (lambda: (a or b) if c else d)()
+    8 8 9
+x = f"{(a or b) if c else d}"
+    8 8 9
+    8 9
+x = list(g(a, b, c, d))
+    8 3 3 9
+    8 3 9
+x = ((a or b) if c
+    else d)
+    8 8 10
+    8 9 8 10
+x = ((a or
+    b) if c
+    else d)
+    9 8 9 8 11
+    9 8 8 11
+    9 10 8 11
+(
+    x) = ((a or b) if c else d)
+    9 9 10
+    9 10
+x = (a or b) if c else d; y = 1
+    8 8 9
+    8 9
+x = n(x=(a or b) if c else d)
+    8 8 9
+    8 9
+def h(k=(a or b) if c else d): pass
+    8 8 9
+    8 9
+x = l2[(a or b) if c else d]
+    8 8 9
+    8 9
+x = l2[(a or b) if c else d:]
+    8 8 9
+    8 9
+x = [*((a or l2) if c else l2)]
+    8 8 9
+    8 8 TypeError
+    8 9
+x = {1: (a or b) if c else d}
+    8 8 9
+    8 9
+x = ((a or b) if c else d) == 1
+    8 8 9
+    8 9
+x = -((a or b) if c else d)
+    8 8 9
+    8 9
+del l[(a and d) if c else d]
+    8 8 9
+    8 9
+with cm((a or b) if c else d):
+    pass
+    8 8 9 8 10
+    8 9 8 10
+for i in (a or l2) if c else l2:
+    pass
+    8 8 9 8 9 8 10
+    8 8 TypeError
+    8 9 8 9 8 10
+match (a or b) if c else d:
+    case 1:
+        pass
+    8 9 10 11
+    8 9 11
+x = (a or b) if c else d / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x = (a or b) if c else d / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'return 1'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'return'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'return x.real'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'pass'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = (a or b) if c else d / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x: int = (a or b) if c else d / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'return 1'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'return'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'return x.real'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x: int = (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'pass'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x: int = (a or b) if c else d / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+x: int = (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+y += (a or b) if c else d / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+y += (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+y += (a or b) if c else d / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+y += (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / ''
+    8 8 | L8>8 L8>8 JNone>8
+    8 8 | L8>8 R8>None JNone>8
+    8 | R8>8
+x = z = (a or b) if c else d / 'return x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'raise KeyError'
+    8 8 9 KeyError | L8>8 L8>8 JNone>8 KeyError
+    8 8 9 KeyError | L8>8 R8>None JNone>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = z = (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = z = (a or b) if c else d / 'return G'
+    8 8 9 NameError | L8>8 L8>8 JNone>8 NameError
+    8 8 9 NameError | L8>8 R8>None JNone>8 NameError
+    8 9 NameError | R8>8 NameError
+x = z = (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+o.x = (a or b) if c else d / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+o.x = (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+o.x = (a or b) if c else d / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+o.x = (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+G = (a or b) if c else d / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+G = (a or b) if c else d / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'return 1'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'return'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'return x.real'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+G = (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'pass'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'return G'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+G = (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x = n((a or b) if c else d) / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = n((a or b) if c else d) / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = n((a or b) if c else d) / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = n((a or b) if c else d) / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x = -((a or b) if c else d) / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = -((a or b) if c else d) / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = -((a or b) if c else d) / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = -((a or b) if c else d) / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+n((a or b) if c else d) / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+n((a or b) if c else d) / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+n((a or b) if c else d) / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+n((a or b) if c else d) / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+return (a or b) if c else d / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return n((a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return -((a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return ((a or b) if c else d) + 1 / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return ((a or b) if c else d, 1) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return [(a or b) if c else d, 1, 2] / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+raise KeyError((a or b) if c else d) / ''
+    8 KeyError | L8>8 L8>8 KeyError
+    8 KeyError | L8>8 R8>8 KeyError
+    8 KeyError | R8>8 KeyError
+raise (a or b) if c else d / ''
+    8 TypeError | L8>8 L8>8 TypeError
+    8 TypeError | L8>8 R8>8 TypeError
+    8 TypeError | R8>8 TypeError
+return ((a or b) if c else d).real / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return not ((a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x = ((a or b) if c else d) + 1 / ''
+    8 8 | L8>8 L8>8 JNone>8
+    8 8 | L8>8 R8>None JNone>8
+    8 | R8>8
+x = ((a or b) if c else d) + 1 / 'return x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'raise KeyError'
+    8 8 9 KeyError | L8>8 L8>8 JNone>8 KeyError
+    8 8 9 KeyError | L8>8 R8>None JNone>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = ((a or b) if c else d) + 1 / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d) + 1 / 'return G'
+    8 8 9 NameError | L8>8 L8>8 JNone>8 NameError
+    8 8 9 NameError | L8>8 R8>None JNone>8 NameError
+    8 9 NameError | R8>8 NameError
+x = ((a or b) if c else d) + 1 / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x = ((a or b) if c else d).real / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = ((a or b) if c else d).real / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = ((a or b) if c else d).real / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = ((a or b) if c else d).real / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / ''
+    8 8 | L8>8 L8>8 JNone>8
+    8 8 | L8>8 R8>None JNone>8
+    8 | R8>8
+yield (a or b) if c else d / 'return x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'raise KeyError'
+    8 8 9 KeyError | L8>8 L8>8 JNone>8 KeyError
+    8 8 9 KeyError | L8>8 R8>None JNone>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+yield (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+yield (a or b) if c else d / 'return G'
+    8 8 9 NameError | L8>8 L8>8 JNone>8 NameError
+    8 8 9 NameError | L8>8 R8>None JNone>8 NameError
+    8 9 NameError | R8>8 NameError
+yield (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = yield (a or b) if c else d / ''
+    8 8 | L8>8 L8>8 JNone>8
+    8 8 | L8>8 R8>None JNone>8
+    8 | R8>8
+x = yield (a or b) if c else d / 'return x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = yield (a or b) if c else d / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = yield (a or b) if c else d / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = yield (a or b) if c else d / 'return x.real'
+    8 8 9 AttributeError | L8>8 L8>8 JNone>8 AttributeError
+    8 8 9 AttributeError | L8>8 R8>None JNone>8 AttributeError
+    8 9 AttributeError | R8>8 AttributeError
+x = yield (a or b) if c else d / 'return x + 1'
+    8 8 9 TypeError | L8>8 L8>8 JNone>8 TypeError
+    8 8 9 TypeError | L8>8 R8>None JNone>8 TypeError
+    8 9 TypeError | R8>8 TypeError
+x = yield (a or b) if c else d / 'raise KeyError'
+    8 8 9 KeyError | L8>8 L8>8 JNone>8 KeyError
+    8 8 9 KeyError | L8>8 R8>None JNone>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = yield (a or b) if c else d / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = yield (a or b) if c else d / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x = yield (a or b) if c else d / 'return G'
+    8 8 9 NameError | L8>8 L8>8 JNone>8 NameError
+    8 8 9 NameError | L8>8 R8>None JNone>8 NameError
+    8 9 NameError | R8>8 NameError
+x = yield (a or b) if c else d / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+return ((a or b) if c else d) is None / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return l[(a or b) if c else d] / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x, z = (a or b) if c else d, 1 / ''
+    8 8 | L8>8 L8>8 JNone>8
+    8 8 | L8>8 R8>None JNone>8
+    8 | R8>8
+x, z = (a or b) if c else d, 1 / 'return x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'return 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'return'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'return x.real'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'raise KeyError'
+    8 8 9 KeyError | L8>8 L8>8 JNone>8 KeyError
+    8 8 9 KeyError | L8>8 R8>None JNone>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x, z = (a or b) if c else d, 1 / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'pass'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+x, z = (a or b) if c else d, 1 / 'return G'
+    8 8 9 NameError | L8>8 L8>8 JNone>8 NameError
+    8 8 9 NameError | L8>8 R8>None JNone>8 NameError
+    8 9 NameError | R8>8 NameError
+x, z = (a or b) if c else d, 1 / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+del l[(a or b) if c else d] / 'return x'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'return 1'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'return'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'return x.real'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'return x + 1'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'raise KeyError'
+    8 9 KeyError | L8>8 L8>8 KeyError
+    8 9 KeyError | L8>8 R8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+del l[(a or b) if c else d] / 'y = 2'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'pass'
+    8 9 | L8>8 L8>8
+    8 9 | L8>8 R8>8
+    8 9 | R8>8
+del l[(a or b) if c else d] / 'return G'
+    8 9 NameError | L8>8 L8>8 NameError
+    8 9 NameError | L8>8 R8>8 NameError
+    8 9 NameError | R8>8 NameError
+del l[(a or b) if c else d] / 'return not x'
+    8 8 9 | L8>8 L8>8 JNone>8
+    8 8 9 | L8>8 R8>None JNone>8
+    8 9 | R8>8
+return n(1, (a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+return n(x=(a or b) if c else d) / ''
+    8 | L8>8 L8>8
+    8 | L8>8 R8>8
+    8 | R8>8
+x = a if c else d / ''
+    8 | L8>8
+    8 | R8>8
+x = a if c else d / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+x = a if c else d / 'return 1'
+    8 9 | L8>8
+    8 9 | R8>8
+x = a if c else d / 'return'
+    8 9 | L8>8
+    8 9 | R8>8
+x = a if c else d / 'return x.real'
+    8 9 | L8>8
+    8 9 | R8>8
+x = a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = a if c else d / 'pass'
+    8 9 | L8>8
+    8 9 | R8>8
+x = a if c else d / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x: int = a if c else d / ''
+    8 | L8>8
+    8 | R8>8
+x: int = a if c else d / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+x: int = a if c else d / 'return 1'
+    8 9 | L8>8
+    8 9 | R8>8
+x: int = a if c else d / 'return'
+    8 9 | L8>8
+    8 9 | R8>8
+x: int = a if c else d / 'return x.real'
+    8 9 | L8>8
+    8 9 | R8>8
+x: int = a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x: int = a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x: int = a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x: int = a if c else d / 'pass'
+    8 9 | L8>8
+    8 9 | R8>8
+x: int = a if c else d / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+x: int = a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / ''
+    8 | L8>8
+    8 | R8>8
+y += a if c else d / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+y += a if c else d / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+y += a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+y += a if c else d / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+y += a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / ''
+    8 | L8>8 J8>8
+    8 | R8>8
+x = z = a if c else d / 'return x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 J8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = z = a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = z = a if c else d / 'return G'
+    8 9 NameError | L8>8 J8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = z = a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / ''
+    8 | L8>8
+    8 | R8>8
+o.x = a if c else d / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+o.x = a if c else d / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+o.x = a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+o.x = a if c else d / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+o.x = a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+G = a if c else d / ''
+    8 | L8>8
+    8 | R8>8
+G = a if c else d / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+G = a if c else d / 'return 1'
+    8 9 | L8>8
+    8 9 | R8>8
+G = a if c else d / 'return'
+    8 9 | L8>8
+    8 9 | R8>8
+G = a if c else d / 'return x.real'
+    8 9 | L8>8
+    8 9 | R8>8
+G = a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+G = a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+G = a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+G = a if c else d / 'pass'
+    8 9 | L8>8
+    8 9 | R8>8
+G = a if c else d / 'return G'
+    8 9 | L8>8
+    8 9 | R8>8
+G = a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+x = n(a if c else d) / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = n(a if c else d) / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = n(a if c else d) / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = n(a if c else d) / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+x = -(a if c else d) / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = -(a if c else d) / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = -(a if c else d) / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = -(a if c else d) / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+n(a if c else d) / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+n(a if c else d) / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+n(a if c else d) / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+n(a if c else d) / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+n(a if c else d) / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+return a if c else d / ''
+    8 | L8>8
+    8 | R8>8
+return n(a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+return -(a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+return (a if c else d) + 1 / ''
+    8 | L8>8
+    8 | R8>8
+return (a if c else d, 1) / ''
+    8 | L8>8
+    8 | R8>8
+return [a if c else d, 1, 2] / ''
+    8 | L8>8
+    8 | R8>8
+raise KeyError(a if c else d) / ''
+    8 KeyError | L8>8 KeyError
+    8 KeyError | R8>8 KeyError
+raise a if c else d / ''
+    8 TypeError | L8>8 TypeError
+    8 TypeError | R8>8 TypeError
+return (a if c else d).real / ''
+    8 | L8>8
+    8 | R8>8
+return not (a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+x = (a if c else d) + 1 / ''
+    8 | L8>8 J8>8
+    8 | R8>8
+x = (a if c else d) + 1 / 'return x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'raise KeyError'
+    8 9 KeyError | L8>8 J8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = (a if c else d) + 1 / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d) + 1 / 'return G'
+    8 9 NameError | L8>8 J8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = (a if c else d) + 1 / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / ''
+    8 | L8>8
+    8 | R8>8
+x = (a if c else d).real / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = (a if c else d).real / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = (a if c else d).real / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = (a if c else d).real / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / ''
+    8 | L8>8 J8>8
+    8 | R8>8
+yield a if c else d / 'return x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 J8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+yield a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+yield a if c else d / 'return G'
+    8 9 NameError | L8>8 J8>8 NameError
+    8 9 NameError | R8>8 NameError
+yield a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = yield a if c else d / ''
+    8 | L8>8 J8>8
+    8 | R8>8
+x = yield a if c else d / 'return x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = yield a if c else d / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = yield a if c else d / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = yield a if c else d / 'return x.real'
+    8 9 AttributeError | L8>8 J8>8 AttributeError
+    8 9 AttributeError | R8>8 AttributeError
+x = yield a if c else d / 'return x + 1'
+    8 9 TypeError | L8>8 J8>8 TypeError
+    8 9 TypeError | R8>8 TypeError
+x = yield a if c else d / 'raise KeyError'
+    8 9 KeyError | L8>8 J8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x = yield a if c else d / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = yield a if c else d / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x = yield a if c else d / 'return G'
+    8 9 NameError | L8>8 J8>8 NameError
+    8 9 NameError | R8>8 NameError
+x = yield a if c else d / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+return (a if c else d) is None / ''
+    8 | L8>8
+    8 | R8>8
+return l[a if c else d] / ''
+    8 | L8>8
+    8 | R8>8
+x, z = a if c else d, 1 / ''
+    8 | L8>8 J8>8
+    8 | R8>8
+x, z = a if c else d, 1 / 'return x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'return 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'return'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'return x.real'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'raise KeyError'
+    8 9 KeyError | L8>8 J8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+x, z = a if c else d, 1 / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'pass'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+x, z = a if c else d, 1 / 'return G'
+    8 9 NameError | L8>8 J8>8 NameError
+    8 9 NameError | R8>8 NameError
+x, z = a if c else d, 1 / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+del l[a if c else d] / ''
+    8 | L8>8
+    8 | R8>8
+del l[a if c else d] / 'return x'
+    8 9 | L8>8
+    8 9 | R8>8
+del l[a if c else d] / 'return 1'
+    8 9 | L8>8
+    8 9 | R8>8
+del l[a if c else d] / 'return'
+    8 9 | L8>8
+    8 9 | R8>8
+del l[a if c else d] / 'return x.real'
+    8 9 | L8>8
+    8 9 | R8>8
+del l[a if c else d] / 'return x + 1'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+del l[a if c else d] / 'raise KeyError'
+    8 9 KeyError | L8>8 KeyError
+    8 9 KeyError | R8>8 KeyError
+del l[a if c else d] / 'y = 2'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+del l[a if c else d] / 'pass'
+    8 9 | L8>8
+    8 9 | R8>8
+del l[a if c else d] / 'return G'
+    8 9 NameError | L8>8 NameError
+    8 9 NameError | R8>8 NameError
+del l[a if c else d] / 'return not x'
+    8 9 | L8>8 J8>8
+    8 9 | R8>8
+return n(1, a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+return n(x=a if c else d) / ''
+    8 | L8>8
+    8 | R8>8
+(a or b) if c else d / for / 'return V'
+    8 9
+(a or b) if c else d / for / 'x = V\nreturn x'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / for / 'x = V\nreturn 1'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / for / 'x = V'
+    8 9 9 8 9 9 8
+    8 9 8 9 8
+(a or b) if c else d / for / 'x = V\nreturn'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / for / 'return n(V)'
+    8 9 9
+    8 9
+(a or b) if c else d / for / 'raise KeyError(V)'
+    8 9 KeyError
+(a or b) if c else d / for / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+(a or b) if c else d / for / 'y += V'
+    8 9 9 8 9 9 8
+    8 9 8 9 8
+(a or b) if c else d / for / 'x = V\npass'
+    8 9 9 10 8 9 9 10 8
+    8 9 10 8 9 10 8
+(a or b) if c else d / for / 'return (V,\n    1)'
+    8 9 10 9
+(a or b) if c else d / for / 'return (\n    V)'
+    8 10 9
+(a or b) if c else d / for / 'V'
+    8 9 8 9 8
+(a or b) if c else d / for / 'x = V\nbreak'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / for / 'x = V\ncontinue'
+    8 9 9 10 8 9 9 10 8
+    8 9 10 8 9 10 8
+(a or b) if c else d / for for / 'return V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / for for / 'x = V\nreturn x'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / for for / 'x = V\nreturn 1'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / for for / 'x = V'
+    8 9 10 10 9 10 10 9 8 9 10 10 9 10 10 9 8
+    8 9 10 9 10 9 8 9 10 9 10 9 8
+(a or b) if c else d / for for / 'x = V\nreturn'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / for for / 'return n(V)'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / for for / 'raise KeyError(V)'
+    8 9 10 KeyError
+(a or b) if c else d / for for / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+(a or b) if c else d / for for / 'y += V'
+    8 9 10 10 9 10 10 9 8 9 10 10 9 10 10 9 8
+    8 9 10 9 10 9 8 9 10 9 10 9 8
+(a or b) if c else d / for for / 'x = V\npass'
+    8 9 10 10 11 9 10 10 11 9 8 9 10 10 11 9 10 10 11 9 8
+    8 9 10 11 9 10 11 9 8 9 10 11 9 10 11 9 8
+(a or b) if c else d / for for / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / for for / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / for for / 'V'
+    8 9 10 9 10 9 8 9 10 9 10 9 8
+(a or b) if c else d / for for / 'x = V\nbreak'
+    8 9 10 10 11 8 9 10 10 11 8
+    8 9 10 11 8 9 10 11 8
+(a or b) if c else d / for for / 'x = V\ncontinue'
+    8 9 10 10 11 9 10 10 11 9 8 9 10 10 11 9 10 10 11 9 8
+    8 9 10 11 9 10 11 9 8 9 10 11 9 10 11 9 8
+(a or b) if c else d / while / 'return V'
+    8 9 10
+(a or b) if c else d / while / 'x = V\nreturn x'
+    8 9 10 11
+(a or b) if c else d / while / 'x = V\nreturn 1'
+    8 9 10 11
+(a or b) if c else d / while / 'x = V'
+    8 9 10 10 8 9 10 10 8
+    8 9 10 8 9 10 8
+(a or b) if c else d / while / 'x = V\nreturn'
+    8 9 10 11
+(a or b) if c else d / while / 'return n(V)'
+    8 9 10
+(a or b) if c else d / while / 'raise KeyError(V)'
+    8 9 10 KeyError
+(a or b) if c else d / while / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+(a or b) if c else d / while / 'y += V'
+    8 9 10 10 8
+    8 9 10 8 9 10 8
+(a or b) if c else d / while / 'x = V\npass'
+    8 9 10 10 11 8 9 10 10 11 8
+    8 9 10 11 8 9 10 11 8
+(a or b) if c else d / while / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / while / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / while / 'V'
+    8 9 10 8 9 10 8
+(a or b) if c else d / while / 'x = V\nbreak'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / while / 'x = V\ncontinue'
+    8 9 10 10 11 8 9 10 10 11 8
+    8 9 10 11 8 9 10 11 8
+(a or b) if c else d / try / 'return V'
+    8 9
+(a or b) if c else d / try / 'x = V\nreturn x'
+    8 9 10
+(a or b) if c else d / try / 'x = V\nreturn 1'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / try / 'x = V'
+    8 9 9
+    8 9
+(a or b) if c else d / try / 'x = V\nreturn'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / try / 'return n(V)'
+    8 9
+(a or b) if c else d / try / 'raise KeyError(V)'
+    8 9 10 KeyError
+(a or b) if c else d / try / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+(a or b) if c else d / try / 'y += V'
+    8 9 9
+    8 9
+(a or b) if c else d / try / 'x = V\npass'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / try / 'return (V,\n    1)'
+    8 9 10 9
+(a or b) if c else d / try / 'return (\n    V)'
+    8 10 9
+(a or b) if c else d / try / 'V'
+    8 9
+(a or b) if c else d / try in for / 'return V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / try in for / 'x = V\nreturn x'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in for / 'x = V\nreturn 1'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in for / 'x = V'
+    8 9 10 10 8 9 10 10 8
+    8 9 10 8 9 10 8
+(a or b) if c else d / try in for / 'x = V\nreturn'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in for / 'return n(V)'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / try in for / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+(a or b) if c else d / try in for / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+(a or b) if c else d / try in for / 'y += V'
+    8 9 10 10 8 9 10 10 8
+    8 9 10 8 9 10 8
+(a or b) if c else d / try in for / 'x = V\npass'
+    8 9 10 10 11 8 9 10 10 11 8
+    8 9 10 11 8 9 10 11 8
+(a or b) if c else d / try in for / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / try in for / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / try in for / 'V'
+    8 9 10 8 9 10 8
+(a or b) if c else d / try in for / 'x = V\nbreak'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in for / 'x = V\ncontinue'
+    8 9 10 10 11 8 9 10 10 11 8
+    8 9 10 11 8 9 10 11 8
+(a or b) if c else d / except / 'return V'
+    8 9 10 11
+(a or b) if c else d / except / 'x = V\nreturn x'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except / 'x = V\nreturn 1'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except / 'x = V'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except / 'x = V\nreturn'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except / 'return n(V)'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+(a or b) if c else d / except / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+(a or b) if c else d / except / 'y += V'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except / 'x = V\npass'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except / 'return (V,\n    1)'
+    8 9 10 11 12 11
+(a or b) if c else d / except / 'return (\n    V)'
+    8 9 10 12 11
+(a or b) if c else d / except / 'V'
+    8 9 10 11
+(a or b) if c else d / except as / 'return V'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except as / 'x = V\nreturn x'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except as / 'x = V\nreturn 1'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except as / 'x = V'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except as / 'x = V\nreturn'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except as / 'return n(V)'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except as / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+(a or b) if c else d / except as / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+(a or b) if c else d / except as / 'y += V'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / except as / 'x = V\npass'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / except as / 'return (V,\n    1)'
+    8 9 10 11 12 11
+(a or b) if c else d / except as / 'return (\n    V)'
+    8 9 10 12 11
+(a or b) if c else d / except as / 'V'
+    8 9 10 11
+(a or b) if c else d / try finally / 'x = V\nreturn x'
+    8 9 9 10 12
+    8 9 10 12
+(a or b) if c else d / try finally / 'x = V\nreturn 1'
+    8 9 9 10 12
+    8 9 10 12
+(a or b) if c else d / try finally / 'x = V'
+    8 9 9 11
+    8 9 11
+(a or b) if c else d / try finally / 'x = V\nreturn'
+    8 9 9 10 12
+    8 9 10 12
+(a or b) if c else d / try finally / 'return n(V)'
+    8 9 9 11
+    8 9 11
+(a or b) if c else d / try finally / 'raise KeyError(V)'
+    8 9 11 KeyError
+(a or b) if c else d / try finally / 'x = V\nraise KeyError'
+    8 9 10 12 KeyError
+(a or b) if c else d / try finally / 'y += V'
+    8 9 9 11
+    8 9 11
+(a or b) if c else d / try finally / 'x = V\npass'
+    8 9 9 10 12
+    8 9 10 12
+(a or b) if c else d / try finally / 'return (V,\n    1)'
+    8 9 10 9 12
+(a or b) if c else d / try finally / 'return (\n    V)'
+    8 10 9 12
+(a or b) if c else d / try finally / 'V'
+    8 9 11
+(a or b) if c else d / with / 'return V'
+    8 9 8
+(a or b) if c else d / with / 'x = V\nreturn x'
+    8 9 9 10 8
+    8 9 10 8
+(a or b) if c else d / with / 'x = V\nreturn 1'
+    8 9 9 10 8
+    8 9 10 8
+(a or b) if c else d / with / 'x = V'
+    8 9 9 8
+    8 9 8
+(a or b) if c else d / with / 'x = V\nreturn'
+    8 9 9 10 8
+    8 9 10 8
+(a or b) if c else d / with / 'return n(V)'
+    8 9 9 8
+    8 9 8
+(a or b) if c else d / with / 'raise KeyError(V)'
+    8 9 8 KeyError
+(a or b) if c else d / with / 'x = V\nraise KeyError'
+    8 9 10 8 KeyError
+(a or b) if c else d / with / 'y += V'
+    8 9 9 8
+    8 9 8
+(a or b) if c else d / with / 'x = V\npass'
+    8 9 9 10 8
+    8 9 10 8
+(a or b) if c else d / with / 'return (V,\n    1)'
+    8 9 10 9 8
+(a or b) if c else d / with / 'return (\n    V)'
+    8 10 9 8
+(a or b) if c else d / with / 'V'
+    8 9 8
+(a or b) if c else d / if / 'return V'
+    8 9
+(a or b) if c else d / if / 'x = V\nreturn x'
+    8 9 10
+(a or b) if c else d / if / 'x = V\nreturn 1'
+    8 9 10
+(a or b) if c else d / if / 'x = V'
+    8 9 9
+    8 9
+(a or b) if c else d / if / 'x = V\nreturn'
+    8 9 10
+(a or b) if c else d / if / 'return n(V)'
+    8 9
+(a or b) if c else d / if / 'raise KeyError(V)'
+    8 9 KeyError
+(a or b) if c else d / if / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+(a or b) if c else d / if / 'y += V'
+    8 9 9
+    8 9
+(a or b) if c else d / if / 'x = V\npass'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / if / 'return (V,\n    1)'
+    8 9 10 9
+(a or b) if c else d / if / 'return (\n    V)'
+    8 10 9
+(a or b) if c else d / if / 'V'
+    8 9
+(a or b) if c else d / if else / 'return V'
+    8 9
+(a or b) if c else d / if else / 'x = V\nreturn x'
+    8 9 10
+(a or b) if c else d / if else / 'x = V\nreturn 1'
+    8 9 10
+(a or b) if c else d / if else / 'x = V'
+    8 9
+(a or b) if c else d / if else / 'x = V\nreturn'
+    8 9 10
+(a or b) if c else d / if else / 'return n(V)'
+    8 9
+(a or b) if c else d / if else / 'raise KeyError(V)'
+    8 9 KeyError
+(a or b) if c else d / if else / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+(a or b) if c else d / if else / 'y += V'
+    8 9 9
+    8 9
+(a or b) if c else d / if else / 'x = V\npass'
+    8 9 9 10
+    8 9 10
+(a or b) if c else d / if else / 'return (V,\n    1)'
+    8 9 10 9
+(a or b) if c else d / if else / 'return (\n    V)'
+    8 10 9
+(a or b) if c else d / if else / 'V'
+    8 9
+(a or b) if c else d / else / 'return V'
+    8 11
+(a or b) if c else d / else / 'x = V\nreturn x'
+    8 11 12
+(a or b) if c else d / else / 'x = V\nreturn 1'
+    8 11 12
+(a or b) if c else d / else / 'x = V'
+    8 11 11
+    8 11
+(a or b) if c else d / else / 'x = V\nreturn'
+    8 11 12
+(a or b) if c else d / else / 'return n(V)'
+    8 11
+(a or b) if c else d / else / 'raise KeyError(V)'
+    8 11 KeyError
+(a or b) if c else d / else / 'x = V\nraise KeyError'
+    8 11 12 KeyError
+(a or b) if c else d / else / 'y += V'
+    8 11 11
+    8 11
+(a or b) if c else d / else / 'x = V\npass'
+    8 11 11 12
+    8 11 12
+(a or b) if c else d / else / 'return (V,\n    1)'
+    8 11 12 11
+(a or b) if c else d / else / 'return (\n    V)'
+    8 12 11
+(a or b) if c else d / else / 'V'
+    8 11
+(a or b) if c else d / if, then more / 'return V'
+    8 9
+(a or b) if c else d / if, then more / 'x = V\nreturn x'
+    8 9 10
+(a or b) if c else d / if, then more / 'x = V\nreturn 1'
+    8 9 10
+(a or b) if c else d / if, then more / 'x = V'
+    8 9 9 10 11 12
+    8 9 10 11 12
+(a or b) if c else d / if, then more / 'x = V\nreturn'
+    8 9 10
+(a or b) if c else d / if, then more / 'return n(V)'
+    8 9
+(a or b) if c else d / if, then more / 'raise KeyError(V)'
+    8 9 KeyError
+(a or b) if c else d / if, then more / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+(a or b) if c else d / if, then more / 'y += V'
+    8 9 9 10 11 12
+    8 9 10 11 12
+(a or b) if c else d / if, then more / 'x = V\npass'
+    8 9 9 10 11 12 13
+    8 9 10 11 12 13
+(a or b) if c else d / if, then more / 'return (V,\n    1)'
+    8 9 10 9
+(a or b) if c else d / if, then more / 'return (\n    V)'
+    8 10 9
+(a or b) if c else d / if, then more / 'V'
+    8 9 10 11 12
+(a or b) if c else d / match / 'return V'
+    8 9 10
+(a or b) if c else d / match / 'x = V\nreturn x'
+    8 9 10 11
+(a or b) if c else d / match / 'x = V\nreturn 1'
+    8 9 10 11
+(a or b) if c else d / match / 'x = V'
+    8 9 10
+(a or b) if c else d / match / 'x = V\nreturn'
+    8 9 10 11
+(a or b) if c else d / match / 'return n(V)'
+    8 9 10
+(a or b) if c else d / match / 'raise KeyError(V)'
+    8 9 10 KeyError
+(a or b) if c else d / match / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+(a or b) if c else d / match / 'y += V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / match / 'x = V\npass'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / match / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / match / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / match / 'V'
+    8 9 10
+(a or b) if c else d / try else / 'return V'
+    8 9 13
+(a or b) if c else d / try else / 'x = V\nreturn x'
+    8 9 13 14
+(a or b) if c else d / try else / 'x = V\nreturn 1'
+    8 9 13 14
+(a or b) if c else d / try else / 'x = V'
+    8 9 13
+(a or b) if c else d / try else / 'x = V\nreturn'
+    8 9 13 14
+(a or b) if c else d / try else / 'return n(V)'
+    8 9 13
+(a or b) if c else d / try else / 'raise KeyError(V)'
+    8 9 13 KeyError
+(a or b) if c else d / try else / 'x = V\nraise KeyError'
+    8 9 13 14 KeyError
+(a or b) if c else d / try else / 'y += V'
+    8 9 13 13
+    8 9 13
+(a or b) if c else d / try else / 'x = V\npass'
+    8 9 13 13 14
+    8 9 13 14
+(a or b) if c else d / try else / 'return (V,\n    1)'
+    8 9 13 14 13
+(a or b) if c else d / try else / 'return (\n    V)'
+    8 9 14 13
+(a or b) if c else d / try else / 'V'
+    8 9 13
+(a or b) if c else d / elif / 'return V'
+    8 10 11
+(a or b) if c else d / elif / 'x = V\nreturn x'
+    8 10 11 12
+(a or b) if c else d / elif / 'x = V\nreturn 1'
+    8 10 11 12
+(a or b) if c else d / elif / 'x = V'
+    8 10 11 11
+    8 10 11
+(a or b) if c else d / elif / 'x = V\nreturn'
+    8 10 11 12
+(a or b) if c else d / elif / 'return n(V)'
+    8 10 11
+(a or b) if c else d / elif / 'raise KeyError(V)'
+    8 10 11 KeyError
+(a or b) if c else d / elif / 'x = V\nraise KeyError'
+    8 10 11 12 KeyError
+(a or b) if c else d / elif / 'y += V'
+    8 10 11 11
+    8 10 11
+(a or b) if c else d / elif / 'x = V\npass'
+    8 10 11 11 12
+    8 10 11 12
+(a or b) if c else d / elif / 'return (V,\n    1)'
+    8 10 11 12 11
+(a or b) if c else d / elif / 'return (\n    V)'
+    8 10 12 11
+(a or b) if c else d / elif / 'V'
+    8 10 11
+(a or b) if c else d / elif else / 'return V'
+    8 10 11
+(a or b) if c else d / elif else / 'x = V\nreturn x'
+    8 10 11 12
+(a or b) if c else d / elif else / 'x = V\nreturn 1'
+    8 10 11 12
+(a or b) if c else d / elif else / 'x = V'
+    8 10 11
+(a or b) if c else d / elif else / 'x = V\nreturn'
+    8 10 11 12
+(a or b) if c else d / elif else / 'return n(V)'
+    8 10 11
+(a or b) if c else d / elif else / 'raise KeyError(V)'
+    8 10 11 KeyError
+(a or b) if c else d / elif else / 'x = V\nraise KeyError'
+    8 10 11 12 KeyError
+(a or b) if c else d / elif else / 'y += V'
+    8 10 11 11
+    8 10 11
+(a or b) if c else d / elif else / 'x = V\npass'
+    8 10 11 11 12
+    8 10 11 12
+(a or b) if c else d / elif else / 'return (V,\n    1)'
+    8 10 11 12 11
+(a or b) if c else d / elif else / 'return (\n    V)'
+    8 10 12 11
+(a or b) if c else d / elif else / 'V'
+    8 10 11
+(a or b) if c else d / default case / 'return V'
+    8 9 11 12
+(a or b) if c else d / default case / 'x = V\nreturn x'
+    8 9 11 12 13
+(a or b) if c else d / default case / 'x = V\nreturn 1'
+    8 9 11 12 13
+(a or b) if c else d / default case / 'x = V'
+    8 9 11 12 12
+    8 9 11 12
+(a or b) if c else d / default case / 'x = V\nreturn'
+    8 9 11 12 13
+(a or b) if c else d / default case / 'return n(V)'
+    8 9 11 12
+(a or b) if c else d / default case / 'raise KeyError(V)'
+    8 9 11 12 KeyError
+(a or b) if c else d / default case / 'x = V\nraise KeyError'
+    8 9 11 12 13 KeyError
+(a or b) if c else d / default case / 'y += V'
+    8 9 11 12 12
+    8 9 11 12
+(a or b) if c else d / default case / 'x = V\npass'
+    8 9 11 12 12 13
+    8 9 11 12 13
+(a or b) if c else d / default case / 'return (V,\n    1)'
+    8 9 11 12 13 12
+(a or b) if c else d / default case / 'return (\n    V)'
+    8 9 11 13 12
+(a or b) if c else d / default case / 'V'
+    8 9 11 12
+(a or b) if c else d / if else in if / 'return V'
+    8 9 10
+(a or b) if c else d / if else in if / 'x = V\nreturn x'
+    8 9 10 11
+(a or b) if c else d / if else in if / 'x = V\nreturn 1'
+    8 9 10 11
+(a or b) if c else d / if else in if / 'x = V'
+    8 9 10
+(a or b) if c else d / if else in if / 'x = V\nreturn'
+    8 9 10 11
+(a or b) if c else d / if else in if / 'return n(V)'
+    8 9 10
+(a or b) if c else d / if else in if / 'raise KeyError(V)'
+    8 9 10 KeyError
+(a or b) if c else d / if else in if / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+(a or b) if c else d / if else in if / 'y += V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / if else in if / 'x = V\npass'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / if else in if / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / if else in if / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / if else in if / 'V'
+    8 9 10
+(a or b) if c else d / if else in if else / 'return V'
+    8 9 10
+(a or b) if c else d / if else in if else / 'x = V\nreturn x'
+    8 9 10 11
+(a or b) if c else d / if else in if else / 'x = V\nreturn 1'
+    8 9 10 11
+(a or b) if c else d / if else in if else / 'x = V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / if else in if else / 'x = V\nreturn'
+    8 9 10 11
+(a or b) if c else d / if else in if else / 'return n(V)'
+    8 9 10
+(a or b) if c else d / if else in if else / 'raise KeyError(V)'
+    8 9 10 KeyError
+(a or b) if c else d / if else in if else / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+(a or b) if c else d / if else in if else / 'y += V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / if else in if else / 'x = V\npass'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / if else in if else / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / if else in if else / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / if else in if else / 'V'
+    8 9 10
+(a or b) if c else d / if in try / 'return V'
+    8 9 10
+(a or b) if c else d / if in try / 'x = V\nreturn x'
+    8 9 10 11
+(a or b) if c else d / if in try / 'x = V\nreturn 1'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / if in try / 'x = V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / if in try / 'x = V\nreturn'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / if in try / 'return n(V)'
+    8 9 10
+(a or b) if c else d / if in try / 'raise KeyError(V)'
+    8 9 10 13 KeyError
+(a or b) if c else d / if in try / 'x = V\nraise KeyError'
+    8 9 10 11 14 KeyError
+(a or b) if c else d / if in try / 'y += V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / if in try / 'x = V\npass'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / if in try / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / if in try / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / if in try / 'V'
+    8 9 10
+(a or b) if c else d / try in try / 'return V'
+    8 9 10
+(a or b) if c else d / try in try / 'x = V\nreturn x'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in try / 'x = V\nreturn 1'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in try / 'x = V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / try in try / 'x = V\nreturn'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in try / 'return n(V)'
+    8 9 10
+(a or b) if c else d / try in try / 'raise KeyError(V)'
+    8 9 10 11 12
+(a or b) if c else d / try in try / 'x = V\nraise KeyError'
+    8 9 10 11 12 13
+(a or b) if c else d / try in try / 'y += V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / try in try / 'x = V\npass'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in try / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / try in try / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / try in try / 'V'
+    8 9 10
+(a or b) if c else d / try in if else / 'return V'
+    8 9 10
+(a or b) if c else d / try in if else / 'x = V\nreturn x'
+    8 9 10 11
+(a or b) if c else d / try in if else / 'x = V\nreturn 1'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in if else / 'x = V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / try in if else / 'x = V\nreturn'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in if else / 'return n(V)'
+    8 9 10
+(a or b) if c else d / try in if else / 'raise KeyError(V)'
+    8 9 10 11 12
+(a or b) if c else d / try in if else / 'x = V\nraise KeyError'
+    8 9 10 11 12 13
+(a or b) if c else d / try in if else / 'y += V'
+    8 9 10 10
+    8 9 10
+(a or b) if c else d / try in if else / 'x = V\npass'
+    8 9 10 10 11
+    8 9 10 11
+(a or b) if c else d / try in if else / 'return (V,\n    1)'
+    8 9 10 11 10
+(a or b) if c else d / try in if else / 'return (\n    V)'
+    8 9 11 10
+(a or b) if c else d / try in if else / 'V'
+    8 9 10
+(a or b) if c else d / except in for / 'return V'
+    8 9 10 11 12 12
+    8 9 10 11 12
+(a or b) if c else d / except in for / 'x = V\nreturn x'
+    8 9 10 11 12 12 13
+    8 9 10 11 12 13
+(a or b) if c else d / except in for / 'x = V\nreturn 1'
+    8 9 10 11 12 12 13
+    8 9 10 11 12 13
+(a or b) if c else d / except in for / 'x = V'
+    8 9 10 11 12 12 8 9 10 11 12 12 8
+    8 9 10 11 12 8 9 10 11 12 8
+(a or b) if c else d / except in for / 'x = V\nreturn'
+    8 9 10 11 12 12 13
+    8 9 10 11 12 13
+(a or b) if c else d / except in for / 'return n(V)'
+    8 9 10 11 12 12
+    8 9 10 11 12
+(a or b) if c else d / except in for / 'raise KeyError(V)'
+    8 9 10 11 12 KeyError
+(a or b) if c else d / except in for / 'x = V\nraise KeyError'
+    8 9 10 11 12 13 KeyError
+(a or b) if c else d / except in for / 'y += V'
+    8 9 10 11 12 12 8 9 10 11 12 12 8
+    8 9 10 11 12 8 9 10 11 12 8
+(a or b) if c else d / except in for / 'x = V\npass'
+    8 9 10 11 12 12 13 8 9 10 11 12 12 13 8
+    8 9 10 11 12 13 8 9 10 11 12 13 8
+(a or b) if c else d / except in for / 'return (V,\n    1)'
+    8 9 10 11 12 13 12
+(a or b) if c else d / except in for / 'return (\n    V)'
+    8 9 10 11 13 12
+(a or b) if c else d / except in for / 'V'
+    8 9 10 11 12 8 9 10 11 12 8
+(a or b) if c else d / except in for / 'x = V\nbreak'
+    8 9 10 11 12 12 13
+    8 9 10 11 12 13
+(a or b) if c else d / except in for / 'x = V\ncontinue'
+    8 9 10 11 12 12 13 8 9 10 11 12 12 13 8
+    8 9 10 11 12 13 8 9 10 11 12 13 8
+(a or b) if c else d / with in for / 'return V'
+    8 9 10 9
+(a or b) if c else d / with in for / 'x = V\nreturn x'
+    8 9 10 10 11 9
+    8 9 10 11 9
+(a or b) if c else d / with in for / 'x = V\nreturn 1'
+    8 9 10 10 11 9
+    8 9 10 11 9
+(a or b) if c else d / with in for / 'x = V'
+    8 9 10 10 9 8 9 10 10 9 8
+    8 9 10 9 8 9 10 9 8
+(a or b) if c else d / with in for / 'x = V\nreturn'
+    8 9 10 10 11 9
+    8 9 10 11 9
+(a or b) if c else d / with in for / 'return n(V)'
+    8 9 10 10 9
+    8 9 10 9
+(a or b) if c else d / with in for / 'raise KeyError(V)'
+    8 9 10 9 KeyError
+(a or b) if c else d / with in for / 'x = V\nraise KeyError'
+    8 9 10 11 9 KeyError
+(a or b) if c else d / with in for / 'y += V'
+    8 9 10 10 9 8 9 10 10 9 8
+    8 9 10 9 8 9 10 9 8
+(a or b) if c else d / with in for / 'x = V\npass'
+    8 9 10 10 11 9 8 9 10 10 11 9 8
+    8 9 10 11 9 8 9 10 11 9 8
+(a or b) if c else d / with in for / 'return (V,\n    1)'
+    8 9 10 11 10 9
+(a or b) if c else d / with in for / 'return (\n    V)'
+    8 9 11 10 9
+(a or b) if c else d / with in for / 'V'
+    8 9 10 9 8 9 10 9 8
+(a or b) if c else d / with in for / 'x = V\nbreak'
+    8 9 10 10 11 9
+    8 9 10 11 9
+(a or b) if c else d / with in for / 'x = V\ncontinue'
+    8 9 10 10 11 9 8 9 10 10 11 9 8
+    8 9 10 11 9 8 9 10 11 9 8
+(a or b) if c else d / while in for / 'return V'
+    8 9 10 11
+(a or b) if c else d / while in for / 'x = V\nreturn x'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / while in for / 'x = V\nreturn 1'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / while in for / 'x = V'
+    8 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 8 9 8
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+(a or b) if c else d / while in for / 'x = V\nreturn'
+    8 9 10 11 11 12
+    8 9 10 11 12
+(a or b) if c else d / while in for / 'return n(V)'
+    8 9 10 11 11
+    8 9 10 11
+(a or b) if c else d / while in for / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+(a or b) if c else d / while in for / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+(a or b) if c else d / while in for / 'y += V'
+    8 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 10 11 11 9 8 9 8
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+(a or b) if c else d / while in for / 'x = V\npass'
+    8 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 8 9 8
+    8 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 8 9 8
+(a or b) if c else d / while in for / 'return (V,\n    1)'
+    8 9 10 11 12 11
+(a or b) if c else d / while in for / 'return (\n    V)'
+    8 9 10 12 11
+(a or b) if c else d / while in for / 'V'
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+(a or b) if c else d / while in for / 'x = V\nbreak'
+    8 9 10 11 11 12 8 9 10 11 11 12 8
+    8 9 10 11 12 8 9 10 11 12 8
+(a or b) if c else d / while in for / 'x = V\ncontinue'
+    8 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 10 11 11 12 9 8 9 8
+    8 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 8 9 8
+a if c else d / for / 'return V'
+    8 9
+a if c else d / for / 'x = V\nreturn x'
+    8 9 10
+a if c else d / for / 'x = V\nreturn 1'
+    8 9 10
+a if c else d / for / 'x = V'
+    8 9 8 9 8
+a if c else d / for / 'x = V\nreturn'
+    8 9 10
+a if c else d / for / 'return n(V)'
+    8 9
+a if c else d / for / 'raise KeyError(V)'
+    8 9 KeyError
+a if c else d / for / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+a if c else d / for / 'y += V'
+    8 9 8 9 8
+a if c else d / for / 'x = V\npass'
+    8 9 10 8 9 10 8
+a if c else d / for / 'return (V,\n    1)'
+    8 9 10 9
+a if c else d / for / 'return (\n    V)'
+    8 10 9
+a if c else d / for / 'V'
+    8 9 8 9 8
+a if c else d / for / 'x = V\nbreak'
+    8 9 10
+a if c else d / for / 'x = V\ncontinue'
+    8 9 10 8 9 10 8
+a if c else d / for for / 'return V'
+    8 9 10
+a if c else d / for for / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / for for / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / for for / 'x = V'
+    8 9 10 9 10 9 8 9 10 9 10 9 8
+a if c else d / for for / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / for for / 'return n(V)'
+    8 9 10
+a if c else d / for for / 'raise KeyError(V)'
+    8 9 10 KeyError
+a if c else d / for for / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+a if c else d / for for / 'y += V'
+    8 9 10 9 10 9 8 9 10 9 10 9 8
+a if c else d / for for / 'x = V\npass'
+    8 9 10 11 9 10 11 9 8 9 10 11 9 10 11 9 8
+a if c else d / for for / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / for for / 'return (\n    V)'
+    8 9 11 10
+a if c else d / for for / 'V'
+    8 9 10 9 10 9 8 9 10 9 10 9 8
+a if c else d / for for / 'x = V\nbreak'
+    8 9 10 11 8 9 10 11 8
+a if c else d / for for / 'x = V\ncontinue'
+    8 9 10 11 9 10 11 9 8 9 10 11 9 10 11 9 8
+a if c else d / while / 'return V'
+    8 9 10
+a if c else d / while / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / while / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / while / 'x = V'
+    8 9 10 8 9 10 8
+a if c else d / while / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / while / 'return n(V)'
+    8 9 10
+a if c else d / while / 'raise KeyError(V)'
+    8 9 10 KeyError
+a if c else d / while / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+a if c else d / while / 'y += V'
+    8 9 10 8 9 10 8
+    8 9 10 8
+a if c else d / while / 'x = V\npass'
+    8 9 10 11 8 9 10 11 8
+a if c else d / while / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / while / 'return (\n    V)'
+    8 9 11 10
+a if c else d / while / 'V'
+    8 9 10 8 9 10 8
+a if c else d / while / 'x = V\nbreak'
+    8 9 10 11
+a if c else d / while / 'x = V\ncontinue'
+    8 9 10 11 8 9 10 11 8
+a if c else d / try / 'return V'
+    8 9
+a if c else d / try / 'x = V\nreturn x'
+    8 9 10
+a if c else d / try / 'x = V\nreturn 1'
+    8 9 10
+a if c else d / try / 'x = V'
+    8 9
+a if c else d / try / 'x = V\nreturn'
+    8 9 10
+a if c else d / try / 'return n(V)'
+    8 9
+a if c else d / try / 'raise KeyError(V)'
+    8 9 10 KeyError
+a if c else d / try / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+a if c else d / try / 'y += V'
+    8 9
+a if c else d / try / 'x = V\npass'
+    8 9 10
+a if c else d / try / 'return (V,\n    1)'
+    8 9 10 9
+a if c else d / try / 'return (\n    V)'
+    8 10 9
+a if c else d / try / 'V'
+    8 9
+a if c else d / try in for / 'return V'
+    8 9 10
+a if c else d / try in for / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / try in for / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / try in for / 'x = V'
+    8 9 10 8 9 10 8
+a if c else d / try in for / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / try in for / 'return n(V)'
+    8 9 10
+a if c else d / try in for / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+a if c else d / try in for / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+a if c else d / try in for / 'y += V'
+    8 9 10 8 9 10 8
+a if c else d / try in for / 'x = V\npass'
+    8 9 10 11 8 9 10 11 8
+a if c else d / try in for / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / try in for / 'return (\n    V)'
+    8 9 11 10
+a if c else d / try in for / 'V'
+    8 9 10 8 9 10 8
+a if c else d / try in for / 'x = V\nbreak'
+    8 9 10 11
+a if c else d / try in for / 'x = V\ncontinue'
+    8 9 10 11 8 9 10 11 8
+a if c else d / except / 'return V'
+    8 9 10 11
+a if c else d / except / 'x = V\nreturn x'
+    8 9 10 11 12
+a if c else d / except / 'x = V\nreturn 1'
+    8 9 10 11 12
+a if c else d / except / 'x = V'
+    8 9 10 11
+a if c else d / except / 'x = V\nreturn'
+    8 9 10 11 12
+a if c else d / except / 'return n(V)'
+    8 9 10 11
+a if c else d / except / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+a if c else d / except / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+a if c else d / except / 'y += V'
+    8 9 10 11
+a if c else d / except / 'x = V\npass'
+    8 9 10 11 12
+a if c else d / except / 'return (V,\n    1)'
+    8 9 10 11 12 11
+a if c else d / except / 'return (\n    V)'
+    8 9 10 12 11
+a if c else d / except / 'V'
+    8 9 10 11
+a if c else d / except as / 'return V'
+    8 9 10 11
+a if c else d / except as / 'x = V\nreturn x'
+    8 9 10 11 12
+a if c else d / except as / 'x = V\nreturn 1'
+    8 9 10 11 12
+a if c else d / except as / 'x = V'
+    8 9 10 11
+a if c else d / except as / 'x = V\nreturn'
+    8 9 10 11 12
+a if c else d / except as / 'return n(V)'
+    8 9 10 11
+a if c else d / except as / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+a if c else d / except as / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+a if c else d / except as / 'y += V'
+    8 9 10 11
+a if c else d / except as / 'x = V\npass'
+    8 9 10 11 12
+a if c else d / except as / 'return (V,\n    1)'
+    8 9 10 11 12 11
+a if c else d / except as / 'return (\n    V)'
+    8 9 10 12 11
+a if c else d / except as / 'V'
+    8 9 10 11
+a if c else d / try finally / 'x = V\nreturn x'
+    8 9 10 12
+a if c else d / try finally / 'x = V\nreturn 1'
+    8 9 10 12
+a if c else d / try finally / 'x = V'
+    8 9 11
+a if c else d / try finally / 'x = V\nreturn'
+    8 9 10 12
+a if c else d / try finally / 'return n(V)'
+    8 9 11
+a if c else d / try finally / 'raise KeyError(V)'
+    8 9 11 KeyError
+a if c else d / try finally / 'x = V\nraise KeyError'
+    8 9 10 12 KeyError
+a if c else d / try finally / 'y += V'
+    8 9 11
+a if c else d / try finally / 'x = V\npass'
+    8 9 10 12
+a if c else d / try finally / 'return (V,\n    1)'
+    8 9 10 9 12
+a if c else d / try finally / 'return (\n    V)'
+    8 10 9 12
+a if c else d / try finally / 'V'
+    8 9 11
+a if c else d / with / 'return V'
+    8 9 8
+a if c else d / with / 'x = V\nreturn x'
+    8 9 10 8
+a if c else d / with / 'x = V\nreturn 1'
+    8 9 10 8
+a if c else d / with / 'x = V'
+    8 9 8
+a if c else d / with / 'x = V\nreturn'
+    8 9 10 8
+a if c else d / with / 'return n(V)'
+    8 9 8
+a if c else d / with / 'raise KeyError(V)'
+    8 9 8 KeyError
+a if c else d / with / 'x = V\nraise KeyError'
+    8 9 10 8 KeyError
+a if c else d / with / 'y += V'
+    8 9 8
+a if c else d / with / 'x = V\npass'
+    8 9 10 8
+a if c else d / with / 'return (V,\n    1)'
+    8 9 10 9 8
+a if c else d / with / 'return (\n    V)'
+    8 10 9 8
+a if c else d / with / 'V'
+    8 9 8
+a if c else d / if / 'return V'
+    8 9
+a if c else d / if / 'x = V\nreturn x'
+    8 9 10
+a if c else d / if / 'x = V\nreturn 1'
+    8 9 10
+a if c else d / if / 'x = V'
+    8 9
+a if c else d / if / 'x = V\nreturn'
+    8 9 10
+a if c else d / if / 'return n(V)'
+    8 9
+a if c else d / if / 'raise KeyError(V)'
+    8 9 KeyError
+a if c else d / if / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+a if c else d / if / 'y += V'
+    8 9
+a if c else d / if / 'x = V\npass'
+    8 9 10
+a if c else d / if / 'return (V,\n    1)'
+    8 9 10 9
+a if c else d / if / 'return (\n    V)'
+    8 10 9
+a if c else d / if / 'V'
+    8 9
+a if c else d / if else / 'return V'
+    8 9
+a if c else d / if else / 'x = V\nreturn x'
+    8 9 10
+a if c else d / if else / 'x = V\nreturn 1'
+    8 9 10
+a if c else d / if else / 'x = V'
+    8 9
+a if c else d / if else / 'x = V\nreturn'
+    8 9 10
+a if c else d / if else / 'return n(V)'
+    8 9
+a if c else d / if else / 'raise KeyError(V)'
+    8 9 KeyError
+a if c else d / if else / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+a if c else d / if else / 'y += V'
+    8 9
+a if c else d / if else / 'x = V\npass'
+    8 9 10
+a if c else d / if else / 'return (V,\n    1)'
+    8 9 10 9
+a if c else d / if else / 'return (\n    V)'
+    8 10 9
+a if c else d / if else / 'V'
+    8 9
+a if c else d / else / 'return V'
+    8 11
+a if c else d / else / 'x = V\nreturn x'
+    8 11 12
+a if c else d / else / 'x = V\nreturn 1'
+    8 11 12
+a if c else d / else / 'x = V'
+    8 11
+a if c else d / else / 'x = V\nreturn'
+    8 11 12
+a if c else d / else / 'return n(V)'
+    8 11
+a if c else d / else / 'raise KeyError(V)'
+    8 11 KeyError
+a if c else d / else / 'x = V\nraise KeyError'
+    8 11 12 KeyError
+a if c else d / else / 'y += V'
+    8 11
+a if c else d / else / 'x = V\npass'
+    8 11 12
+a if c else d / else / 'return (V,\n    1)'
+    8 11 12 11
+a if c else d / else / 'return (\n    V)'
+    8 12 11
+a if c else d / else / 'V'
+    8 11
+a if c else d / if, then more / 'return V'
+    8 9
+a if c else d / if, then more / 'x = V\nreturn x'
+    8 9 10
+a if c else d / if, then more / 'x = V\nreturn 1'
+    8 9 10
+a if c else d / if, then more / 'x = V'
+    8 9 10 11 12
+a if c else d / if, then more / 'x = V\nreturn'
+    8 9 10
+a if c else d / if, then more / 'return n(V)'
+    8 9
+a if c else d / if, then more / 'raise KeyError(V)'
+    8 9 KeyError
+a if c else d / if, then more / 'x = V\nraise KeyError'
+    8 9 10 KeyError
+a if c else d / if, then more / 'y += V'
+    8 9 10 11 12
+a if c else d / if, then more / 'x = V\npass'
+    8 9 10 11 12 13
+a if c else d / if, then more / 'return (V,\n    1)'
+    8 9 10 9
+a if c else d / if, then more / 'return (\n    V)'
+    8 10 9
+a if c else d / if, then more / 'V'
+    8 9 10 11 12
+a if c else d / match / 'return V'
+    8 9 10
+a if c else d / match / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / match / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / match / 'x = V'
+    8 9 10
+a if c else d / match / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / match / 'return n(V)'
+    8 9 10
+a if c else d / match / 'raise KeyError(V)'
+    8 9 10 KeyError
+a if c else d / match / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+a if c else d / match / 'y += V'
+    8 9 10
+a if c else d / match / 'x = V\npass'
+    8 9 10 11
+a if c else d / match / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / match / 'return (\n    V)'
+    8 9 11 10
+a if c else d / match / 'V'
+    8 9 10
+a if c else d / try else / 'return V'
+    8 9 13
+a if c else d / try else / 'x = V\nreturn x'
+    8 9 13 14
+a if c else d / try else / 'x = V\nreturn 1'
+    8 9 13 14
+a if c else d / try else / 'x = V'
+    8 9 13
+a if c else d / try else / 'x = V\nreturn'
+    8 9 13 14
+a if c else d / try else / 'return n(V)'
+    8 9 13
+a if c else d / try else / 'raise KeyError(V)'
+    8 9 13 KeyError
+a if c else d / try else / 'x = V\nraise KeyError'
+    8 9 13 14 KeyError
+a if c else d / try else / 'y += V'
+    8 9 13
+a if c else d / try else / 'x = V\npass'
+    8 9 13 14
+a if c else d / try else / 'return (V,\n    1)'
+    8 9 13 14 13
+a if c else d / try else / 'return (\n    V)'
+    8 9 14 13
+a if c else d / try else / 'V'
+    8 9 13
+a if c else d / elif / 'return V'
+    8 10 11
+a if c else d / elif / 'x = V\nreturn x'
+    8 10 11 12
+a if c else d / elif / 'x = V\nreturn 1'
+    8 10 11 12
+a if c else d / elif / 'x = V'
+    8 10 11
+a if c else d / elif / 'x = V\nreturn'
+    8 10 11 12
+a if c else d / elif / 'return n(V)'
+    8 10 11
+a if c else d / elif / 'raise KeyError(V)'
+    8 10 11 KeyError
+a if c else d / elif / 'x = V\nraise KeyError'
+    8 10 11 12 KeyError
+a if c else d / elif / 'y += V'
+    8 10 11
+a if c else d / elif / 'x = V\npass'
+    8 10 11 12
+a if c else d / elif / 'return (V,\n    1)'
+    8 10 11 12 11
+a if c else d / elif / 'return (\n    V)'
+    8 10 12 11
+a if c else d / elif / 'V'
+    8 10 11
+a if c else d / elif else / 'return V'
+    8 10 11
+a if c else d / elif else / 'x = V\nreturn x'
+    8 10 11 12
+a if c else d / elif else / 'x = V\nreturn 1'
+    8 10 11 12
+a if c else d / elif else / 'x = V'
+    8 10 11
+a if c else d / elif else / 'x = V\nreturn'
+    8 10 11 12
+a if c else d / elif else / 'return n(V)'
+    8 10 11
+a if c else d / elif else / 'raise KeyError(V)'
+    8 10 11 KeyError
+a if c else d / elif else / 'x = V\nraise KeyError'
+    8 10 11 12 KeyError
+a if c else d / elif else / 'y += V'
+    8 10 11
+a if c else d / elif else / 'x = V\npass'
+    8 10 11 12
+a if c else d / elif else / 'return (V,\n    1)'
+    8 10 11 12 11
+a if c else d / elif else / 'return (\n    V)'
+    8 10 12 11
+a if c else d / elif else / 'V'
+    8 10 11
+a if c else d / default case / 'return V'
+    8 9 11 12
+a if c else d / default case / 'x = V\nreturn x'
+    8 9 11 12 13
+a if c else d / default case / 'x = V\nreturn 1'
+    8 9 11 12 13
+a if c else d / default case / 'x = V'
+    8 9 11 12
+a if c else d / default case / 'x = V\nreturn'
+    8 9 11 12 13
+a if c else d / default case / 'return n(V)'
+    8 9 11 12
+a if c else d / default case / 'raise KeyError(V)'
+    8 9 11 12 KeyError
+a if c else d / default case / 'x = V\nraise KeyError'
+    8 9 11 12 13 KeyError
+a if c else d / default case / 'y += V'
+    8 9 11 12
+a if c else d / default case / 'x = V\npass'
+    8 9 11 12 13
+a if c else d / default case / 'return (V,\n    1)'
+    8 9 11 12 13 12
+a if c else d / default case / 'return (\n    V)'
+    8 9 11 13 12
+a if c else d / default case / 'V'
+    8 9 11 12
+a if c else d / if else in if / 'return V'
+    8 9 10
+a if c else d / if else in if / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / if else in if / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / if else in if / 'x = V'
+    8 9 10
+a if c else d / if else in if / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / if else in if / 'return n(V)'
+    8 9 10
+a if c else d / if else in if / 'raise KeyError(V)'
+    8 9 10 KeyError
+a if c else d / if else in if / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+a if c else d / if else in if / 'y += V'
+    8 9 10
+a if c else d / if else in if / 'x = V\npass'
+    8 9 10 11
+a if c else d / if else in if / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / if else in if / 'return (\n    V)'
+    8 9 11 10
+a if c else d / if else in if / 'V'
+    8 9 10
+a if c else d / if else in if else / 'return V'
+    8 9 10
+a if c else d / if else in if else / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / if else in if else / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / if else in if else / 'x = V'
+    8 9 10
+a if c else d / if else in if else / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / if else in if else / 'return n(V)'
+    8 9 10
+a if c else d / if else in if else / 'raise KeyError(V)'
+    8 9 10 KeyError
+a if c else d / if else in if else / 'x = V\nraise KeyError'
+    8 9 10 11 KeyError
+a if c else d / if else in if else / 'y += V'
+    8 9 10
+a if c else d / if else in if else / 'x = V\npass'
+    8 9 10 11
+a if c else d / if else in if else / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / if else in if else / 'return (\n    V)'
+    8 9 11 10
+a if c else d / if else in if else / 'V'
+    8 9 10
+a if c else d / if in try / 'return V'
+    8 9 10
+a if c else d / if in try / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / if in try / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / if in try / 'x = V'
+    8 9 10
+a if c else d / if in try / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / if in try / 'return n(V)'
+    8 9 10
+a if c else d / if in try / 'raise KeyError(V)'
+    8 9 10 13 KeyError
+a if c else d / if in try / 'x = V\nraise KeyError'
+    8 9 10 11 14 KeyError
+a if c else d / if in try / 'y += V'
+    8 9 10
+a if c else d / if in try / 'x = V\npass'
+    8 9 10 11
+a if c else d / if in try / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / if in try / 'return (\n    V)'
+    8 9 11 10
+a if c else d / if in try / 'V'
+    8 9 10
+a if c else d / try in try / 'return V'
+    8 9 10
+a if c else d / try in try / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / try in try / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / try in try / 'x = V'
+    8 9 10
+a if c else d / try in try / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / try in try / 'return n(V)'
+    8 9 10
+a if c else d / try in try / 'raise KeyError(V)'
+    8 9 10 11 12
+a if c else d / try in try / 'x = V\nraise KeyError'
+    8 9 10 11 12 13
+a if c else d / try in try / 'y += V'
+    8 9 10
+a if c else d / try in try / 'x = V\npass'
+    8 9 10 11
+a if c else d / try in try / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / try in try / 'return (\n    V)'
+    8 9 11 10
+a if c else d / try in try / 'V'
+    8 9 10
+a if c else d / try in if else / 'return V'
+    8 9 10
+a if c else d / try in if else / 'x = V\nreturn x'
+    8 9 10 11
+a if c else d / try in if else / 'x = V\nreturn 1'
+    8 9 10 11
+a if c else d / try in if else / 'x = V'
+    8 9 10
+a if c else d / try in if else / 'x = V\nreturn'
+    8 9 10 11
+a if c else d / try in if else / 'return n(V)'
+    8 9 10
+a if c else d / try in if else / 'raise KeyError(V)'
+    8 9 10 11 12
+a if c else d / try in if else / 'x = V\nraise KeyError'
+    8 9 10 11 12 13
+a if c else d / try in if else / 'y += V'
+    8 9 10
+a if c else d / try in if else / 'x = V\npass'
+    8 9 10 11
+a if c else d / try in if else / 'return (V,\n    1)'
+    8 9 10 11 10
+a if c else d / try in if else / 'return (\n    V)'
+    8 9 11 10
+a if c else d / try in if else / 'V'
+    8 9 10
+a if c else d / except in for / 'return V'
+    8 9 10 11 12
+a if c else d / except in for / 'x = V\nreturn x'
+    8 9 10 11 12 13
+a if c else d / except in for / 'x = V\nreturn 1'
+    8 9 10 11 12 13
+a if c else d / except in for / 'x = V'
+    8 9 10 11 12 8 9 10 11 12 8
+a if c else d / except in for / 'x = V\nreturn'
+    8 9 10 11 12 13
+a if c else d / except in for / 'return n(V)'
+    8 9 10 11 12
+a if c else d / except in for / 'raise KeyError(V)'
+    8 9 10 11 12 KeyError
+a if c else d / except in for / 'x = V\nraise KeyError'
+    8 9 10 11 12 13 KeyError
+a if c else d / except in for / 'y += V'
+    8 9 10 11 12 8 9 10 11 12 8
+a if c else d / except in for / 'x = V\npass'
+    8 9 10 11 12 13 8 9 10 11 12 13 8
+a if c else d / except in for / 'return (V,\n    1)'
+    8 9 10 11 12 13 12
+a if c else d / except in for / 'return (\n    V)'
+    8 9 10 11 13 12
+a if c else d / except in for / 'V'
+    8 9 10 11 12 8 9 10 11 12 8
+a if c else d / except in for / 'x = V\nbreak'
+    8 9 10 11 12 13
+a if c else d / except in for / 'x = V\ncontinue'
+    8 9 10 11 12 13 8 9 10 11 12 13 8
+a if c else d / with in for / 'return V'
+    8 9 10 9
+a if c else d / with in for / 'x = V\nreturn x'
+    8 9 10 11 9
+a if c else d / with in for / 'x = V\nreturn 1'
+    8 9 10 11 9
+a if c else d / with in for / 'x = V'
+    8 9 10 9 8 9 10 9 8
+a if c else d / with in for / 'x = V\nreturn'
+    8 9 10 11 9
+a if c else d / with in for / 'return n(V)'
+    8 9 10 9
+a if c else d / with in for / 'raise KeyError(V)'
+    8 9 10 9 KeyError
+a if c else d / with in for / 'x = V\nraise KeyError'
+    8 9 10 11 9 KeyError
+a if c else d / with in for / 'y += V'
+    8 9 10 9 8 9 10 9 8
+a if c else d / with in for / 'x = V\npass'
+    8 9 10 11 9 8 9 10 11 9 8
+a if c else d / with in for / 'return (V,\n    1)'
+    8 9 10 11 10 9
+a if c else d / with in for / 'return (\n    V)'
+    8 9 11 10 9
+a if c else d / with in for / 'V'
+    8 9 10 9 8 9 10 9 8
+a if c else d / with in for / 'x = V\nbreak'
+    8 9 10 11 9
+a if c else d / with in for / 'x = V\ncontinue'
+    8 9 10 11 9 8 9 10 11 9 8
+a if c else d / while in for / 'return V'
+    8 9 10 11
+a if c else d / while in for / 'x = V\nreturn x'
+    8 9 10 11 12
+a if c else d / while in for / 'x = V\nreturn 1'
+    8 9 10 11 12
+a if c else d / while in for / 'x = V'
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+a if c else d / while in for / 'x = V\nreturn'
+    8 9 10 11 12
+a if c else d / while in for / 'return n(V)'
+    8 9 10 11
+a if c else d / while in for / 'raise KeyError(V)'
+    8 9 10 11 KeyError
+a if c else d / while in for / 'x = V\nraise KeyError'
+    8 9 10 11 12 KeyError
+a if c else d / while in for / 'y += V'
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+a if c else d / while in for / 'x = V\npass'
+    8 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 8 9 8
+a if c else d / while in for / 'return (V,\n    1)'
+    8 9 10 11 12 11
+a if c else d / while in for / 'return (\n    V)'
+    8 9 10 12 11
+a if c else d / while in for / 'V'
+    8 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 10 11 9 8 9 8
+a if c else d / while in for / 'x = V\nbreak'
+    8 9 10 11 12 8 9 10 11 12 8
+a if c else d / while in for / 'x = V\ncontinue'
+    8 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 10 11 12 9 8 9 8
+repr(source) [source='y = 0\nx = (a or b) if c else d\n'] => 'y = 0\nx = (a or b) if c else d\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='y = 0\nx = (a or b) if c else d\n', c=1] => 
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='y = 0\nx = (a or b) if c else d\n', c=0] => 
+repr(source) [source='y = 0\nx = (a or b) if c else d\ny = 1\n'] => 'y = 0\nx = (a or b) if c else d\ny = 1\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='y = 0\nx = (a or b) if c else d\ny = 1\n', c=1] => 2 3
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='y = 0\nx = (a or b) if c else d\ny = 1\n', c=0] => 3
+repr(source) [source='y = 0\n(a or b) if c else d\n'] => 'y = 0\n(a or b) if c else d\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='y = 0\n(a or b) if c else d\n', c=1] => 
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='y = 0\n(a or b) if c else d\n', c=0] => 
+repr(source) [source='class K:\n    y = 0\n    x = (a or b) if c else d\n'] => 'class K:\n    y = 0\n    x = (a or b) if c else d\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='class K:\n    y = 0\n    x = (a or b) if c else d\n', c=1] => 2 3 3
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='class K:\n    y = 0\n    x = (a or b) if c else d\n', c=0] => 2 3
+repr(source) [source='class K:\n    y = 0\n    x = (a or b) if c else d\n    y = 1\n'] => 'class K:\n    y = 0\n    x = (a or b) if c else d\n    y = 1\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='class K:\n    y = 0\n    x = (a or b) if c else d\n    y = 1\n', c=1] => 2 3 3 4
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='class K:\n    y = 0\n    x = (a or b) if c else d\n    y = 1\n', c=0] => 2 3 4
+repr(source) [source='async def f():\n    y = 0\n    x = (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n'] => 'async def f():\n    y = 0\n    x = (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='async def f():\n    y = 0\n    x = (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n', c=1] => 2 3 5
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='async def f():\n    y = 0\n    x = (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n', c=0] => 2 3 5
+repr(source) [source='async def f():\n    y = 0\n    return (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n'] => 'async def f():\n    y = 0\n    return (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='async def f():\n    y = 0\n    return (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n', c=1] => 2 3 5
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='async def f():\n    y = 0\n    return (a or b) if c else d\ntry: f().send(None)\nexcept StopIteration: pass\n', c=0] => 2 3 5
+repr(source) [source='def f():\n    yield 1\n    return (a or b) if c else d\nlist(f())\n'] => 'def f():\n    yield 1\n    return (a or b) if c else d\nlist(f())\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='def f():\n    yield 1\n    return (a or b) if c else d\nlist(f())\n', c=1] => 2 3
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='def f():\n    yield 1\n    return (a or b) if c else d\nlist(f())\n', c=0] => 2 3
+repr(source) [source='def f():\n    yield 1\n    x = (a or b) if c else d\nlist(f())\n'] => 'def f():\n    yield 1\n    x = (a or b) if c else d\nlist(f())\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='def f():\n    yield 1\n    x = (a or b) if c else d\nlist(f())\n', c=1] => 2 3
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='def f():\n    yield 1\n    x = (a or b) if c else d\nlist(f())\n', c=0] => 2 3
+repr(source) [source='def o():\n    x = 0\n    def f():\n        nonlocal x\n        x = (a or b) if c else d\n    f()\no()\n'] => 'def o():\n    x = 0\n    def f():\n        nonlocal x\n        x = (a or b) if c else d\n    f()\no()\n'
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='def o():\n    x = 0\n    def f():\n        nonlocal x\n        x = (a or b) if c else d\n    f()\no()\n', c=1] => 2 3 6 5
+    lines(lambda: exec(code, {'a': 0, 'b': 1, 'c': c, 'd': 0}), ()) [source='def o():\n    x = 0\n    def f():\n        nonlocal x\n        x = (a or b) if c else d\n    f()\no()\n', c=0] => 2 3 6 5

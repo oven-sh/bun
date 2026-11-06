@@ -1,0 +1,2508 @@
+status: 0
+script: d87291dde2014673
+source: 940527bdc12992b5
+---
+for / plain / if
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+    L3>3 R4>5 J5>3 L3>3 R4>5 J5>3 R3>6
+for / plain / if not
+    L3>3 R4>5 J5>3 L3>3 R4>5 J5>3 R3>6
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+for / plain / if and
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+    L3>3 R4>4 L4>4 J4>3 L3>3 R4>4 L4>4 J4>3 R3>6
+    L3>3 R4>4 R4>5 J5>3 L3>3 R4>4 R4>5 J5>3 R3>6
+for / plain / if or
+    L3>3 L4>4 L4>4 J4>3 L3>3 L4>4 L4>4 J4>3 R3>6
+    L3>3 L4>4 R4>5 J5>3 L3>3 L4>4 R4>5 J5>3 R3>6
+    L3>3 R4>5 J5>3 L3>3 R4>5 J5>3 R3>6
+for / plain / if else
+    L3>3 R4>7 J7>3 L3>3 R4>7 J7>3 R3>8
+    L3>3 L4>5 J5>3 L3>3 L4>5 J5>3 R3>8
+for / plain / if elif
+    L3>3 R4>6 L6>6 J6>3 L3>3 R4>6 L6>6 J6>3 R3>8
+    L3>3 R4>6 R6>7 J7>3 L3>3 R4>6 R6>7 J7>3 R3>8
+    L3>3 L4>5 J5>3 L3>3 L4>5 J5>3 R3>8
+for / plain / if if
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>7
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>6 J6>3 L3>3 R4>5 R5>6 J6>3 R3>7
+for / plain / is None
+    L3>3 R4>5 J5>3 L3>3 R4>5 J5>3 R3>6
+for / plain / and
+    L3>3 R4>4 J4>3 L3>3 R4>4 J4>3 R3>5
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>5
+for / except / if
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+for / except / if not
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+for / except / if and
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 L7>8 J8>3 L3>3 L6>6 L7>7 L7>8 J8>3 R3>9
+for / except / if or
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 L7>8 J8>3 L3>3 L6>6 L7>7 L7>8 J8>3 R3>9
+    L3>3 L6>6 R7>8 J8>3 L3>3 L6>6 R7>8 J8>3 R3>9
+for / except / if else
+    L3>3 L6>6 R7>10 J10>3 L3>3 L6>6 R7>10 J10>3 R3>11
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>11
+for / except / if elif
+    L3>3 L6>6 R7>9 R9>9 J9>3 L3>3 L6>6 R7>9 R9>9 J9>3 R3>11
+    L3>3 L6>6 R7>9 L9>10 J10>3 L3>3 L6>6 R7>9 L9>10 J10>3 R3>11
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>11
+for / except / if if
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>10
+    L3>3 L6>6 L7>8 R8>8 J8>3 L3>3 L6>6 L7>8 R8>8 J8>3 R3>10
+    L3>3 L6>6 L7>8 L8>9 J9>3 L3>3 L6>6 L7>8 L8>9 J9>3 R3>10
+for / except / is None
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+for / except / and
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>8
+    L3>3 L6>6 L7>7 J7>3 L3>3 L6>6 L7>7 J7>3 R3>8
+for / except as / if
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+for / except as / if not
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+for / except as / if and
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 L7>8 J8>3 L3>3 L6>6 L7>7 L7>8 J8>3 R3>9
+for / except as / if or
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 L7>8 J8>3 L3>3 L6>6 L7>7 L7>8 J8>3 R3>9
+    L3>3 L6>6 R7>8 J8>3 L3>3 L6>6 R7>8 J8>3 R3>9
+for / except as / if else
+    L3>3 L6>6 R7>10 J10>3 L3>3 L6>6 R7>10 J10>3 R3>11
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>11
+for / except as / if elif
+    L3>3 L6>6 R7>9 R9>9 J9>3 L3>3 L6>6 R7>9 R9>9 J9>3 R3>11
+    L3>3 L6>6 R7>9 L9>10 J10>3 L3>3 L6>6 R7>9 L9>10 J10>3 R3>11
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>11
+for / except as / if if
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>10
+    L3>3 L6>6 L7>8 R8>8 J8>3 L3>3 L6>6 L7>8 R8>8 J8>3 R3>10
+    L3>3 L6>6 L7>8 L8>9 J9>3 L3>3 L6>6 L7>8 L8>9 J9>3 R3>10
+for / except as / is None
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+for / except as / and
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>8
+    L3>3 L6>6 L7>7 J7>3 L3>3 L6>6 L7>7 J7>3 R3>8
+for / except, and the body may go on / if
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>9 J9>3 L3>3 L5>6 L7>7 L8>9 J9>3 R3>10
+for / except, and the body may go on / if not
+    L3>3 L5>6 L7>7 L8>9 J9>3 L3>3 L5>6 L7>7 L8>9 J9>3 R3>10
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+for / except, and the body may go on / if and
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>8 L8>9 J9>3 L3>3 L5>6 L7>7 L8>8 L8>9 J9>3 R3>10
+for / except, and the body may go on / if or
+    L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>8 L8>9 J9>3 L3>3 L5>6 L7>7 L8>8 L8>9 J9>3 R3>10
+    L3>3 L5>6 L7>7 R8>9 J9>3 L3>3 L5>6 L7>7 R8>9 J9>3 R3>10
+for / except, and the body may go on / if else
+    L3>3 L5>6 L7>7 R8>11 J11>3 L3>3 L5>6 L7>7 R8>11 J11>3 R3>12
+    L3>3 L5>6 L7>7 L8>9 J9>3 L3>3 L5>6 L7>7 L8>9 J9>3 R3>12
+for / except, and the body may go on / if elif
+    L3>3 L5>6 L7>7 R8>10 R10>10 J10>3 L3>3 L5>6 L7>7 R8>10 R10>10 J10>3 R3>12
+    L3>3 L5>6 L7>7 R8>10 L10>11 J11>3 L3>3 L5>6 L7>7 R8>10 L10>11 J11>3 R3>12
+    L3>3 L5>6 L7>7 L8>9 J9>3 L3>3 L5>6 L7>7 L8>9 J9>3 R3>12
+for / except, and the body may go on / if if
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>11
+    L3>3 L5>6 L7>7 L8>9 R9>9 J9>3 L3>3 L5>6 L7>7 L8>9 R9>9 J9>3 R3>11
+    L3>3 L5>6 L7>7 L8>9 L9>10 J10>3 L3>3 L5>6 L7>7 L8>9 L9>10 J10>3 R3>11
+for / except, and the body may go on / is None
+    L3>3 L5>6 L7>7 L8>9 J9>3 L3>3 L5>6 L7>7 L8>9 J9>3 R3>10
+for / except, and the body may go on / and
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>9
+    L3>3 L5>6 L7>7 L8>8 J8>3 L3>3 L5>6 L7>7 L8>8 J8>3 R3>9
+for / if body / if
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>6 J6>3 L3>3 L4>5 L5>6 J6>3 R3>9
+for / if body / if not
+    L3>3 L4>5 L5>6 J6>3 L3>3 L4>5 L5>6 J6>3 R3>9
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+for / if body / if and
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>5 R5>5 J5>3 L3>3 L4>5 L5>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>5 L5>6 J6>3 L3>3 L4>5 L5>5 L5>6 J6>3 R3>9
+for / if body / if or
+    L3>3 L4>5 L5>5 R5>5 J5>3 L3>3 L4>5 L5>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>5 L5>6 J6>3 L3>3 L4>5 L5>5 L5>6 J6>3 R3>9
+    L3>3 L4>5 R5>6 J6>3 L3>3 L4>5 R5>6 J6>3 R3>9
+for / if body / if else
+    L3>3 L4>5 R5>8 J8>3 L3>3 L4>5 R5>8 J8>3 R3>11
+    L3>3 L4>5 L5>6 J6>3 L3>3 L4>5 L5>6 J6>3 R3>11
+for / if body / if elif
+    L3>3 L4>5 R5>7 R7>7 J7>3 L3>3 L4>5 R5>7 R7>7 J7>3 R3>11
+    L3>3 L4>5 R5>7 L7>8 J8>3 L3>3 L4>5 R5>7 L7>8 J8>3 R3>11
+    L3>3 L4>5 L5>6 J6>3 L3>3 L4>5 L5>6 J6>3 R3>11
+for / if body / if if
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>10
+    L3>3 L4>5 L5>6 R6>6 J6>3 L3>3 L4>5 L5>6 R6>6 J6>3 R3>10
+    L3>3 L4>5 L5>6 L6>7 J7>3 L3>3 L4>5 L5>6 L6>7 J7>3 R3>10
+for / if body / is None
+    L3>3 L4>5 L5>6 J6>3 L3>3 L4>5 L5>6 J6>3 R3>9
+for / if body / and
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>8
+    L3>3 L4>5 L5>5 J5>3 L3>3 L4>5 L5>5 J5>3 R3>8
+for / else body / if
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>8 J8>3 L3>3 R4>7 R7>8 J8>3 R3>9
+for / else body / if not
+    L3>3 R4>7 R7>8 J8>3 L3>3 R4>7 R7>8 J8>3 R3>9
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+for / else body / if and
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>7 L7>7 J7>3 L3>3 R4>7 R7>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>7 R7>8 J8>3 L3>3 R4>7 R7>7 R7>8 J8>3 R3>9
+for / else body / if or
+    L3>3 R4>7 L7>7 L7>7 J7>3 L3>3 R4>7 L7>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 L7>7 R7>8 J8>3 L3>3 R4>7 L7>7 R7>8 J8>3 R3>9
+    L3>3 R4>7 R7>8 J8>3 L3>3 R4>7 R7>8 J8>3 R3>9
+for / else body / if else
+    L3>3 R4>7 R7>10 J10>3 L3>3 R4>7 R7>10 J10>3 R3>11
+    L3>3 R4>7 L7>8 J8>3 L3>3 R4>7 L7>8 J8>3 R3>11
+for / else body / if elif
+    L3>3 R4>7 R7>9 L9>9 J9>3 L3>3 R4>7 R7>9 L9>9 J9>3 R3>11
+    L3>3 R4>7 R7>9 R9>10 J10>3 L3>3 R4>7 R7>9 R9>10 J10>3 R3>11
+    L3>3 R4>7 L7>8 J8>3 L3>3 R4>7 L7>8 J8>3 R3>11
+for / else body / if if
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>10
+    L3>3 R4>7 R7>8 L8>8 J8>3 L3>3 R4>7 R7>8 L8>8 J8>3 R3>10
+    L3>3 R4>7 R7>8 R8>9 J9>3 L3>3 R4>7 R7>8 R8>9 J9>3 R3>10
+for / else body / is None
+    L3>3 R4>7 R7>8 J8>3 L3>3 R4>7 R7>8 J8>3 R3>9
+for / else body / and
+    L3>3 R4>7 R7>7 J7>3 L3>3 R4>7 R7>7 J7>3 R3>8
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>8
+for / if only / if
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>6 J6>3 L3>3 R4>5 R5>6 J6>3 R3>7
+for / if only / if not
+    L3>3 R4>5 R5>6 J6>3 L3>3 R4>5 R5>6 J6>3 R3>7
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+for / if only / if and
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>5 L5>5 J5>3 L3>3 R4>5 R5>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>5 R5>6 J6>3 L3>3 R4>5 R5>5 R5>6 J6>3 R3>7
+for / if only / if or
+    L3>3 R4>5 L5>5 L5>5 J5>3 L3>3 R4>5 L5>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 L5>5 R5>6 J6>3 L3>3 R4>5 L5>5 R5>6 J6>3 R3>7
+    L3>3 R4>5 R5>6 J6>3 L3>3 R4>5 R5>6 J6>3 R3>7
+for / if only / if else
+    L3>3 R4>5 R5>8 J8>3 L3>3 R4>5 R5>8 J8>3 R3>9
+    L3>3 R4>5 L5>6 J6>3 L3>3 R4>5 L5>6 J6>3 R3>9
+for / if only / if elif
+    L3>3 R4>5 R5>7 L7>7 J7>3 L3>3 R4>5 R5>7 L7>7 J7>3 R3>9
+    L3>3 R4>5 R5>7 R7>8 J8>3 L3>3 R4>5 R5>7 R7>8 J8>3 R3>9
+    L3>3 R4>5 L5>6 J6>3 L3>3 R4>5 L5>6 J6>3 R3>9
+for / if only / if if
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>8
+    L3>3 R4>5 R5>6 L6>6 J6>3 L3>3 R4>5 R5>6 L6>6 J6>3 R3>8
+    L3>3 R4>5 R5>6 R6>7 J7>3 L3>3 R4>5 R5>6 R6>7 J7>3 R3>8
+for / if only / is None
+    L3>3 R4>5 R5>6 J6>3 L3>3 R4>5 R5>6 J6>3 R3>7
+for / if only / and
+    L3>3 R4>5 R5>5 J5>3 L3>3 R4>5 R5>5 J5>3 R3>6
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>6
+for / case / if
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>10
+for / case / if not
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>10
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+for / case / if and
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>6 R6>6 J6>3 L3>3 L5>6 L6>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>6 L6>7 J7>3 L3>3 L5>6 L6>6 L6>7 J7>3 R3>10
+for / case / if or
+    L3>3 L5>6 L6>6 R6>6 J6>3 L3>3 L5>6 L6>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>6 L6>7 J7>3 L3>3 L5>6 L6>6 L6>7 J7>3 R3>10
+    L3>3 L5>6 R6>7 J7>3 L3>3 L5>6 R6>7 J7>3 R3>10
+for / case / if else
+    L3>3 L5>6 R6>9 J9>3 L3>3 L5>6 R6>9 J9>3 R3>12
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>12
+for / case / if elif
+    L3>3 L5>6 R6>8 R8>8 J8>3 L3>3 L5>6 R6>8 R8>8 J8>3 R3>12
+    L3>3 L5>6 R6>8 L8>9 J9>3 L3>3 L5>6 R6>8 L8>9 J9>3 R3>12
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>12
+for / case / if if
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>11
+    L3>3 L5>6 L6>7 R7>7 J7>3 L3>3 L5>6 L6>7 R7>7 J7>3 R3>11
+    L3>3 L5>6 L6>7 L7>8 J8>3 L3>3 L5>6 L6>7 L7>8 J8>3 R3>11
+for / case / is None
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>10
+for / case / and
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>9
+    L3>3 L5>6 L6>6 J6>3 L3>3 L5>6 L6>6 J6>3 R3>9
+for / try / if
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>9
+    L3>3 L5>6 J6>3 L3>3 L5>6 J6>3 R3>9
+for / try / if not
+    L3>3 L5>6 J6>3 L3>3 L5>6 J6>3 R3>9
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>9
+for / try / if and
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>9
+    L3>3 L5>5 R5>5 J5>3 L3>3 L5>5 R5>5 J5>3 R3>9
+    L3>3 L5>5 L5>6 J6>3 L3>3 L5>5 L5>6 J6>3 R3>9
+for / try / if or
+    L3>3 L5>5 R5>5 J5>3 L3>3 L5>5 R5>5 J5>3 R3>9
+    L3>3 L5>5 L5>6 J6>3 L3>3 L5>5 L5>6 J6>3 R3>9
+    L3>3 R5>6 J6>3 L3>3 R5>6 J6>3 R3>9
+for / try / if else
+    L3>3 R5>8 J8>3 L3>3 R5>8 J8>3 R3>11
+    L3>3 L5>6 J6>3 L3>3 L5>6 J6>3 R3>11
+for / try / if elif
+    L3>3 R5>7 R7>7 J7>3 L3>3 R5>7 R7>7 J7>3 R3>11
+    L3>3 R5>7 L7>8 J8>3 L3>3 R5>7 L7>8 J8>3 R3>11
+    L3>3 L5>6 J6>3 L3>3 L5>6 J6>3 R3>11
+for / try / if if
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>10
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>10
+for / try / is None
+    L3>3 L5>6 J6>3 L3>3 L5>6 J6>3 R3>9
+for / try / and
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>8
+    L3>3 L5>5 J5>3 L3>3 L5>5 J5>3 R3>8
+for / try else / if
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>11
+    L3>3 L9>10 J10>3 L3>3 L9>10 J10>3 R3>11
+for / try else / if not
+    L3>3 L9>10 J10>3 L3>3 L9>10 J10>3 R3>11
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>11
+for / try else / if and
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>11
+    L3>3 L9>9 R9>9 J9>3 L3>3 L9>9 R9>9 J9>3 R3>11
+    L3>3 L9>9 L9>10 J10>3 L3>3 L9>9 L9>10 J10>3 R3>11
+for / try else / if or
+    L3>3 L9>9 R9>9 J9>3 L3>3 L9>9 R9>9 J9>3 R3>11
+    L3>3 L9>9 L9>10 J10>3 L3>3 L9>9 L9>10 J10>3 R3>11
+    L3>3 R9>10 J10>3 L3>3 R9>10 J10>3 R3>11
+for / try else / if else
+    L3>3 R9>12 J12>3 L3>3 R9>12 J12>3 R3>13
+    L3>3 L9>10 J10>3 L3>3 L9>10 J10>3 R3>13
+for / try else / if elif
+    L3>3 R9>11 R11>11 J11>3 L3>3 R9>11 R11>11 J11>3 R3>13
+    L3>3 R9>11 L11>12 J12>3 L3>3 R9>11 L11>12 J12>3 R3>13
+    L3>3 L9>10 J10>3 L3>3 L9>10 J10>3 R3>13
+for / try else / if if
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>12
+    L3>3 L9>10 R10>10 J10>3 L3>3 L9>10 R10>10 J10>3 R3>12
+    L3>3 L9>10 L10>11 J11>3 L3>3 L9>10 L10>11 J11>3 R3>12
+for / try else / is None
+    L3>3 L9>10 J10>3 L3>3 L9>10 J10>3 R3>11
+for / try else / and
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>10
+    L3>3 L9>9 J9>3 L3>3 L9>9 J9>3 R3>10
+for / finally / if
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>9
+    L3>3 L7>8 J8>3 L3>3 L7>8 J8>3 R3>9
+for / finally / if not
+    L3>3 L7>8 J8>3 L3>3 L7>8 J8>3 R3>9
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>9
+for / finally / if and
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>9
+    L3>3 L7>7 R7>7 J7>3 L3>3 L7>7 R7>7 J7>3 R3>9
+    L3>3 L7>7 L7>8 J8>3 L3>3 L7>7 L7>8 J8>3 R3>9
+for / finally / if or
+    L3>3 L7>7 R7>7 J7>3 L3>3 L7>7 R7>7 J7>3 R3>9
+    L3>3 L7>7 L7>8 J8>3 L3>3 L7>7 L7>8 J8>3 R3>9
+    L3>3 R7>8 J8>3 L3>3 R7>8 J8>3 R3>9
+for / finally / if else
+    L3>3 R7>10 J10>3 L3>3 R7>10 J10>3 R3>11
+    L3>3 L7>8 J8>3 L3>3 L7>8 J8>3 R3>11
+for / finally / if elif
+    L3>3 R7>9 R9>9 J9>3 L3>3 R7>9 R9>9 J9>3 R3>11
+    L3>3 R7>9 L9>10 J10>3 L3>3 R7>9 L9>10 J10>3 R3>11
+    L3>3 L7>8 J8>3 L3>3 L7>8 J8>3 R3>11
+for / finally / if if
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>10
+    L3>3 L7>8 R8>8 J8>3 L3>3 L7>8 R8>8 J8>3 R3>10
+    L3>3 L7>8 L8>9 J9>3 L3>3 L7>8 L8>9 J9>3 R3>10
+for / finally / is None
+    L3>3 L7>8 J8>3 L3>3 L7>8 J8>3 R3>9
+for / finally / and
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>8
+    L3>3 L7>7 J7>3 L3>3 L7>7 J7>3 R3>8
+for / try finally / if
+    L3>3 R5>8 J8>3 L3>3 R5>8 J8>3 R3>9
+    L3>3 L5>6 J8>3 L3>3 L5>6 J8>3 R3>9
+for / try finally / if not
+    L3>3 L5>6 J8>3 L3>3 L5>6 J8>3 R3>9
+    L3>3 R5>8 J8>3 L3>3 R5>8 J8>3 R3>9
+for / try finally / if and
+    L3>3 R5>8 J8>3 L3>3 R5>8 J8>3 R3>9
+    L3>3 L5>5 R5>8 J8>3 L3>3 L5>5 R5>8 J8>3 R3>9
+    L3>3 L5>5 L5>6 J8>3 L3>3 L5>5 L5>6 J8>3 R3>9
+for / try finally / if or
+    L3>3 L5>5 R5>8 J8>3 L3>3 L5>5 R5>8 J8>3 R3>9
+    L3>3 L5>5 L5>6 J8>3 L3>3 L5>5 L5>6 J8>3 R3>9
+    L3>3 R5>6 J8>3 L3>3 R5>6 J8>3 R3>9
+for / try finally / if else
+    L3>3 R5>8 J10>3 L3>3 R5>8 J10>3 R3>11
+    L3>3 L5>6 J6>10 J10>3 L3>3 L5>6 J6>10 J10>3 R3>11
+for / try finally / if elif
+    L3>3 R5>7 R7>10 J10>3 L3>3 R5>7 R7>10 J10>3 R3>11
+    L3>3 R5>7 L7>8 J10>3 L3>3 R5>7 L7>8 J10>3 R3>11
+    L3>3 L5>6 J6>10 J10>3 L3>3 L5>6 J6>10 J10>3 R3>11
+for / try finally / if if
+    L3>3 R5>9 J9>3 L3>3 R5>9 J9>3 R3>10
+    L3>3 L5>6 R6>9 J9>3 L3>3 L5>6 R6>9 J9>3 R3>10
+    L3>3 L5>6 L6>7 J9>3 L3>3 L5>6 L6>7 J9>3 R3>10
+for / try finally / is None
+    L3>3 L5>6 J8>3 L3>3 L5>6 J8>3 R3>9
+for / try finally / and
+    L3>3 R5>5 J7>3 L3>3 R5>5 J7>3 R3>8
+    L3>3 L5>5 J7>3 L3>3 L5>5 J7>3 R3>8
+for / with / if
+    L3>3 R5>4 J4>3 L3>3 R5>4 J4>3 R3>7
+    L3>3 L5>6 J4>3 L3>3 L5>6 J4>3 R3>7
+for / with / if not
+    L3>3 L5>6 J4>3 L3>3 L5>6 J4>3 R3>7
+    L3>3 R5>4 J4>3 L3>3 R5>4 J4>3 R3>7
+for / with / if and
+    L3>3 R5>4 J4>3 L3>3 R5>4 J4>3 R3>7
+    L3>3 L5>5 R5>4 J4>3 L3>3 L5>5 R5>4 J4>3 R3>7
+    L3>3 L5>5 L5>6 J4>3 L3>3 L5>5 L5>6 J4>3 R3>7
+for / with / if or
+    L3>3 L5>5 R5>4 J4>3 L3>3 L5>5 R5>4 J4>3 R3>7
+    L3>3 L5>5 L5>6 J4>3 L3>3 L5>5 L5>6 J4>3 R3>7
+    L3>3 R5>6 J4>3 L3>3 R5>6 J4>3 R3>7
+for / with / if else
+    L3>3 R5>8 J4>3 L3>3 R5>8 J4>3 R3>9
+    L3>3 L5>6 J6>4 J4>3 L3>3 L5>6 J6>4 J4>3 R3>9
+for / with / if elif
+    L3>3 R5>7 R7>4 J4>3 L3>3 R5>7 R7>4 J4>3 R3>9
+    L3>3 R5>7 L7>8 J4>3 L3>3 R5>7 L7>8 J4>3 R3>9
+    L3>3 L5>6 J6>4 J4>3 L3>3 L5>6 J6>4 J4>3 R3>9
+for / with / if if
+    L3>3 R5>4 J4>3 L3>3 R5>4 J4>3 R3>8
+    L3>3 L5>6 R6>4 J4>3 L3>3 L5>6 R6>4 J4>3 R3>8
+    L3>3 L5>6 L6>7 J4>3 L3>3 L5>6 L6>7 J4>3 R3>8
+for / with / is None
+    L3>3 L5>6 J4>3 L3>3 L5>6 J4>3 R3>7
+for / with / and
+    L3>3 R5>5 J4>3 L3>3 R5>5 J4>3 R3>6
+    L3>3 L5>5 J4>3 L3>3 L5>5 J4>3 R3>6
+while True / plain / if
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>9 J9>4 R6>8 R8>9 J9>4 L6>7
+while True / plain / if not
+    R6>8 R8>9 J9>4 R6>8 R8>9 J9>4 L6>7
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+while True / plain / if and
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>8 L8>8 J8>4 R6>8 R8>8 L8>8 J8>4 L6>7
+    R6>8 R8>8 R8>9 J9>4 R6>8 R8>8 R8>9 J9>4 L6>7
+while True / plain / if or
+    R6>8 L8>8 L8>8 J8>4 R6>8 L8>8 L8>8 J8>4 L6>7
+    R6>8 L8>8 R8>9 J9>4 R6>8 L8>8 R8>9 J9>4 L6>7
+    R6>8 R8>9 J9>4 R6>8 R8>9 J9>4 L6>7
+while True / plain / if else
+    R6>8 R8>11 J11>4 R6>8 R8>11 J11>4 L6>7
+    R6>8 L8>9 J9>4 R6>8 L8>9 J9>4 L6>7
+while True / plain / if elif
+    R6>8 R8>10 L10>10 J10>4 R6>8 R8>10 L10>10 J10>4 L6>7
+    R6>8 R8>10 R10>11 J11>4 R6>8 R8>10 R10>11 J11>4 L6>7
+    R6>8 L8>9 J9>4 R6>8 L8>9 J9>4 L6>7
+while True / plain / if if
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>10 J10>4 R6>8 R8>9 R9>10 J10>4 L6>7
+while True / plain / is None
+    R6>8 R8>9 J9>4 R6>8 R8>9 J9>4 L6>7
+while True / plain / and
+    R6>8 R8>8 J8>4 R6>8 R8>8 J8>4 L6>7
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+while True / except / if
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except / if not
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+while True / except / if and
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>12 J12>4 R6>8 L10>10 L11>11 L11>12 J12>4 L6>7
+while True / except / if or
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>12 J12>4 R6>8 L10>10 L11>11 L11>12 J12>4 L6>7
+    R6>8 L10>10 R11>12 J12>4 R6>8 L10>10 R11>12 J12>4 L6>7
+while True / except / if else
+    R6>8 L10>10 R11>14 J14>4 R6>8 L10>10 R11>14 J14>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except / if elif
+    R6>8 L10>10 R11>13 R13>13 J13>4 R6>8 L10>10 R11>13 R13>13 J13>4 L6>7
+    R6>8 L10>10 R11>13 L13>14 J14>4 R6>8 L10>10 R11>13 L13>14 J14>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except / if if
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 R12>12 J12>4 R6>8 L10>10 L11>12 R12>12 J12>4 L6>7
+    R6>8 L10>10 L11>12 L12>13 J13>4 R6>8 L10>10 L11>12 L12>13 J13>4 L6>7
+while True / except / is None
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except / and
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 J11>4 R6>8 L10>10 L11>11 J11>4 L6>7
+while True / except as / if
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except as / if not
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+while True / except as / if and
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>12 J12>4 R6>8 L10>10 L11>11 L11>12 J12>4 L6>7
+while True / except as / if or
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>12 J12>4 R6>8 L10>10 L11>11 L11>12 J12>4 L6>7
+    R6>8 L10>10 R11>12 J12>4 R6>8 L10>10 R11>12 J12>4 L6>7
+while True / except as / if else
+    R6>8 L10>10 R11>14 J14>4 R6>8 L10>10 R11>14 J14>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except as / if elif
+    R6>8 L10>10 R11>13 R13>13 J13>4 R6>8 L10>10 R11>13 R13>13 J13>4 L6>7
+    R6>8 L10>10 R11>13 L13>14 J14>4 R6>8 L10>10 R11>13 L13>14 J14>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except as / if if
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 R12>12 J12>4 R6>8 L10>10 L11>12 R12>12 J12>4 L6>7
+    R6>8 L10>10 L11>12 L12>13 J13>4 R6>8 L10>10 L11>12 L12>13 J13>4 L6>7
+while True / except as / is None
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except as / and
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 J11>4 R6>8 L10>10 L11>11 J11>4 L6>7
+while True / except, and the body may go on / if
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 J13>4 R6>8 L9>10 L11>11 L12>13 J13>4 L6>7
+while True / except, and the body may go on / if not
+    R6>8 L9>10 L11>11 L12>13 J13>4 R6>8 L9>10 L11>11 L12>13 J13>4 L6>7
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+while True / except, and the body may go on / if and
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 L12>13 J13>4 R6>8 L9>10 L11>11 L12>12 L12>13 J13>4 L6>7
+while True / except, and the body may go on / if or
+    R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 L12>13 J13>4 R6>8 L9>10 L11>11 L12>12 L12>13 J13>4 L6>7
+    R6>8 L9>10 L11>11 R12>13 J13>4 R6>8 L9>10 L11>11 R12>13 J13>4 L6>7
+while True / except, and the body may go on / if else
+    R6>8 L9>10 L11>11 R12>15 J15>4 R6>8 L9>10 L11>11 R12>15 J15>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 J13>4 R6>8 L9>10 L11>11 L12>13 J13>4 L6>7
+while True / except, and the body may go on / if elif
+    R6>8 L9>10 L11>11 R12>14 R14>14 J14>4 R6>8 L9>10 L11>11 R12>14 R14>14 J14>4 L6>7
+    R6>8 L9>10 L11>11 R12>14 L14>15 J15>4 R6>8 L9>10 L11>11 R12>14 L14>15 J15>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 J13>4 R6>8 L9>10 L11>11 L12>13 J13>4 L6>7
+while True / except, and the body may go on / if if
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 R13>13 J13>4 R6>8 L9>10 L11>11 L12>13 R13>13 J13>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 L13>14 J14>4 R6>8 L9>10 L11>11 L12>13 L13>14 J14>4 L6>7
+while True / except, and the body may go on / is None
+    R6>8 L9>10 L11>11 L12>13 J13>4 R6>8 L9>10 L11>11 L12>13 J13>4 L6>7
+while True / except, and the body may go on / and
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 J12>4 R6>8 L9>10 L11>11 L12>12 J12>4 L6>7
+while True / if body / if
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>10 J10>4 R6>8 L8>9 L9>10 J10>4 L6>7
+while True / if body / if not
+    R6>8 L8>9 L9>10 J10>4 R6>8 L8>9 L9>10 J10>4 L6>7
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+while True / if body / if and
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 R9>9 J9>4 R6>8 L8>9 L9>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 L9>10 J10>4 R6>8 L8>9 L9>9 L9>10 J10>4 L6>7
+while True / if body / if or
+    R6>8 L8>9 L9>9 R9>9 J9>4 R6>8 L8>9 L9>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 L9>10 J10>4 R6>8 L8>9 L9>9 L9>10 J10>4 L6>7
+    R6>8 L8>9 R9>10 J10>4 R6>8 L8>9 R9>10 J10>4 L6>7
+while True / if body / if else
+    R6>8 L8>9 R9>12 J12>4 R6>8 L8>9 R9>12 J12>4 L6>7
+    R6>8 L8>9 L9>10 J10>4 R6>8 L8>9 L9>10 J10>4 L6>7
+while True / if body / if elif
+    R6>8 L8>9 R9>11 R11>11 J11>4 R6>8 L8>9 R9>11 R11>11 J11>4 L6>7
+    R6>8 L8>9 R9>11 L11>12 J12>4 R6>8 L8>9 R9>11 L11>12 J12>4 L6>7
+    R6>8 L8>9 L9>10 J10>4 R6>8 L8>9 L9>10 J10>4 L6>7
+while True / if body / if if
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>10 R10>10 J10>4 R6>8 L8>9 L9>10 R10>10 J10>4 L6>7
+    R6>8 L8>9 L9>10 L10>11 J11>4 R6>8 L8>9 L9>10 L10>11 J11>4 L6>7
+while True / if body / is None
+    R6>8 L8>9 L9>10 J10>4 R6>8 L8>9 L9>10 J10>4 L6>7
+while True / if body / and
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 J9>4 R6>8 L8>9 L9>9 J9>4 L6>7
+while True / else body / if
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>12 J12>4 R6>8 R8>11 R11>12 J12>4 L6>7
+while True / else body / if not
+    R6>8 R8>11 R11>12 J12>4 R6>8 R8>11 R11>12 J12>4 L6>7
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+while True / else body / if and
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>11 L11>11 J11>4 R6>8 R8>11 R11>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>11 R11>12 J12>4 R6>8 R8>11 R11>11 R11>12 J12>4 L6>7
+while True / else body / if or
+    R6>8 R8>11 L11>11 L11>11 J11>4 R6>8 R8>11 L11>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 L11>11 R11>12 J12>4 R6>8 R8>11 L11>11 R11>12 J12>4 L6>7
+    R6>8 R8>11 R11>12 J12>4 R6>8 R8>11 R11>12 J12>4 L6>7
+while True / else body / if else
+    R6>8 R8>11 R11>14 J14>4 R6>8 R8>11 R11>14 J14>4 L6>7
+    R6>8 R8>11 L11>12 J12>4 R6>8 R8>11 L11>12 J12>4 L6>7
+while True / else body / if elif
+    R6>8 R8>11 R11>13 L13>13 J13>4 R6>8 R8>11 R11>13 L13>13 J13>4 L6>7
+    R6>8 R8>11 R11>13 R13>14 J14>4 R6>8 R8>11 R11>13 R13>14 J14>4 L6>7
+    R6>8 R8>11 L11>12 J12>4 R6>8 R8>11 L11>12 J12>4 L6>7
+while True / else body / if if
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>12 L12>12 J12>4 R6>8 R8>11 R11>12 L12>12 J12>4 L6>7
+    R6>8 R8>11 R11>12 R12>13 J13>4 R6>8 R8>11 R11>12 R12>13 J13>4 L6>7
+while True / else body / is None
+    R6>8 R8>11 R11>12 J12>4 R6>8 R8>11 R11>12 J12>4 L6>7
+while True / else body / and
+    R6>8 R8>11 R11>11 J11>4 R6>8 R8>11 R11>11 J11>4 L6>7
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+while True / if only / if
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>10 J10>4 R6>8 R8>9 R9>10 J10>4 L6>7
+while True / if only / if not
+    R6>8 R8>9 R9>10 J10>4 R6>8 R8>9 R9>10 J10>4 L6>7
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+while True / if only / if and
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>9 L9>9 J9>4 R6>8 R8>9 R9>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>9 R9>10 J10>4 R6>8 R8>9 R9>9 R9>10 J10>4 L6>7
+while True / if only / if or
+    R6>8 R8>9 L9>9 L9>9 J9>4 R6>8 R8>9 L9>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 L9>9 R9>10 J10>4 R6>8 R8>9 L9>9 R9>10 J10>4 L6>7
+    R6>8 R8>9 R9>10 J10>4 R6>8 R8>9 R9>10 J10>4 L6>7
+while True / if only / if else
+    R6>8 R8>9 R9>12 J12>4 R6>8 R8>9 R9>12 J12>4 L6>7
+    R6>8 R8>9 L9>10 J10>4 R6>8 R8>9 L9>10 J10>4 L6>7
+while True / if only / if elif
+    R6>8 R8>9 R9>11 L11>11 J11>4 R6>8 R8>9 R9>11 L11>11 J11>4 L6>7
+    R6>8 R8>9 R9>11 R11>12 J12>4 R6>8 R8>9 R9>11 R11>12 J12>4 L6>7
+    R6>8 R8>9 L9>10 J10>4 R6>8 R8>9 L9>10 J10>4 L6>7
+while True / if only / if if
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>10 L10>10 J10>4 R6>8 R8>9 R9>10 L10>10 J10>4 L6>7
+    R6>8 R8>9 R9>10 R10>11 J11>4 R6>8 R8>9 R9>10 R10>11 J11>4 L6>7
+while True / if only / is None
+    R6>8 R8>9 R9>10 J10>4 R6>8 R8>9 R9>10 J10>4 L6>7
+while True / if only / and
+    R6>8 R8>9 R9>9 J9>4 R6>8 R8>9 R9>9 J9>4 L6>7
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+while True / case / if
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+while True / case / if not
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+while True / case / if and
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 R10>10 J10>4 R6>8 L9>10 L10>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 L10>11 J11>4 R6>8 L9>10 L10>10 L10>11 J11>4 L6>7
+while True / case / if or
+    R6>8 L9>10 L10>10 R10>10 J10>4 R6>8 L9>10 L10>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 L10>11 J11>4 R6>8 L9>10 L10>10 L10>11 J11>4 L6>7
+    R6>8 L9>10 R10>11 J11>4 R6>8 L9>10 R10>11 J11>4 L6>7
+while True / case / if else
+    R6>8 L9>10 R10>13 J13>4 R6>8 L9>10 R10>13 J13>4 L6>7
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+while True / case / if elif
+    R6>8 L9>10 R10>12 R12>12 J12>4 R6>8 L9>10 R10>12 R12>12 J12>4 L6>7
+    R6>8 L9>10 R10>12 L12>13 J13>4 R6>8 L9>10 R10>12 L12>13 J13>4 L6>7
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+while True / case / if if
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>11 R11>11 J11>4 R6>8 L9>10 L10>11 R11>11 J11>4 L6>7
+    R6>8 L9>10 L10>11 L11>12 J12>4 R6>8 L9>10 L10>11 L11>12 J12>4 L6>7
+while True / case / is None
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+while True / case / and
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 J10>4 R6>8 L9>10 L10>10 J10>4 L6>7
+while True / try / if
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+    R6>8 L9>10 J10>4 R6>8 L9>10 J10>4 L6>7
+while True / try / if not
+    R6>8 L9>10 J10>4 R6>8 L9>10 J10>4 L6>7
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+while True / try / if and
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+    R6>8 L9>9 R9>9 J9>4 R6>8 L9>9 R9>9 J9>4 L6>7
+    R6>8 L9>9 L9>10 J10>4 R6>8 L9>9 L9>10 J10>4 L6>7
+while True / try / if or
+    R6>8 L9>9 R9>9 J9>4 R6>8 L9>9 R9>9 J9>4 L6>7
+    R6>8 L9>9 L9>10 J10>4 R6>8 L9>9 L9>10 J10>4 L6>7
+    R6>8 R9>10 J10>4 R6>8 R9>10 J10>4 L6>7
+while True / try / if else
+    R6>8 R9>12 J12>4 R6>8 R9>12 J12>4 L6>7
+    R6>8 L9>10 J10>4 R6>8 L9>10 J10>4 L6>7
+while True / try / if elif
+    R6>8 R9>11 R11>11 J11>4 R6>8 R9>11 R11>11 J11>4 L6>7
+    R6>8 R9>11 L11>12 J12>4 R6>8 R9>11 L11>12 J12>4 L6>7
+    R6>8 L9>10 J10>4 R6>8 L9>10 J10>4 L6>7
+while True / try / if if
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+while True / try / is None
+    R6>8 L9>10 J10>4 R6>8 L9>10 J10>4 L6>7
+while True / try / and
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+    R6>8 L9>9 J9>4 R6>8 L9>9 J9>4 L6>7
+while True / try else / if
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+    R6>8 L13>14 J14>4 R6>8 L13>14 J14>4 L6>7
+while True / try else / if not
+    R6>8 L13>14 J14>4 R6>8 L13>14 J14>4 L6>7
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+while True / try else / if and
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+    R6>8 L13>13 R13>13 J13>4 R6>8 L13>13 R13>13 J13>4 L6>7
+    R6>8 L13>13 L13>14 J14>4 R6>8 L13>13 L13>14 J14>4 L6>7
+while True / try else / if or
+    R6>8 L13>13 R13>13 J13>4 R6>8 L13>13 R13>13 J13>4 L6>7
+    R6>8 L13>13 L13>14 J14>4 R6>8 L13>13 L13>14 J14>4 L6>7
+    R6>8 R13>14 J14>4 R6>8 R13>14 J14>4 L6>7
+while True / try else / if else
+    R6>8 R13>16 J16>4 R6>8 R13>16 J16>4 L6>7
+    R6>8 L13>14 J14>4 R6>8 L13>14 J14>4 L6>7
+while True / try else / if elif
+    R6>8 R13>15 R15>15 J15>4 R6>8 R13>15 R15>15 J15>4 L6>7
+    R6>8 R13>15 L15>16 J16>4 R6>8 R13>15 L15>16 J16>4 L6>7
+    R6>8 L13>14 J14>4 R6>8 L13>14 J14>4 L6>7
+while True / try else / if if
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+    R6>8 L13>14 R14>14 J14>4 R6>8 L13>14 R14>14 J14>4 L6>7
+    R6>8 L13>14 L14>15 J15>4 R6>8 L13>14 L14>15 J15>4 L6>7
+while True / try else / is None
+    R6>8 L13>14 J14>4 R6>8 L13>14 J14>4 L6>7
+while True / try else / and
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+    R6>8 L13>13 J13>4 R6>8 L13>13 J13>4 L6>7
+while True / finally / if
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+    R6>8 L11>12 J12>4 R6>8 L11>12 J12>4 L6>7
+while True / finally / if not
+    R6>8 L11>12 J12>4 R6>8 L11>12 J12>4 L6>7
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+while True / finally / if and
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+    R6>8 L11>11 R11>11 J11>4 R6>8 L11>11 R11>11 J11>4 L6>7
+    R6>8 L11>11 L11>12 J12>4 R6>8 L11>11 L11>12 J12>4 L6>7
+while True / finally / if or
+    R6>8 L11>11 R11>11 J11>4 R6>8 L11>11 R11>11 J11>4 L6>7
+    R6>8 L11>11 L11>12 J12>4 R6>8 L11>11 L11>12 J12>4 L6>7
+    R6>8 R11>12 J12>4 R6>8 R11>12 J12>4 L6>7
+while True / finally / if else
+    R6>8 R11>14 J14>4 R6>8 R11>14 J14>4 L6>7
+    R6>8 L11>12 J12>4 R6>8 L11>12 J12>4 L6>7
+while True / finally / if elif
+    R6>8 R11>13 R13>13 J13>4 R6>8 R11>13 R13>13 J13>4 L6>7
+    R6>8 R11>13 L13>14 J14>4 R6>8 R11>13 L13>14 J14>4 L6>7
+    R6>8 L11>12 J12>4 R6>8 L11>12 J12>4 L6>7
+while True / finally / if if
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+    R6>8 L11>12 R12>12 J12>4 R6>8 L11>12 R12>12 J12>4 L6>7
+    R6>8 L11>12 L12>13 J13>4 R6>8 L11>12 L12>13 J13>4 L6>7
+while True / finally / is None
+    R6>8 L11>12 J12>4 R6>8 L11>12 J12>4 L6>7
+while True / finally / and
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+    R6>8 L11>11 J11>4 R6>8 L11>11 J11>4 L6>7
+while True / try finally / if
+    R6>8 R9>12 J12>4 R6>8 R9>12 J12>4 L6>7
+    R6>8 L9>10 J12>4 R6>8 L9>10 J12>4 L6>7
+while True / try finally / if not
+    R6>8 L9>10 J12>4 R6>8 L9>10 J12>4 L6>7
+    R6>8 R9>12 J12>4 R6>8 R9>12 J12>4 L6>7
+while True / try finally / if and
+    R6>8 R9>12 J12>4 R6>8 R9>12 J12>4 L6>7
+    R6>8 L9>9 R9>12 J12>4 R6>8 L9>9 R9>12 J12>4 L6>7
+    R6>8 L9>9 L9>10 J12>4 R6>8 L9>9 L9>10 J12>4 L6>7
+while True / try finally / if or
+    R6>8 L9>9 R9>12 J12>4 R6>8 L9>9 R9>12 J12>4 L6>7
+    R6>8 L9>9 L9>10 J12>4 R6>8 L9>9 L9>10 J12>4 L6>7
+    R6>8 R9>10 J12>4 R6>8 R9>10 J12>4 L6>7
+while True / try finally / if else
+    R6>8 R9>12 J14>4 R6>8 R9>12 J14>4 L6>7
+    R6>8 L9>10 J10>14 J14>4 R6>8 L9>10 J10>14 J14>4 L6>7
+while True / try finally / if elif
+    R6>8 R9>11 R11>14 J14>4 R6>8 R9>11 R11>14 J14>4 L6>7
+    R6>8 R9>11 L11>12 J14>4 R6>8 R9>11 L11>12 J14>4 L6>7
+    R6>8 L9>10 J10>14 J14>4 R6>8 L9>10 J10>14 J14>4 L6>7
+while True / try finally / if if
+    R6>8 R9>13 J13>4 R6>8 R9>13 J13>4 L6>7
+    R6>8 L9>10 R10>13 J13>4 R6>8 L9>10 R10>13 J13>4 L6>7
+    R6>8 L9>10 L10>11 J13>4 R6>8 L9>10 L10>11 J13>4 L6>7
+while True / try finally / is None
+    R6>8 L9>10 J12>4 R6>8 L9>10 J12>4 L6>7
+while True / try finally / and
+    R6>8 R9>9 J11>4 R6>8 R9>9 J11>4 L6>7
+    R6>8 L9>9 J11>4 R6>8 L9>9 J11>4 L6>7
+while True / with / if
+    R6>8 R9>8 J8>4 R6>8 R9>8 J8>4 L6>7
+    R6>8 L9>10 J8>4 R6>8 L9>10 J8>4 L6>7
+while True / with / if not
+    R6>8 L9>10 J8>4 R6>8 L9>10 J8>4 L6>7
+    R6>8 R9>8 J8>4 R6>8 R9>8 J8>4 L6>7
+while True / with / if and
+    R6>8 R9>8 J8>4 R6>8 R9>8 J8>4 L6>7
+    R6>8 L9>9 R9>8 J8>4 R6>8 L9>9 R9>8 J8>4 L6>7
+    R6>8 L9>9 L9>10 J8>4 R6>8 L9>9 L9>10 J8>4 L6>7
+while True / with / if or
+    R6>8 L9>9 R9>8 J8>4 R6>8 L9>9 R9>8 J8>4 L6>7
+    R6>8 L9>9 L9>10 J8>4 R6>8 L9>9 L9>10 J8>4 L6>7
+    R6>8 R9>10 J8>4 R6>8 R9>10 J8>4 L6>7
+while True / with / if else
+    R6>8 R9>12 J8>4 R6>8 R9>12 J8>4 L6>7
+    R6>8 L9>10 J10>8 J8>4 R6>8 L9>10 J10>8 J8>4 L6>7
+while True / with / if elif
+    R6>8 R9>11 R11>8 J8>4 R6>8 R9>11 R11>8 J8>4 L6>7
+    R6>8 R9>11 L11>12 J8>4 R6>8 R9>11 L11>12 J8>4 L6>7
+    R6>8 L9>10 J10>8 J8>4 R6>8 L9>10 J10>8 J8>4 L6>7
+while True / with / if if
+    R6>8 R9>8 J8>4 R6>8 R9>8 J8>4 L6>7
+    R6>8 L9>10 R10>8 J8>4 R6>8 L9>10 R10>8 J8>4 L6>7
+    R6>8 L9>10 L10>11 J8>4 R6>8 L9>10 L10>11 J8>4 L6>7
+while True / with / is None
+    R6>8 L9>10 J8>4 R6>8 L9>10 J8>4 L6>7
+while True / with / and
+    R6>8 R9>9 J8>4 R6>8 R9>9 J8>4 L6>7
+    R6>8 L9>9 J8>4 R6>8 L9>9 J8>4 L6>7
+end / plain / if
+    R3>3
+    L3>4
+end / plain / if not
+    L3>4
+    R3>3
+end / plain / if and
+    R3>3
+    L3>3 R3>3
+    L3>3 L3>4
+end / plain / if or
+    L3>3 R3>3
+    L3>3 L3>4
+    R3>4
+end / plain / if else
+    R3>6
+    L3>4
+end / plain / if elif
+    R3>5 R5>5
+    R3>5 L5>6
+    L3>4
+end / plain / if if
+    R3>3
+    L3>4 R4>4
+    L3>4 L4>5
+end / plain / is None
+    L3>4
+end / plain / and
+    R3>3
+    L3>3
+end / except / if
+    L5>5 R6>6
+    L5>5 L6>7
+end / except / if not
+    L5>5 L6>7
+    L5>5 R6>6
+end / except / if and
+    L5>5 R6>6
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>7
+end / except / if or
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>7
+    L5>5 R6>7
+end / except / if else
+    L5>5 R6>9
+    L5>5 L6>7
+end / except / if elif
+    L5>5 R6>8 R8>8
+    L5>5 R6>8 L8>9
+    L5>5 L6>7
+end / except / if if
+    L5>5 R6>6
+    L5>5 L6>7 R7>7
+    L5>5 L6>7 L7>8
+end / except / is None
+    L5>5 L6>7
+end / except / and
+    L5>5 R6>6
+    L5>5 L6>6
+end / except as / if
+    L5>5 R6>6
+    L5>5 L6>7
+end / except as / if not
+    L5>5 L6>7
+    L5>5 R6>6
+end / except as / if and
+    L5>5 R6>6
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>7
+end / except as / if or
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>7
+    L5>5 R6>7
+end / except as / if else
+    L5>5 R6>9
+    L5>5 L6>7
+end / except as / if elif
+    L5>5 R6>8 R8>8
+    L5>5 R6>8 L8>9
+    L5>5 L6>7
+end / except as / if if
+    L5>5 R6>6
+    L5>5 L6>7 R7>7
+    L5>5 L6>7 L7>8
+end / except as / is None
+    L5>5 L6>7
+end / except as / and
+    L5>5 R6>6
+    L5>5 L6>6
+end / except, and the body may go on / if
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>8
+end / except, and the body may go on / if not
+    L4>5 L6>6 L7>8
+    L4>5 L6>6 R7>7
+end / except, and the body may go on / if and
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>7 R7>7
+    L4>5 L6>6 L7>7 L7>8
+end / except, and the body may go on / if or
+    L4>5 L6>6 L7>7 R7>7
+    L4>5 L6>6 L7>7 L7>8
+    L4>5 L6>6 R7>8
+end / except, and the body may go on / if else
+    L4>5 L6>6 R7>10
+    L4>5 L6>6 L7>8
+end / except, and the body may go on / if elif
+    L4>5 L6>6 R7>9 R9>9
+    L4>5 L6>6 R7>9 L9>10
+    L4>5 L6>6 L7>8
+end / except, and the body may go on / if if
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>8 R8>8
+    L4>5 L6>6 L7>8 L8>9
+end / except, and the body may go on / is None
+    L4>5 L6>6 L7>8
+end / except, and the body may go on / and
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>7
+end / if body / if
+    L3>4 R4>4
+    L3>4 L4>5
+end / if body / if not
+    L3>4 L4>5
+    L3>4 R4>4
+end / if body / if and
+    L3>4 R4>4
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>5
+end / if body / if or
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>5
+    L3>4 R4>5
+end / if body / if else
+    L3>4 R4>7
+    L3>4 L4>5
+end / if body / if elif
+    L3>4 R4>6 R6>6
+    L3>4 R4>6 L6>7
+    L3>4 L4>5
+end / if body / if if
+    L3>4 R4>4
+    L3>4 L4>5 R5>5
+    L3>4 L4>5 L5>6
+end / if body / is None
+    L3>4 L4>5
+end / if body / and
+    L3>4 R4>4
+    L3>4 L4>4
+end / else body / if
+    R3>6 R6>6
+    R3>6 L6>7
+end / else body / if not
+    R3>6 L6>7
+    R3>6 R6>6
+end / else body / if and
+    R3>6 R6>6
+    R3>6 L6>6 R6>6
+    R3>6 L6>6 L6>7
+end / else body / if or
+    R3>6 L6>6 R6>6
+    R3>6 L6>6 L6>7
+    R3>6 R6>7
+end / else body / if else
+    R3>6 R6>9
+    R3>6 L6>7
+end / else body / if elif
+    R3>6 R6>8 R8>8
+    R3>6 R6>8 L8>9
+    R3>6 L6>7
+end / else body / if if
+    R3>6 R6>6
+    R3>6 L6>7 R7>7
+    R3>6 L6>7 L7>8
+end / else body / is None
+    R3>6 L6>7
+end / else body / and
+    R3>6 R6>6
+    R3>6 L6>6
+end / if only / if
+    L3>4 R4>4
+    L3>4 L4>5
+end / if only / if not
+    L3>4 L4>5
+    L3>4 R4>4
+end / if only / if and
+    L3>4 R4>4
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>5
+end / if only / if or
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>5
+    L3>4 R4>5
+end / if only / if else
+    L3>4 R4>7
+    L3>4 L4>5
+end / if only / if elif
+    L3>4 R4>6 R6>6
+    L3>4 R4>6 L6>7
+    L3>4 L4>5
+end / if only / if if
+    L3>4 R4>4
+    L3>4 L4>5 R5>5
+    L3>4 L4>5 L5>6
+end / if only / is None
+    L3>4 L4>5
+end / if only / and
+    L3>4 R4>4
+    L3>4 L4>4
+end / case / if
+    L4>5 R5>5
+    L4>5 L5>6
+end / case / if not
+    L4>5 L5>6
+    L4>5 R5>5
+end / case / if and
+    L4>5 R5>5
+    L4>5 L5>5 R5>5
+    L4>5 L5>5 L5>6
+end / case / if or
+    L4>5 L5>5 R5>5
+    L4>5 L5>5 L5>6
+    L4>5 R5>6
+end / case / if else
+    L4>5 R5>8
+    L4>5 L5>6
+end / case / if elif
+    L4>5 R5>7 R7>7
+    L4>5 R5>7 L7>8
+    L4>5 L5>6
+end / case / if if
+    L4>5 R5>5
+    L4>5 L5>6 R6>6
+    L4>5 L5>6 L6>7
+end / case / is None
+    L4>5 L5>6
+end / case / and
+    L4>5 R5>5
+    L4>5 L5>5
+end / try / if
+    R4>4
+    L4>5
+end / try / if not
+    L4>5
+    R4>4
+end / try / if and
+    R4>4
+    L4>4 R4>4
+    L4>4 L4>5
+end / try / if or
+    L4>4 R4>4
+    L4>4 L4>5
+    R4>5
+end / try / if else
+    R4>7
+    L4>5
+end / try / if elif
+    R4>6 R6>6
+    R4>6 L6>7
+    L4>5
+end / try / if if
+    R4>4
+    L4>5 R5>5
+    L4>5 L5>6
+end / try / is None
+    L4>5
+end / try / and
+    R4>4
+    L4>4
+end / try else / if
+    R8>8
+    L8>9
+end / try else / if not
+    L8>9
+    R8>8
+end / try else / if and
+    R8>8
+    L8>8 R8>8
+    L8>8 L8>9
+end / try else / if or
+    L8>8 R8>8
+    L8>8 L8>9
+    R8>9
+end / try else / if else
+    R8>11
+    L8>9
+end / try else / if elif
+    R8>10 R10>10
+    R8>10 L10>11
+    L8>9
+end / try else / if if
+    R8>8
+    L8>9 R9>9
+    L8>9 L9>10
+end / try else / is None
+    L8>9
+end / try else / and
+    R8>8
+    L8>8
+end / finally / if
+    R6>6
+    L6>7
+end / finally / if not
+    L6>7
+    R6>6
+end / finally / if and
+    R6>6
+    L6>6 R6>6
+    L6>6 L6>7
+end / finally / if or
+    L6>6 R6>6
+    L6>6 L6>7
+    R6>7
+end / finally / if else
+    R6>9
+    L6>7
+end / finally / if elif
+    R6>8 R8>8
+    R6>8 L8>9
+    L6>7
+end / finally / if if
+    R6>6
+    L6>7 R7>7
+    L6>7 L7>8
+end / finally / is None
+    L6>7
+end / finally / and
+    R6>6
+    L6>6
+end / try finally / if
+    R4>7
+    L4>5
+end / try finally / if not
+    L4>5
+    R4>7
+end / try finally / if and
+    R4>7
+    L4>4 R4>7
+    L4>4 L4>5
+end / try finally / if or
+    L4>4 R4>7
+    L4>4 L4>5
+    R4>5
+end / try finally / if else
+    R4>7
+    L4>5 J5>9
+end / try finally / if elif
+    R4>6 R6>9
+    R4>6 L6>7
+    L4>5 J5>9
+end / try finally / if if
+    R4>8
+    L4>5 R5>8
+    L4>5 L5>6
+end / try finally / is None
+    L4>5
+end / try finally / and
+    R4>4
+    L4>4
+end / with / if
+    R4>3
+    L4>5
+end / with / if not
+    L4>5
+    R4>3
+end / with / if and
+    R4>3
+    L4>4 R4>3
+    L4>4 L4>5
+end / with / if or
+    L4>4 R4>3
+    L4>4 L4>5
+    R4>5
+end / with / if else
+    R4>7
+    L4>5 J5>3
+end / with / if elif
+    R4>6 R6>3
+    R4>6 L6>7
+    L4>5 J5>3
+end / with / if if
+    R4>3
+    L4>5 R5>3
+    L4>5 L5>6
+end / with / is None
+    L4>5
+end / with / and
+    R4>4
+    L4>4
+then / plain / if
+    R3>5
+    L3>4
+then / plain / if not
+    L3>4
+    R3>5
+then / plain / if and
+    R3>5
+    L3>3 R3>5
+    L3>3 L3>4
+then / plain / if or
+    L3>3 R3>5
+    L3>3 L3>4
+    R3>4
+then / plain / if else
+    R3>6
+    L3>4 J4>7
+then / plain / if elif
+    R3>5 R5>7
+    R3>5 L5>6
+    L3>4 J4>7
+then / plain / if if
+    R3>6
+    L3>4 R4>6
+    L3>4 L4>5
+then / plain / is None
+    L3>4
+then / plain / and
+    R3>3
+    L3>3
+then / except / if
+    L5>5 R6>None JNone>8
+    L5>5 L6>7 JNone>8
+then / except / if not
+    L5>5 L6>7 JNone>8
+    L5>5 R6>None JNone>8
+then / except / if and
+    L5>5 R6>None JNone>8
+    L5>5 L6>6 R6>None JNone>8
+    L5>5 L6>6 L6>7 JNone>8
+then / except / if or
+    L5>5 L6>6 R6>None JNone>8
+    L5>5 L6>6 L6>7 JNone>8
+    L5>5 R6>7 JNone>8
+then / except / if else
+    L5>5 R6>9 J9>10
+    L5>5 L6>7 J7>10
+then / except / if elif
+    L5>5 R6>8 R8>None JNone>10
+    L5>5 R6>8 L8>9 JNone>10
+    L5>5 L6>7 J7>10
+then / except / if if
+    L5>5 R6>None JNone>9
+    L5>5 L6>7 R7>None JNone>9
+    L5>5 L6>7 L7>8 JNone>9
+then / except / is None
+    L5>5 L6>7 JNone>8
+then / except / and
+    L5>5 R6>6 J6>7
+    L5>5 L6>6 J6>7
+then / except as / if
+    L5>5 R6>None JNone>8
+    L5>5 L6>7 JNone>8
+then / except as / if not
+    L5>5 L6>7 JNone>8
+    L5>5 R6>None JNone>8
+then / except as / if and
+    L5>5 R6>None JNone>8
+    L5>5 L6>6 R6>None JNone>8
+    L5>5 L6>6 L6>7 JNone>8
+then / except as / if or
+    L5>5 L6>6 R6>None JNone>8
+    L5>5 L6>6 L6>7 JNone>8
+    L5>5 R6>7 JNone>8
+then / except as / if else
+    L5>5 R6>9 J9>10
+    L5>5 L6>7 J7>10
+then / except as / if elif
+    L5>5 R6>8 R8>None JNone>10
+    L5>5 R6>8 L8>9 JNone>10
+    L5>5 L6>7 J7>10
+then / except as / if if
+    L5>5 R6>None JNone>9
+    L5>5 L6>7 R7>None JNone>9
+    L5>5 L6>7 L7>8 JNone>9
+then / except as / is None
+    L5>5 L6>7 JNone>8
+then / except as / and
+    L5>5 R6>6 J6>7
+    L5>5 L6>6 J6>7
+then / except, and the body may go on / if
+    L4>5 L6>6 R7>None
+    L4>5 L6>6 L7>8
+then / except, and the body may go on / if not
+    L4>5 L6>6 L7>8
+    L4>5 L6>6 R7>None
+then / except, and the body may go on / if and
+    L4>5 L6>6 R7>None
+    L4>5 L6>6 L7>7 R7>None
+    L4>5 L6>6 L7>7 L7>8
+then / except, and the body may go on / if or
+    L4>5 L6>6 L7>7 R7>None
+    L4>5 L6>6 L7>7 L7>8
+    L4>5 L6>6 R7>8
+then / except, and the body may go on / if else
+    L4>5 L6>6 R7>10
+    L4>5 L6>6 L7>8
+then / except, and the body may go on / if elif
+    L4>5 L6>6 R7>9 R9>None
+    L4>5 L6>6 R7>9 L9>10
+    L4>5 L6>6 L7>8
+then / except, and the body may go on / if if
+    L4>5 L6>6 R7>None
+    L4>5 L6>6 L7>8 R8>None
+    L4>5 L6>6 L7>8 L8>9
+then / except, and the body may go on / is None
+    L4>5 L6>6 L7>8
+then / except, and the body may go on / and
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>7
+then / if body / if
+    L3>4 R4>None JNone>8
+    L3>4 L4>5 JNone>8
+then / if body / if not
+    L3>4 L4>5 JNone>8
+    L3>4 R4>None JNone>8
+then / if body / if and
+    L3>4 R4>None JNone>8
+    L3>4 L4>4 R4>None JNone>8
+    L3>4 L4>4 L4>5 JNone>8
+then / if body / if or
+    L3>4 L4>4 R4>None JNone>8
+    L3>4 L4>4 L4>5 JNone>8
+    L3>4 R4>5 JNone>8
+then / if body / if else
+    L3>4 R4>7 J7>10
+    L3>4 L4>5 J5>10
+then / if body / if elif
+    L3>4 R4>6 R6>None JNone>10
+    L3>4 R4>6 L6>7 JNone>10
+    L3>4 L4>5 J5>10
+then / if body / if if
+    L3>4 R4>None JNone>9
+    L3>4 L4>5 R5>None JNone>9
+    L3>4 L4>5 L5>6 JNone>9
+then / if body / is None
+    L3>4 L4>5 JNone>8
+then / if body / and
+    L3>4 R4>4 J4>7
+    L3>4 L4>4 J4>7
+then / else body / if
+    R3>6 R6>8
+    R3>6 L6>7
+then / else body / if not
+    R3>6 L6>7
+    R3>6 R6>8
+then / else body / if and
+    R3>6 R6>8
+    R3>6 L6>6 R6>8
+    R3>6 L6>6 L6>7
+then / else body / if or
+    R3>6 L6>6 R6>8
+    R3>6 L6>6 L6>7
+    R3>6 R6>7
+then / else body / if else
+    R3>6 R6>9
+    R3>6 L6>7 J7>10
+then / else body / if elif
+    R3>6 R6>8 R8>10
+    R3>6 R6>8 L8>9
+    R3>6 L6>7 J7>10
+then / else body / if if
+    R3>6 R6>9
+    R3>6 L6>7 R7>9
+    R3>6 L6>7 L7>8
+then / else body / is None
+    R3>6 L6>7
+then / else body / and
+    R3>6 R6>6
+    R3>6 L6>6
+then / if only / if
+    L3>4 R4>6
+    L3>4 L4>5
+then / if only / if not
+    L3>4 L4>5
+    L3>4 R4>6
+then / if only / if and
+    L3>4 R4>6
+    L3>4 L4>4 R4>6
+    L3>4 L4>4 L4>5
+then / if only / if or
+    L3>4 L4>4 R4>6
+    L3>4 L4>4 L4>5
+    L3>4 R4>5
+then / if only / if else
+    L3>4 R4>7
+    L3>4 L4>5 J5>8
+then / if only / if elif
+    L3>4 R4>6 R6>8
+    L3>4 R4>6 L6>7
+    L3>4 L4>5 J5>8
+then / if only / if if
+    L3>4 R4>7
+    L3>4 L4>5 R5>7
+    L3>4 L4>5 L5>6
+then / if only / is None
+    L3>4 L4>5
+then / if only / and
+    L3>4 R4>4
+    L3>4 L4>4
+then / case / if
+    L4>5 R5>9
+    L4>5 L5>6 J6>9
+then / case / if not
+    L4>5 L5>6 J6>9
+    L4>5 R5>9
+then / case / if and
+    L4>5 R5>9
+    L4>5 L5>5 R5>9
+    L4>5 L5>5 L5>6 J6>9
+then / case / if or
+    L4>5 L5>5 R5>9
+    L4>5 L5>5 L5>6 J6>9
+    L4>5 R5>6 J6>9
+then / case / if else
+    L4>5 R5>8 J8>11
+    L4>5 L5>6 J6>11
+then / case / if elif
+    L4>5 R5>7 R7>11
+    L4>5 R5>7 L7>8 J8>11
+    L4>5 L5>6 J6>11
+then / case / if if
+    L4>5 R5>10
+    L4>5 L5>6 R6>10
+    L4>5 L5>6 L6>7 J7>10
+then / case / is None
+    L4>5 L5>6 J6>9
+then / case / and
+    L4>5 R5>5 J5>8
+    L4>5 L5>5 J5>8
+then / try / if
+    R4>8
+    L4>5
+then / try / if not
+    L4>5
+    R4>8
+then / try / if and
+    R4>8
+    L4>4 R4>8
+    L4>4 L4>5
+then / try / if or
+    L4>4 R4>8
+    L4>4 L4>5
+    R4>5
+then / try / if else
+    R4>7
+    L4>5 J5>10
+then / try / if elif
+    R4>6 R6>10
+    R4>6 L6>7
+    L4>5 J5>10
+then / try / if if
+    R4>9
+    L4>5 R5>9
+    L4>5 L5>6
+then / try / is None
+    L4>5
+then / try / and
+    R4>4
+    L4>4
+then / try else / if
+    R8>10
+    L8>9
+then / try else / if not
+    L8>9
+    R8>10
+then / try else / if and
+    R8>10
+    L8>8 R8>10
+    L8>8 L8>9
+then / try else / if or
+    L8>8 R8>10
+    L8>8 L8>9
+    R8>9
+then / try else / if else
+    R8>11
+    L8>9 J9>12
+then / try else / if elif
+    R8>10 R10>12
+    R8>10 L10>11
+    L8>9 J9>12
+then / try else / if if
+    R8>11
+    L8>9 R9>11
+    L8>9 L9>10
+then / try else / is None
+    L8>9
+then / try else / and
+    R8>8
+    L8>8
+then / finally / if
+    R6>8
+    L6>7
+then / finally / if not
+    L6>7
+    R6>8
+then / finally / if and
+    R6>8
+    L6>6 R6>8
+    L6>6 L6>7
+then / finally / if or
+    L6>6 R6>8
+    L6>6 L6>7
+    R6>7
+then / finally / if else
+    R6>9
+    L6>7 J7>10
+then / finally / if elif
+    R6>8 R8>10
+    R6>8 L8>9
+    L6>7 J7>10
+then / finally / if if
+    R6>9
+    L6>7 R7>9
+    L6>7 L7>8
+then / finally / is None
+    L6>7
+then / finally / and
+    R6>6
+    L6>6
+then / try finally / if
+    R4>7
+    L4>5
+then / try finally / if not
+    L4>5
+    R4>7
+then / try finally / if and
+    R4>7
+    L4>4 R4>7
+    L4>4 L4>5
+then / try finally / if or
+    L4>4 R4>7
+    L4>4 L4>5
+    R4>5
+then / try finally / if else
+    R4>7
+    L4>5 J5>9
+then / try finally / if elif
+    R4>6 R6>9
+    R4>6 L6>7
+    L4>5 J5>9
+then / try finally / if if
+    R4>8
+    L4>5 R5>8
+    L4>5 L5>6
+then / try finally / is None
+    L4>5
+then / try finally / and
+    R4>4
+    L4>4
+then / with / if
+    R4>3
+    L4>5
+then / with / if not
+    L4>5
+    R4>3
+then / with / if and
+    R4>3
+    L4>4 R4>3
+    L4>4 L4>5
+then / with / if or
+    L4>4 R4>3
+    L4>4 L4>5
+    R4>5
+then / with / if else
+    R4>7
+    L4>5 J5>3
+then / with / if elif
+    R4>6 R6>3
+    R4>6 L6>7
+    L4>5 J5>3
+then / with / if if
+    R4>3
+    L4>5 R5>3
+    L4>5 L5>6
+then / with / is None
+    L4>5
+then / with / and
+    R4>4
+    L4>4
+for / plain / assert
+    L3>3 R4>4 R4>4 AssertionError
+    L3>3 R4>4 L4>4 J4>3 L3>3 R4>4 L4>4 J4>3 R3>5
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>5
+for / plain / if raise
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+    L3>3 R4>4 L4>4 J4>3 L3>3 R4>4 L4>4 J4>3 R3>6
+    L3>3 R4>4 R4>5 KeyError
+for / plain / for
+    L3>3 L4>4 J5>4 R4>4 J4>3 L3>3 L4>4 J5>4 R4>4 J4>3 R3>6
+for / except / assert
+    L3>3 L6>6 L7>7 L7>7 AssertionError
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>8
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>8
+for / except / if raise
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 L7>8 KeyError
+for / except / for
+    L3>3 L6>6 L7>7 J8>7 R7>7 J7>3 L3>3 L6>6 L7>7 J8>7 R7>7 J7>3 R3>9
+for / except as / assert
+    L3>3 L6>6 L7>7 L7>7 AssertionError
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>8
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>8
+for / except as / if raise
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>7 L7>8 KeyError
+for / except as / for
+    L3>3 L6>6 L7>7 J8>7 R7>7 J7>3 L3>3 L6>6 L7>7 J8>7 R7>7 J7>3 R3>9
+for / except, and the body may go on / assert
+    L3>3 L5>6 L7>7 L8>8 L8>8 AssertionError
+    L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 R3>9
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>9
+for / except, and the body may go on / if raise
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>8 L8>9 KeyError
+for / except, and the body may go on / for
+    L3>3 L5>6 L7>7 L8>8 J9>8 R8>8 J8>3 L3>3 L5>6 L7>7 L8>8 J9>8 R8>8 J8>3 R3>10
+for / if body / assert
+    L3>3 L4>5 L5>5 L5>5 AssertionError
+    L3>3 L4>5 L5>5 R5>5 J5>3 L3>3 L4>5 L5>5 R5>5 J5>3 R3>8
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>8
+for / if body / if raise
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>5 R5>5 J5>3 L3>3 L4>5 L5>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>5 L5>6 KeyError
+for / if body / for
+    L3>3 L4>5 L5>5 J6>5 R5>5 J5>3 L3>3 L4>5 L5>5 J6>5 R5>5 J5>3 R3>9
+for / else body / assert
+    L3>3 R4>7 R7>7 R7>7 AssertionError
+    L3>3 R4>7 R7>7 L7>7 J7>3 L3>3 R4>7 R7>7 L7>7 J7>3 R3>8
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>8
+for / else body / if raise
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>7 L7>7 J7>3 L3>3 R4>7 R7>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>7 R7>8 KeyError
+for / else body / for
+    L3>3 R4>7 L7>7 J8>7 R7>7 J7>3 L3>3 R4>7 L7>7 J8>7 R7>7 J7>3 R3>9
+for / if only / assert
+    L3>3 R4>5 R5>5 R5>5 AssertionError
+    L3>3 R4>5 R5>5 L5>5 J5>3 L3>3 R4>5 R5>5 L5>5 J5>3 R3>6
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>6
+for / if only / if raise
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>5 L5>5 J5>3 L3>3 R4>5 R5>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>5 R5>6 KeyError
+for / if only / for
+    L3>3 R4>5 L5>5 J6>5 R5>5 J5>3 L3>3 R4>5 L5>5 J6>5 R5>5 J5>3 R3>7
+for / case / assert
+    L3>3 L5>6 L6>6 L6>6 AssertionError
+    L3>3 L5>6 L6>6 R6>6 J6>3 L3>3 L5>6 L6>6 R6>6 J6>3 R3>9
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>9
+for / case / if raise
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>6 R6>6 J6>3 L3>3 L5>6 L6>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>6 L6>7 KeyError
+for / case / for
+    L3>3 L5>6 L6>6 J7>6 R6>6 J6>3 L3>3 L5>6 L6>6 J7>6 R6>6 J6>3 R3>10
+for / try / assert
+    L3>3 L5>5 L5>5 R6>6 AssertionError
+    L3>3 L5>5 R5>5 J5>3 L3>3 L5>5 R5>5 J5>3 R3>8
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>8
+for / try / if raise
+    L3>3 R5>5 J5>3 L3>3 R5>5 J5>3 R3>9
+    L3>3 L5>5 R5>5 J5>3 L3>3 L5>5 R5>5 J5>3 R3>9
+    L3>3 L5>5 L5>6 L7>7 J8>3 L3>3 L5>5 L5>6 L7>7 J8>3 R3>9
+for / try / for
+    L3>3 L5>5 J6>5 R5>5 J5>3 L3>3 L5>5 J6>5 R5>5 J5>3 R3>9
+for / try else / assert
+    L3>3 L9>9 L9>9 AssertionError
+    L3>3 L9>9 R9>9 J9>3 L3>3 L9>9 R9>9 J9>3 R3>10
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>10
+for / try else / if raise
+    L3>3 R9>9 J9>3 L3>3 R9>9 J9>3 R3>11
+    L3>3 L9>9 R9>9 J9>3 L3>3 L9>9 R9>9 J9>3 R3>11
+    L3>3 L9>9 L9>10 KeyError
+for / try else / for
+    L3>3 L9>9 J10>9 R9>9 J9>3 L3>3 L9>9 J10>9 R9>9 J9>3 R3>11
+for / finally / assert
+    L3>3 L7>7 L7>7 AssertionError
+    L3>3 L7>7 R7>7 J7>3 L3>3 L7>7 R7>7 J7>3 R3>8
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>8
+for / finally / if raise
+    L3>3 R7>7 J7>3 L3>3 R7>7 J7>3 R3>9
+    L3>3 L7>7 R7>7 J7>3 L3>3 L7>7 R7>7 J7>3 R3>9
+    L3>3 L7>7 L7>8 KeyError
+for / finally / for
+    L3>3 L7>7 J8>7 R7>7 J7>3 L3>3 L7>7 J8>7 R7>7 J7>3 R3>9
+for / try finally / assert
+    L3>3 L5>5 L5>5 AssertionError
+    L3>3 L5>5 R5>7 J7>3 L3>3 L5>5 R5>7 J7>3 R3>8
+    L3>3 R5>7 J7>3 L3>3 R5>7 J7>3 R3>8
+for / try finally / if raise
+    L3>3 R5>8 J8>3 L3>3 R5>8 J8>3 R3>9
+    L3>3 L5>5 R5>8 J8>3 L3>3 L5>5 R5>8 J8>3 R3>9
+    L3>3 L5>5 L5>6 KeyError
+for / try finally / for
+    L3>3 L5>5 J6>5 R5>8 J8>3 L3>3 L5>5 J6>5 R5>8 J8>3 R3>9
+while True / plain / assert
+    R6>8 R8>8 R8>8 AssertionError
+    R6>8 R8>8 L8>8 J8>4 R6>8 R8>8 L8>8 J8>4 L6>7
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+while True / plain / if raise
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>8 L8>8 J8>4 R6>8 R8>8 L8>8 J8>4 L6>7
+    R6>8 R8>8 R8>9 KeyError
+while True / plain / for
+    R6>8 L8>8 J9>8 R8>8 J8>4 R6>8 L8>8 J9>8 R8>8 J8>4 L6>7
+while True / except / assert
+    R6>8 L10>10 L11>11 L11>11 AssertionError
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+while True / except / if raise
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>12 KeyError
+while True / except / for
+    R6>8 L10>10 L11>11 J12>11 R11>11 J11>4 R6>8 L10>10 L11>11 J12>11 R11>11 J11>4 L6>7
+while True / except as / assert
+    R6>8 L10>10 L11>11 L11>11 AssertionError
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+while True / except as / if raise
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>12 KeyError
+while True / except as / for
+    R6>8 L10>10 L11>11 J12>11 R11>11 J11>4 R6>8 L10>10 L11>11 J12>11 R11>11 J11>4 L6>7
+while True / except, and the body may go on / assert
+    R6>8 L9>10 L11>11 L12>12 L12>12 AssertionError
+    R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+while True / except, and the body may go on / if raise
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 L12>13 KeyError
+while True / except, and the body may go on / for
+    R6>8 L9>10 L11>11 L12>12 J13>12 R12>12 J12>4 R6>8 L9>10 L11>11 L12>12 J13>12 R12>12 J12>4 L6>7
+while True / if body / assert
+    R6>8 L8>9 L9>9 L9>9 AssertionError
+    R6>8 L8>9 L9>9 R9>9 J9>4 R6>8 L8>9 L9>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+while True / if body / if raise
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 R9>9 J9>4 R6>8 L8>9 L9>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 L9>10 KeyError
+while True / if body / for
+    R6>8 L8>9 L9>9 J10>9 R9>9 J9>4 R6>8 L8>9 L9>9 J10>9 R9>9 J9>4 L6>7
+while True / else body / assert
+    R6>8 R8>11 R11>11 R11>11 AssertionError
+    R6>8 R8>11 R11>11 L11>11 J11>4 R6>8 R8>11 R11>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+while True / else body / if raise
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>11 L11>11 J11>4 R6>8 R8>11 R11>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>11 R11>12 KeyError
+while True / else body / for
+    R6>8 R8>11 L11>11 J12>11 R11>11 J11>4 R6>8 R8>11 L11>11 J12>11 R11>11 J11>4 L6>7
+while True / if only / assert
+    R6>8 R8>9 R9>9 R9>9 AssertionError
+    R6>8 R8>9 R9>9 L9>9 J9>4 R6>8 R8>9 R9>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+while True / if only / if raise
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>9 L9>9 J9>4 R6>8 R8>9 R9>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>9 R9>10 KeyError
+while True / if only / for
+    R6>8 R8>9 L9>9 J10>9 R9>9 J9>4 R6>8 R8>9 L9>9 J10>9 R9>9 J9>4 L6>7
+while True / case / assert
+    R6>8 L9>10 L10>10 L10>10 AssertionError
+    R6>8 L9>10 L10>10 R10>10 J10>4 R6>8 L9>10 L10>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+while True / case / if raise
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 R10>10 J10>4 R6>8 L9>10 L10>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 L10>11 KeyError
+while True / case / for
+    R6>8 L9>10 L10>10 J11>10 R10>10 J10>4 R6>8 L9>10 L10>10 J11>10 R10>10 J10>4 L6>7
+while True / try / assert
+    R6>8 L9>9 L9>9 R10>10 AssertionError
+    R6>8 L9>9 R9>9 J9>4 R6>8 L9>9 R9>9 J9>4 L6>7
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+while True / try / if raise
+    R6>8 R9>9 J9>4 R6>8 R9>9 J9>4 L6>7
+    R6>8 L9>9 R9>9 J9>4 R6>8 L9>9 R9>9 J9>4 L6>7
+    R6>8 L9>9 L9>10 L11>11 J12>4 R6>8 L9>9 L9>10 L11>11 J12>4 L6>7
+while True / try / for
+    R6>8 L9>9 J10>9 R9>9 J9>4 R6>8 L9>9 J10>9 R9>9 J9>4 L6>7
+while True / try else / assert
+    R6>8 L13>13 L13>13 AssertionError
+    R6>8 L13>13 R13>13 J13>4 R6>8 L13>13 R13>13 J13>4 L6>7
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+while True / try else / if raise
+    R6>8 R13>13 J13>4 R6>8 R13>13 J13>4 L6>7
+    R6>8 L13>13 R13>13 J13>4 R6>8 L13>13 R13>13 J13>4 L6>7
+    R6>8 L13>13 L13>14 KeyError
+while True / try else / for
+    R6>8 L13>13 J14>13 R13>13 J13>4 R6>8 L13>13 J14>13 R13>13 J13>4 L6>7
+while True / finally / assert
+    R6>8 L11>11 L11>11 AssertionError
+    R6>8 L11>11 R11>11 J11>4 R6>8 L11>11 R11>11 J11>4 L6>7
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+while True / finally / if raise
+    R6>8 R11>11 J11>4 R6>8 R11>11 J11>4 L6>7
+    R6>8 L11>11 R11>11 J11>4 R6>8 L11>11 R11>11 J11>4 L6>7
+    R6>8 L11>11 L11>12 KeyError
+while True / finally / for
+    R6>8 L11>11 J12>11 R11>11 J11>4 R6>8 L11>11 J12>11 R11>11 J11>4 L6>7
+while True / try finally / assert
+    R6>8 L9>9 L9>9 AssertionError
+    R6>8 L9>9 R9>11 J11>4 R6>8 L9>9 R9>11 J11>4 L6>7
+    R6>8 R9>11 J11>4 R6>8 R9>11 J11>4 L6>7
+while True / try finally / if raise
+    R6>8 R9>12 J12>4 R6>8 R9>12 J12>4 L6>7
+    R6>8 L9>9 R9>12 J12>4 R6>8 L9>9 R9>12 J12>4 L6>7
+    R6>8 L9>9 L9>10 KeyError
+while True / try finally / for
+    R6>8 L9>9 J10>9 R9>12 J12>4 R6>8 L9>9 J10>9 R9>12 J12>4 L6>7
+end / plain / assert
+    L3>3 L3>3 AssertionError
+    L3>3 R3>3
+    R3>3
+end / plain / if raise
+    R3>3
+    L3>3 R3>3
+    L3>3 L3>4 KeyError
+end / plain / for
+    L3>3 J4>3 R3>3
+end / except / assert
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 L6>6 R6>6
+    L5>5 R6>6
+end / except / if raise
+    L5>5 R6>6
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>7 KeyError
+end / except / for
+    L5>5 L6>6 J7>6 R6>6
+end / except as / assert
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 L6>6 R6>6
+    L5>5 R6>6
+end / except as / if raise
+    L5>5 R6>6
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>7 KeyError
+end / except as / for
+    L5>5 L6>6 J7>6 R6>6
+end / except, and the body may go on / assert
+    L4>5 L6>6 L7>7 L7>7 AssertionError
+    L4>5 L6>6 L7>7 R7>7
+    L4>5 L6>6 R7>7
+end / except, and the body may go on / if raise
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>7 R7>7
+    L4>5 L6>6 L7>7 L7>8 KeyError
+end / except, and the body may go on / for
+    L4>5 L6>6 L7>7 J8>7 R7>7
+end / if body / assert
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 L4>4 R4>4
+    L3>4 R4>4
+end / if body / if raise
+    L3>4 R4>4
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>5 KeyError
+end / if body / for
+    L3>4 L4>4 J5>4 R4>4
+end / else body / assert
+    R3>6 L6>6 L6>6 AssertionError
+    R3>6 L6>6 R6>6
+    R3>6 R6>6
+end / else body / if raise
+    R3>6 R6>6
+    R3>6 L6>6 R6>6
+    R3>6 L6>6 L6>7 KeyError
+end / else body / for
+    R3>6 L6>6 J7>6 R6>6
+end / if only / assert
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 L4>4 R4>4
+    L3>4 R4>4
+end / if only / if raise
+    L3>4 R4>4
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>5 KeyError
+end / if only / for
+    L3>4 L4>4 J5>4 R4>4
+end / case / assert
+    L4>5 L5>5 L5>5 AssertionError
+    L4>5 L5>5 R5>5
+    L4>5 R5>5
+end / case / if raise
+    L4>5 R5>5
+    L4>5 L5>5 R5>5
+    L4>5 L5>5 L5>6 KeyError
+end / case / for
+    L4>5 L5>5 J6>5 R5>5
+end / try / assert
+    L4>4 L4>4 R5>5 AssertionError
+    L4>4 R4>4
+    R4>4
+end / try / if raise
+    R4>4
+    L4>4 R4>4
+    L4>4 L4>5 L6>6
+end / try / for
+    L4>4 J5>4 R4>4
+end / try else / assert
+    L8>8 L8>8 AssertionError
+    L8>8 R8>8
+    R8>8
+end / try else / if raise
+    R8>8
+    L8>8 R8>8
+    L8>8 L8>9 KeyError
+end / try else / for
+    L8>8 J9>8 R8>8
+end / finally / assert
+    L6>6 L6>6 AssertionError
+    L6>6 R6>6
+    R6>6
+end / finally / if raise
+    R6>6
+    L6>6 R6>6
+    L6>6 L6>7 KeyError
+end / finally / for
+    L6>6 J7>6 R6>6
+end / try finally / assert
+    L4>4 L4>4 AssertionError
+    L4>4 R4>6
+    R4>6
+end / try finally / if raise
+    R4>7
+    L4>4 R4>7
+    L4>4 L4>5 KeyError
+end / try finally / for
+    L4>4 J5>4 R4>7
+then / plain / assert
+    L3>3 L3>3 AssertionError
+    L3>3 R3>4
+    R3>4
+then / plain / if raise
+    R3>5
+    L3>3 R3>5
+    L3>3 L3>4 KeyError
+then / plain / for
+    L3>3 J4>3 R3>5
+then / except / assert
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 L6>6 R6>None JNone>7
+    L5>5 R6>None JNone>7
+then / except / if raise
+    L5>5 R6>None JNone>8
+    L5>5 L6>6 R6>None JNone>8
+    L5>5 L6>6 L6>7 KeyError
+then / except / for
+    L5>5 L6>6 J7>6 R6>6 J6>8
+then / except as / assert
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 L6>6 R6>None JNone>7
+    L5>5 R6>None JNone>7
+then / except as / if raise
+    L5>5 R6>None JNone>8
+    L5>5 L6>6 R6>None JNone>8
+    L5>5 L6>6 L6>7 KeyError
+then / except as / for
+    L5>5 L6>6 J7>6 R6>6 J6>8
+then / except, and the body may go on / assert
+    L4>5 L6>6 L7>7 L7>7 AssertionError
+    L4>5 L6>6 L7>7 R7>None
+    L4>5 L6>6 R7>None
+then / except, and the body may go on / if raise
+    L4>5 L6>6 R7>None
+    L4>5 L6>6 L7>7 R7>None
+    L4>5 L6>6 L7>7 L7>8 KeyError
+then / except, and the body may go on / for
+    L4>5 L6>6 L7>7 J8>7 R7>7
+then / if body / assert
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 L4>4 R4>None JNone>7
+    L3>4 R4>None JNone>7
+then / if body / if raise
+    L3>4 R4>None JNone>8
+    L3>4 L4>4 R4>None JNone>8
+    L3>4 L4>4 L4>5 KeyError
+then / if body / for
+    L3>4 L4>4 J5>4 R4>4 J4>8
+then / else body / assert
+    R3>6 L6>6 L6>6 AssertionError
+    R3>6 L6>6 R6>7
+    R3>6 R6>7
+then / else body / if raise
+    R3>6 R6>8
+    R3>6 L6>6 R6>8
+    R3>6 L6>6 L6>7 KeyError
+then / else body / for
+    R3>6 L6>6 J7>6 R6>8
+then / if only / assert
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 L4>4 R4>5
+    L3>4 R4>5
+then / if only / if raise
+    L3>4 R4>6
+    L3>4 L4>4 R4>6
+    L3>4 L4>4 L4>5 KeyError
+then / if only / for
+    L3>4 L4>4 J5>4 R4>6
+then / case / assert
+    L4>5 L5>5 L5>5 AssertionError
+    L4>5 L5>5 R5>8
+    L4>5 R5>8
+then / case / if raise
+    L4>5 R5>9
+    L4>5 L5>5 R5>9
+    L4>5 L5>5 L5>6 KeyError
+then / case / for
+    L4>5 L5>5 J6>5 R5>5 J5>9
+then / try / assert
+    L4>4 L4>4 R5>5 AssertionError
+    L4>4 R4>7
+    R4>7
+then / try / if raise
+    R4>8
+    L4>4 R4>8
+    L4>4 L4>5 L6>6
+then / try / for
+    L4>4 J5>4 R4>8
+then / try else / assert
+    L8>8 L8>8 AssertionError
+    L8>8 R8>9
+    R8>9
+then / try else / if raise
+    R8>10
+    L8>8 R8>10
+    L8>8 L8>9 KeyError
+then / try else / for
+    L8>8 J9>8 R8>10
+then / finally / assert
+    L6>6 L6>6 AssertionError
+    L6>6 R6>7
+    R6>7
+then / finally / if raise
+    R6>8
+    L6>6 R6>8
+    L6>6 L6>7 KeyError
+then / finally / for
+    L6>6 J7>6 R6>8
+then / try finally / assert
+    L4>4 L4>4 AssertionError
+    L4>4 R4>6
+    R4>6
+then / try finally / if raise
+    R4>7
+    L4>4 R4>7
+    L4>4 L4>5 KeyError
+then / try finally / for
+    L4>4 J5>4 R4>7
+for / plain / assert not
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>5
+    L3>3 R4>4 AssertionError
+for / plain / assert of a chain
+    L3>3 L4>4 L4>4 J4>3 L3>3 L4>4 L4>4 J4>3 R3>5
+    L3>3 L4>4 R4>4 AssertionError
+    L3>3 R4>4 AssertionError
+for / plain / while
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+    L3>3 R4>5 J5>4 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+for / plain / if continue
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+    L3>3 R4>5 J5>3 L3>3 R4>5 J5>3 R3>6
+for / plain / if return
+    L3>3 L4>4 J4>3 L3>3 L4>4 J4>3 R3>6
+    L3>3 R4>5
+for / except / assert not
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>8
+    L3>3 L6>6 L7>7 AssertionError
+for / except / assert of a chain
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>8
+    L3>3 L6>6 L7>7 L7>7 AssertionError
+    L3>3 L6>6 R7>7 AssertionError
+for / except / while
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8 J8>7 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+for / except / if continue
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+for / except / if return
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8
+for / except as / assert not
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>8
+    L3>3 L6>6 L7>7 AssertionError
+for / except as / assert of a chain
+    L3>3 L6>6 L7>7 R7>7 J7>3 L3>3 L6>6 L7>7 R7>7 J7>3 R3>8
+    L3>3 L6>6 L7>7 L7>7 AssertionError
+    L3>3 L6>6 R7>7 AssertionError
+for / except as / while
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8 J8>7 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+for / except as / if continue
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8 J8>3 L3>3 L6>6 L7>8 J8>3 R3>9
+for / except as / if return
+    L3>3 L6>6 R7>7 J7>3 L3>3 L6>6 R7>7 J7>3 R3>9
+    L3>3 L6>6 L7>8
+for / except, and the body may go on / assert not
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>9
+    L3>3 L5>6 L7>7 L8>8 AssertionError
+for / except, and the body may go on / assert of a chain
+    L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 L3>3 L5>6 L7>7 L8>8 R8>8 J8>3 R3>9
+    L3>3 L5>6 L7>7 L8>8 L8>8 AssertionError
+    L3>3 L5>6 L7>7 R8>8 AssertionError
+for / except, and the body may go on / while
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>9 J9>8 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+for / except, and the body may go on / if continue
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>9 J9>3 L3>3 L5>6 L7>7 L8>9 J9>3 R3>10
+for / except, and the body may go on / if return
+    L3>3 L5>6 L7>7 R8>8 J8>3 L3>3 L5>6 L7>7 R8>8 J8>3 R3>10
+    L3>3 L5>6 L7>7 L8>9
+for / if body / assert not
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>8
+    L3>3 L4>5 L5>5 AssertionError
+for / if body / assert of a chain
+    L3>3 L4>5 L5>5 R5>5 J5>3 L3>3 L4>5 L5>5 R5>5 J5>3 R3>8
+    L3>3 L4>5 L5>5 L5>5 AssertionError
+    L3>3 L4>5 R5>5 AssertionError
+for / if body / while
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>6 J6>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+for / if body / if continue
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>6 J6>3 L3>3 L4>5 L5>6 J6>3 R3>9
+for / if body / if return
+    L3>3 L4>5 R5>5 J5>3 L3>3 L4>5 R5>5 J5>3 R3>9
+    L3>3 L4>5 L5>6
+for / else body / assert not
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>8
+    L3>3 R4>7 R7>7 AssertionError
+for / else body / assert of a chain
+    L3>3 R4>7 L7>7 L7>7 J7>3 L3>3 R4>7 L7>7 L7>7 J7>3 R3>8
+    L3>3 R4>7 L7>7 R7>7 AssertionError
+    L3>3 R4>7 R7>7 AssertionError
+for / else body / while
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>8 J8>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+for / else body / if continue
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>8 J8>3 L3>3 R4>7 R7>8 J8>3 R3>9
+for / else body / if return
+    L3>3 R4>7 L7>7 J7>3 L3>3 R4>7 L7>7 J7>3 R3>9
+    L3>3 R4>7 R7>8
+for / if only / assert not
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>6
+    L3>3 R4>5 R5>5 AssertionError
+for / if only / assert of a chain
+    L3>3 R4>5 L5>5 L5>5 J5>3 L3>3 R4>5 L5>5 L5>5 J5>3 R3>6
+    L3>3 R4>5 L5>5 R5>5 AssertionError
+    L3>3 R4>5 R5>5 AssertionError
+for / if only / while
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>6 J6>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+for / if only / if continue
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>6 J6>3 L3>3 R4>5 R5>6 J6>3 R3>7
+for / if only / if return
+    L3>3 R4>5 L5>5 J5>3 L3>3 R4>5 L5>5 J5>3 R3>7
+    L3>3 R4>5 R5>6
+for / case / assert not
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>9
+    L3>3 L5>6 L6>6 AssertionError
+for / case / assert of a chain
+    L3>3 L5>6 L6>6 R6>6 J6>3 L3>3 L5>6 L6>6 R6>6 J6>3 R3>9
+    L3>3 L5>6 L6>6 L6>6 AssertionError
+    L3>3 L5>6 R6>6 AssertionError
+for / case / while
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>7 J7>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+for / case / if continue
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>7 J7>3 L3>3 L5>6 L6>7 J7>3 R3>10
+for / case / if return
+    L3>3 L5>6 R6>6 J6>3 L3>3 L5>6 R6>6 J6>3 R3>10
+    L3>3 L5>6 L6>7
+while True / plain / assert not
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>8 AssertionError
+while True / plain / assert of a chain
+    R6>8 L8>8 L8>8 J8>4 R6>8 L8>8 L8>8 J8>4 L6>7
+    R6>8 L8>8 R8>8 AssertionError
+    R6>8 R8>8 AssertionError
+while True / plain / while
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>9 J9>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+while True / plain / if continue
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>9 J9>4 R6>8 R8>9 J9>4 L6>7
+while True / plain / if return
+    R6>8 L8>8 J8>4 R6>8 L8>8 J8>4 L6>7
+    R6>8 R8>9
+while True / except / assert not
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 AssertionError
+while True / except / assert of a chain
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>11 AssertionError
+    R6>8 L10>10 R11>11 AssertionError
+while True / except / while
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 J12>11 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+while True / except / if continue
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except / if return
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12
+while True / except as / assert not
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 AssertionError
+while True / except as / assert of a chain
+    R6>8 L10>10 L11>11 R11>11 J11>4 R6>8 L10>10 L11>11 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>11 L11>11 AssertionError
+    R6>8 L10>10 R11>11 AssertionError
+while True / except as / while
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 J12>11 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+while True / except as / if continue
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12 J12>4 R6>8 L10>10 L11>12 J12>4 L6>7
+while True / except as / if return
+    R6>8 L10>10 R11>11 J11>4 R6>8 L10>10 R11>11 J11>4 L6>7
+    R6>8 L10>10 L11>12
+while True / except, and the body may go on / assert not
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 AssertionError
+while True / except, and the body may go on / assert of a chain
+    R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 R6>8 L9>10 L11>11 L12>12 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>12 L12>12 AssertionError
+    R6>8 L9>10 L11>11 R12>12 AssertionError
+while True / except, and the body may go on / while
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 J13>12 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+while True / except, and the body may go on / if continue
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>13 J13>4 R6>8 L9>10 L11>11 L12>13 J13>4 L6>7
+while True / except, and the body may go on / if return
+    R6>8 L9>10 L11>11 R12>12 J12>4 R6>8 L9>10 L11>11 R12>12 J12>4 L6>7
+    R6>8 L9>10 L11>11 L12>13
+while True / if body / assert not
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 AssertionError
+while True / if body / assert of a chain
+    R6>8 L8>9 L9>9 R9>9 J9>4 R6>8 L8>9 L9>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>9 L9>9 AssertionError
+    R6>8 L8>9 R9>9 AssertionError
+while True / if body / while
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>10 J10>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+while True / if body / if continue
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>10 J10>4 R6>8 L8>9 L9>10 J10>4 L6>7
+while True / if body / if return
+    R6>8 L8>9 R9>9 J9>4 R6>8 L8>9 R9>9 J9>4 L6>7
+    R6>8 L8>9 L9>10
+while True / else body / assert not
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>11 AssertionError
+while True / else body / assert of a chain
+    R6>8 R8>11 L11>11 L11>11 J11>4 R6>8 R8>11 L11>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 L11>11 R11>11 AssertionError
+    R6>8 R8>11 R11>11 AssertionError
+while True / else body / while
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>12 J12>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+while True / else body / if continue
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>12 J12>4 R6>8 R8>11 R11>12 J12>4 L6>7
+while True / else body / if return
+    R6>8 R8>11 L11>11 J11>4 R6>8 R8>11 L11>11 J11>4 L6>7
+    R6>8 R8>11 R11>12
+while True / if only / assert not
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>9 AssertionError
+while True / if only / assert of a chain
+    R6>8 R8>9 L9>9 L9>9 J9>4 R6>8 R8>9 L9>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 L9>9 R9>9 AssertionError
+    R6>8 R8>9 R9>9 AssertionError
+while True / if only / while
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>10 J10>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+while True / if only / if continue
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>10 J10>4 R6>8 R8>9 R9>10 J10>4 L6>7
+while True / if only / if return
+    R6>8 R8>9 L9>9 J9>4 R6>8 R8>9 L9>9 J9>4 L6>7
+    R6>8 R8>9 R9>10
+while True / case / assert not
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 AssertionError
+while True / case / assert of a chain
+    R6>8 L9>10 L10>10 R10>10 J10>4 R6>8 L9>10 L10>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>10 L10>10 AssertionError
+    R6>8 L9>10 R10>10 AssertionError
+while True / case / while
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>11 J11>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+while True / case / if continue
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>11 J11>4 R6>8 L9>10 L10>11 J11>4 L6>7
+while True / case / if return
+    R6>8 L9>10 R10>10 J10>4 R6>8 L9>10 R10>10 J10>4 L6>7
+    R6>8 L9>10 L10>11
+end / plain / assert not
+    R3>3
+    L3>3 AssertionError
+end / plain / assert of a chain
+    L3>3 R3>3
+    L3>3 L3>3 AssertionError
+    R3>3 AssertionError
+end / plain / while
+    R3>3
+    L3>4 J4>3 R3>3
+end / plain / if return
+    R3>3
+    L3>4
+end / except / assert not
+    L5>5 R6>6
+    L5>5 L6>6 AssertionError
+end / except / assert of a chain
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 R6>6 AssertionError
+end / except / while
+    L5>5 R6>6
+    L5>5 L6>7 J7>6 R6>6
+end / except / if return
+    L5>5 R6>6
+    L5>5 L6>7
+end / except as / assert not
+    L5>5 R6>6
+    L5>5 L6>6 AssertionError
+end / except as / assert of a chain
+    L5>5 L6>6 R6>6
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 R6>6 AssertionError
+end / except as / while
+    L5>5 R6>6
+    L5>5 L6>7 J7>6 R6>6
+end / except as / if return
+    L5>5 R6>6
+    L5>5 L6>7
+end / except, and the body may go on / assert not
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>7 AssertionError
+end / except, and the body may go on / assert of a chain
+    L4>5 L6>6 L7>7 R7>7
+    L4>5 L6>6 L7>7 L7>7 AssertionError
+    L4>5 L6>6 R7>7 AssertionError
+end / except, and the body may go on / while
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>8 J8>7 R7>7
+end / except, and the body may go on / if return
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>8
+end / if body / assert not
+    L3>4 R4>4
+    L3>4 L4>4 AssertionError
+end / if body / assert of a chain
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 R4>4 AssertionError
+end / if body / while
+    L3>4 R4>4
+    L3>4 L4>5 J5>4 R4>4
+end / if body / if return
+    L3>4 R4>4
+    L3>4 L4>5
+end / else body / assert not
+    R3>6 R6>6
+    R3>6 L6>6 AssertionError
+end / else body / assert of a chain
+    R3>6 L6>6 R6>6
+    R3>6 L6>6 L6>6 AssertionError
+    R3>6 R6>6 AssertionError
+end / else body / while
+    R3>6 R6>6
+    R3>6 L6>7 J7>6 R6>6
+end / else body / if return
+    R3>6 R6>6
+    R3>6 L6>7
+end / if only / assert not
+    L3>4 R4>4
+    L3>4 L4>4 AssertionError
+end / if only / assert of a chain
+    L3>4 L4>4 R4>4
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 R4>4 AssertionError
+end / if only / while
+    L3>4 R4>4
+    L3>4 L4>5 J5>4 R4>4
+end / if only / if return
+    L3>4 R4>4
+    L3>4 L4>5
+end / case / assert not
+    L4>5 R5>5
+    L4>5 L5>5 AssertionError
+end / case / assert of a chain
+    L4>5 L5>5 R5>5
+    L4>5 L5>5 L5>5 AssertionError
+    L4>5 R5>5 AssertionError
+end / case / while
+    L4>5 R5>5
+    L4>5 L5>6 J6>5 R5>5
+end / case / if return
+    L4>5 R5>5
+    L4>5 L5>6
+then / plain / assert not
+    R3>4
+    L3>3 AssertionError
+then / plain / assert of a chain
+    L3>3 R3>4
+    L3>3 L3>3 AssertionError
+    R3>3 AssertionError
+then / plain / while
+    R3>5
+    L3>4 J4>3 R3>5
+then / plain / if return
+    R3>5
+    L3>4
+then / except / assert not
+    L5>5 R6>6 J6>7
+    L5>5 L6>6 AssertionError
+then / except / assert of a chain
+    L5>5 L6>6 R6>6 J6>7
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 R6>6 AssertionError
+then / except / while
+    L5>5 R6>6 J6>8
+    L5>5 L6>7 J7>6 R6>6 J6>8
+then / except / if return
+    L5>5 R6>6 J6>8
+    L5>5 L6>7
+then / except as / assert not
+    L5>5 R6>6 J6>7
+    L5>5 L6>6 AssertionError
+then / except as / assert of a chain
+    L5>5 L6>6 R6>6 J6>7
+    L5>5 L6>6 L6>6 AssertionError
+    L5>5 R6>6 AssertionError
+then / except as / while
+    L5>5 R6>6 J6>8
+    L5>5 L6>7 J7>6 R6>6 J6>8
+then / except as / if return
+    L5>5 R6>6 J6>8
+    L5>5 L6>7
+then / except, and the body may go on / assert not
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>7 AssertionError
+then / except, and the body may go on / assert of a chain
+    L4>5 L6>6 L7>7 R7>7
+    L4>5 L6>6 L7>7 L7>7 AssertionError
+    L4>5 L6>6 R7>7 AssertionError
+then / except, and the body may go on / while
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>8 J8>7 R7>7
+then / except, and the body may go on / if return
+    L4>5 L6>6 R7>7
+    L4>5 L6>6 L7>8
+then / if body / assert not
+    L3>4 R4>4 J4>7
+    L3>4 L4>4 AssertionError
+then / if body / assert of a chain
+    L3>4 L4>4 R4>4 J4>7
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 R4>4 AssertionError
+then / if body / while
+    L3>4 R4>4 J4>8
+    L3>4 L4>5 J5>4 R4>4 J4>8
+then / if body / if return
+    L3>4 R4>4 J4>8
+    L3>4 L4>5
+then / else body / assert not
+    R3>6 R6>7
+    R3>6 L6>6 AssertionError
+then / else body / assert of a chain
+    R3>6 L6>6 R6>7
+    R3>6 L6>6 L6>6 AssertionError
+    R3>6 R6>6 AssertionError
+then / else body / while
+    R3>6 R6>8
+    R3>6 L6>7 J7>6 R6>8
+then / else body / if return
+    R3>6 R6>8
+    R3>6 L6>7
+then / if only / assert not
+    L3>4 R4>5
+    L3>4 L4>4 AssertionError
+then / if only / assert of a chain
+    L3>4 L4>4 R4>5
+    L3>4 L4>4 L4>4 AssertionError
+    L3>4 R4>4 AssertionError
+then / if only / while
+    L3>4 R4>6
+    L3>4 L4>5 J5>4 R4>6
+then / if only / if return
+    L3>4 R4>6
+    L3>4 L4>5
+then / case / assert not
+    L4>5 R5>8
+    L4>5 L5>5 AssertionError
+then / case / assert of a chain
+    L4>5 L5>5 R5>8
+    L4>5 L5>5 L5>5 AssertionError
+    L4>5 R5>5 AssertionError
+then / case / while
+    L4>5 R5>9
+    L4>5 L5>6 J6>5 R5>9
+then / case / if return
+    L4>5 R5>9
+    L4>5 L5>6

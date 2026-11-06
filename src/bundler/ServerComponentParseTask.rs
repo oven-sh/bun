@@ -92,8 +92,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
-    // SAFETY: `task_ptr` is the box from `enqueue_server_component_generated_file`. The result
-    // copied what it keeps into the arena, and nothing reads the task after this callback.
+    // SAFETY: the box from `enqueue_server_component_generated_file`. The result keeps arena copies, not the task.
     unsafe { bun_core::heap::destroy(task_ptr) };
 
     let result = Box::new(parse_task::Result {
@@ -226,9 +225,7 @@ impl Default for ServerComponentParseTask<'_> {
 }
 
 fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`, and the task is freed
-    // when its callback returns: copy the path into the arena. Route through
-    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
+    // The `ImportRecord` keeps this slice raw, and the task is freed after its callback: the arena copy outlives it.
     let path = bun_ast::StoreStr::new(b.bump.alloc_slice_copy(&data.path[..]));
     let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;

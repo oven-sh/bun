@@ -5555,7 +5555,7 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 }
 }
 
-// The frame of runGC<true> holds a GCRequest, and nothing writes the padding of one. So that frame is built over zeroes: over what earlier calls left, the collection scans the dead words under the padding.
+// Each runGC frame holds a GCRequest, and nothing writes the padding of one: the collection scans the dead word under it. The sizes of clearStackBelowCaller() are measured for the frame of runGC<false>. The frame of runGC<true> is another, so it is built over zeroes.
 static NEVER_INLINE size_t runGCWithPerformanceEntry(JSC::VM* vm)
 {
     clearStackBelowCaller();

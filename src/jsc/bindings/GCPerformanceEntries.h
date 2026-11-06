@@ -32,8 +32,10 @@ public:
     RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
     // After a synchronous collection that the program asked for, and the sweep that follows it.
     void didForceCollection();
-    // Right before this thread waits in the event loop. True: a collection is under way, and the wait is to leave it to the collector thread.
-    bool eventLoopWillWait(bool canWaitWithoutHeapAccess);
+    // Right before this thread waits in the event loop, with or without access to the heap.
+    void eventLoopWillWait();
+    // The records of some collections have not reached the listeners yet.
+    bool hasRecords();
 
 private:
     explicit GCPerformanceEntries(JSC::VM&);
@@ -70,6 +72,8 @@ private:
     Records m_records WTF_GUARDED_BY_LOCK(m_lock);
     // One past the record of the last synchronous collection, or 0.
     unsigned m_synchronousRecordEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    // The timer is due 1 ms after the first record that waits. A later collection does not move it.
+    bool m_timerIsArmed WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener);

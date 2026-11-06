@@ -1887,6 +1887,7 @@ impl VirtualMachine {
             || self.has_handles(timers.holds_loop_ref)
             || self.has_handles_off_the_loop()
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
+            || crate::cpp::Bun__hasGCPerformanceEntriesToDeliver(self.global())
     }
 
     /// Handles that wake the loop from their own thread: a `Worker`, `fs.watch()`, a napi threadsafe function.

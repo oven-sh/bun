@@ -40,7 +40,6 @@ extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
 // (JSVMClientData::idleCollectionsPending): a requested collection only advances at this thread's safepoints while this
 // thread holds the collector's conn, and a parked thread has none; without access, the conn goes to the collector thread,
 // which finishes the collection while this one sleeps.
-// It does the same for a collection that a 'gc' performance entry times (GCPerformanceEntries::eventLoopWillWait).
 extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs, int* _Nullable releasedHeapAccess)
 {
     ASSERT(vm);
@@ -134,19 +133,14 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
 #endif
         }
     }
-    const bool canWaitWithoutHeapAccess = releasedHeapAccess && previouslyHadAccess;
-    auto* clientData = WebCore::clientData(*vm);
-    bool waitsWithoutHeapAccess = canWaitWithoutHeapAccess && clientData->idleCollectionsPending.load();
-    if (waitsWithoutHeapAccess) {
+    if (releasedHeapAccess && previouslyHadAccess && WebCore::clientData(*vm)->idleCollectionsPending.load()) {
         // If the collector handed the conn back for a stop-the-world phase while this thread was awake, run that phase
         // now rather than at the next time JS happens to run; then park without access so the rest goes on without us.
         vm->heap.stopIfNecessary();
-    }
-    if (auto* gcPerformanceEntries = clientData->gcPerformanceEntries.get()) [[unlikely]]
-        waitsWithoutHeapAccess |= gcPerformanceEntries->eventLoopWillWait(canWaitWithoutHeapAccess);
-    if (waitsWithoutHeapAccess) {
         vm->heap.releaseAccess();
         *releasedHeapAccess = 1;
     }
+    if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get()) [[unlikely]]
+        gcPerformanceEntries->eventLoopWillWait();
     return runAgainInMs;
 }

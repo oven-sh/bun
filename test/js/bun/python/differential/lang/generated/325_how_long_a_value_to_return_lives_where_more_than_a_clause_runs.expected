@@ -1,0 +1,484 @@
+status: 0
+script: e9e7d175e61b828a
+source: decd2c3c5899a177
+---
+wn [outer='', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => with
+| en [outer='', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => return
+| outer [outer='', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => 
+| seen [outer='', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => [('exit', True), True, ('after', False)]
+r [outer='', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => int
+wn [outer='clause', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => with
+| en [outer='clause', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => [('exit', True), True, False, ('after', False)]
+r [outer='clause', wn='with', way='with C():\n    return make()', en='return', end='return 5'] => int
+wn [outer='', wn='with', way='with C():\n    return make()', en='break', end='break'] => with
+| en [outer='', wn='with', way='with C():\n    return make()', en='break', end='break'] => break
+| outer [outer='', wn='with', way='with C():\n    return make()', en='break', end='break'] => 
+| seen [outer='', wn='with', way='with C():\n    return make()', en='break', end='break'] => [('exit', True), True, False, ('after', False)]
+r [outer='', wn='with', way='with C():\n    return make()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='with', way='with C():\n    return make()', en='break', end='break'] => with
+| en [outer='clause', wn='with', way='with C():\n    return make()', en='break', end='break'] => break
+| outer [outer='clause', wn='with', way='with C():\n    return make()', en='break', end='break'] => clause
+| seen [outer='clause', wn='with', way='with C():\n    return make()', en='break', end='break'] => [('exit', True), True, False, False, ('after', False)]
+r [outer='clause', wn='with', way='with C():\n    return make()', en='break', end='break'] => NoneType
+wn [outer='', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => with
+| en [outer='', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => 
+| seen [outer='', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => [('exit', True), True, ('exit', True), True, False, ('after', False)]
+r [outer='', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => with
+| en [outer='clause', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => [('exit', True), True, ('exit', True), True, False, False, ('after', False)]
+r [outer='clause', wn='with', way='with C():\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => with
+| en [outer='', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => [('exit', True), True, ('after', False)]
+r [outer='', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => with
+| en [outer='clause', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => [('exit', True), True, False, ('after', False)]
+r [outer='clause', wn='with', way='with C():\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => with
+| en [outer='', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => 
+| seen [outer='', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => [('exit', True), True, True, ('after', False)]
+r [outer='', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => with
+| en [outer='clause', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => [('exit', True), True, True, True, ('after', False)]
+r [outer='clause', wn='with', way='with C():\n    return make()', en='goes on', end='p()'] => C
+wn [outer='', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => with
+| en [outer='', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('exit', True), True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => with
+| en [outer='clause', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('exit', True), True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='with', way='with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => loop
+| en [outer='', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => return
+| outer [outer='', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => 
+| seen [outer='', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => [('closed', True), True, ('after', False)]
+r [outer='', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => int
+wn [outer='clause', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => loop
+| en [outer='clause', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => [('closed', True), True, False, ('after', False)]
+r [outer='clause', wn='loop', way='for i in items():\n    return make()', en='return', end='return 5'] => int
+wn [outer='', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => loop
+| en [outer='', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => break
+| outer [outer='', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => 
+| seen [outer='', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => [('closed', True), True, False, ('after', False)]
+r [outer='', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => loop
+| en [outer='clause', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => break
+| outer [outer='clause', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => clause
+| seen [outer='clause', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => [('closed', True), True, False, False, ('after', False)]
+r [outer='clause', wn='loop', way='for i in items():\n    return make()', en='break', end='break'] => NoneType
+wn [outer='', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => loop
+| en [outer='', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => 
+| seen [outer='', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => [('closed', True), True, ('closed', True), True, False, ('after', False)]
+r [outer='', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => loop
+| en [outer='clause', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => [('closed', True), True, ('closed', True), True, False, False, ('after', False)]
+r [outer='clause', wn='loop', way='for i in items():\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => loop
+| en [outer='', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => [('closed', True), True, ('after', False)]
+r [outer='', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => loop
+| en [outer='clause', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => [('closed', True), True, False, ('after', False)]
+r [outer='clause', wn='loop', way='for i in items():\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => loop
+| en [outer='', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => 
+| seen [outer='', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => [('closed', True), True, True, ('after', False)]
+r [outer='', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => loop
+| en [outer='clause', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => [('closed', True), True, True, True, ('after', False)]
+r [outer='clause', wn='loop', way='for i in items():\n    return make()', en='goes on', end='p()'] => C
+wn [outer='', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => loop
+| en [outer='', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('closed', True), True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => loop
+| en [outer='clause', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('closed', True), True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='loop', way='for i in items():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => handler
+| en [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => return
+| outer [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => 
+| seen [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => [True, ('after', False)]
+r [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => int
+wn [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => handler
+| en [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => [True, False, ('after', False)]
+r [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='return', end='return 5'] => int
+wn [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => handler
+| en [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => break
+| outer [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => 
+| seen [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => [True, False, ('after', False)]
+r [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => handler
+| en [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => break
+| outer [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => clause
+| seen [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => [True, False, False, ('after', False)]
+r [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='break', end='break'] => NoneType
+wn [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => handler
+| en [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => 
+| seen [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => [True, True, False, ('after', False)]
+r [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => handler
+| en [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => [True, True, False, False, ('after', False)]
+r [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => handler
+| en [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => [True, ('after', False)]
+r [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => handler
+| en [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => [True, False, ('after', False)]
+r [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => handler
+| en [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => 
+| seen [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => [True, True, ('after', False)]
+r [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => handler
+| en [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => [True, True, True, ('after', False)]
+r [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='goes on', end='p()'] => C
+wn [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => handler
+| en [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => handler
+| en [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='handler', way='try:\n    raise KeyError\nexcept KeyError as e:\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => inner clause
+| en [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => return
+| outer [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => 
+| seen [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => [True, True, ('after', False)]
+r [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => int
+wn [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => inner clause
+| en [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => [True, True, False, ('after', False)]
+r [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='return', end='return 5'] => int
+wn [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => inner clause
+| en [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => break
+| outer [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => 
+| seen [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => [True, True, False, ('after', False)]
+r [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => inner clause
+| en [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => break
+| outer [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => clause
+| seen [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => [True, True, False, False, ('after', False)]
+r [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='break', end='break'] => NoneType
+wn [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => inner clause
+| en [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => continue
+| outer [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => 
+| seen [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => [True, True, True, True, False, ('after', False)]
+r [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => inner clause
+| en [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => [True, True, True, True, False, False, ('after', False)]
+r [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => inner clause
+| en [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => [True, True, ('after', False)]
+r [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => inner clause
+| en [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => [True, True, False, ('after', False)]
+r [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => inner clause
+| en [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => 
+| seen [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => [True, True, True, ('after', False)]
+r [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => inner clause
+| en [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => [True, True, True, True, ('after', False)]
+r [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='goes on', end='p()'] => C
+wn [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => inner clause
+| en [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => [True, True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => inner clause
+| en [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => [True, True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='inner clause', way='try:\n    return make()\nfinally:\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='plain', way='return make()', en='return', end='return 5'] => plain
+| en [outer='', wn='plain', way='return make()', en='return', end='return 5'] => return
+| outer [outer='', wn='plain', way='return make()', en='return', end='return 5'] => 
+| seen [outer='', wn='plain', way='return make()', en='return', end='return 5'] => [True, ('after', False)]
+r [outer='', wn='plain', way='return make()', en='return', end='return 5'] => int
+wn [outer='clause', wn='plain', way='return make()', en='return', end='return 5'] => plain
+| en [outer='clause', wn='plain', way='return make()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='plain', way='return make()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='plain', way='return make()', en='return', end='return 5'] => [True, False, ('after', False)]
+r [outer='clause', wn='plain', way='return make()', en='return', end='return 5'] => int
+wn [outer='', wn='plain', way='return make()', en='break', end='break'] => plain
+| en [outer='', wn='plain', way='return make()', en='break', end='break'] => break
+| outer [outer='', wn='plain', way='return make()', en='break', end='break'] => 
+| seen [outer='', wn='plain', way='return make()', en='break', end='break'] => [True, False, ('after', False)]
+r [outer='', wn='plain', way='return make()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='plain', way='return make()', en='break', end='break'] => plain
+| en [outer='clause', wn='plain', way='return make()', en='break', end='break'] => break
+| outer [outer='clause', wn='plain', way='return make()', en='break', end='break'] => clause
+| seen [outer='clause', wn='plain', way='return make()', en='break', end='break'] => [True, False, False, ('after', False)]
+r [outer='clause', wn='plain', way='return make()', en='break', end='break'] => NoneType
+wn [outer='', wn='plain', way='return make()', en='continue', end='continue'] => plain
+| en [outer='', wn='plain', way='return make()', en='continue', end='continue'] => continue
+| outer [outer='', wn='plain', way='return make()', en='continue', end='continue'] => 
+| seen [outer='', wn='plain', way='return make()', en='continue', end='continue'] => [True, True, False, ('after', False)]
+r [outer='', wn='plain', way='return make()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='plain', way='return make()', en='continue', end='continue'] => plain
+| en [outer='clause', wn='plain', way='return make()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='plain', way='return make()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='plain', way='return make()', en='continue', end='continue'] => [True, True, False, False, ('after', False)]
+r [outer='clause', wn='plain', way='return make()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='plain', way='return make()', en='raise', end='raise IndexError'] => plain
+| en [outer='', wn='plain', way='return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='plain', way='return make()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='plain', way='return make()', en='raise', end='raise IndexError'] => [True, ('after', False)]
+r [outer='', wn='plain', way='return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='plain', way='return make()', en='raise', end='raise IndexError'] => plain
+| en [outer='clause', wn='plain', way='return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='plain', way='return make()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='plain', way='return make()', en='raise', end='raise IndexError'] => [True, False, ('after', False)]
+r [outer='clause', wn='plain', way='return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='plain', way='return make()', en='goes on', end='p()'] => plain
+| en [outer='', wn='plain', way='return make()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='plain', way='return make()', en='goes on', end='p()'] => 
+| seen [outer='', wn='plain', way='return make()', en='goes on', end='p()'] => [True, True, ('after', False)]
+r [outer='', wn='plain', way='return make()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='plain', way='return make()', en='goes on', end='p()'] => plain
+| en [outer='clause', wn='plain', way='return make()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='plain', way='return make()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='plain', way='return make()', en='goes on', end='p()'] => [True, True, True, ('after', False)]
+r [outer='clause', wn='plain', way='return make()', en='goes on', end='p()'] => C
+wn [outer='', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => plain
+| en [outer='', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => [True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => plain
+| en [outer='clause', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => [True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='plain', way='return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => async with
+| en [outer='', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => return
+| outer [outer='', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => 
+| seen [outer='', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, ('after', False)]
+r [outer='', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => int
+wn [outer='clause', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => async with
+| en [outer='clause', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, False, ('after', False)]
+r [outer='clause', wn='async with', way='async with C():\n    return make()', en='return', end='return 5'] => int
+wn [outer='', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => async with
+| en [outer='', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => break
+| outer [outer='', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => 
+| seen [outer='', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, False, ('after', False)]
+r [outer='', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => async with
+| en [outer='clause', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => break
+| outer [outer='clause', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => clause
+| seen [outer='clause', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, False, False, ('after', False)]
+r [outer='clause', wn='async with', way='async with C():\n    return make()', en='break', end='break'] => NoneType
+wn [outer='', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => async with
+| en [outer='', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => 
+| seen [outer='', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, ('aexit', True), ('suspended', True), ('aexit 2', True), True, False, ('after', False)]
+r [outer='', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => async with
+| en [outer='clause', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, ('aexit', True), ('suspended', True), ('aexit 2', True), True, False, False, ('after', False)]
+r [outer='clause', wn='async with', way='async with C():\n    return make()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => async with
+| en [outer='', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, ('after', False)]
+r [outer='', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => async with
+| en [outer='clause', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, False, ('after', False)]
+r [outer='clause', wn='async with', way='async with C():\n    return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => async with
+| en [outer='', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => 
+| seen [outer='', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, True, ('after', False)]
+r [outer='', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => async with
+| en [outer='clause', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, True, True, ('after', False)]
+r [outer='clause', wn='async with', way='async with C():\n    return make()', en='goes on', end='p()'] => C
+wn [outer='', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => async with
+| en [outer='', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => async with
+| en [outer='clause', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='async with', way='async with C():\n    return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => async with in with
+| en [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => return
+| outer [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => 
+| seen [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, ('after', False)]
+r [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => int
+wn [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => async with in with
+| en [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, False, ('after', False)]
+r [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='return', end='return 5'] => int
+wn [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => async with in with
+| en [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => break
+| outer [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => 
+| seen [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, False, ('after', False)]
+r [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => async with in with
+| en [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => break
+| outer [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => clause
+| seen [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, False, False, ('after', False)]
+r [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='break', end='break'] => NoneType
+wn [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => async with in with
+| en [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => continue
+| outer [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => 
+| seen [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, ('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, False, ('after', False)]
+r [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => async with in with
+| en [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, ('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, False, False, ('after', False)]
+r [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => async with in with
+| en [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, ('after', False)]
+r [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => async with in with
+| en [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, False, ('after', False)]
+r [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => async with in with
+| en [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => 
+| seen [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, True, ('after', False)]
+r [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => async with in with
+| en [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, True, True, ('after', False)]
+r [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='goes on', end='p()'] => C
+wn [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => async with in with
+| en [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => async with in with
+| en [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => [('aexit', True), ('suspended', True), ('aexit 2', True), ('exit', True), True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='async with in with', way='with C():\n    async with C():\n        return make()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => inner clause that awaits
+| en [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => return
+| outer [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => 
+| seen [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => [('suspended', True), True, True, ('after', False)]
+r [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => int
+wn [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => inner clause that awaits
+| en [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => return
+| outer [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => clause
+| seen [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => [('suspended', True), True, True, False, ('after', False)]
+r [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='return', end='return 5'] => int
+wn [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => inner clause that awaits
+| en [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => break
+| outer [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => 
+| seen [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => [('suspended', True), True, True, False, ('after', False)]
+r [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => NoneType
+wn [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => inner clause that awaits
+| en [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => break
+| outer [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => clause
+| seen [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => [('suspended', True), True, True, False, False, ('after', False)]
+r [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='break', end='break'] => NoneType
+wn [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => inner clause that awaits
+| en [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => continue
+| outer [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => 
+| seen [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => [('suspended', True), True, True, ('suspended', True), True, True, False, ('after', False)]
+r [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => NoneType
+wn [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => inner clause that awaits
+| en [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => continue
+| outer [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => clause
+| seen [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => [('suspended', True), True, True, ('suspended', True), True, True, False, False, ('after', False)]
+r [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='continue', end='continue'] => NoneType
+wn [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => inner clause that awaits
+| en [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => raise
+| outer [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => 
+| seen [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => [('suspended', True), True, True, ('after', False)]
+r [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => inner clause that awaits
+| en [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => raise
+| outer [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => clause
+| seen [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => [('suspended', True), True, True, False, ('after', False)]
+r [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='raise', end='raise IndexError'] => IndexError
+wn [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => inner clause that awaits
+| en [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => goes on
+| outer [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => 
+| seen [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => [('suspended', True), True, True, True, ('after', False)]
+r [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => C
+wn [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => inner clause that awaits
+| en [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => goes on
+| outer [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => clause
+| seen [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => [('suspended', True), True, True, True, True, ('after', False)]
+r [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='goes on', end='p()'] => C
+wn [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => inner clause that awaits
+| en [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => 
+| seen [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => [('suspended', True), True, True, ('suspended', True), True, ('after', False)]
+r [outer='', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => int
+wn [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => inner clause that awaits
+| en [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => await, return
+| outer [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => clause
+| seen [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => [('suspended', True), True, True, ('suspended', True), True, False, ('after', False)]
+r [outer='clause', wn='inner clause that awaits', way='try:\n    return make()\nfinally:\n    await K()\n    p()', en='await, return', end='await K()\np()\nreturn 5'] => int

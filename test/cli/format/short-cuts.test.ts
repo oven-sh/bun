@@ -5220,10 +5220,19 @@ describe("TypeScript that the long way rejects", () => {
     "x = a ? b ? x = ({ c }) : delete {} : z;\n",
     "function* g() { x = a ? yield (b) : class {}; }\n",
     "switch (x) { case <T>(b, c): void {}; }\n",
+    // characters that are letters since Unicode 16
+    "x = \u088fa;\n",
+    "x = \u1c89;\n",
+    "x = a\u0897;\n",
+    "x = a\u1acf;\n",
+    "class A { #\ua7cb; }\n",
+    "x = { a\ud803\udd4a: 1 };\n",
   ]);
   expectRejected("a.tsx", [
     // a comment directly behind the `<` of type arguments in a tag
     "x = <a><Component<// c\nnumber> foo></Component></a>;\n",
+    // characters that are letters since Unicode 16
+    "x = <a\u0897 />;\n",
   ]);
   describe("what looks like it and is printed", () =>
     expectSame(
@@ -6830,6 +6839,11 @@ describe("programs that are read as written", () => {
       [
         // `await of`
         "await\nof;\n",
+        // a character that is not printable behind a backslash
+        'x = f("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\u007f");\n',
+        "x = f(`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\u007f`);\n",
+        "x = f(/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\t/);\n",
+        "x = f(/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\u0001/);\n",
       ],
       [[]],
     ));
@@ -6885,6 +6899,44 @@ describe("programs that are read as written", () => {
       ].map(text => `// @flow\n${text}`),
       [[]],
     ));
+  test.skipIf(!hasFlag).concurrent("bytes that are no text behind a backslash", async () => {
+    const files: [string, Buffer][] = [
+      ["a.js.flow", Buffer.from('x = "\\\xff";\n', "latin1")],
+      ["a.js.flow", Buffer.from("x = `\\\xff`;\n", "latin1")],
+      ["a.js.flow", Buffer.from("x = /\\\xff/;\n", "latin1")],
+      [
+        "a.js",
+        Buffer.from(
+          'x = f("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\xff");\n',
+          "latin1",
+        ),
+      ],
+      [
+        "a.ts",
+        Buffer.from(
+          'x = f("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\xc3");\n',
+          "latin1",
+        ),
+      ],
+    ];
+    const tree = Object.fromEntries(files.map(([name, bytes], index) => [`${index}/${name}`, bytes]));
+    const [short, long] = await Promise.all(
+      [[], ["--no-short-cuts"]].map(async own => {
+        using dir = tempDir("format-short-cuts", tree);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--log-level=warn", ...own, "."],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const written = Object.keys(tree).map(name => readFileSync(join(String(dir), name)).toString("latin1"));
+        return { written, said: `${stdout}${stderr}`.split("\n").sort().join("\n"), exitCode };
+      }),
+    );
+    expect(short).toEqual(long);
+  });
 });
 
 describe("an `if` with a statement that is no block on its line", () => {

@@ -31,7 +31,6 @@ mod es5_id_table;
 mod fast;
 mod guest;
 mod holes;
-mod id_table;
 mod js;
 mod jsx_guess;
 mod lang;

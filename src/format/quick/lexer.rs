@@ -2,11 +2,14 @@
 //! what the parser expects.
 
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
-use crate::id_table::{ID_PART, ID_START};
 use crate::lang::lang;
 use crate::parse::core::TYPED_TS;
 use crate::{
     Bytes, Quick, R, Words, bytes_before, rare, where_byte_is, where_not_printable, zeros,
+};
+use bun_core::lexer::{
+    is_identifier_start, is_recent_identifier_part, is_recent_identifier_start,
+    is_type_script_identifier_part,
 };
 
 /// What [`Quick::save`] gives.
@@ -795,28 +798,20 @@ impl Quick {
         return info >> 8;
     }
 }
+/// How much to skip at a backslash with the byte `e` behind it, in a string, a template or a regular expression. What is not printable
+/// ASCII is looked at like every other byte of the text: it may be no character, or have a width of its own.
+#[inline(always)]
+fn escape_length(e: i32) -> i32 {
+    if e >= 32 && e < 127 { 2 } else { 1 }
+}
+
 /// A bit for each letter, from `a` on: d g i m s u v y
 const REGEX_FLAGS: i32 = 0x01341148;
 const REGEX_U_AND_V: i32 = 0x00300000;
 
-pub(crate) fn is_in_ranges(ranges: &[i32], code: i32) -> bool {
-    let mut low: i32 = 0;
-    let mut high = ((ranges.len() as i32) >> 1) - 1;
-    while low <= high {
-        let middle = (low + high) >> 1;
-        if code < ranges.at(middle << 1) {
-            high = middle - 1;
-        } else if code > ranges.at((middle << 1) | 1) {
-            low = middle + 1;
-        } else {
-            return true;
-        }
-    }
-    return false;
-}
-
 impl Quick {
-    /// Can the character of two to four bytes at `p` be in a name, or start one?
+    /// Can the character of two to four bytes at `p` be in a name, or start one? As the long way's lexer asks: TypeScript's tables are
+    /// those of an older Unicode than Babel's.
     fn is_in_name(&self, p: i32, is_first: bool) -> bool {
         let c = self.t.at(p);
         let code = if c < 0xe0 {
@@ -829,14 +824,13 @@ impl Quick {
                 | ((self.t.at(p + 2) & 0x3f) << 6)
                 | (self.t.at(p + 3) & 0x3f)
         };
-        is_in_ranges(
-            if is_first {
-                ID_START.as_slice()
-            } else {
-                ID_PART.as_slice()
-            },
-            code,
-        )
+        let knows_recent = self.parse.typed != TYPED_TS;
+        if is_first {
+            is_identifier_start(code as u32) || (knows_recent && is_recent_identifier_start(code))
+        } else {
+            is_type_script_identifier_part(code)
+                || (knows_recent && is_recent_identifier_part(code))
+        }
     }
 
     /// Scans the rest of a name that has a non-ASCII byte or a backslash at p. Returns its end.
@@ -1086,7 +1080,7 @@ impl Quick {
                 {
                     return Err(self.fail(p));
                 }
-                p += 2;
+                p += if e == 10 { 2 } else { escape_length(e) };
                 continue;
             }
             if c == 34 || c == 39 {
@@ -1453,7 +1447,7 @@ impl Quick {
                 if self.t.at(p + 1) == 10 || self.is_line_separator(p + 1) {
                     return Err(self.fail(start));
                 }
-                p += 2;
+                p += escape_length(self.t.at(p + 1));
                 continue;
             }
             if c == 91 {
@@ -1522,7 +1516,7 @@ impl Quick {
                         return Err(self.text_refuse());
                     }
                 }
-                p += 2;
+                p += escape_length(self.t.at(p + 1));
                 continue;
             }
             if c < 32 || c >= 127 {

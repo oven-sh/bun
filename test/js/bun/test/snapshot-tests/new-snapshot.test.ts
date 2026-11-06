@@ -55,6 +55,65 @@ test("--update-snapshots keeps the old file until the new contents are written",
   expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });
 
+// bun test reads a .snap file as data, so a macro in it must not run. Such a file is one that does not parse.
+test.concurrent.each([
+  ["the call of a named import", 'import { fn } from "../macro.ts" with { type: "macro" };', "fn()"],
+  ["the call of a member of a namespace import", 'import * as m from "../macro.ts" with { type: "macro" };', "m.fn()"],
+  ["the tag of a template", 'import { fn } from "macro:../macro.ts";', "fn`x`"],
+])(
+  "a .snap file with a macro as %s fails the test, and --update-snapshots replaces it",
+  async (_, importLine, call) => {
+    const withMacro = `${importLine}\nexports[\`a 1\`] = ${call};\n`;
+    using dir = tempDir("snapshot-macro", {
+      "a.test.ts": `
+      import { test, expect } from "bun:test";
+      test("a", () => { expect("hello").toMatchSnapshot(); });
+    `,
+      "macro.ts": `
+      import { writeFileSync } from "fs";
+      import { join } from "path";
+      export function fn() {
+        writeFileSync(join(import.meta.dir, "ran"), "");
+        return '"hello"';
+      }
+    `,
+      "__snapshots__/a.test.ts.snap": withMacro,
+    });
+    async function run(...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, CI: "false" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return {
+        stderr,
+        ranTheMacro: fs.existsSync(join(String(dir), "ran")),
+        snapshot: fs.readFileSync(join(String(dir), "__snapshots__", "a.test.ts.snap"), "utf8"),
+        exitCode,
+        signalCode: proc.signalCode,
+      };
+    }
+
+    expect(await run()).toEqual({
+      stderr: expect.stringContaining("error: Failed to parse snapshot file for: "),
+      ranTheMacro: false,
+      snapshot: withMacro,
+      exitCode: 1,
+      signalCode: null,
+    });
+    expect(await run("--update-snapshots")).toEqual({
+      stderr: expect.stringContaining("snapshots: +1 added"),
+      ranTheMacro: false,
+      snapshot: '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`a 1`] = `"hello"`;\n',
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 // What a person wrote into a file in Bun's format that has no entry yet.
 const textWithNoEntry: [string, string][] = [
   ["the first line alone", "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n"],
@@ -362,20 +421,72 @@ describe.concurrent("--update-snapshots", () => {
     expect(result).toMatchObject({ snapshot: snap({ "a 1": `"a"`, "b 1": `"new"` }), exitCode: 0 });
   });
 
+  const unreadable =
+    header + '\n<<<<<<< ours\nexports[`b 1`] = `"ours"`;\n=======\nexports[`b 1`] = `"theirs"`;\n>>>>>>> theirs\n';
+
   // Such a run can't tell which entries of the file to keep.
   test.each([
     ["-t leaves a test out", `test("b", () => { expect("new").toMatchSnapshot(); });`, ["-t", "a"]],
     ["a test fails", `test("b", () => { throw new Error("boom"); });`, []],
+    ["a test is skipped", `test.skip("b", () => { expect("new").toMatchSnapshot(); });`, []],
   ])("leaves a file that does not parse when %s", async (_, b, args) => {
-    const unreadable =
-      header + '\n<<<<<<< ours\nexports[`b 1`] = `"ours"`;\n=======\nexports[`b 1`] = `"theirs"`;\n>>>>>>> theirs\n';
     const result = await updateOne(`test("a", () => { expect("a").toMatchSnapshot(); });\n${b}`, unreadable, ...args);
     expect(result).toMatchObject({
       snapshot: unreadable,
-      stderr: expect.stringContaining("error: Failed to parse snapshot file for: a.test.ts"),
+      stderr: expect.stringContaining(
+        "error: Failed to parse snapshot file for: a.test.ts\n" +
+          "note: --update-snapshots replaces a snapshot file that doesn't parse only when every test of the file runs to the end. " +
+          "Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+      ),
       exitCode: 1,
     });
+    // The snapshot of "a" is not in the file, so it does not count as added.
+    expect(result.stderr).toContain("\n 1 snapshots, 1 expect() calls\n");
   });
+
+  const inline = `test("a", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
+
+  test("leaves a file that does not parse, with no error, when no test of a run that leaves a test out asks for it", async () => {
+    const skipped = `test.skip("b", () => { expect("b").toMatchSnapshot(); });`;
+    const result = await updateOne(`${inline}\n${skipped}`, unreadable);
+    expect(result).toMatchObject({ snapshot: unreadable, exitCode: 0 });
+    expect(result.stderr).not.toContain("Failed to parse snapshot file");
+  });
+
+  test("removes a file that does not parse when every test ran to the end and none asks for it", async () => {
+    const result = await updateOne(inline, unreadable);
+    expect(result).toMatchObject({ snapshot: undefined, exitCode: 0 });
+  });
+
+  // The comment shows that the run put the entry behind the text of the file and did not print the file again.
+  const twice = (options: string, afterTheSnapshot = "") => `
+    test("one", () => { expect("1").toMatchSnapshot(); });
+    test("two", () => {
+      globalThis.tries = (globalThis.tries ?? 0) + 1;
+      expect("try " + globalThis.tries).toMatchSnapshot();
+      ${afterTheSnapshot}
+    }${options});`;
+  test.each([
+    [
+      "{ retry: 1 }",
+      twice(", { retry: 1 }", `if (globalThis.tries === 1) throw new Error("again");`),
+      [],
+      "1 passed, 1 added",
+    ],
+    ["{ repeats: 1 }", twice(", { repeats: 1 }"), [], "1 passed, 1 added"],
+    ["--rerun-each=2", twice(""), ["--rerun-each=2"], "2 passed, 1 added"],
+  ])(
+    "puts a new entry that %s asks for twice behind the text of the file, with its last value",
+    async (_, tests, args, counts) => {
+      const before = header + '\n// about one\nexports[`one 1`] = `"1"`;\n';
+      const result = await updateOne(tests, before, ...args);
+      expect(result).toMatchObject({
+        snapshot: before + '\nexports[`two 1`] = `"try 2"`;\n',
+        stderr: expect.stringContaining(`snapshots: ${counts}\n`),
+        exitCode: 0,
+      });
+    },
+  );
 
   test("--rerun-each keeps the value of the last run", async () => {
     const result = await updateOne(
@@ -480,11 +591,11 @@ describe.concurrent("a run without --update-snapshots", () => {
   const one = `test("one", () => { expect("1").toMatchSnapshot(); });`;
   const file = (dir: unknown) => join(String(dir), "__snapshots__", "a.test.ts.snap");
 
-  async function run(dir: unknown, CI: string) {
+  async function run(dir: unknown, CI: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test"],
       cwd: String(dir),
-      env: { ...bunEnv, CI },
+      env: { ...bunEnv, CI, ...env },
       stdout: "ignore",
       stderr: "pipe",
     });
@@ -522,6 +633,44 @@ describe.concurrent("a run without --update-snapshots", () => {
     expect(stderr).toContain("snapshots: +1 added");
     expect(fs.readFileSync(file(dir), "utf8")).toBe(before + '\nexports[`one 1`] = `"1"`;\n');
     expect(exitCode).toBe(0);
+  });
+
+  // The first matcher loads the file, and the run writes it after the tests. Another process can change it in between.
+  const withZero = header + '\nexports[`zero 1`] = `"0"`;\n\nexports[`one 1`] = `"1"`;\n';
+  test.each([
+    ["makes it shorter", "write", header + '\nexports[`one 1`] = `"1"`;\n'],
+    ["puts an entry in front", "write", withZero],
+    ["replaces it with a rename", "rename", withZero],
+    ["empties it", "write", ""],
+    ["removes it", "remove", ""],
+  ])("puts a new entry behind what the file holds when another writer %s", async (_, how, contents) => {
+    using dir = tempDir("snapshot-other-writer", {
+      "a.test.ts": `
+        import fs from "fs";
+        ${one}
+        test("another writer", () => {
+          const file = import.meta.dir + "/__snapshots__/a.test.ts.snap";
+          const contents = process.env.CONTENTS ?? "";
+          if (process.env.HOW === "write") fs.writeFileSync(file, contents);
+          if (process.env.HOW === "rename") {
+            fs.writeFileSync(file + ".tmp", contents);
+            fs.renameSync(file + ".tmp", file);
+          }
+          if (process.env.HOW === "remove") fs.rmSync(file);
+        });
+        test("two", () => { expect("2").toMatchSnapshot(); });
+      `,
+      "__snapshots__/a.test.ts.snap": stored,
+    });
+    const { stderr, exitCode } = await run(dir, "false", { HOW: how, CONTENTS: contents });
+    expect(stderr).toContain("snapshots: 1 passed, 1 added");
+    expect(fs.readFileSync(file(dir), "utf8")).toBe((contents || header) + '\nexports[`two 1`] = `"2"`;\n');
+    expect(exitCode).toBe(0);
+
+    // The file that the run left parses: the next run finds the entry of "two" in it.
+    const next = await run(dir, "false");
+    expect(next.stderr).toContain(contents ? " 2 snapshots, " : "snapshots: 1 passed, 1 added");
+    expect(next.exitCode).toBe(0);
   });
 
   test("makes no file and no directory when CI refuses the new snapshot", async () => {

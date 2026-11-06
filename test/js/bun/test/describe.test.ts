@@ -288,6 +288,7 @@ test("deeply nested describe() doesn't overflow the native stack", async () => {
 test("deeply nested describe() doesn't overflow the native stack with --update-snapshots", async () => {
   // --update-snapshots lists the tests that did not run to the end, to keep their entries.
   const depth = 10000;
+  const scopes = Buffer.alloc(depth * 2, "d ").toString();
   using test_dir = tempDir("describe-deep-update-snapshots", {
     "describe-deep.test.js": `
       import { describe, test, expect } from "bun:test";
@@ -298,16 +299,17 @@ test("deeply nested describe() doesn't overflow the native stack with --update-s
           test("leaf", () => {
             expect("new").toMatchSnapshot();
           });
+          test.skip("skipped", () => {
+            expect("kept").toMatchSnapshot();
+          });
           return;
         }
         describe("d", nest);
       }
       nest();
-      test.skip("skipped", () => {
-        expect("kept").toMatchSnapshot();
-      });
     `,
-    "__snapshots__/describe-deep.test.js.snap": 'exports[`skipped 1`] = `"kept"`;\n\nexports[`gone 1`] = `"gone"`;\n',
+    "__snapshots__/describe-deep.test.js.snap":
+      "exports[`" + scopes + 'skipped 1`] = `"kept"`;\n\nexports[`' + scopes + 'gone 1`] = `"gone"`;\n',
   });
   const cmd = [bunExe(), "test", "--update-snapshots", "./describe-deep.test.js"];
   await using proc = Bun.spawn({
@@ -321,12 +323,10 @@ test("deeply nested describe() doesn't overflow the native stack with --update-s
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).toInclude("\n 1 pass");
-  const scopes = Buffer.alloc(depth * 2, "d ").toString();
   expect(await Bun.file(`${test_dir}/__snapshots__/describe-deep.test.js.snap`).text()).toBe(
     "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
-      '\nexports[`skipped 1`] = `"kept"`;\n\nexports[`' +
-      scopes +
-      'leaf 1`] = `"new"`;\n',
+      ("\nexports[`" + scopes + 'skipped 1`] = `"kept"`;\n') +
+      ("\nexports[`" + scopes + 'leaf 1`] = `"new"`;\n'),
   );
   expect(exitCode).toBe(0);
 });

@@ -2012,7 +2012,7 @@ if (other === \"\\0never\") {
 // 2k-line body rewrite.
 use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
-use crate::test_runner::snapshot::Snapshots;
+use crate::test_runner::snapshot::{LeftAsItIs, Snapshots};
 use bun_collections::index_sort;
 
 mod bun_test {
@@ -5558,13 +5558,27 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
-                if reporter.jest.snapshots.remove_obsolete(buntest).is_err() {
+                if let Err(left) = reporter
+                    .jest
+                    .snapshots
+                    .remove_obsolete(&reporter.jest.files, buntest)
+                {
                     reporter.jest.current_file.print_if_needed();
                     let top_level_dir = FileSystem::instance().top_level_dir();
-                    pretty_error!(
-                        "<r><red>error<r>: Failed to parse snapshot file for: {}\n<blue>note<r><d>:<r> --update-snapshots replaces a snapshot file that doesn't parse only when every test of the file runs to the end\n",
-                        bstr::BStr::new(resolve_path::relative(top_level_dir, file_path))
-                    );
+                    match left {
+                        LeftAsItIs::DoesNotParse => pretty_error!(
+                            "<r><red>error<r>: Failed to parse snapshot file for: {}\n<blue>note<r><d>:<r> --update-snapshots replaces a snapshot file that doesn't parse only when every test of the file runs to the end. Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+                            bstr::BStr::new(resolve_path::relative(top_level_dir, file_path))
+                        ),
+                        LeftAsItIs::NotWritable(err) => Output::err(
+                            &err,
+                            "Failed to remove the entries that no test uses from {}",
+                            (bun_fmt::quote(resolve_path::relative(
+                                top_level_dir,
+                                &err.path,
+                            )),),
+                        ),
+                    }
                     Output::flush();
                     reporter.jest.unhandled_errors_between_tests += 1;
                 }

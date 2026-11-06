@@ -11,11 +11,11 @@ use bun_lint::utils::text::natural_compare;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
 
-use super::bun_test::{BunTest, DescribeScope, ExecutionEntry, ScopeMode, TestScheduleEntry};
+use super::bun_test::{BunTest, ExecutionEntry, ScopeMode, TestScheduleEntry};
 use super::diff_format::DiffFormatter;
 use super::execution::Result as TestResult;
 use super::expect::Expect;
-use super::expect::get_state::{full_name, full_test_name};
+use super::expect::get_state::full_test_name;
 use super::jest::{FileColumns as _, FileList};
 use bun_collections::index_sort;
 
@@ -91,9 +91,11 @@ struct Entry {
     checked: bool,
     /// Its test did not run to the end, so `remove_obsolete` keeps it even if unchecked.
     stays: bool,
+    /// `value` is of this run, not of the file.
+    written: bool,
 }
 
-/// How far the tests of a file ran, for `remove_obsolete`.
+/// How far the tests and hooks of a file ran, for `remove_obsolete`.
 #[derive(PartialEq, Eq)]
 enum Ran {
     ToTheEnd,
@@ -106,9 +108,16 @@ enum Ran {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Pending {
     Nothing,
-    /// The entries after the first `File::loaded_entries`, behind the text that was loaded. Only Bun's format, whose order is the order of the file.
+    /// The entries that this run wrote, behind the text of the file. Only Bun's format, whose order is the order of the file.
     NewEntries,
     WholeFile,
+}
+
+/// Why `--update-snapshots` left a snapshot file as it is.
+pub(crate) enum LeftAsItIs {
+    /// Only a run of every test to its end has all the entries that replace a file nobody can read.
+    DoesNotParse,
+    NotWritable(bun_sys::Error),
 }
 
 pub(crate) enum Outcome {
@@ -250,10 +259,7 @@ pub(crate) struct File {
     /// Opened by the first change, and never with O_TRUNC: a run that exits before the flush must leave the old contents.
     file: Option<bun_sys::File>,
     pending: Pending,
-    /// The length of the text that was loaded, and the number of its entries.
-    loaded_len: usize,
-    loaded_entries: usize,
-    /// With `--update-snapshots`, a file in Bun's format that doesn't parse. A run of every test to its end replaces it.
+    /// With `--update-snapshots`, a file in Bun's format that doesn't parse, until a run of every test to its end replaces it.
     unparsed: bool,
     /// A run could not tell which entries have no test. A later run of the file can't either: it may register fewer tests (module cache).
     keeps_all: bool,
@@ -415,8 +421,6 @@ impl Snapshots {
             format,
             file: None,
             pending: Pending::Nothing,
-            loaded_len: if unparsed { 0 } else { contents.len() },
-            loaded_entries: self.values.len(),
             unparsed,
             keeps_all: false,
             may_hold_entries_of_bun,
@@ -457,14 +461,12 @@ impl Snapshots {
             key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
         }
 
-        // A test that runs again asks for the same key. It counts once.
-        let mut is_counted = false;
-        let mut is_in_loaded_text = false;
+        // What the entry holds before this call: the value of the file, or a value that this run wrote.
+        let (mut is_of_the_file, mut is_of_this_run) = (false, false);
+        let mut renamed_from = None;
         if let Some(key_in_file) = key_in_file
-            && let Some(index) = self.values.get_index(&key_in_file)
+            && let Some(entry) = self.values.get_mut(&key_in_file)
         {
-            let entry = &mut self.values.values_mut()[index];
-            is_counted = entry.checked;
             entry.checked = true;
             let is_to_be_renamed = self.update_snapshots && key_in_file != key;
             if format.matches(&entry.value, received) && !is_to_be_renamed {
@@ -474,26 +476,30 @@ impl Snapshots {
             if !self.update_snapshots {
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
             }
-            is_in_loaded_text = self._current_file.as_ref().is_some_and(|file| index < file.loaded_entries);
-            if is_to_be_renamed {
-                self.values.swap_remove(&key_in_file);
-            }
+            (is_of_the_file, is_of_this_run) = (!entry.written, entry.written);
+            renamed_from = is_to_be_renamed.then_some(key_in_file);
         } else if bun_core::ci_info::is_ci() && !self.update_snapshots {
             self.last_error_snapshot_name = Some(key.into_boxed_slice());
             return Err(Error::SnapshotCreationNotAllowedInCI);
         }
 
-        // The flush writes the file after the tests. If it can't be written, the test that changes it fails.
-        self.open_to_append(files)?;
-        // `remove_obsolete` decides if a file that doesn't parse is replaced.
-        if let Some(file) = self._current_file.as_mut().filter(|file| !file.unparsed) {
-            let is_appended = format == Format::Bun && file.loaded_len > 0 && !is_in_loaded_text;
-            file.pending = file.pending.max(if is_appended { Pending::NewEntries } else { Pending::WholeFile });
+        if let Some(file) = self._current_file.as_mut() {
+            // The flush writes the file after the tests. If it can't be written, the test that changes it fails.
+            Self::open(&mut self.snapshot_dir_path, files, file).map_err(Self::error_of_open)?;
+            // `remove_obsolete` decides if a file that doesn't parse is replaced.
+            if !file.unparsed {
+                let is_appended = format == Format::Bun && !is_of_the_file;
+                file.pending = file.pending.max(if is_appended { Pending::NewEntries } else { Pending::WholeFile });
+            }
         }
-        if !is_counted {
+        if let Some(old_key) = renamed_from {
+            self.values.swap_remove(&old_key);
+        }
+        // A test that runs again asks for the same key. It counts once.
+        if !is_of_this_run {
             self.added += 1;
         }
-        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false });
+        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false, written: true });
         Ok(Outcome::Written)
     }
 
@@ -501,8 +507,10 @@ impl Snapshots {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
-        let opts =
+        let mut opts =
             js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_ast::Loader::Js);
+        // This parse gets no macro context, so the visitor must not dispatch a macro call.
+        opts.features.no_macros = true;
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -563,7 +571,7 @@ impl Snapshots {
                                                 let value = value_string.slice(&arena);
                                                 self.values.insert(
                                                     key,
-                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false },
+                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false, written: false },
                                                 );
                                             }
                                         }
@@ -582,113 +590,108 @@ impl Snapshots {
     }
 
     /// With `--update-snapshots`, drops the entries no test asked for. The entries of a test that did not run to the end stay.
-    pub(crate) fn remove_obsolete(&mut self, buntest: &BunTest) -> Result<(), Error> {
+    pub(crate) fn remove_obsolete(&mut self, files: &FileList, buntest: &BunTest) -> Result<(), LeftAsItIs> {
         let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return Ok(()) };
         if !self.update_snapshots || (!file.unparsed && self.values.values().iter().all(|entry| entry.checked)) {
             return Ok(());
         }
-        let mut done: Vec<*const ExecutionEntry> = Vec::new();
-        let mut scopes_of_unfinished_hooks: Vec<&DescribeScope> = Vec::new();
-        for sequence in &buntest.execution.sequences {
-            // SAFETY: `buntest` owns the entries of its sequences.
-            let (test, first) = unsafe {
-                (sequence.test_entry.map(|entry| entry.as_ref()), sequence.first_entry.map(|entry| entry.as_ref()))
-            };
-            let Some(test) = test else {
-                let scope_of_all_hook = first.and_then(|hook| hook.base.parent);
-                if sequence.result != TestResult::Pass
-                    && let Some(scope) = scope_of_all_hook
-                {
-                    // SAFETY: `buntest` owns the scope of each of its hooks.
-                    scopes_of_unfinished_hooks.push(unsafe { &*scope });
-                }
-                continue;
-            };
-            let is_done = match test.base.mode {
-                // Only `--todo` runs the body of a todo, so another run can't tell what the body asks for.
-                ScopeMode::Todo => sequence.result == TestResult::Todo && !test.has_body,
-                // These pass when they throw, which can be before the matcher.
-                ScopeMode::Failing | ScopeMode::Fails => false,
-                _ => sequence.result == TestResult::Pass,
-            };
-            if is_done {
-                done.push(core::ptr::from_ref(test));
-            }
-        }
-        let root = &buntest.collection.root_scope;
-        // An older Bun wrote its own keys into the files of the other two.
-        let formats = [file.format, Format::Bun];
-        let formats = &formats[..if file.may_hold_entries_of_bun && file.format != Format::Bun { 2 } else { 1 }];
-        let ran = Self::keep_entries_of_tests(&mut self.values, formats, root, &done, &scopes_of_unfinished_hooks);
-        let kept_all = file.keeps_all;
-        // Only a run of every test to its end has all the entries that replace a file nobody can read.
+        let ran = Self::keep_entries_of_tests(&mut self.values, file, buntest);
         file.keeps_all |= ran == Ran::NotAllRegistered || (file.unparsed && ran != Ran::ToTheEnd);
-        if file.unparsed {
-            let replaces = !file.keeps_all && !self.values.is_empty();
-            file.pending = if replaces { Pending::WholeFile } else { Pending::Nothing };
-            return if file.keeps_all && !kept_all { Err(Error::ParseError) } else { Ok(()) };
-        }
-        if !file.keeps_all {
-            let before = self.values.len();
-            self.values.retain(|_, entry| entry.checked || entry.stays);
-            if self.values.len() != before {
-                file.pending = Pending::WholeFile;
+        if file.keeps_all {
+            if !file.unparsed {
+                return Ok(());
             }
+            // All that the map has of a file that doesn't parse is what this run wrote, and each entry counted once.
+            let taken = self.values.len();
+            self.added -= taken;
+            self.values.clear();
+            file.pending = Pending::Nothing;
+            return if taken > 0 { Err(LeftAsItIs::DoesNotParse) } else { Ok(()) };
         }
+        let before = self.values.len();
+        self.values.retain(|_, entry| entry.checked || entry.stays);
+        if self.values.len() == before && !file.unparsed {
+            return Ok(());
+        }
+
+        // No test owns this change, so a file that can't be changed is an error of the test file.
+        if self.values.is_empty() {
+            Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable)?;
+        } else {
+            Self::open(&mut self.snapshot_dir_path, files, file).map_err(LeftAsItIs::NotWritable)?;
+            file.pending = Pending::WholeFile;
+        }
+        file.unparsed = false;
         Ok(())
     }
 
-    /// Sets `stays` on the entries of every test under `root` that isn't in `done`, and on the entries of the hooks around it.
-    fn keep_entries_of_tests(
-        values: &mut StringArrayHashMap<Entry>,
-        formats: &[Format],
-        root: &DescribeScope,
-        done: &[*const ExecutionEntry],
-        scopes_of_unfinished_hooks: &[&DescribeScope],
-    ) -> Ran {
-        let mut done = done.to_vec();
-        index_sort::sort_slice_unstable_by(&mut done, |a, b| a.cmp(b));
-        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
-        // A snapshot that a hook of a scope takes has the key `<scope> (unnamed) <count>`.
-        let keep_hooks_around = |names: &mut StringArrayHashMap<()>, mut scope: Option<&DescribeScope>| {
-            while let Some(around) = scope {
-                let mut is_new = false;
-                for format in formats {
-                    let name = full_name(b"(unnamed)", Some(around), format.name_separator(), *format == Format::Jest);
-                    is_new |= names.insert(&Self::escape_line_breaks(*format, name), ()).is_none();
-                }
-                if !is_new {
-                    break;
-                }
-                // SAFETY: the `BunTest` that owns a scope owns its enclosing scopes.
-                scope = around.base.parent.map(|parent| unsafe { &*parent });
-            }
+    fn remove_file(files: &FileList, file_id: FileId) -> bun_sys::Result<()> {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Some((_, _, len)) = snapshot_file_path(files, file_id, path_buf.0.as_mut_slice()) else {
+            return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::unlink));
         };
-        for scope in scopes_of_unfinished_hooks {
-            keep_hooks_around(&mut names, Some(scope));
+        match bun_sys::unlink(ZStr::from_buf(&path_buf.0[..], len)) {
+            Err(err) if err.get_errno() != bun_sys::Errno::ENOENT => Err(err),
+            _ => Ok(()),
         }
-        let mut scopes = vec![root];
+    }
+
+    /// Sets `stays` on the entries of every test that did not run to the end, and on the entries of the hooks unless every test and hook did.
+    fn keep_entries_of_tests(values: &mut StringArrayHashMap<Entry>, file: &File, buntest: &BunTest) -> Ran {
+        let mut results: Vec<(*const ExecutionEntry, TestResult)> = Vec::with_capacity(buntest.execution.sequences.len());
+        let mut all_ran_to_the_end = true;
+        for sequence in &buntest.execution.sequences {
+            match sequence.test_entry {
+                Some(test) => results.push((test.as_ptr().cast_const(), sequence.result)),
+                // A sequence with no test is a hook of a scope, such as `beforeAll`.
+                None => all_ran_to_the_end &= sequence.result == TestResult::Pass,
+            }
+        }
+        index_sort::sort_slice_unstable_by(&mut results, |a, b| a.0.cmp(&b.0));
+
+        // An older Bun wrote its own keys into the files of the other two.
+        let formats = [file.format, Format::Bun];
+        let formats = &formats[..if file.may_hold_entries_of_bun && file.format != Format::Bun { 2 } else { 1 }];
+        // Vitest removes the entries of a test that it counts as passed or as todo. Jest keeps those of a `test.failing`.
+        let is_vitest = file.format == Format::Vitest;
+        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut scopes = vec![&buntest.collection.root_scope];
         while let Some(scope) = scopes.pop() {
             if scope.failed {
                 return Ran::NotAllRegistered;
             }
             for entry in &scope.entries {
-                match entry {
-                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
-                    TestScheduleEntry::TestCallback(test) => {
-                        if done.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
-                            for format in formats {
-                                let name = full_test_name(test, format.name_separator(), *format == Format::Jest);
-                                names.insert(&Self::escape_line_breaks(*format, name), ());
-                            }
-                            // SAFETY: `root` owns the scope of each test under it.
-                            keep_hooks_around(&mut names, test.base.parent.map(|parent| unsafe { &*parent }));
-                        }
+                let test: &ExecutionEntry = match entry {
+                    TestScheduleEntry::Describe(describe) => {
+                        scopes.push(describe);
+                        continue;
                     }
+                    TestScheduleEntry::TestCallback(test) => test,
+                };
+                let result = results.binary_search_by(|(of, _)| of.cmp(&core::ptr::from_ref(test))).ok().map(|i| results[i].1);
+                let ran_to_the_end = match test.base.mode {
+                    ScopeMode::Normal => result == Some(TestResult::Pass),
+                    // Only `--todo` runs the body of a todo, so another run can't tell what the body asks for.
+                    ScopeMode::Todo => result == Some(TestResult::Todo) && (is_vitest || !test.has_body),
+                    // These pass when they throw, which can be before the matcher.
+                    ScopeMode::Failing | ScopeMode::Fails => result == Some(TestResult::Pass) && is_vitest,
+                    ScopeMode::Skip | ScopeMode::FilteredOut => false,
+                };
+                if ran_to_the_end {
+                    continue;
+                }
+                all_ran_to_the_end = false;
+                for format in formats {
+                    let name = full_test_name(test, format.name_separator(), *format == Format::Jest);
+                    names.insert(&Self::escape_line_breaks(*format, name), ());
                 }
             }
         }
 
+        // The key of a snapshot that a hook takes has `(unnamed)` for the name of the test.
+        let is_kept = |name: &[u8]| {
+            names.contains_key(name) || (!all_ran_to_the_end && (name == b"(unnamed)" || name.ends_with(b" (unnamed)")))
+        };
         for i in 0..values.len() {
             // Keys look like `<test name>[<separator><hint>] <count>`.
             let key = &values.keys()[i];
@@ -697,18 +700,18 @@ impl Snapshots {
                 continue;
             }
             let name = &key[..end];
-            let mut is_of_a_test = names.contains_key(name);
+            let mut stays = is_kept(name);
             for format in formats {
                 let mut from = 0;
-                while let Some(at) = strings::index_of(&name[from..], format.hint_separator()).filter(|_| !is_of_a_test) {
-                    is_of_a_test = names.contains_key(&name[..from + at]);
+                while let Some(at) = strings::index_of(&name[from..], format.hint_separator()).filter(|_| !stays) {
+                    stays = is_kept(&name[..from + at]);
                     from += at + 1;
                 }
             }
             // Not `=`: see `File::keeps_all`.
-            values.values_mut()[i].stays |= is_of_a_test;
+            values.values_mut()[i].stays |= stays;
         }
-        if names.is_empty() { Ran::ToTheEnd } else { Ran::NotAll }
+        if all_ran_to_the_end { Ran::ToTheEnd } else { Ran::NotAll }
     }
 
     #[cold]
@@ -783,9 +786,6 @@ impl Snapshots {
     pub(crate) fn write_snapshot_file(&mut self, files: &FileList) -> Result<(), Error> {
         let Some(mut file) = self._current_file.take() else { return Ok(()) };
         let result = self.write_pending(files, &mut file);
-        if let Some(opened) = file.file.take() {
-            let _ = opened.close();
-        }
         self.values.clear();
         self.counts.clear();
         result.map_err(|_| Error::FailedToWriteSnapshotFile)
@@ -794,50 +794,41 @@ impl Snapshots {
     /// jest-snapshot's `saveSnapshotFile`. The text comes from `values` alone.
     #[optimize(size)]
     fn write_pending(&mut self, files: &FileList, file: &mut File) -> bun_sys::Result<()> {
-        // New entries go behind the text that was loaded, which can be text with no entry.
-        let (from, at) = match file.pending {
-            Pending::Nothing => return Ok(()),
-            Pending::NewEntries => (file.loaded_entries, file.loaded_len),
-            Pending::WholeFile => (0, 0),
-        };
-        if self.values.is_empty() {
-            if let Some(opened) = file.file.take() {
-                let _ = opened.close();
-            }
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let Some((_, _, len)) = snapshot_file_path(files, file.id, path_buf.0.as_mut_slice()) else {
-                return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::unlink));
-            };
-            return match bun_sys::unlink(ZStr::from_buf(&path_buf.0[..], len)) {
-                Err(err) if err.get_errno() != bun_sys::Errno::ENOENT => Err(err),
-                _ => Ok(()),
-            };
+        let (format, pending, may_hold_entries_of_bun) = (file.format, file.pending, file.may_hold_entries_of_bun);
+        if pending == Pending::Nothing {
+            return Ok(());
         }
+        let opened = Self::open(&mut self.snapshot_dir_path, files, file)?;
+        // Another writer can have changed the file after it was loaded, so new entries go behind what it holds now.
+        let offset = if pending == Pending::NewEntries { opened.get_end_pos()? } else { 0 };
 
         let (keys, values) = (self.values.keys(), self.values.values());
         // Unchecked entries may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
-        let stays_as_it_is = file.may_hold_entries_of_bun && values.iter().any(|entry| !entry.checked);
+        let stays_as_it_is = may_hold_entries_of_bun && values.iter().any(|entry| !entry.checked);
         // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
-        let mut order: Vec<usize> = Vec::with_capacity(keys.len().saturating_sub(from));
-        for (i, key) in keys.iter().enumerate().skip(from) {
+        let mut order: Vec<usize> = Vec::with_capacity(keys.len());
+        for (i, key) in keys.iter().enumerate() {
+            if pending == Pending::NewEntries && !values[i].written {
+                continue;
+            }
             // Bun's format has the order of the file.
-            let at = if stays_as_it_is || file.format == Format::Bun {
+            let at = if stays_as_it_is || format == Format::Bun {
                 order.len()
             } else {
                 order.partition_point(|other| natural_compare(&keys[*other], key).is_le())
             };
             order.insert(at, i);
         }
-        let mut text = if file.pending == Pending::WholeFile { file.format.header().to_vec() } else { Vec::new() };
+        let mut text = if offset == 0 { format.header().to_vec() } else { Vec::new() };
         for i in order {
-            file.format.write_entry(&mut text, &keys[i], &values[i].value);
+            format.write_entry(&mut text, &keys[i], &values[i].value);
         }
 
-        // Only `remove_obsolete` changed a file that isn't open yet.
-        Self::open(&mut self.snapshot_dir_path, files, file)?;
-        let Some(opened) = file.file.as_ref() else { return Ok(()) };
-        opened.pwrite_all(&text, at as i64)?;
-        bun_sys::ftruncate(opened.handle, (at + text.len()) as i64)
+        opened.pwrite_all(&text, offset as i64)?;
+        if pending == Pending::WholeFile {
+            bun_sys::ftruncate(opened.handle, text.len() as i64)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn add_inline_snapshot_to_write(
@@ -1281,33 +1272,39 @@ impl Snapshots {
         Ok(success.get())
     }
 
-    fn open_to_append(&mut self, files: &FileList) -> Result<(), Error> {
-        self.try_open_to_append(files).map_err(|err| {
-            // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
-            // not an enum — match arms require structural-eq; use if-chain instead.
-            if err.syscall == bun_sys::Tag::mkdir {
-                Error::FailedToMakeSnapshotDirectory
-            } else if err.syscall == bun_sys::Tag::open {
-                Error::FailedToOpenSnapshotFile
-            } else {
-                Error::SnapshotFailed
-            }
-        })
-    }
-
-    fn try_open_to_append(&mut self, files: &FileList) -> bun_sys::Result<()> {
-        let Some(current) = self._current_file.as_mut() else { return Ok(()) };
-        Self::open(&mut self.snapshot_dir_path, files, current)
-    }
-
-    /// Makes `__snapshots__` and opens the file for the flush, unless it is open.
-    fn open(snapshot_dir_path: &mut Option<&'static [u8]>, files: &FileList, current: &mut File) -> bun_sys::Result<()> {
-        if current.file.is_some() {
-            return Ok(());
+    fn error_of_open(err: bun_sys::Error) -> Error {
+        // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
+        // not an enum — match arms require structural-eq; use if-chain instead.
+        if err.syscall == bun_sys::Tag::mkdir {
+            Error::FailedToMakeSnapshotDirectory
+        } else if err.syscall == bun_sys::Tag::open {
+            Error::FailedToOpenSnapshotFile
+        } else {
+            Error::SnapshotFailed
         }
+    }
+
+    /// The handle that the flush writes through. The first call for a file opens it.
+    fn open<'a>(
+        snapshot_dir_path: &mut Option<&'static [u8]>,
+        files: &FileList,
+        current: &'a mut File,
+    ) -> bun_sys::Result<&'a bun_sys::File> {
+        let opened = match current.file.take() {
+            Some(opened) => opened,
+            None => Self::make_dir_and_open(snapshot_dir_path, files, current.id)?,
+        };
+        Ok(current.file.insert(opened))
+    }
+
+    fn make_dir_and_open(
+        snapshot_dir_path: &mut Option<&'static [u8]>,
+        files: &FileList,
+        file_id: FileId,
+    ) -> bun_sys::Result<bun_sys::File> {
         let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let Some((dir_path, dir_len, len)) = snapshot_file_path(files, current.id, buf) else {
+        let Some((dir_path, dir_len, len)) = snapshot_file_path(files, file_id, buf) else {
             return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
         };
 
@@ -1322,8 +1319,6 @@ impl Snapshots {
 
         // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
         let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-        let fd = bun_sys::open(ZStr::from_buf(&buf[..], len), flags, 0o644)?;
-        current.file = Some(bun_sys::File::from_fd(fd));
-        Ok(())
+        Ok(bun_sys::File::from_fd(bun_sys::open(ZStr::from_buf(&buf[..], len), flags, 0o644)?))
     }
 }

@@ -3285,17 +3285,18 @@ impl NativeMatcher {
         Some(Self { flags, kind })
     }
 
-    /// What the matcher's `toString()` returns in Jest and Vitest.
+    /// The matcher's `toString()` in Jest and Vitest, with the words of Bun's own format for the flags they lack.
     #[optimize(size)]
     fn write_name(self, global: &JSGlobalObject, out: &mut Vec<u8>) -> JsResult<()> {
+        out.extend_from_slice(self.flags.asymmetric_matcher_promise_prefix().as_bytes());
         let names = match self.kind {
             MatcherKind::ArrayContaining(_) => ["ArrayContaining", "ArrayNotContaining"],
             MatcherKind::ObjectContaining(_) => ["ObjectContaining", "ObjectNotContaining"],
             MatcherKind::StringContaining(_) => ["StringContaining", "StringNotContaining"],
             MatcherKind::StringMatching(_) => ["StringMatching", "StringNotMatching"],
             MatcherKind::CloseTo { .. } => ["NumberCloseTo", "NumberNotCloseTo"],
-            MatcherKind::Any(_) => ["Any", "Any"],
-            MatcherKind::Anything => ["Anything", "Anything"],
+            MatcherKind::Any(_) => ["Any", "NotAny"],
+            MatcherKind::Anything => ["Anything", "NotAnything"],
             MatcherKind::Custom { matcher_fn, .. } => {
                 if self.flags.not() {
                     out.extend_from_slice(b"not.");

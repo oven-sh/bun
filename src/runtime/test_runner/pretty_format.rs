@@ -3224,10 +3224,11 @@ fn for_each_member_of_source(
     format: SnapshotFormat,
     each: &mut dyn FnMut(JSValue, JSValue) -> JsResult<()>,
 ) -> JsResult<()> {
-    if let Some((sample, inverse, precision)) = members_of_matcher(global, source)? {
+    if let Some(matcher) = NativeMatcher::of(source) {
+        let (sample, precision) = matcher.sample_and_precision(global)?;
         let key = |name: &'static str| bun_core::String::static_(name).to_js(global);
         each(key("$$typeof")?, JSValue::symbol_for(global, b"jest.asymmetricMatcher"))?;
-        each(key("inverse")?, JSValue::from(inverse))?;
+        each(key("inverse")?, JSValue::from(matcher.flags.not()))?;
         if let Some(precision) = precision {
             each(key("precision")?, precision)?;
         }
@@ -3236,41 +3237,99 @@ fn for_each_member_of_source(
     for_each_sorted_property(global, source, format, &mut |key, value| if key.is_string() { each(key, value) } else { Ok(()) })
 }
 
-/// Returns `(sample, inverse, precision)`. Only `closeTo()` has a precision.
-fn members_of_matcher(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<(JSValue, bool, Option<JSValue>)>> {
-    if value.js_type() != JSType::DOMWrapper {
-        return Ok(None);
+/// One of Bun's native asymmetric matchers, as the printers of Jest's and Vitest's formats read it.
+#[derive(Clone, Copy)]
+struct NativeMatcher {
+    flags: expect::Flags,
+    kind: MatcherKind,
+}
+
+#[derive(Clone, Copy)]
+enum MatcherKind {
+    ArrayContaining(JSValue),
+    ObjectContaining(JSValue),
+    StringContaining(JSValue),
+    /// What `expect.stringMatching()` got: a string or a regular expression.
+    StringMatching(JSValue),
+    CloseTo { number: JSValue, digits: JSValue },
+    Custom { matcher_fn: JSValue, arguments: JSValue },
+    Any(JSValue),
+    Anything,
+}
+
+impl NativeMatcher {
+    fn of(value: JSValue) -> Option<Self> {
+        if value.js_type() != JSType::DOMWrapper {
+            return None;
+        }
+        let (flags, kind) = if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
+            (matcher.flags, MatcherKind::ArrayContaining(js_ExpectArrayContaining::array_value_get_cached(value)?))
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
+            (matcher.flags, MatcherKind::ObjectContaining(js_ExpectObjectContaining::object_value_get_cached(value)?))
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
+            (matcher.flags, MatcherKind::StringContaining(js_ExpectStringContaining::string_value_get_cached(value)?))
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
+            (matcher.flags, MatcherKind::StringMatching(js_ExpectStringMatching::test_value_get_cached(value)?))
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
+            let number = js_ExpectCloseTo::number_value_get_cached(value)?;
+            (matcher.flags, MatcherKind::CloseTo { number, digits: js_ExpectCloseTo::digits_value_get_cached(value)? })
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
+            let arguments = js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value)?;
+            let matcher_fn = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value)?;
+            (matcher.flags, MatcherKind::Custom { matcher_fn, arguments })
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
+            (matcher.flags, MatcherKind::Any(js_ExpectAny::constructor_value_get_cached(value)?))
+        } else {
+            (value.as_class_ref::<expect::ExpectAnything>()?.flags, MatcherKind::Anything)
+        };
+        Some(Self { flags, kind })
     }
-    let found = |sample: Option<JSValue>, flags: expect::Flags| Some((sample.unwrap_or(JSValue::UNDEFINED), flags.not(), None));
-    Ok(if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
-        found(js_ExpectArrayContaining::array_value_get_cached(value), matcher.flags)
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-        found(js_ExpectObjectContaining::object_value_get_cached(value), matcher.flags)
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
-        found(js_ExpectStringContaining::string_value_get_cached(value), matcher.flags)
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-        let sample = js_ExpectStringMatching::test_value_get_cached(value).map(|sample| to_reg_exp(global, sample)).transpose()?;
-        found(sample, matcher.flags)
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-        found(js_ExpectCloseTo::number_value_get_cached(value), matcher.flags)
-            .map(|(sample, inverse, _)| (sample, inverse, js_ExpectCloseTo::digits_value_get_cached(value)))
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-        found(js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value), matcher.flags)
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
-        found(js_ExpectAny::constructor_value_get_cached(value), matcher.flags)
-    } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-        found(None, matcher.flags)
-    } else {
-        None
-    })
+
+    /// What the matcher's `toString()` returns in Jest and Vitest.
+    #[optimize(size)]
+    fn write_name(self, global: &JSGlobalObject, out: &mut Vec<u8>) -> JsResult<()> {
+        let names = match self.kind {
+            MatcherKind::ArrayContaining(_) => ["ArrayContaining", "ArrayNotContaining"],
+            MatcherKind::ObjectContaining(_) => ["ObjectContaining", "ObjectNotContaining"],
+            MatcherKind::StringContaining(_) => ["StringContaining", "StringNotContaining"],
+            MatcherKind::StringMatching(_) => ["StringMatching", "StringNotMatching"],
+            MatcherKind::CloseTo { .. } => ["NumberCloseTo", "NumberNotCloseTo"],
+            MatcherKind::Any(_) => ["Any", "Any"],
+            MatcherKind::Anything => ["Anything", "Anything"],
+            MatcherKind::Custom { matcher_fn, .. } => {
+                if self.flags.not() {
+                    out.extend_from_slice(b"not.");
+                }
+                out.extend_from_slice(matcher_fn.get_name(global)?.to_utf8().slice());
+                return Ok(());
+            }
+        };
+        out.extend_from_slice(names[usize::from(self.flags.not())].as_bytes());
+        Ok(())
+    }
+
+    /// The `sample` and `precision` of the matcher object in Jest and Vitest. Only `closeTo()` has a precision.
+    fn sample_and_precision(self, global: &JSGlobalObject) -> JsResult<(JSValue, Option<JSValue>)> {
+        Ok(match self.kind {
+            MatcherKind::ArrayContaining(sample)
+            | MatcherKind::ObjectContaining(sample)
+            | MatcherKind::StringContaining(sample)
+            | MatcherKind::Any(sample) => (sample, None),
+            MatcherKind::StringMatching(sample) => (to_reg_exp(global, sample)?, None),
+            MatcherKind::CloseTo { number, digits } => (number, Some(digits)),
+            MatcherKind::Custom { arguments, .. } => (arguments, None),
+            MatcherKind::Anything => (JSValue::UNDEFINED, None),
+        })
+    }
 }
 
 /// The plain object a matcher is in Jest and Vitest, minus `$$typeof`, which `JSON.stringify()` drops anyway.
 pub(crate) fn matcher_as_object(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSValue>> {
-    let Some((sample, inverse, precision)) = members_of_matcher(global, value)? else { return Ok(None) };
+    let Some(matcher) = NativeMatcher::of(value) else { return Ok(None) };
+    let (sample, precision) = matcher.sample_and_precision(global)?;
     let object = JSValue::create_empty_object(global, 3);
     object.put(global, b"sample", sample);
-    object.put(global, b"inverse", JSValue::from(inverse));
+    object.put(global, b"inverse", JSValue::from(matcher.flags.not()));
     if let Some(precision) = precision {
         object.put(global, b"precision", precision);
     }
@@ -3278,38 +3337,8 @@ pub(crate) fn matcher_as_object(global: &JSGlobalObject, value: JSValue) -> JsRe
 }
 
 pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out: &mut Vec<u8>) -> JsResult<bool> {
-    if value.js_type() != JSType::DOMWrapper {
-        return Ok(false);
-    }
-    let name = |flags: expect::Flags, is: &'static str, is_not: &'static str| if flags.not() { is_not } else { is };
-    out.extend_from_slice(
-        if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
-            name(matcher.flags, "ArrayContaining", "ArrayNotContaining")
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-            name(matcher.flags, "ObjectContaining", "ObjectNotContaining")
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
-            name(matcher.flags, "StringContaining", "StringNotContaining")
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            name(matcher.flags, "StringMatching", "StringNotMatching")
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            name(matcher.flags, "NumberCloseTo", "NumberNotCloseTo")
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
-            "Any"
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
-            "Anything"
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-            let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value) else { return Ok(false) };
-            if matcher.flags.not() {
-                out.extend_from_slice(b"not.");
-            }
-            out.extend_from_slice(matcher_fn.get_name(global)?.to_utf8().slice());
-            return Ok(true);
-        } else {
-            return Ok(false);
-        }
-        .as_bytes(),
-    );
-    Ok(true)
+    let Some(matcher) = NativeMatcher::of(value) else { return Ok(false) };
+    matcher.write_name(global, out).map(|()| true)
 }
 
 #[optimize(size)]
@@ -3619,7 +3648,7 @@ impl JestPrettyFormat {
             return Ok(());
         }
         // Vitest's asymmetric matchers are plain objects, so they truncate like one.
-        if members_of_matcher(global, value)?.is_some()
+        if NativeMatcher::of(value).is_some()
             || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isShortenedByWidth(global, value))?
         {
             let (mut fitting, mut too_wide) = (0, Self::TRUNCATE as u32);
@@ -4202,96 +4231,80 @@ impl Formatter<'_> {
     fn print_asymmetric_matcher_like_pretty_format(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         use std::io::Write as _;
         let global = self.global_this;
-        let name = |flags: expect::Flags, is: &'static str, is_not: &'static str| -> &'static [u8] {
-            (if flags.not() { is_not } else { is }).as_bytes()
-        };
-        if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
-            let Some(sample) = js_ExpectArrayContaining::array_value_get_cached(value) else { return Ok(false) };
-            if self.is_at_max_depth() {
-                out.extend_from_slice(name(matcher.flags, "[ArrayContaining]", "[ArrayNotContaining]"));
-                return Ok(true);
-            }
-            out.extend_from_slice(name(matcher.flags, "ArrayContaining [", "ArrayNotContaining ["));
-            self.deeper(|this| this.print_list_items(out, sample))?;
+        let Some(matcher) = NativeMatcher::of(value) else { return Ok(false) };
+        let has_items = matches!(matcher.kind, MatcherKind::ArrayContaining(_) | MatcherKind::ObjectContaining(_));
+        if has_items && self.is_at_max_depth() {
+            out.push(b'[');
+            matcher.write_name(global, out)?;
             out.push(b']');
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-            let Some(sample) = js_ExpectObjectContaining::object_value_get_cached(value) else { return Ok(false) };
-            if self.is_at_max_depth() {
-                out.extend_from_slice(name(matcher.flags, "[ObjectContaining]", "[ObjectNotContaining]"));
-                return Ok(true);
+            return Ok(true);
+        }
+        matcher.write_name(global, out)?;
+        match matcher.kind {
+            MatcherKind::ArrayContaining(sample) => {
+                out.extend_from_slice(b" [");
+                self.deeper(|this| this.print_list_items(out, sample))?;
+                out.push(b']');
             }
-            out.extend_from_slice(name(matcher.flags, "ObjectContaining {", "ObjectNotContaining {"));
-            self.deeper(|this| this.print_object_properties(out, sample))?;
-            out.push(b'}');
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
-            let Some(sample) = js_ExpectStringContaining::string_value_get_cached(value) else { return Ok(false) };
-            out.extend_from_slice(name(matcher.flags, "StringContaining ", "StringNotContaining "));
-            self.print_child(out, sample)?;
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            let Some(sample) = js_ExpectStringMatching::test_value_get_cached(value) else { return Ok(false) };
-            out.extend_from_slice(name(matcher.flags, "StringMatching ", "StringNotMatching "));
-            self.print_child(out, to_reg_exp(global, sample)?)?;
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            let (Some(number), Some(digits)) =
-                (js_ExpectCloseTo::number_value_get_cached(value), js_ExpectCloseTo::digits_value_get_cached(value))
-            else {
-                return Ok(false);
-            };
-            out.extend_from_slice(name(matcher.flags, "NumberCloseTo ", "NumberNotCloseTo "));
-            write_string(global, out, number)?;
-            let digits = digits.to_int32();
-            let _ = write!(out, " ({} digit{})", digits, if digits == 1 { "" } else { "s" });
-        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-            let (Some(arguments), Some(matcher_fn)) =
-                (js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value), js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value))
-            else {
-                return Ok(false);
-            };
-            if matcher.flags.not() {
-                out.extend_from_slice(b"not.");
+            MatcherKind::ObjectContaining(sample) => {
+                out.extend_from_slice(b" {");
+                self.deeper(|this| this.print_object_properties(out, sample))?;
+                out.push(b'}');
             }
-            out.extend_from_slice(matcher_fn.get_name(global)?.to_utf8().slice());
-            out.push(b'<');
-            let mut iter = arguments.array_iterator(global)?;
-            while let Some(argument) = iter.next()? {
-                if iter.i > 1 {
-                    out.extend_from_slice(b", ");
+            MatcherKind::StringContaining(sample) => {
+                out.push(b' ');
+                self.print_child(out, sample)?;
+            }
+            MatcherKind::StringMatching(sample) => {
+                out.push(b' ');
+                self.print_child(out, to_reg_exp(global, sample)?)?;
+            }
+            MatcherKind::CloseTo { number, digits } => {
+                out.push(b' ');
+                write_string(global, out, number)?;
+                let digits = digits.to_int32();
+                let _ = write!(out, " ({} digit{})", digits, if digits == 1 { "" } else { "s" });
+            }
+            MatcherKind::Custom { arguments, .. } => {
+                out.push(b'<');
+                let mut iter = arguments.array_iterator(global)?;
+                while let Some(argument) = iter.next()? {
+                    if iter.i > 1 {
+                        out.extend_from_slice(b", ");
+                    }
+                    if self.snapshot_format == SnapshotFormat::Vitest {
+                        let outer = (
+                            core::mem::take(&mut self.indent),
+                            core::mem::replace(&mut self.print_basic_prototype, true),
+                            core::mem::replace(&mut self.print_function_name, true),
+                            core::mem::take(&mut self.is_inline),
+                            core::mem::replace(&mut self.max_depth, u32::MAX),
+                            core::mem::replace(&mut self.max_width, u32::MAX),
+                        );
+                        let result = self.print_child(out, argument);
+                        (
+                            self.indent,
+                            self.print_basic_prototype,
+                            self.print_function_name,
+                            self.is_inline,
+                            self.max_depth,
+                            self.max_width,
+                        ) = outer;
+                        result?;
+                    } else {
+                        out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
+                    }
                 }
-                if self.snapshot_format == SnapshotFormat::Vitest {
-                    let outer = (
-                        core::mem::take(&mut self.indent),
-                        core::mem::replace(&mut self.print_basic_prototype, true),
-                        core::mem::replace(&mut self.print_function_name, true),
-                        core::mem::take(&mut self.is_inline),
-                        core::mem::replace(&mut self.max_depth, u32::MAX),
-                        core::mem::replace(&mut self.max_width, u32::MAX),
-                    );
-                    let result = self.print_child(out, argument);
-                    (
-                        self.indent,
-                        self.print_basic_prototype,
-                        self.print_function_name,
-                        self.is_inline,
-                        self.max_depth,
-                        self.max_width,
-                    ) = outer;
-                    result?;
-                } else {
-                    out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
-                }
+                out.push(b'>');
             }
-            out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
-            let Some(constructor) = js_ExpectAny::constructor_value_get_cached(value) else { return Ok(false) };
-            out.extend_from_slice(b"Any<");
-            let name = constructor.get_class_name(global)?;
-            let name = name.to_utf8();
-            out.extend_from_slice(if name.slice().is_empty() { b"<anonymous>" } else { name.slice() });
-            out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
-            out.extend_from_slice(b"Anything");
-        } else {
-            return Ok(false);
+            MatcherKind::Any(constructor) => {
+                out.push(b'<');
+                let name = constructor.get_class_name(global)?;
+                let name = name.to_utf8();
+                out.extend_from_slice(if name.slice().is_empty() { b"<anonymous>" } else { name.slice() });
+                out.push(b'>');
+            }
+            MatcherKind::Anything => {}
         }
         Ok(true)
     }

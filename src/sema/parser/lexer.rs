@@ -9,25 +9,22 @@
 use crate::Rejection;
 use crate::names::{Names, Text};
 use crate::token::T;
-use bun_core::lexer::{
-    is_identifier_part, is_identifier_start, is_white_space_like, is_white_space_single_line,
+use bun_core::lexer::{is_identifier_part, is_identifier_start, is_white_space_like};
+use bun_core::strings::{
+    self, CodepointIterator, Cursor, is_js_line_terminator, push_codepoint_wtf8_joined, push_wtf8,
 };
-use bun_core::strings::{self, is_js_line_terminator, push_codepoint_wtf8_joined};
 use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{
     Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind, NodeOrName,
 };
 
+mod runtime_text;
+
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Lexer<'a> {
-    pub(crate) src: &'a [u8],
-    /// Computed for the whole text, even while `src` is cut short.
-    stops: ScannerStops<'a>,
-    pub(crate) token: T,
-    /// A line break precedes the token.
-    pub(crate) newline_before: bool,
-    /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
-    pub(crate) has_escape: bool,
     /// The start of the token.
     pub(crate) start: u32,
     /// The end of the token.
@@ -36,12 +33,48 @@ pub(crate) struct Lexer<'a> {
     pub(crate) full_start: u32,
     /// The text of a name, keyword or bigint, or the value of a string or template piece.
     pub(crate) atom: Atom,
-    pub(crate) number: f64,
-    /// The start of the last string whose contents are only printable ASCII, with no backslash.
-    plain_string: u32,
+    /// See `Parser::finish_node`. A node that starts after this offset can't affect any pending comment.
+    pub(crate) max_relevant_node_start: u32,
+    pub(crate) token: T,
+    /// A line break precedes the token.
+    pub(crate) newline_before: bool,
+    /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
+    pub(crate) has_escape: bool,
     pub(crate) rejection: Option<Rejection>,
+    pub(crate) number: f64,
+    pub(crate) stack_check: bun_core::StackCheck,
+    pub(crate) src: &'a [u8],
+    /// Every scanned private name that wasn't declared by a class that has ended since, for
+    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
+    pub(crate) private_names: Vec<Atom>,
+    /// `hir::File::comment_directives`
+    pub(crate) comment_directives: Vec<CommentDirective>,
+    /// The comments before the first token.
+    pub(crate) leading_comments: Vec<(u32, u32)>,
+    /// `hir::File::comments`
+    pub(crate) comments: Vec<Comment>,
+    /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
+    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
+    pub(crate) flagged: Vec<(u32, u32, u32)>,
+    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
+    /// the order they were reported.
+    pub(crate) errors: Vec<Diagnostic>,
+    /// `hir::File::jsdoc_asterisks`, in scan order: unsorted, and possibly with duplicates.
+    pub(crate) jsdoc_asterisks: Vec<u32>,
+    /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
+    origins: Vec<u32>,
+    /// Scratch space for decoding values that have escapes.
+    buffer: Vec<u8>,
+    /// Only filled in if `records_html_opens` is set.
+    pub(crate) html_opens: HtmlOpens,
+    /// Computed for the whole text, even while `src` is cut short.
+    stops: ScannerStops<'a>,
+    pub(crate) atoms: &'a dyn Intern,
+    pub(crate) names: &'a mut Names,
     /// Where the text was rejected, and by which line of this crate.
     pub(crate) rejected_at: (u32, &'static core::panic::Location<'static>),
+    /// The start of the last string whose contents are only printable ASCII, with no backslash.
+    plain_string: u32,
     /// `full_start` at that point.
     pub(crate) rejected_after: u32,
     /// `</` is one token.
@@ -50,6 +83,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_ecmascript: bool,
     /// The goal symbol is Script.
     pub(crate) is_script: bool,
+    /// `Options::compiles`: text that is not UTF-8 is read as `bun run` reads it, so the value of every token is WTF-8, and the lines of JSX text are trimmed as `bun run` trims them.
+    pub(crate) decodes_ill_formed_text: bool,
     /// `Dialect::typescript_5`
     pub(crate) is_typescript_5: bool,
     /// `Dialect::babel`
@@ -58,43 +93,17 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_oxc: bool,
     /// Records `<!--` positions in `html_opens`. The caller may reparse a text that has one as a script.
     pub(crate) records_html_opens: bool,
-    /// Only filled in if `records_html_opens` is set.
-    pub(crate) html_opens: HtmlOpens,
-    /// Every scanned private name that wasn't declared by a class that has ended since, for
-    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
-    pub(crate) private_names: Vec<Atom>,
-    pub(crate) atoms: &'a dyn Intern,
-    pub(crate) names: &'a mut Names,
-    /// `hir::File::comment_directives`
-    pub(crate) comment_directives: Vec<CommentDirective>,
-    /// The comments before the first token.
-    pub(crate) leading_comments: Vec<(u32, u32)>,
-    /// `hir::File::comments`
-    pub(crate) comments: Vec<Comment>,
     /// While scanning the comments between two tokens: true if a line break was seen since the last comment, or since
     /// the previous token if there was no comment yet.
     newline_since_comment: bool,
     /// `Options::attach_comments`
     pub(crate) attach_comments: bool,
-    /// See `Parser::finish_node`. A node that starts after this offset can't affect any pending comment.
-    pub(crate) max_relevant_node_start: u32,
-    /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
-    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
-    pub(crate) flagged: Vec<(u32, u32, u32)>,
+    /// `hir::rare::LEGACY_OCTAL`
+    pub(crate) has_legacy_octal: bool,
     /// `Options::recovers`
     pub(crate) recovers: bool,
-    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
-    /// the order they were reported.
-    pub(crate) errors: Vec<Diagnostic>,
     /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
     pub(crate) skips_jsdoc_asterisks: bool,
-    /// `hir::File::jsdoc_asterisks`, in scan order: unsorted, and possibly with duplicates.
-    pub(crate) jsdoc_asterisks: Vec<u32>,
-    /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
-    origins: Vec<u32>,
-    /// Scratch space for decoding values that have escapes.
-    buffer: Vec<u8>,
-    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 /// Outside a script: the position of the first `<!--` that was scanned as `<`, and of the first one preceded only by
@@ -254,6 +263,12 @@ fn is_utf8(text: &[u8]) -> bool {
 }
 
 impl<'a> Lexer<'a> {
+    /// The file is JavaScript parsed for `bun compile`.
+    #[inline]
+    pub(crate) fn compiles(&self) -> bool {
+        self.decodes_ill_formed_text && self.is_ecmascript
+    }
+
     pub(crate) fn new(
         src: &'a [u8],
         stops: ScannerStops<'a>,
@@ -278,6 +293,7 @@ impl<'a> Lexer<'a> {
             is_jsx: false,
             is_ecmascript: false,
             is_script: false,
+            decodes_ill_formed_text: false,
             is_typescript_5: false,
             is_babel: false,
             is_oxc: false,
@@ -293,6 +309,7 @@ impl<'a> Lexer<'a> {
             attach_comments: false,
             max_relevant_node_start: 0,
             flagged: Vec::new(),
+            has_legacy_octal: false,
             recovers: false,
             errors: Vec::new(),
             skips_jsdoc_asterisks: false,
@@ -440,9 +457,10 @@ impl<'a> Lexer<'a> {
     /// Adds an entry to `flagged`. Returns false if the caller has to reject the text instead.
     #[cold]
     fn flag(&mut self, code: u32, start: usize, end: usize) -> bool {
-        if self.is_ecmascript {
+        if self.is_ecmascript && !self.compiles() {
             self.flagged.push((code, start as u32, end as u32));
         }
+        self.has_legacy_octal |= self.compiles();
         self.is_ecmascript
     }
 
@@ -508,7 +526,7 @@ impl<'a> Lexer<'a> {
         let rest = self.src.get(self.end as usize..).unwrap_or_default();
         match *rest {
             // `<!--` starts a comment.
-            _ if self.is_script => 0,
+            _ if self.reads_html_comments() => 0,
             [b' ', b'/' | b'\\', ..] | [b'/' | b'\\', ..] => 0,
             [b' ', first @ b'!'..=b'~', ..] | [first @ b'!'..=b'~', ..] => first,
             _ => 0,
@@ -623,7 +641,8 @@ impl<'a> Lexer<'a> {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
                     (b'!', b'-')
-                        if (self.is_script || self.records_html_opens) && at(pos + 3) == b'-' =>
+                        if (self.reads_html_comments() || self.records_html_opens)
+                            && at(pos + 3) == b'-' =>
                     {
                         return self.scan_at_html_open(pos);
                     }
@@ -644,7 +663,8 @@ impl<'a> Lexer<'a> {
                 First::Minus => match (at(next), at(next + 1)) {
                     // Only whitespace and comments precede it on its line.
                     (b'-', b'>')
-                        if self.is_script && (self.newline_before || self.full_start == 0) =>
+                        if self.reads_html_comments()
+                            && (self.newline_before || self.full_start == 0) =>
                     {
                         return self.scan_after_comments(pos);
                     }
@@ -789,6 +809,9 @@ impl<'a> Lexer<'a> {
                 b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
                 b'<' | b'-' | b'#' => match self.end_of_html_or_hashbang_comment(pos) {
                     Some(end) => {
+                        if self.compiles() && self.at(pos) == b'<' && !self.html_open_error(pos) {
+                            return;
+                        }
                         // A formatter has to print `<!-- comment` and `--> comment` too.
                         if self.attach_comments && self.at(pos) != b'#' {
                             self.note_comment(pos, end, CommentForm::Line);
@@ -813,7 +836,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn scan_at_html_open(&mut self, pos: usize) {
-        if self.is_script {
+        if self.reads_html_comments() {
             return self.scan_after_comments(pos);
         }
         self.html_opens.first.get_or_insert(pos as u32);
@@ -853,7 +876,7 @@ impl<'a> Lexer<'a> {
         if c == 0x2028 || c == 0x2029 {
             self.newline_before = true;
             self.newline_since_comment = true;
-        } else if !is_white_space_single_line(c as i32) {
+        } else if !self.is_white_space_between_tokens(c as i32) {
             self.name_slow(pos, pos);
             return None;
         }
@@ -865,7 +888,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn end_of_html_or_hashbang_comment(&self, pos: usize) -> Option<usize> {
         let rest = &self.src[pos..];
-        let is_comment = match self.is_script {
+        let is_comment = match self.reads_html_comments() {
             true if rest.starts_with(b"<!--") => true,
             // Only whitespace and comments precede it on its line.
             true if rest.starts_with(b"-->") => self.newline_before || self.full_start == 0,
@@ -1437,8 +1460,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Decodes `\1` to `\377`, `\8` or `\9` at `pos` in a string. Returns its end.
-    fn legacy_escape(&mut self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
+    /// Decodes `\1` to `\377`, `\8` or `\9` at `pos` in a string that `quote` ends. Returns its end.
+    fn legacy_escape(&mut self, pos: usize, quote: u8, text: &mut Vec<u8>) -> Option<usize> {
         let end = self.end_of_invalid_escape(pos);
         let digits = self.src.get(pos + 1..end)?;
         let (code, c) = match digits.first()? {
@@ -1449,8 +1472,15 @@ impl<'a> Lexer<'a> {
             &c @ (b'8' | b'9') => (1488, u32::from(c)),
             _ => return None,
         };
+        // `bun run` reports an octal escape of one or two digits before an `8`, a `9` or the end of the string.
+        let next = self.at(end);
+        let is_reported_by_bun_run =
+            code == 1487 && digits.len() < 3 && (matches!(next, b'8' | b'9') || next == quote);
         if !self.flag(code, pos, end) {
             return None;
+        }
+        if is_reported_by_bun_run && self.compiles() {
+            self.flagged.push((code, pos as u32, end as u32));
         }
         push_codepoint_wtf8_joined(text, c);
         Some(end)
@@ -1535,15 +1565,16 @@ impl<'a> Lexer<'a> {
         Some(pos + 2)
     }
 
-    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8. Go decodes it as U+FFFD.
+    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8.
     #[cold]
     #[inline(never)]
     fn escaped_byte(&self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
         if !self.recovers {
             return None;
         }
-        push_codepoint_wtf8_joined(text, 0xFFFD);
-        Some(pos + 2)
+        let (c, len) = self.decode_escaped_byte(pos + 1);
+        push_codepoint_wtf8_joined(text, c);
+        Some(pos + 1 + len)
     }
 
     #[cold]
@@ -1572,7 +1603,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
-                    None => match self.legacy_escape(pos, &mut text) {
+                    None => match self.legacy_escape(pos, quote, &mut text) {
                         Some(end) => pos = end,
                         None if self.recovers => pos = self.invalid_escape(pos, &mut text, true),
                         None => {
@@ -1585,7 +1616,7 @@ impl<'a> Lexer<'a> {
                     let end = self.end_of_run_before(pos + 1, [quote, b'\\', b'\n', b'\r']);
                     let raw = src.get(pos..end).unwrap_or_default();
                     is_ascii &= raw.is_ascii();
-                    text.extend_from_slice(raw);
+                    self.push_written(raw, &mut text);
                     pos = end;
                 }
             }
@@ -1733,7 +1764,7 @@ impl<'a> Lexer<'a> {
                     let end = self.end_of_run_before(pos + 1, *b"`$\\\r");
                     let raw = src.get(pos..end).unwrap_or_default();
                     is_ascii &= raw.is_ascii();
-                    text.extend_from_slice(raw);
+                    self.push_written(raw, &mut text);
                     pos = end;
                 }
             }
@@ -2164,9 +2195,9 @@ impl<'a> Lexer<'a> {
                         pos += 1;
                     }
                 }
-                // TypeScript 7's scanner reads bytes here, so only "\n" and "\r" end a line.
+                // TypeScript 7's scanner reads bytes here, so only "\n" and "\r" end a line. In the language U+2028 and U+2029 do too.
                 Some(0xE2)
-                    if self.is_typescript_5
+                    if (self.is_typescript_5 || self.decodes_ill_formed_text)
                         && matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) =>
                 {
                     return self.unterminated_regex(pos);
@@ -2328,7 +2359,8 @@ impl Lexer<'_> {
             return self.unterminated_jsx_string(before, start);
         };
         let text = &src[start + 1..start + 1 + len];
-        if core::str::from_utf8(text).is_err() && !self.recovers {
+        let is_well_formed = core::str::from_utf8(text).is_ok();
+        if !is_well_formed && !self.recovers {
             return self.reject(Rejection::NotUtf8);
         }
         if start != before
@@ -2337,8 +2369,7 @@ impl Lexer<'_> {
         {
             return;
         }
-        let text = Text::from_source(src, start + 1, start + 1 + len);
-        self.atom = self.names.atom(text, self.atoms);
+        self.atom = self.atom_of_written(start + 1, start + 1 + len, is_well_formed);
         self.set(T::String, start, start + len + 2);
     }
 
@@ -2446,10 +2477,7 @@ impl Lexer<'_> {
                 Some(_) => false,
             };
             if is_only_whitespace && has_line_break {
-                debug_assert!(
-                    core::str::from_utf8(&src[start..end])
-                        .is_ok_and(|it| fix_whitespace_and_decode_jsx_entities(it).is_empty())
-                );
+                debug_assert!(self.jsx_text_value(&src[start..end]).is_empty());
                 newline_before = true;
                 start = end;
                 continue;
@@ -2467,9 +2495,6 @@ impl Lexer<'_> {
                 return;
             }
             self.newline_before = newline_before;
-            let Ok(valid) = core::str::from_utf8(text) else {
-                return self.jsx_text_with_invalid_utf8(start, text);
-            };
             let needs_fixing = text
                 .iter()
                 .any(|&c| matches!(c, b'&' | b'\n' | b'\r' | 0x80..));
@@ -2478,7 +2503,13 @@ impl Lexer<'_> {
                 self.atom = self.names.atom(text, self.atoms);
                 return self.set(T::JsxText, start, start + len);
             }
-            let fixed = fix_whitespace_and_decode_jsx_entities(valid);
+            let fixed = match core::str::from_utf8(text) {
+                Ok(_) => self.jsx_text_value(text),
+                Err(_) => match self.decode_ill_formed_jsx_text(text) {
+                    Some(decoded) => self.jsx_text_value(&decoded),
+                    None => return,
+                },
+            };
             if fixed.is_empty() {
                 newline_before = true;
                 start += len;
@@ -2528,18 +2559,19 @@ impl Lexer<'_> {
         true
     }
 
-    /// Scans the JSX text `text` at `start`, which isn't valid UTF-8.
+    /// Returns the JSX text `text`, which isn't valid UTF-8, as WTF-8. `None`: the file's text is rejected.
     #[cold]
     #[inline(never)]
     #[track_caller]
-    fn jsx_text_with_invalid_utf8(&mut self, start: usize, text: &[u8]) {
+    fn decode_ill_formed_jsx_text(&mut self, text: &[u8]) -> Option<Vec<u8>> {
         if !self.recovers {
-            return self.reject(Rejection::NotUtf8);
+            self.reject(Rejection::NotUtf8);
+            return None;
         }
-        let read = with_replacement_characters(text);
-        let fixed = fix_whitespace_and_decode_jsx_entities(&read);
-        self.atom = (self.names).atom(Text::not_in_source(self.src, &fixed), self.atoms);
-        self.set(T::JsxText, start, start + text.len());
+        Some(match self.decodes_ill_formed_text {
+            true => runtime_text::read_as_bun_run(text),
+            false => with_replacement_characters(text).into_bytes(),
+        })
     }
 }
 
@@ -2554,21 +2586,20 @@ fn with_replacement_characters(mut text: &[u8]) -> String {
     read
 }
 
-/// Returns the value of the JSX text `text`: lines are trimmed and joined with a space, whitespace-only lines are
-/// dropped, and entities are decoded.
-fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
+/// Returns the value of the JSX text `text`, which is WTF-8: lines are trimmed and joined with a space, whitespace-only lines are dropped, and entities are decoded.
+fn fix_whitespace_and_decode_jsx_entities(text: &[u8], is_white_space: fn(i32) -> bool) -> Vec<u8> {
     let mut decoded = Vec::new();
     let mut after_last_non_whitespace = None;
     // Leading whitespace on the first line is kept.
     let mut first_non_whitespace = Some(0);
-    for (at, c) in text.char_indices() {
-        let (is_line_break, is_whitespace) = match c {
-            '!'..='~' => (false, false),
-            ' ' | '\t' => (false, true),
-            c => (
-                is_js_line_terminator(u32::from(c)),
-                bun_core::lexer::is_white_space_single_line(c as i32),
-            ),
+    let code_points = CodepointIterator::init(text);
+    let mut cursor = Cursor::default();
+    while code_points.next(&mut cursor) {
+        let at = cursor.i as usize;
+        let (is_line_break, is_whitespace) = match cursor.c {
+            0x21..=0x7E => (false, false),
+            0x20 | 0x09 => (false, true),
+            c => (is_js_line_terminator(c as u32), is_white_space(c)),
         };
         if is_line_break {
             if let (Some(start), Some(end)) = (first_non_whitespace, after_last_non_whitespace) {
@@ -2579,7 +2610,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
             }
             first_non_whitespace = None;
         } else if !is_whitespace {
-            after_last_non_whitespace = Some(at + c.len_utf8());
+            after_last_non_whitespace = Some(at + usize::from(cursor.width));
             first_non_whitespace.get_or_insert(at);
         }
     }
@@ -2593,23 +2624,23 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
     decoded
 }
 
-fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
-    while let Some(at) = bun_core::strings::index_of_char_usize(text.as_bytes(), b'&') {
-        decoded.extend_from_slice(&text.as_bytes()[..at]);
+fn decode_jsx_entities(mut text: &[u8], decoded: &mut Vec<u8>) {
+    while let Some(at) = bun_core::strings::index_of_char_usize(text, b'&') {
+        push_wtf8(decoded, &text[..at]);
         text = &text[at + 1..];
-        let entity = bun_core::strings::index_of_char_usize(text.as_bytes(), b';')
+        let entity = bun_core::strings::index_of_char_usize(text, b';')
             .map(|len| &text[..len])
             .filter(|entity| !entity.is_empty());
-        let c = entity.and_then(|entity| match entity.strip_prefix('#') {
+        let c = entity.and_then(|entity| match entity.strip_prefix(b"#") {
             Some(number) => {
-                let parsed = match number.strip_prefix('x').filter(|_| number.len() > 1) {
+                let parsed = match number.strip_prefix(b"x").filter(|_| number.len() > 1) {
                     Some(hex) => parse_entity_number(hex, 16),
                     None => parse_entity_number(number, 10),
                 };
                 Some(parsed.unwrap_or(0xFFFD))
             }
             None => bun_ast::lexer_tables::JSX_ENTITY
-                .get(entity.as_bytes())
+                .get(entity)
                 .map(|&c| c as u32),
         });
         match (c, entity) {
@@ -2620,12 +2651,12 @@ fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
             _ => decoded.push(b'&'),
         }
     }
-    decoded.extend_from_slice(text.as_bytes());
+    push_wtf8(decoded, text);
 }
 
 /// Returns the code point for the digits of `&#..;`.
-fn parse_entity_number(digits: &str, radix: u8) -> Option<u32> {
-    let number = bun_core::parse_int::<i32>(digits.as_bytes(), radix).ok()?;
+fn parse_entity_number(digits: &[u8], radix: u8) -> Option<u32> {
+    let number = bun_core::parse_int::<i32>(digits, radix).ok()?;
     u32::try_from(number).ok().filter(|&c| c <= 0x10_FFFF)
 }
 

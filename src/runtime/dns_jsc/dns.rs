@@ -146,11 +146,11 @@ mod lib_c {
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(this, global_this, context);
+            let promise = dns_lookup.promise.value();
             // SAFETY: inflight points into resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
-            // SAFETY: dns_lookup just heap-allocated; owned by the inflight list.
-            return unsafe { (*dns_lookup).promise.value() };
+            return promise;
         }
 
         let query = query_init.clone();
@@ -160,7 +160,7 @@ mod lib_c {
         let request = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::CAres,
-            Some(this.as_ctx_ptr()),
+            this,
             global_this,
             context,
             PendingCacheField::PendingHostCacheNative,
@@ -247,15 +247,16 @@ pub(crate) mod lib_uv_backend {
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(this, global_this, context);
+            let promise = dns_lookup.promise.value();
             unsafe { (*inflight).append(dns_lookup) };
-            return Ok(unsafe { (*dns_lookup).promise.value() });
+            return Ok(promise);
         }
 
         let request = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
-            Some(this.as_ctx_ptr()),
+            this,
             global_this,
             context,
             PendingCacheField::PendingHostCacheNative,
@@ -314,7 +315,7 @@ pub(crate) mod lib_uv_backend {
                 // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
                 let owned = *bun_core::heap::take(request);
                 let mut head = owned.head;
-                DNSLookup::process_get_addr_info_native(&mut head, rc.int(), ptr::null_mut());
+                head.process_get_addr_info_native(rc.int());
                 return Ok(promise);
             }
             promise
@@ -356,14 +357,14 @@ pub(crate) trait CAresRecordType: Sized {
     /// `"query" + ucfirst(TYPE_NAME)` — each impl carries the precomputed
     /// literal so error paths report the right syscall.
     const SYSCALL: &'static str;
-    /// `"pending_{TYPE_NAME}_cache_cares"` — used to reach the matching HiveArray on `Resolver`.
-    const CACHE_FIELD: PendingCacheField;
     /// The DNS RR type passed to `ares_query`.
     const NS_TYPE: c_ares::NSType;
     /// The `ares_callback` thunk that parses raw reply bytes for this record type
     /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
-    /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
+    /// `ResolveHandler::RAW_CALLBACK` for the generic `Channel::resolve` dispatch.
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
+    /// The `pending_{TYPE_NAME}_cache_cares` field of `resolver`.
+    fn cache(resolver: &Resolver) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32>;
     fn to_js_response(
         &mut self,
         global: &JSGlobalObject,
@@ -429,12 +430,13 @@ pub(crate) mod resolve_info_request {
     }
 
     impl<T: CAresRecordType> PendingCacheKey<T> {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresLookup<T>) {
+        pub(crate) fn append(&mut self, cares_lookup: Box<CAresLookup<T>>) {
+            let cares_lookup = bun_core::heap::into_raw_nn(cares_lookup);
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(cares_lookup);
-                (*self.lookup).tail = cares_lookup;
+                (*tail).next = Some(cares_lookup);
+                (*self.lookup).tail = cares_lookup.as_ptr();
             }
         }
 
@@ -453,25 +455,22 @@ pub(crate) mod resolve_info_request {
 impl<T: CAresRecordType> ResolveInfoRequest<T> {
     fn init(
         cache: LookupCacheHit<Self>,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-        cache_field: PendingCacheField,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresLookup {
-                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+                resolver: Some(resolver.ref_guard()),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
-                allocated: false,
                 next: None,
                 name: Box::<[u8]>::from(name),
                 _marker: core::marker::PhantomData,
@@ -484,11 +483,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
-                    .pending_cache_for::<T>(cache_field)
-                    .index_of(new)
-                    .unwrap();
+                let pos = T::cache(resolver).index_of(new).unwrap();
                 (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
@@ -516,7 +511,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             // + `heap::take` would double-Drop `CAresLookup<T>` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            CAresLookup::<T>::process_resolve(&raw mut head, err_, timeout, result);
+            head.process_resolve(err_, timeout, result);
         }
     }
 }
@@ -527,17 +522,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
     const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
     const NS_TYPE: c_ares::NSType = T::NS_TYPE;
-    unsafe extern "C" fn raw_callback(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: `ctx` is the `*mut ResolveInfoRequest<T>` handed to `ares_query`
-        // by `Channel::resolve`; the callback owns it for this call.
-        unsafe { (T::RAW_CALLBACK)(ctx, status, timeouts, buffer, buffer_length) }
-    }
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+        T::RAW_CALLBACK;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -564,12 +550,13 @@ pub(crate) mod get_host_by_addr_info_request {
     }
 
     impl PendingCacheKey {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresReverse) {
+        pub(crate) fn append(&mut self, cares_lookup: Box<CAresReverse>) {
+            let cares_lookup = bun_core::heap::into_raw_nn(cares_lookup);
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(cares_lookup);
-                (*self.lookup).tail = cares_lookup;
+                (*tail).next = Some(cares_lookup);
+                (*self.lookup).tail = cares_lookup.as_ptr();
             }
         }
 
@@ -586,11 +573,9 @@ pub(crate) mod get_host_by_addr_info_request {
 }
 
 impl GetHostByAddrInfoRequest {
-    /// Reverse lookups always cache through `pending_addr_cache_cares`, so no
-    /// `cache_field` selector is needed (unlike `ResolveInfoRequest::<T>::init`).
     fn init(
         cache: LookupCacheHit<Self>,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
@@ -598,16 +583,14 @@ impl GetHostByAddrInfoRequest {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresReverse {
-                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+                resolver: Some(resolver.ref_guard()),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
-                allocated: false,
                 next: None,
                 name: Box::<[u8]>::from(name),
             },
@@ -618,8 +601,7 @@ impl GetHostByAddrInfoRequest {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
+                let pos = resolver
                     .pending_addr_cache_cares
                     .get()
                     .index_of(new)
@@ -650,7 +632,7 @@ impl GetHostByAddrInfoRequest {
             // + `heap::take` would double-Drop `CAresReverse` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            CAresReverse::process_resolve(&raw mut head, err_, timeout, result);
+            head.process_resolve(err_, timeout, result);
         }
     }
 }
@@ -679,7 +661,6 @@ pub(crate) struct CAresNameInfo {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub allocated: bool,
     pub next: Option<NonNull<CAresNameInfo>>, // INTRUSIVE
     pub name: Box<[u8]>,
     /// The context whose script asked: an answer for a stopped one settles nothing.
@@ -700,91 +681,55 @@ impl CAresNameInfo {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         name: Box<[u8]>,
-    ) -> *mut Self {
+    ) -> Box<Self> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        bun_core::heap::into_raw(Box::new(Self {
+        Box::new(Self {
             global_this: bun_ptr::BackRef::new(global_this),
             context,
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
-            allocated: true,
             next: None,
             name,
-        }))
+        })
     }
 
-    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
-    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
-    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    unsafe fn process_resolve(
-        this: *mut Self,
+    fn process_resolve(
+        &mut self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<c_ares::struct_nameinfo>,
     ) {
-        // SAFETY: see fn contract — `this` is a live node.
-        let global_this = unsafe { (*this).global_this() };
         if let Some(err) = err_ {
-            // SAFETY: see fn contract.
-            unsafe {
-                error_to_deferred(
-                    err,
-                    b"getnameinfo",
-                    Some((*this).name.as_ref()),
-                    &mut (*this).promise,
-                )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-            }
+            error_to_deferred(
+                err,
+                b"getnameinfo",
+                Some(self.name.as_ref()),
+                &mut self.promise,
+            )
+            .reject_later(self.global_this(), self.context);
             return;
         }
         let Some(mut name_info) = result else {
-            // SAFETY: see fn contract.
-            unsafe {
-                error_to_deferred(
-                    c_ares::Error::ENOTFOUND,
-                    b"getnameinfo",
-                    Some((*this).name.as_ref()),
-                    &mut (*this).promise,
-                )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-            }
+            error_to_deferred(
+                c_ares::Error::ENOTFOUND,
+                b"getnameinfo",
+                Some(self.name.as_ref()),
+                &mut self.promise,
+            )
+            .reject_later(self.global_this(), self.context);
             return;
         };
+        let global_this = self.global_this();
         let array = Outcome::of(
             global_this,
             super::cares_jsc::nameinfo_to_js_response(&mut name_info, global_this),
         );
-        // SAFETY: see fn contract.
-        unsafe { Self::on_complete(this, array) };
+        self.on_complete(array);
     }
 
-    /// SAFETY: see `process_resolve`.
-    unsafe fn on_complete(this: *mut Self, result: Outcome) {
-        // SAFETY: see fn contract — `this` is a live node.
-        let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
-        // SAFETY: see fn contract — `this` is a live node.
-        let (global_this, context) = unsafe { ((*this).global_this(), (*this).context) };
-        result.settle(&mut promise, global_this, context);
-        // SAFETY: see fn contract.
-        unsafe { Self::destroy(this) };
-    }
-
-    /// Conditionally free a heap-allocated tail node. Head nodes (`allocated == false`)
-    /// are inline fields of the parent `*Request` (or a stack local moved out of it) and
-    /// are dropped exactly once by their owner; this is a no-op for them.
-    /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `heap::alloc` in `init()`.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: see fn contract — `this` is a live node; if `allocated`, it is
-        // the exact pointer returned by `heap::alloc` in `init()`.
-        unsafe {
-            if (*this).allocated {
-                drop(bun_core::heap::take(this));
-            }
-        }
+    fn on_complete(&mut self, result: Outcome) {
+        result.settle(&mut self.promise, self.global_this.get(), self.context);
     }
 }
 
@@ -819,12 +764,13 @@ pub(crate) mod get_name_info_request {
     }
 
     impl PendingCacheKey {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresNameInfo) {
+        pub(crate) fn append(&mut self, cares_lookup: Box<CAresNameInfo>) {
+            let cares_lookup = bun_core::heap::into_raw_nn(cares_lookup);
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(cares_lookup);
-                (*self.lookup).tail = cares_lookup;
+                (*tail).next = Some(cares_lookup);
+                (*self.lookup).tail = cares_lookup.as_ptr();
             }
         }
 
@@ -843,23 +789,21 @@ pub(crate) mod get_name_info_request {
 impl GetNameInfoRequest {
     fn init(
         cache: LookupCacheHit<Self>,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         name: Box<[u8]>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-        cache_field: PendingCacheField,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresNameInfo {
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
-                allocated: false,
                 next: None,
                 name,
             },
@@ -870,8 +814,7 @@ impl GetNameInfoRequest {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` points into the resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
+                let pos = resolver
                     .pending_nameinfo_cache_cares
                     .get()
                     .index_of(new)
@@ -880,7 +823,6 @@ impl GetNameInfoRequest {
                 (*new).lookup = request;
             }
         }
-        let _ = cache_field;
         request
     }
 
@@ -905,7 +847,7 @@ impl GetNameInfoRequest {
             // + `heap::take` would double-Drop `CAresNameInfo` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            CAresNameInfo::process_resolve(&raw mut head, err_, timeout, result);
+            head.process_resolve(err_, timeout, result);
         }
     }
 }
@@ -1022,12 +964,13 @@ pub(crate) mod get_addr_info_request {
     }
 
     impl PendingCacheKey {
-        pub(crate) fn append(&mut self, dns_lookup: *mut DNSLookup) {
+        pub(crate) fn append(&mut self, dns_lookup: Box<DNSLookup>) {
+            let dns_lookup = bun_core::heap::into_raw_nn(dns_lookup);
             // SAFETY: `lookup`/`tail` are valid while the request sits in the pending cache.
             unsafe {
                 let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(dns_lookup);
-                (*self.lookup).tail = dns_lookup;
+                (*tail).next = Some(dns_lookup);
+                (*self.lookup).tail = dns_lookup.as_ptr();
             }
         }
 
@@ -1170,7 +1113,7 @@ impl GetAddrInfoRequest {
     pub(crate) fn init(
         cache: CacheHit,
         backend: get_addr_info_request::Backend,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         cache_field: PendingCacheField,
@@ -1180,15 +1123,13 @@ impl GetAddrInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: DNSLookup {
-                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+                resolver: Some(resolver.ref_guard()),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
-                allocated: false,
                 next: None,
                 context,
             },
@@ -1199,8 +1140,7 @@ impl GetAddrInfoRequest {
         if let CacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
+                let pos = resolver
                     .pending_host_cache(cache_field)
                     .index_of(new)
                     .unwrap();
@@ -1251,9 +1191,9 @@ impl GetAddrInfoRequest {
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
             if status != 0 {
-                DNSLookup::process_get_addr_info_native(&raw mut head, status, ptr::null_mut());
+                head.process_get_addr_info_native(status);
             } else {
-                DNSLookup::on_complete_native(&raw mut head, &any);
+                head.on_complete_native(&any);
             }
         }
     }
@@ -1298,7 +1238,7 @@ impl GetAddrInfoRequest {
                     // `ptr::read` + `heap::take` would double-Drop `DNSLookup`.
                     let owned = *bun_core::heap::take(this);
                     let mut head = owned.head;
-                    DNSLookup::on_complete_native(&raw mut head, &any);
+                    head.on_complete_native(&any);
                 }
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Err(
                     err,
@@ -1316,7 +1256,7 @@ impl GetAddrInfoRequest {
                     }
                     let owned = *bun_core::heap::take(this);
                     let mut head = owned.head;
-                    DNSLookup::process_get_addr_info_native(&raw mut head, err, ptr::null_mut());
+                    head.process_get_addr_info_native(err);
                 }
                 _ => unreachable!(),
             }
@@ -1350,7 +1290,7 @@ impl GetAddrInfoRequest {
             // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            DNSLookup::process_get_addr_info(&raw mut head, err_, timeout, result);
+            head.process_get_addr_info(err_, timeout, result);
         }
     }
 
@@ -1396,12 +1336,11 @@ impl GetAddrInfoRequest {
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
             // Inline `process_get_addr_info_native` so the success path can
-            // reuse the owned `List` instead of re-wrapping the (now-freed)
-            // raw `addrinfo` pointer.
+            // reuse the owned `List`.
             if c_ares::Error::init_eai(retcode).is_some() {
-                DNSLookup::process_get_addr_info_native(&raw mut head, retcode, ptr::null_mut());
+                head.process_get_addr_info_native(retcode);
             } else {
-                DNSLookup::on_complete_native(&raw mut head, &result_any);
+                head.on_complete_native(&result_any);
             }
         }
     }
@@ -1433,7 +1372,6 @@ pub(crate) struct CAresReverse {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub allocated: bool,
     pub next: Option<NonNull<CAresReverse>>, // INTRUSIVE
     pub name: Box<[u8]>,
     /// The context whose script asked: an answer for a stopped one settles nothing.
@@ -1453,94 +1391,59 @@ impl CAresReverse {
     }
 
     fn init(
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         name: &[u8],
-    ) -> *mut Self {
+    ) -> Box<Self> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+        Box::new(Self {
+            resolver: Some(resolver.ref_guard()),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
-            allocated: true,
             next: None,
             name: Box::<[u8]>::from(name),
-        }))
+        })
     }
 
-    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
-    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
-    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
+    /// SAFETY: `result`, if any, must be a c-ares hostent that is valid and unaliased for this call.
     unsafe fn process_resolve(
-        this: *mut Self,
+        &mut self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<*mut c_ares::struct_hostent>,
     ) {
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let global_this = (*this).global_this();
-            if let Some(err) = err_ {
-                error_to_deferred(
-                    err,
-                    b"getHostByAddr",
-                    Some(&(*this).name),
-                    &mut (*this).promise,
-                )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-                return;
-            }
-            let Some(node) = result else {
-                error_to_deferred(
-                    c_ares::Error::ENOTFOUND,
-                    b"getHostByAddr",
-                    Some(&(*this).name),
-                    &mut (*this).promise,
-                )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-                return;
-            };
-            // node is a valid c-ares hostent for the callback's duration
-            let array = Outcome::of(
-                global_this,
-                super::cares_jsc::hostent_to_js_response(&mut *node, global_this, b""),
-            );
-            Self::on_complete(this, array);
+        if let Some(err) = err_ {
+            error_to_deferred(err, b"getHostByAddr", Some(&self.name), &mut self.promise)
+                .reject_later(self.global_this(), self.context);
+            return;
         }
+        let Some(node) = result else {
+            error_to_deferred(
+                c_ares::Error::ENOTFOUND,
+                b"getHostByAddr",
+                Some(&self.name),
+                &mut self.promise,
+            )
+            .reject_later(self.global_this(), self.context);
+            return;
+        };
+        let global_this = self.global_this();
+        let array = Outcome::of(
+            global_this,
+            // SAFETY: fn contract.
+            super::cares_jsc::hostent_to_js_response(unsafe { &mut *node }, global_this, b""),
+        );
+        self.on_complete(array);
     }
 
-    /// SAFETY: see `process_resolve`.
-    unsafe fn on_complete(this: *mut Self, result: Outcome) {
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this, (*this).context);
-            if let Some(resolver) = (*this).resolver.as_ref() {
-                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.as_ptr()).request_completed();
-            }
-            Self::destroy(this);
-        }
-    }
-
-    /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `heap::alloc` in `init()`. Head nodes (`!allocated`)
-    /// are dropped by their owner; this is a no-op for them.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: see fn contract — `this` is live; if `allocated`, it is the
-        // exact pointer returned by `heap::alloc` in `init()`.
-        unsafe {
-            if (*this).allocated {
-                drop(bun_core::heap::take(this));
-            }
+    fn on_complete(&mut self, result: Outcome) {
+        result.settle(&mut self.promise, self.global_this.get(), self.context);
+        if let Some(resolver) = self.resolver.as_ref() {
+            resolver.request_completed();
         }
     }
 }
@@ -1562,7 +1465,6 @@ pub(crate) struct CAresLookup<T: CAresRecordType> {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub allocated: bool,
     pub next: Option<NonNull<CAresLookup<T>>>, // INTRUSIVE
     pub name: Box<[u8]>,
     /// The context whose script asked: an answer for a stopped one settles nothing.
@@ -1571,27 +1473,20 @@ pub(crate) struct CAresLookup<T: CAresRecordType> {
 }
 
 impl<T: CAresRecordType> CAresLookup<T> {
-    fn new(data: Self) -> *mut Self {
-        debug_assert!(data.allocated); // deinit will not free this otherwise
-        bun_core::heap::into_raw(Box::new(data))
-    }
-
     fn init(
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         name: &[u8],
-    ) -> *mut Self {
+    ) -> Box<Self> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        Self::new(Self {
-            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+        Box::new(Self {
+            resolver: Some(resolver.ref_guard()),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
-            allocated: true,
             next: None,
             name: Box::<[u8]>::from(name),
             _marker: core::marker::PhantomData,
@@ -1609,11 +1504,8 @@ impl<T: CAresRecordType> CAresLookup<T> {
         self.global_this.get()
     }
 
-    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
-    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
-    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    unsafe fn process_resolve(
-        this: *mut Self,
+    fn process_resolve(
+        &mut self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<OwnedReply<T>>,
@@ -1622,62 +1514,31 @@ impl<T: CAresRecordType> CAresLookup<T> {
         // carries the precomputed literal.
         let syscall = T::SYSCALL; // e.g. "querySrv"
 
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let global_this = (*this).global_this();
-            if let Some(err) = err_ {
-                error_to_deferred(
-                    err,
-                    syscall.as_bytes(),
-                    Some(&(*this).name),
-                    &mut (*this).promise,
-                )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-                return;
-            }
-            let Some(mut node) = result else {
-                error_to_deferred(
-                    c_ares::Error::ENOTFOUND,
-                    syscall.as_bytes(),
-                    Some(&(*this).name),
-                    &mut (*this).promise,
-                )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-                return;
-            };
-
-            let array = Outcome::of(global_this, node.to_js_response(global_this, T::TYPE_NAME));
-            Self::on_complete(this, array);
+        if let Some(err) = err_ {
+            error_to_deferred(err, syscall.as_bytes(), Some(&self.name), &mut self.promise)
+                .reject_later(self.global_this(), self.context);
+            return;
         }
+        let Some(mut node) = result else {
+            error_to_deferred(
+                c_ares::Error::ENOTFOUND,
+                syscall.as_bytes(),
+                Some(&self.name),
+                &mut self.promise,
+            )
+            .reject_later(self.global_this(), self.context);
+            return;
+        };
+
+        let global_this = self.global_this();
+        let array = Outcome::of(global_this, node.to_js_response(global_this, T::TYPE_NAME));
+        self.on_complete(array);
     }
 
-    /// SAFETY: see `process_resolve`.
-    unsafe fn on_complete(this: *mut Self, result: Outcome) {
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this, (*this).context);
-            if let Some(resolver) = (*this).resolver.as_ref() {
-                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.as_ptr()).request_completed();
-            }
-            Self::destroy(this);
-        }
-    }
-
-    /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `heap::alloc` in `new()`. Head nodes (`!allocated`)
-    /// are dropped by their owner; this is a no-op for them.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: see fn contract — `this` is live; if `allocated`, it is the
-        // exact pointer returned by `heap::alloc` in `init()`.
-        unsafe {
-            if (*this).allocated {
-                drop(bun_core::heap::take(this));
-            }
+    fn on_complete(&mut self, result: Outcome) {
+        result.settle(&mut self.promise, self.global_this.get(), self.context);
+        if let Some(resolver) = self.resolver.as_ref() {
+            resolver.request_completed();
         }
     }
 }
@@ -1698,7 +1559,6 @@ pub(crate) struct DNSLookup {
     pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
-    pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
     /// The context whose script asked (several contexts' lookups of one name
@@ -1721,60 +1581,47 @@ impl DNSLookup {
     }
 
     fn init(
-        resolver: *mut Resolver,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-    ) -> *mut Self {
+    ) -> Box<Self> {
         bun_output::scoped_log!(DNSLookup, "init");
 
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
 
-        bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-            resolver: Some(unsafe { RefPtr::init_ref(resolver) }),
+        Box::new(Self {
+            resolver: Some(resolver.ref_guard()),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
             promise: JSPromiseStrong::init(global_this),
-            allocated: true,
             next: None,
             context,
-        }))
+        })
     }
 
-    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
-    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
-    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    unsafe fn on_complete_native(this: *mut Self, result: &GetAddrInfoResultAny) {
+    fn on_complete_native(&mut self, result: &GetAddrInfoResultAny) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let global = (*this).global_this();
-            // A null addrinfo with no error is an empty answer.
-            let array = super::options_jsc::result_any_to_js(result, global)
-                .and_then(|a| a.map_or_else(|| JSValue::create_empty_array(global, 0), Ok));
-            Self::on_complete_with_array(this, Outcome::of(global, array));
-        }
+        let global = self.global_this();
+        // A null addrinfo with no error is an empty answer.
+        let array = super::options_jsc::result_any_to_js(result, global)
+            .and_then(|a| a.map_or_else(|| JSValue::create_empty_array(global, 0), Ok));
+        self.on_complete_with_array(Outcome::of(global, array));
     }
 
-    /// SAFETY: see `on_complete_native`.
-    unsafe fn process_get_addr_info_native(this: *mut Self, status: i32, result: *mut AddrInfo) {
+    fn process_get_addr_info_native(&mut self, status: i32) {
         bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            if let Some(err) = c_ares::Error::init_eai(status) {
-                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
-                    .reject_later((*this).global_this(), (*this).context);
-                Self::destroy(this);
-                return;
-            }
-            Self::on_complete_native(this, &GetAddrInfoResultAny::Addrinfo(result));
+        if let Some(err) = c_ares::Error::init_eai(status) {
+            error_to_deferred(err, b"getaddrinfo", None, &mut self.promise)
+                .reject_later(self.global_this(), self.context);
+            return;
         }
+        self.on_complete_native(&GetAddrInfoResultAny::Addrinfo(ptr::null_mut()));
     }
 
-    /// SAFETY: see `on_complete_native`.
+    /// SAFETY: `result`, if any, must be a live c-ares `AddrInfo`, which this call frees.
     unsafe fn process_get_addr_info(
-        this: *mut Self,
+        &mut self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<*mut c_ares::AddrInfo>,
@@ -1790,70 +1637,42 @@ impl DNSLookup {
             }
         });
 
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let global_this = (*this).global_this();
-            if let Some(err) = err_ {
-                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
-                    .reject_later(global_this, (*this).context);
-                Self::destroy(this);
-                return;
-            }
+        if let Some(err) = err_ {
+            error_to_deferred(err, b"getaddrinfo", None, &mut self.promise)
+                .reject_later(self.global_this(), self.context);
+            return;
+        }
 
-            // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
+        // SAFETY: fn contract — `r` is live until `_free` runs.
+        unsafe {
             let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
                 error_to_deferred(
                     c_ares::Error::ENOTFOUND,
                     b"getaddrinfo",
                     None,
-                    &mut (*this).promise,
+                    &mut self.promise,
                 )
-                .reject_later(global_this, (*this).context);
-                Self::destroy(this);
+                .reject_later(self.global_this(), self.context);
                 return;
             };
-            Self::on_complete(this, r);
+            self.on_complete(r);
         }
     }
 
-    /// SAFETY: see `on_complete_native`.
-    unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
+    /// SAFETY: `result` must be a live c-ares `AddrInfo`, unaliased for this call.
+    unsafe fn on_complete(&mut self, result: *mut c_ares::AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
-        // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
-        // owned by the caller's scopeguard; JSGlobalObject outlives the request.
-        unsafe {
-            let global = (*this).global_this();
-            let array = super::cares_jsc::addr_info_to_js_array(&mut *result, global);
-            Self::on_complete_with_array(this, Outcome::of(global, array));
-        }
+        let global = self.global_this();
+        // SAFETY: fn contract.
+        let array = super::cares_jsc::addr_info_to_js_array(unsafe { &mut *result }, global);
+        self.on_complete_with_array(Outcome::of(global, array));
     }
 
-    /// SAFETY: see `on_complete_native`.
-    unsafe fn on_complete_with_array(this: *mut Self, result: Outcome) {
+    fn on_complete_with_array(&mut self, result: Outcome) {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
-        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
-        unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this, (*this).context);
-            if let Some(resolver) = (*this).resolver.as_ref() {
-                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.as_ptr()).request_completed();
-            }
-            Self::destroy(this);
-        }
-    }
-
-    /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `heap::alloc` in `init()`. Head nodes (`!allocated`)
-    /// are dropped by their owner; this is a no-op for them.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; if `allocated`, it is the exact
-        // pointer from `heap::alloc` in `init()`.
-        unsafe {
-            if (*this).allocated {
-                drop(bun_core::heap::take(this));
-            }
+        result.settle(&mut self.promise, self.global_this.get(), self.context);
+        if let Some(resolver) = self.resolver.as_ref() {
+            resolver.request_completed();
         }
     }
 }
@@ -1966,9 +1785,7 @@ impl Resolver {
     /// callback with UV_ECANCELED against the still-live VM).
     #[cfg(windows)]
     pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
-        // SAFETY: JS thread; no other borrow of the cache is live during the
-        // stop phase (completions run later, from the loop drain).
-        let cache = unsafe { self.pending_host_cache_native.get_mut() };
+        let cache = self.pending_host_cache_native.get();
         let mut set = cache.used.iter_set();
         while let Some(index) = set.next() {
             // SAFETY: a set slot is an initialised `PendingCacheKey`; JS thread.
@@ -2000,9 +1817,8 @@ impl Resolver {
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.
         // SAFETY: fn contract.
-        let _guard = unsafe { RefPtr::init_ref(this) };
-        // SAFETY: alive under the ref just taken.
-        let result = if unsafe { (*this).destroy_channel() } {
+        let guard = unsafe { RefPtr::init_ref(this) };
+        let result = if guard.destroy_channel() {
             SweepResult::Stopped
         } else {
             SweepResult::Idle
@@ -2010,8 +1826,7 @@ impl Resolver {
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
-        // SAFETY: as above. `_guard` then releases our ref (may free `this`).
-        unsafe { (*this).remove_timer() };
+        guard.remove_timer();
         result
     }
 }
@@ -2040,7 +1855,7 @@ pub(crate) mod internal {
     // The stack key borrows the caller's host string; `to_owned()` copies
     // before storing on the heap `Request`.
     struct RequestKey<'a> {
-        pub(crate) host: Option<&'a ZStr>,
+        pub(crate) host: Option<&'a [u8]>,
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
         pub(crate) port: u16,
         /// Hash of hostname only - DNS results are port-agnostic
@@ -2063,7 +1878,7 @@ pub(crate) mod internal {
                 return false;
             }
             match (self.host.as_ref(), other.host) {
-                (Some(a), Some(b)) => a.as_bytes() == b.as_bytes(),
+                (Some(a), Some(b)) => a.as_bytes() == b,
                 (None, None) => true,
                 _ => false,
             }
@@ -2071,7 +1886,7 @@ pub(crate) mod internal {
     }
 
     impl<'a> RequestKey<'a> {
-        pub(crate) fn init(name: Option<&'a ZStr>, port: u16) -> Self {
+        pub(crate) fn init(name: Option<&'a [u8]>, port: u16) -> Self {
             let hash = if let Some(n) = name {
                 Self::generate_hash(n) // Don't include port
             } else {
@@ -2084,13 +1899,13 @@ pub(crate) mod internal {
             }
         }
 
-        fn generate_hash(name: &ZStr) -> u64 {
-            wyhash(name.as_bytes())
+        fn generate_hash(name: &[u8]) -> u64 {
+            wyhash(name)
         }
 
         pub(crate) fn to_owned(&self) -> RequestKeyOwned {
             if let Some(host) = self.host {
-                let host_copy = bun::ZBox::from_bytes(host.as_bytes());
+                let host_copy = bun::ZBox::from_bytes(host);
                 RequestKeyOwned {
                     host: Some(host_copy),
                     hash: self.hash,
@@ -2155,8 +1970,8 @@ pub(crate) mod internal {
     }
 
     impl Request {
-        pub(crate) fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> *mut Self {
-            bun_core::heap::into_raw(Box::new(Self {
+        pub(crate) fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> Box<Self> {
+            Box::new(Self {
                 key,
                 result: None,
                 result_buf: None,
@@ -2166,7 +1981,7 @@ pub(crate) mod internal {
                 valid: true,
                 #[cfg(target_os = "macos")]
                 dns_sd: MacAsyncDNS::default(),
-            }))
+            })
         }
 
         pub(crate) fn is_expired(&mut self, timestamp_to_store: &mut u32) -> bool {
@@ -2619,10 +2434,8 @@ pub(crate) mod internal {
                 node
             })
             .collect();
-        let base = nodes.as_mut_ptr();
         for i in 1..nodes.len() {
-            // SAFETY: `i - 1` and `i` are in bounds of the boxed slice, which is not moved afterwards.
-            unsafe { (*base.add(i - 1)).ai_next = base.add(i) };
+            nodes[i - 1].ai_next = &raw mut nodes[i];
         }
         nodes
     }
@@ -2870,7 +2683,6 @@ pub(crate) mod internal {
         addresses: JsLocal<'a>,
     ) -> JsResult<core::iter::Take<core::array::IntoIter<i32, MAX_ADDRESSES_FOR_TESTING>>> {
         let global = cx.global();
-        let hostname_z = bun::ZBox::from_bytes(hostname);
         let mut addrs = addresses_for_testing(global, addresses.to_js())?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
@@ -2888,18 +2700,15 @@ pub(crate) mod internal {
         }
         let families = families.into_iter().take(results.len());
 
-        let key = RequestKey::init(Some(hostname_z.as_zstr()), 0);
-        let req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
-        // SAFETY: `req` is freshly heap-allocated and exclusively owned until
-        // `try_push` transfers it to the lock-guarded cache.
-        unsafe {
-            (*req).result_buf = Some(results);
-            let info = (*req)
-                .result_buf
-                .as_mut()
-                .and_then(|b| NonNull::new(b.as_mut_ptr()));
-            (*req).result = Some(RequestResult { info, err: 0 });
-        }
+        let key = RequestKey::init(Some(hostname), 0);
+        let mut req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
+        req.result_buf = Some(results);
+        let info = req
+            .result_buf
+            .as_mut()
+            .and_then(|b| NonNull::new(b.as_mut_ptr()));
+        req.result = Some(RequestResult { info, err: 0 });
+        let req = bun_core::heap::into_raw(req);
         let mut guard = global_cache().lock();
         if !guard.try_push(req) {
             drop(guard);
@@ -2938,7 +2747,7 @@ pub(crate) mod internal {
 
     pub(crate) fn getaddrinfo(
         loop_: *mut Loop,
-        host: Option<&ZStr>,
+        host: Option<&[u8]>,
         port: u16,
         is_cache_hit: Option<&mut bool>,
     ) -> Option<*mut Request> {
@@ -2968,14 +2777,14 @@ pub(crate) mod internal {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit",
-                        bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                        bstr::BStr::new(host.unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_COMPLETED.fetch_add(1, Ordering::Relaxed);
                 } else {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit (inflight)",
-                        bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                        bstr::BStr::new(host.unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_INFLIGHT.fetch_add(1, Ordering::Relaxed);
                 }
@@ -2986,7 +2795,7 @@ pub(crate) mod internal {
         }
 
         // no cache hit, we have to make a new request
-        let req = Request::new(
+        let req = bun_core::heap::into_raw(Request::new(
             key.to_owned(),
             (!preload) as u32 + 1,
             // Seconds since when this request was created
@@ -2995,18 +2804,18 @@ pub(crate) mod internal {
             } else {
                 timestamp_to_store
             },
-        );
+        ));
 
         let _ = guard.try_push(req);
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
 
-        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h.as_bytes())) {
+        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h)) {
             bun_output::scoped_log!(
                 dns,
                 "getaddrinfo({}) = cache miss (not a hostname)",
-                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                bstr::BStr::new(host.unwrap_or(b""))
             );
             after_result_entries(req, None, netc::EAI_NONAME);
             if let Some(is_cache_hit) = is_cache_hit {
@@ -3015,11 +2824,11 @@ pub(crate) mod internal {
             return Some(req);
         }
 
-        if host.is_some_and(|h| is_localhost_name(h.as_bytes())) {
+        if host.is_some_and(is_localhost_name) {
             bun_output::scoped_log!(
                 dns,
                 "getaddrinfo({}) = cache miss (localhost)",
-                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                bstr::BStr::new(host.unwrap_or(b""))
             );
             after_result_entries(req, Some(localhost_results(port)), 0);
             if let Some(is_cache_hit) = is_cache_hit {
@@ -3046,7 +2855,7 @@ pub(crate) mod internal {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache miss (dns_sd)",
-                        bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                        bstr::BStr::new(host.unwrap_or(b""))
                     );
                     return Some(req);
                 }
@@ -3059,7 +2868,7 @@ pub(crate) mod internal {
         bun_output::scoped_log!(
             dns,
             "getaddrinfo({}) = cache miss (libc)",
-            bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+            bstr::BStr::new(host.unwrap_or(b""))
         );
         // schedule the request to be executed on the work pool
         run_on_work_pool(req);
@@ -3077,35 +2886,19 @@ pub(crate) mod internal {
     }
 
     pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
-        let hostname_z = bun::ZBox::from_bytes(hostname);
-        prefetch(
-            VirtualMachine::get().uws_loop(),
-            Some(hostname_z.as_zstr()),
-            port,
-        );
+        prefetch(VirtualMachine::get().uws_loop(), Some(hostname), port);
     }
 
-    pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&ZStr>, port: u16) {
+    pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&[u8]>, port: u16) {
         let _ = getaddrinfo(loop_, hostname, port, None);
     }
 
     /// `bun_dns::__bun_dns_prefetch` body — declared `extern "Rust"` in the
     /// lower-tier `bun_dns` crate so `bun_install` can prefetch registry
     /// hostnames without a crate cycle. Link-time resolved.
-    ///
-    /// # Safety
-    /// `hostname` (if non-null) must point to a NUL-terminated `[u8; len]` live
-    /// for the duration of the call.
-    // `hostname` is null-guarded before the deref; the non-null contract is
-    // documented above and on the `bun_dns` extern decl.
     #[unsafe(no_mangle)]
-    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
-        let host = if hostname.is_null() || len == 0 {
-            None
-        } else {
-            // SAFETY: caller passes a NUL-terminated `[u8; len]` live for the call.
-            Some(unsafe { ZStr::from_raw(hostname, len) })
-        };
+    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: &[u8], port: u16) {
+        let host = (!hostname.is_empty()).then_some(hostname);
         prefetch(loop_.cast::<Loop>(), host, port);
     }
 
@@ -3115,14 +2908,11 @@ pub(crate) mod internal {
         port: u16,
         socket: *mut *mut c_void,
     ) -> c_int {
-        let host: Option<&ZStr> = if _host.is_null() {
+        let host: Option<&[u8]> = if _host.is_null() {
             None
         } else {
-            // SAFETY: caller passes NUL-terminated string; compute len via strlen.
-            Some(unsafe {
-                let p = _host.cast::<u8>();
-                ZStr::from_raw(p, libc::strlen(_host) as usize)
-            })
+            // SAFETY: caller passes NUL-terminated string.
+            Some(unsafe { bun_core::ffi::cstr(_host) }.to_bytes())
         };
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();
@@ -3247,26 +3037,11 @@ pub(crate) mod internal {
 // Resolver — JSC-exposed `dns.Resolver` (a JSDNSResolver holds a ref)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Field selector for the `pending_*` cache fields on `Resolver` — Rust
-/// cannot index struct fields by name string.
+/// Field selector for the `pending_host_cache_*` fields on `Resolver`.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum PendingCacheField {
     PendingHostCacheCares,
     PendingHostCacheNative,
-    PendingSrvCacheCares,
-    PendingSoaCacheCares,
-    PendingTxtCacheCares,
-    PendingNaptrCacheCares,
-    PendingMxCacheCares,
-    PendingCaaCacheCares,
-    PendingNsCacheCares,
-    PendingPtrCacheCares,
-    PendingCnameCacheCares,
-    PendingACacheCares,
-    PendingAaaaCacheCares,
-    PendingAnyCacheCares,
-    PendingAddrCacheCares,
-    PendingNameinfoCacheCares,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3284,10 +3059,14 @@ macro_rules! impl_cares_record_type {
         impl CAresRecordType for $ty {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
                 c_ares::ares_reply_callback::<$ty, ResolveInfoRequest<$ty>>;
+            fn cache(
+                resolver: &Resolver,
+            ) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
+                resolver.$field.get()
+            }
             fn to_js_response(
                 &mut self,
                 global: &JSGlobalObject,
@@ -3323,7 +3102,7 @@ impl_cares_record_type!(
     c_ares::struct_ares_srv_reply,
     "srv",
     "querySrv",
-    PendingSrvCacheCares,
+    pending_srv_cache_cares,
     ns_t_srv,
     super::cares_jsc::srv_reply_to_js_response
 );
@@ -3331,7 +3110,7 @@ impl_cares_record_type!(
     c_ares::struct_ares_soa_reply,
     "soa",
     "querySoa",
-    PendingSoaCacheCares,
+    pending_soa_cache_cares,
     ns_t_soa,
     super::cares_jsc::soa_reply_to_js_response
 );
@@ -3339,7 +3118,7 @@ impl_cares_record_type!(
     c_ares::struct_ares_txt_reply,
     "txt",
     "queryTxt",
-    PendingTxtCacheCares,
+    pending_txt_cache_cares,
     ns_t_txt,
     super::cares_jsc::txt_reply_to_js_response
 );
@@ -3347,7 +3126,7 @@ impl_cares_record_type!(
     c_ares::struct_ares_naptr_reply,
     "naptr",
     "queryNaptr",
-    PendingNaptrCacheCares,
+    pending_naptr_cache_cares,
     ns_t_naptr,
     super::cares_jsc::naptr_reply_to_js_response
 );
@@ -3355,7 +3134,7 @@ impl_cares_record_type!(
     c_ares::struct_ares_mx_reply,
     "mx",
     "queryMx",
-    PendingMxCacheCares,
+    pending_mx_cache_cares,
     ns_t_mx,
     super::cares_jsc::mx_reply_to_js_response
 );
@@ -3363,7 +3142,7 @@ impl_cares_record_type!(
     c_ares::struct_ares_caa_reply,
     "caa",
     "queryCaa",
-    PendingCaaCacheCares,
+    pending_caa_cache_cares,
     ns_t_caa,
     super::cares_jsc::caa_reply_to_js_response
 );
@@ -3374,10 +3153,12 @@ impl_cares_record_type!(
 impl CAresRecordType for c_ares::struct_any_reply {
     const TYPE_NAME: &'static str = "any";
     const SYSCALL: &'static str = "queryAny";
-    const CACHE_FIELD: PendingCacheField = PendingCacheField::PendingAnyCacheCares;
     const NS_TYPE: c_ares::NSType = c_ares::NSType::ns_t_any;
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
         c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest<c_ares::struct_any_reply>>;
+    fn cache(resolver: &Resolver) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
+        resolver.pending_any_cache_cares.get()
+    }
     fn to_js_response(
         &mut self,
         global: &JSGlobalObject,
@@ -3413,10 +3194,14 @@ macro_rules! hostent_newtype {
         impl CAresRecordType for $name {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
                 c_ares::struct_hostent::$wrapper::<ResolveInfoRequest<$name>>;
+            fn cache(
+                resolver: &Resolver,
+            ) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
+                resolver.$field.get()
+            }
             fn to_js_response(
                 &mut self,
                 global: &JSGlobalObject,
@@ -3456,10 +3241,14 @@ macro_rules! hostent_ttls_newtype {
         impl CAresRecordType for $name {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
                 c_ares::hostent_with_ttls::callback_wrapper::<ResolveInfoRequest<$name>>;
+            fn cache(
+                resolver: &Resolver,
+            ) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
+                resolver.$field.get()
+            }
             fn to_js_response(
                 &mut self,
                 global: &JSGlobalObject,
@@ -3505,7 +3294,7 @@ hostent_newtype!(
     NsHostent,
     "ns",
     "queryNs",
-    PendingNsCacheCares,
+    pending_ns_cache_cares,
     ns_t_ns,
     callback_wrapper_ns
 );
@@ -3513,7 +3302,7 @@ hostent_newtype!(
     PtrHostent,
     "ptr",
     "queryPtr",
-    PendingPtrCacheCares,
+    pending_ptr_cache_cares,
     ns_t_ptr,
     callback_wrapper_ptr
 );
@@ -3521,7 +3310,7 @@ hostent_newtype!(
     CnameHostent,
     "cname",
     "queryCname",
-    PendingCnameCacheCares,
+    pending_cname_cache_cares,
     ns_t_cname,
     callback_wrapper_cname
 );
@@ -3529,7 +3318,7 @@ hostent_ttls_newtype!(
     AHostentWithTtls,
     "a",
     "queryA",
-    PendingACacheCares,
+    pending_a_cache_cares,
     ns_t_a,
     parse_a
 );
@@ -3537,7 +3326,7 @@ hostent_ttls_newtype!(
     AaaaHostentWithTtls,
     "aaaa",
     "queryAaaa",
-    PendingAaaaCacheCares,
+    pending_aaaa_cache_cares,
     ns_t_aaaa,
     parse_aaaa
 );
@@ -3709,17 +3498,7 @@ pub(crate) trait HasPendingCacheKey {
     type PendingCacheKey;
 
     /// Return the per-request-type pending HiveArray field on `Resolver`.
-    /// `field` is the runtime tag selecting which field (some request types are reachable
-    /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
-    ///
-    /// R-2: takes `&Resolver` and projects `&mut` via the field's `JsCell`.
-    /// Callers hold the borrow only for a short, non-reentrant window
-    /// (slot read/claim/unset).
-    #[allow(clippy::mut_from_ref)]
-    fn pending_cache(
-        resolver: &Resolver,
-        field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32>;
+    fn pending_cache(resolver: &Resolver) -> &HiveArray<Self::PendingCacheKey, 32>;
 
     /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, lookup: *mut _ }`.
     fn key_hash(key: &Self::PendingCacheKey) -> u64;
@@ -3739,11 +3518,8 @@ impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
     type PendingCacheKey = resolve_info_request::PendingCacheKey<T>;
 
     #[inline]
-    fn pending_cache(
-        resolver: &Resolver,
-        field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
-        resolver.pending_cache_for::<T>(field)
+    fn pending_cache(resolver: &Resolver) -> &HiveArray<Self::PendingCacheKey, 32> {
+        T::cache(resolver)
     }
     #[inline]
     fn key_hash(key: &Self::PendingCacheKey) -> u64 {
@@ -3772,13 +3548,8 @@ impl HasPendingCacheKey for GetHostByAddrInfoRequest {
     type PendingCacheKey = get_host_by_addr_info_request::PendingCacheKey;
 
     #[inline]
-    fn pending_cache(
-        resolver: &Resolver,
-        _field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
-        // SAFETY: see `HasPendingCacheKey::pending_cache` doc — short,
-        // non-reentrant borrow on the single JS thread.
-        unsafe { resolver.pending_addr_cache_cares.get_mut() }
+    fn pending_cache(resolver: &Resolver) -> &HiveArray<Self::PendingCacheKey, 32> {
+        resolver.pending_addr_cache_cares.get()
     }
     #[inline]
     fn key_hash(key: &Self::PendingCacheKey) -> u64 {
@@ -3807,13 +3578,8 @@ impl HasPendingCacheKey for GetNameInfoRequest {
     type PendingCacheKey = get_name_info_request::PendingCacheKey;
 
     #[inline]
-    fn pending_cache(
-        resolver: &Resolver,
-        _field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
-        // SAFETY: see `HasPendingCacheKey::pending_cache` doc — short,
-        // non-reentrant borrow on the single JS thread.
-        unsafe { resolver.pending_nameinfo_cache_cares.get_mut() }
+    fn pending_cache(resolver: &Resolver) -> &HiveArray<Self::PendingCacheKey, 32> {
+        resolver.pending_nameinfo_cache_cares.get()
     }
     #[inline]
     fn key_hash(key: &Self::PendingCacheKey) -> u64 {
@@ -3958,9 +3724,9 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> *mut Self {
+    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Box<Self> {
         bun_output::scoped_log!(DNSResolver, "init");
-        bun_core::heap::into_raw(Box::new(Self::setup(vm, made_in)))
+        Box::new(Self::setup(vm, made_in))
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
@@ -3985,7 +3751,7 @@ impl Resolver {
             sec: now.sec,
             nsec: now.nsec,
         };
-        let uws_loop = vm.uws_loop();
+        let uws_loop = vm.uws_loop_ref();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
@@ -4008,12 +3774,7 @@ impl Resolver {
 
         if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
-                // SAFETY: `channel` is the live c-ares channel owned by `self`.
-                c_ares::ares_process_fd(
-                    unsafe { &mut *channel },
-                    c_ares::ARES_SOCKET_BAD,
-                    c_ares::ARES_SOCKET_BAD,
-                );
+                c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
                     let _ = self.add_timer(Some(&now));
@@ -4088,7 +3849,7 @@ impl Resolver {
                 nsec: next.nsec,
             }
         });
-        let uws_loop = self.vm().uws_loop();
+        let uws_loop = self.vm().uws_loop_ref();
         let state = crate::jsc_hooks::runtime_state();
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
         unsafe {
@@ -4117,7 +3878,7 @@ impl Resolver {
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
-                let uws_loop = (*this).vm().uws_loop();
+                let uws_loop = (*this).vm().uws_loop_ref();
                 let state = crate::jsc_hooks::runtime_state();
                 (*state).timer.increment_timer_ref(-1, uws_loop);
                 Self::deref(this);
@@ -4132,73 +3893,10 @@ impl Resolver {
     // ───────────── pending-cache helpers ─────────────
 
     /// Dispatch to the GetAddrInfo PendingCache by field enum.
-    ///
-    /// R-2: returns `&mut` from `&self` via `JsCell::get_mut`. Callers hold
-    /// the borrow only for the duration of a slot read/claim/unset and never
-    /// across a re-entrant call (the c-ares callback path that re-enters the
-    /// resolver runs *after* the borrow is dropped).
-    #[allow(clippy::mut_from_ref)]
-    fn pending_host_cache(&self, field: PendingCacheField) -> &mut PendingCache {
-        // SAFETY: single-JS-thread invariant; caller holds the borrow only for
-        // a short, non-reentrant window (see fn doc).
-        unsafe {
-            match field {
-                PendingCacheField::PendingHostCacheCares => self.pending_host_cache_cares.get_mut(),
-                PendingCacheField::PendingHostCacheNative => {
-                    self.pending_host_cache_native.get_mut()
-                }
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    /// Dispatch to a typed ResolveInfoRequest cache by record type.
-    // Each per-record cache is a distinct monomorphization of
-    // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
-    // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
-    // type differs), so reinterpreting the field reference at the caller's `T` is sound when
-    // `T::CACHE_FIELD` selects the matching field.
-    #[allow(clippy::mut_from_ref)]
-    fn pending_cache_for<T: CAresRecordType>(
-        &self,
-        _field: PendingCacheField,
-    ) -> &mut HiveArray<resolve_info_request::PendingCacheKey<T>, 32> {
-        macro_rules! field {
-            ($f:ident) => {
-                // SAFETY: the matched arm guarantees `self.$f` *is*
-                // `JsCell<HiveArray<PendingCacheKey<T>, 32>>` for this `T::CACHE_FIELD`;
-                // the cast is an identity transmute (same layout, same lifetime).
-                // R-2: `JsCell::as_ptr` projects `&mut` from `&self`; caller
-                // holds the borrow only for a short, non-reentrant window
-                // (see `pending_host_cache` doc).
-                unsafe {
-                    &mut *self
-                        .$f
-                        .as_ptr()
-                        .cast::<HiveArray<resolve_info_request::PendingCacheKey<T>, 32>>()
-                }
-            };
-        }
-        match T::CACHE_FIELD {
-            PendingCacheField::PendingSrvCacheCares => field!(pending_srv_cache_cares),
-            PendingCacheField::PendingSoaCacheCares => field!(pending_soa_cache_cares),
-            PendingCacheField::PendingTxtCacheCares => field!(pending_txt_cache_cares),
-            PendingCacheField::PendingNaptrCacheCares => field!(pending_naptr_cache_cares),
-            PendingCacheField::PendingMxCacheCares => field!(pending_mx_cache_cares),
-            PendingCacheField::PendingCaaCacheCares => field!(pending_caa_cache_cares),
-            PendingCacheField::PendingNsCacheCares => field!(pending_ns_cache_cares),
-            PendingCacheField::PendingPtrCacheCares => field!(pending_ptr_cache_cares),
-            PendingCacheField::PendingCnameCacheCares => field!(pending_cname_cache_cares),
-            PendingCacheField::PendingACacheCares => field!(pending_a_cache_cares),
-            PendingCacheField::PendingAaaaCacheCares => field!(pending_aaaa_cache_cares),
-            PendingCacheField::PendingAnyCacheCares => field!(pending_any_cache_cares),
-            // host/addr/nameinfo caches use distinct key types and have their own helpers.
-            PendingCacheField::PendingHostCacheCares
-            | PendingCacheField::PendingHostCacheNative
-            | PendingCacheField::PendingAddrCacheCares
-            | PendingCacheField::PendingNameinfoCacheCares => {
-                unreachable!()
-            }
+    fn pending_host_cache(&self, field: PendingCacheField) -> &PendingCache {
+        match field {
+            PendingCacheField::PendingHostCacheCares => self.pending_host_cache_cares.get(),
+            PendingCacheField::PendingHostCacheNative => self.pending_host_cache_native.get(),
         }
     }
 
@@ -4215,20 +3913,18 @@ impl Resolver {
             .into_inner()
     }
     fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
-        self.pending_addr_cache_cares.with_mut(|cache| {
-            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
-            unsafe { cache.box_at(index as usize) }
-                .expect("pending DNS slot")
-                .into_inner()
-        })
+        let cache = self.pending_addr_cache_cares.get();
+        // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+        unsafe { cache.box_at(index as usize) }
+            .expect("pending DNS slot")
+            .into_inner()
     }
     fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
-        self.pending_nameinfo_cache_cares.with_mut(|cache| {
-            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
-            unsafe { cache.box_at(index as usize) }
-                .expect("pending DNS slot")
-                .into_inner()
-        })
+        let cache = self.pending_nameinfo_cache_cares.get();
+        // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+        unsafe { cache.box_at(index as usize) }
+            .expect("pending DNS slot")
+            .into_inner()
     }
 
     pub(crate) fn drain_pending_cares<T: CAresRecordType>(
@@ -4242,7 +3938,7 @@ impl Resolver {
         let _guard = self.ref_guard();
 
         let key = {
-            let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
+            let cache = T::cache(self);
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
             unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
@@ -4251,34 +3947,35 @@ impl Resolver {
 
         let Some(mut addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
+            // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+            // that `append` released, taken once here. The slot is already empty and
+            // the backend is done with the request, so nothing else reaches it or its
+            // waiters.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                CAresLookup::<T>::process_resolve(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
+                (*key.lookup).head.process_resolve(err, timeout, None);
                 drop(bun_core::heap::take(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    CAresLookup::<T>::process_resolve(value.as_ptr(), err, timeout, None);
+                    bun_core::heap::take(value.as_ptr()).process_resolve(err, timeout, None);
                 }
             }
             return;
         };
 
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
-        // pending-cache slot; consumed via `heap::take` below.
+        // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+        // that `append` released, taken once here. The slot is already empty and
+        // the backend is done with the request, so nothing else reaches it or its
+        // waiters.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
             let mut array =
                 Outcome::of(prev_global, addr.to_js_response(prev_global, T::TYPE_NAME));
             keep_alive(&array);
-            CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
+            (*key.lookup).head.on_complete(array);
             drop(bun_core::heap::take(key.lookup));
 
             keep_alive(&array);
@@ -4292,7 +3989,7 @@ impl Resolver {
                 pending = (*value.as_ptr()).next;
 
                 keep_alive(&array);
-                CAresLookup::<T>::on_complete(value.as_ptr(), array);
+                bun_core::heap::take(value.as_ptr()).on_complete(array);
                 keep_alive(&array);
             }
         }
@@ -4311,20 +4008,18 @@ impl Resolver {
 
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
+            // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+            // that `append` released, taken once here. The slot is already empty and
+            // the backend is done with the request, so nothing else reaches it or its
+            // waiters.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                DNSLookup::process_get_addr_info(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
+                (*key.lookup).head.process_get_addr_info(err, timeout, None);
                 drop(bun_core::heap::take(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    DNSLookup::process_get_addr_info(value.as_ptr(), err, timeout, None);
+                    bun_core::heap::take(value.as_ptr()).process_get_addr_info(err, timeout, None);
                 }
             }
             return;
@@ -4332,6 +4027,9 @@ impl Resolver {
 
         // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
         // slot; `addr` is the c-ares-allocated AddrInfo freed by `_free_addr` below.
+        // Each waiter is a box that `append` released, taken once here. The slot is
+        // already empty and the backend is done with the request, so nothing else
+        // reaches it or its waiters.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4343,7 +4041,7 @@ impl Resolver {
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
             keep_alive(&array);
-            DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
+            (*key.lookup).head.on_complete_with_array(array);
             drop(bun_core::heap::take(key.lookup));
 
             keep_alive(&array);
@@ -4360,7 +4058,7 @@ impl Resolver {
                 pending = (*value.as_ptr()).next;
 
                 keep_alive(&array);
-                DNSLookup::on_complete_with_array(value.as_ptr(), array);
+                bun_core::heap::take(value.as_ptr()).on_complete_with_array(array);
                 keep_alive(&array);
             }
         }
@@ -4378,42 +4076,43 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        let mut array: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
-            .transpose()
-        {
-            Some(a) => Outcome::of(global_object, a),
-            None => {
-                // SAFETY: `key.lookup` is the heap-allocated request stored in the
-                // pending-cache slot; consumed via `heap::take` below.
-                unsafe {
-                    let mut pending = (*key.lookup).head.next;
-                    // Consume the request and move `head` out by value;
-                    // `ptr::read` + `heap::take` would double-Drop `DNSLookup`.
-                    let owned = *bun_core::heap::take(key.lookup);
-                    let mut head = owned.head;
-                    DNSLookup::process_get_addr_info_native(&raw mut head, err, ptr::null_mut());
+        let mut array: Outcome =
+            match super::options_jsc::result_any_to_js(result, global_object).transpose() {
+                Some(a) => Outcome::of(global_object, a),
+                None => {
+                    // SAFETY: `key.lookup` is the heap-allocated request stored in the
+                    // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+                    // that `append` released, taken once here. The slot is already empty and
+                    // the backend is done with the request, so nothing else reaches it or its
+                    // waiters.
+                    unsafe {
+                        let mut pending = (*key.lookup).head.next;
+                        // Consume the request and move `head` out by value;
+                        // `ptr::read` + `heap::take` would double-Drop `DNSLookup`.
+                        let owned = *bun_core::heap::take(key.lookup);
+                        let mut head = owned.head;
+                        head.process_get_addr_info_native(err);
 
-                    while let Some(value) = pending {
-                        pending = (*value.as_ptr()).next;
-                        DNSLookup::process_get_addr_info_native(
-                            value.as_ptr(),
-                            err,
-                            ptr::null_mut(),
-                        );
+                        while let Some(value) = pending {
+                            pending = (*value.as_ptr()).next;
+                            bun_core::heap::take(value.as_ptr()).process_get_addr_info_native(err);
+                        }
                     }
+                    return;
                 }
-                return;
-            }
-        };
+            };
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
-        // pending-cache slot; consumed via `heap::take` below.
+        // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+        // that `append` released, taken once here. The slot is already empty and
+        // the backend is done with the request, so nothing else reaches it or its
+        // waiters.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
 
             {
                 keep_alive(&array);
-                DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
+                (*key.lookup).head.on_complete_with_array(array);
                 drop(bun_core::heap::take(key.lookup));
                 keep_alive(&array);
             }
@@ -4432,7 +4131,7 @@ impl Resolver {
                 }
 
                 keep_alive(&array);
-                DNSLookup::on_complete_with_array(value.as_ptr(), array);
+                bun_core::heap::take(value.as_ptr()).on_complete_with_array(array);
                 keep_alive(&array);
             }
         }
@@ -4451,20 +4150,18 @@ impl Resolver {
 
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
+            // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+            // that `append` released, taken once here. The slot is already empty and
+            // the backend is done with the request, so nothing else reaches it or its
+            // waiters.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                CAresReverse::process_resolve(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
+                (*key.lookup).head.process_resolve(err, timeout, None);
                 drop(bun_core::heap::take(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    CAresReverse::process_resolve(value.as_ptr(), err, timeout, None);
+                    bun_core::heap::take(value.as_ptr()).process_resolve(err, timeout, None);
                 }
             }
             return;
@@ -4472,6 +4169,9 @@ impl Resolver {
 
         // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
         // slot; `addr` is the c-ares-owned hostent (freed by c-ares after the callback).
+        // Each waiter is a box that `append` released, taken once here. The slot is
+        // already empty and the backend is done with the request, so nothing else
+        // reaches it or its waiters.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4483,7 +4183,7 @@ impl Resolver {
                 super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b""),
             );
             keep_alive(&array);
-            CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
+            (*key.lookup).head.on_complete(array);
             drop(bun_core::heap::take(key.lookup));
 
             keep_alive(&array);
@@ -4500,7 +4200,7 @@ impl Resolver {
                 pending = (*value.as_ptr()).next;
 
                 keep_alive(&array);
-                CAresReverse::on_complete(value.as_ptr(), array);
+                bun_core::heap::take(value.as_ptr()).on_complete(array);
                 keep_alive(&array);
             }
         }
@@ -4519,27 +4219,28 @@ impl Resolver {
 
         let Some(mut name_info) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
+            // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+            // that `append` released, taken once here. The slot is already empty and
+            // the backend is done with the request, so nothing else reaches it or its
+            // waiters.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                CAresNameInfo::process_resolve(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
+                (*key.lookup).head.process_resolve(err, timeout, None);
                 drop(bun_core::heap::take(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    CAresNameInfo::process_resolve(value.as_ptr(), err, timeout, None);
+                    bun_core::heap::take(value.as_ptr()).process_resolve(err, timeout, None);
                 }
             }
             return;
         };
 
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
-        // pending-cache slot; consumed via `heap::take` below.
+        // pending-cache slot; consumed via `heap::take` below. Each waiter is a box
+        // that `append` released, taken once here. The slot is already empty and
+        // the backend is done with the request, so nothing else reaches it or its
+        // waiters.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4549,7 +4250,7 @@ impl Resolver {
                 super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global),
             );
             keep_alive(&array);
-            CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
+            (*key.lookup).head.on_complete(array);
             drop(bun_core::heap::take(key.lookup));
 
             keep_alive(&array);
@@ -4566,7 +4267,7 @@ impl Resolver {
                 pending = (*value.as_ptr()).next;
 
                 keep_alive(&array);
-                CAresNameInfo::on_complete(value.as_ptr(), array);
+                bun_core::heap::take(value.as_ptr()).on_complete(array);
                 keep_alive(&array);
             }
         }
@@ -4575,11 +4276,10 @@ impl Resolver {
     pub(crate) fn get_or_put_into_resolve_pending_cache<R: HasPendingCacheKey>(
         &self,
         key: &R::PendingCacheKey,
-        field: PendingCacheField,
     ) -> LookupCacheHit<R> {
         // Dispatch via `HasPendingCacheKey::pending_cache`; the body is
         // identical across all `R`.
-        let cache = R::pending_cache(self, field);
+        let cache = R::pending_cache(self);
         let mut inflight_iter = cache.used.iter_set();
 
         while let Some(index) = inflight_iter.next() {
@@ -4639,16 +4339,16 @@ impl Resolver {
         ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
     }
 
-    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
+    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<&mut c_ares::Channel> {
         global_resolver(global_this).get_channel_or_error(global_this)
     }
 
     pub(crate) fn get_channel_or_error(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<*mut c_ares::Channel> {
+    ) -> JsResult<&mut c_ares::Channel> {
         match self.get_channel() {
-            ChannelResult::Result(result) => Ok(std::ptr::from_mut(result)),
+            ChannelResult::Result(result) => Ok(result),
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
@@ -4708,7 +4408,7 @@ impl Resolver {
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
                 // The task queue isn't drained until this libuv callback returns.
-                vm.as_mut().enqueue_task(jsc::Task::init(poll));
+                vm.enqueue_task(jsc::Task::init(poll));
             }
         }
     }
@@ -4810,7 +4510,11 @@ impl Resolver {
                 // SAFETY: `Loop::get()` is the live per-thread uws loop;
                 // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
+                    uv::uv_poll_init_socket(
+                        (*Loop::get()).uv_loop(),
+                        &mut (*new_poll).poll,
+                        fd as _,
+                    )
                 } < 0
                 {
                     UvDnsPoll::destroy(new_poll);
@@ -4858,8 +4562,7 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+            let loop_ = self.vm().uws_loop_ref();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
@@ -4998,7 +4701,7 @@ impl Resolver {
             ));
         }
 
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 return Err(global_this.throw_value(
@@ -5013,33 +4716,23 @@ impl Resolver {
         };
 
         let key = get_host_by_addr_info_request::PendingCacheKey::init(ip);
-        let cache = self.get_or_put_into_resolve_pending_cache::<GetHostByAddrInfoRequest>(
-            &key,
-            PendingCacheField::PendingAddrCacheCares,
-        );
+        let cache = self.get_or_put_into_resolve_pending_cache::<GetHostByAddrInfoRequest>(&key);
         if let LookupCacheHit::Inflight(inflight) = cache {
-            let cares_reverse =
-                CAresReverse::init(Some(self.as_ctx_ptr()), global_this, context, ip);
+            let cares_reverse = CAresReverse::init(self, global_this, context, ip);
+            let promise = cares_reverse.promise.value();
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_reverse) };
-            // SAFETY: `cares_reverse` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*cares_reverse).promise.value() });
+            return Ok(promise);
         }
 
-        let request = GetHostByAddrInfoRequest::init(
-            cache,
-            Some(self.as_ctx_ptr()),
-            ip,
-            global_this,
-            context,
-        );
+        let request = GetHostByAddrInfoRequest::init(cache, self, ip, global_this, context);
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
-            (*channel).get_host_by_addr(ip, &mut *request);
+            channel.get_host_by_addr(ip, &mut *request);
         }
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
@@ -5289,7 +4982,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
@@ -5303,29 +4996,24 @@ impl Resolver {
             }
         };
 
-        let cache_field = T::CACHE_FIELD; // "pending_{TYPE_NAME}_cache_cares"
-
         let key = resolve_info_request::PendingCacheKey::<T>::init(name);
 
-        let cache =
-            self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest<T>>(&key, cache_field);
+        let cache = self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest<T>>(&key);
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
-            let cares_lookup =
-                CAresLookup::<T>::init(Some(self.as_ctx_ptr()), global_this, context, name);
+            let cares_lookup = CAresLookup::<T>::init(self, global_this, context, name);
+            let promise = cares_lookup.promise.value();
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_lookup) };
-            // SAFETY: `cares_lookup` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*cares_lookup).promise.value() });
+            return Ok(promise);
         }
 
         let request = ResolveInfoRequest::<T>::init(
             cache,
-            Some(self.as_ctx_ptr()),
+            self,
             name, // CAresLookup will have the ownership
             global_this,
             context,
-            cache_field,
         );
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
@@ -5334,7 +5022,7 @@ impl Resolver {
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
         // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        unsafe { channel.resolve(name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5347,7 +5035,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
@@ -5367,18 +5055,18 @@ impl Resolver {
         let cache =
             self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(self, global_this, context);
+            let promise = dns_lookup.promise.value();
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
-            // SAFETY: `dns_lookup` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*dns_lookup).promise.value() });
+            return Ok(promise);
         }
 
         let hints_buf = [query.to_cares()];
         let request = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::CAres,
-            Some(self.as_ctx_ptr()),
+            self,
             global_this,
             context,
             PendingCacheField::PendingHostCacheCares,
@@ -5391,7 +5079,7 @@ impl Resolver {
         // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
         // (→ `on_cares_complete`) which consumes the request, so the `&mut`
         // borrow is not held past this call.
-        unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
+        unsafe { channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5401,7 +5089,7 @@ impl Resolver {
     // ───────── servers / local address ─────────
 
     fn get_channel_servers(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
@@ -5456,7 +5144,6 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
                     global_this,
@@ -5476,8 +5163,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[0..size + 1 + port_len])
-                        .to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[0..size + 1 + port_len])?,
                 )?;
             } else {
                 use std::io::Write;
@@ -5527,7 +5213,7 @@ impl Resolver {
     }
 
     fn set_channel_local_addresses(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
         first: &bun_core::String,
         second: Option<bun_core::String>,
@@ -5554,7 +5240,7 @@ impl Resolver {
     }
 
     fn set_channel_local_address(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
         value: &bun_core::String,
     ) -> JsResult<c_int> {
@@ -5568,8 +5254,7 @@ impl Resolver {
         } == 1
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
+            c_ares::ares_set_local_ip4(channel, ip);
             return Ok(c_ares::AF::INET);
         }
 
@@ -5597,14 +5282,13 @@ impl Resolver {
     }
 
     fn set_channel_servers(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<()> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
-        if channel != Self::get_channel_from_vm(global_this)?
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
+        if !core::ptr::eq(channel, Self::get_channel_from_vm(global_this)?)
+            && c_ares::ares_queue_active_queries(channel) != 0
         {
             return Err(global_this
                 .err(
@@ -5745,23 +5429,18 @@ impl Resolver {
             Some(global_this.bun_vm().context_of_caller().id()),
         );
 
-        // SAFETY: `resolver` is the heap allocation from `init`; not yet
-        // wrapped in JS so exclusively owned here.
-        let opts_cell = unsafe { &(*resolver).options };
-        let mut opts = opts_cell.get();
+        let mut opts = resolver.options.get();
         opts.timeout = Some(options.timeout);
         opts.tries = Some(options.tries);
-        opts_cell.set(opts);
+        resolver.options.set(opts);
 
-        // SAFETY: `resolver` was `heap::alloc`'d in `Resolver::init`; ownership
+        // SAFETY: `resolver` was boxed in `Resolver::init`; ownership
         // transfers to the JS wrapper, which holds one ref.
-        unsafe { Resolver::to_js_ptr(resolver, global_this) }
+        unsafe { Resolver::to_js_ptr(bun_core::heap::into_raw(resolver), global_this) }
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
-        let channel = self.get_channel_or_error(cx.global())?;
-        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-        c_ares::ares_cancel(unsafe { &mut *channel });
+        c_ares::ares_cancel(self.get_channel_or_error(cx.global())?);
         Ok(())
     }
 
@@ -5786,16 +5465,7 @@ impl Resolver {
         let port: u16 = to_port_number(port_value, global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
-        // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
-        // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
-        // `&mut sockaddr` view into that storage.
-        if c_ares::get_sockaddr(addr_s, port, unsafe {
-            // Target type inferred from `get_sockaddr`'s signature: `libc::sockaddr`
-            // on POSIX, `bun_cares_sys::winsock::sockaddr` on Windows (the latter
-            // is crate-private, so it cannot be named here).
-            &mut *(&raw mut sa).cast()
-        }) != 0
-        {
+        if c_ares::get_sockaddr(addr_s, port, &mut sa) != 0 {
             return Err(global_this.throw_invalid_argument_value(
                 b"address",
                 bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,
@@ -5815,41 +5485,29 @@ impl Resolver {
         let cache_name: Box<[u8]> = cache_name.into_boxed_slice();
 
         let key = get_name_info_request::PendingCacheKey::init(&cache_name);
-        let cache = resolver.get_or_put_into_resolve_pending_cache::<GetNameInfoRequest>(
-            &key,
-            PendingCacheField::PendingNameinfoCacheCares,
-        );
+        let cache = resolver.get_or_put_into_resolve_pending_cache::<GetNameInfoRequest>(&key);
 
         if let LookupCacheHit::Inflight(inflight) = cache {
             let info = CAresNameInfo::init(global_this, context, cache_name);
+            let promise = info.promise.value();
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(info) };
-            // SAFETY: `info` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*info).promise.value() });
+            return Ok(promise);
         }
 
         let request = GetNameInfoRequest::init(
             cache,
-            Some(resolver.as_ctx_ptr()),
+            resolver,
             cache_name, // transfer ownership here
             global_this,
             context,
-            PendingCacheField::PendingNameinfoCacheCares,
         );
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
-        // sockaddr_storage reborrowed as sockaddr; `request` was just
-        // `heap::alloc`'d and is owned by c-ares until the callback fires.
-        unsafe {
-            (*channel).get_name_info(
-                // See `get_sockaddr` call above — inferred `sockaddr` type is
-                // platform-dependent and unnameable on Windows from this crate.
-                &mut *(&raw mut sa).cast(),
-                &mut *request,
-            );
-        }
+        // SAFETY: `request` was just `heap::alloc`'d and is owned by c-ares
+        // until the callback fires.
+        channel.get_name_info(&sa, unsafe { &mut *request });
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         resolver.request_sent(global_this.bun_vm());

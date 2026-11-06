@@ -9,7 +9,7 @@ pub struct MaxLines {
     skip_blank_lines: bool,
 }
 
-const EXCEED: Message = Message::new(
+const EXCEED: &Message = &Message::new(
     "exceed",
     "File has too many lines ({{actual}}). Maximum allowed is {{max}}.",
 );

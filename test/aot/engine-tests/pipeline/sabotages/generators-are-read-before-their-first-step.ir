@@ -1,0 +1,6 @@
+# sabotage=GeneratorsAreReadBeforeTheirFirstStep: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=GeneratorsAreReadBeforeTheirFirstStep
+# CHECK-NOT: one true,true,1:0,true,true,2:0,true,true,3:0
+# PROGRAM-OF: generators-are-read-before-their-first-step-left-alone.ir

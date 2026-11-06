@@ -5,11 +5,11 @@ use bun_lint_oxlint::ast_util::is_global_reference;
 /// Prefer `Bun.sleep()` to a hand-written promise that only waits for a timer.
 pub struct PreferBuiltinSleep;
 
-const HANDMADE_SLEEP: Message = Message::new(
+const HANDMADE_SLEEP: &Message = &Message::new(
     "handmadeSleep",
     "This promise only waits. Use `Bun.sleep(ms)` or `setTimeout(ms)` from `node:timers/promises`.",
 );
-const USE_BUN_SLEEP: Message = Message::new("useBunSleep", "Replace it with `Bun.sleep()`.");
+const USE_BUN_SLEEP: &Message = &Message::new("useBunSleep", "Replace it with `Bun.sleep()`.");
 
 /// Returns the expression if `func` is just one expression: its body, or the only statement in its body.
 fn only_expression(func: Func<'_>) -> Option<Expr<'_>> {

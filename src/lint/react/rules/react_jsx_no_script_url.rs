@@ -13,11 +13,11 @@ pub struct JsxNoScriptUrl {
     components: Vec<(Box<[u8]>, Vec<Box<[u8]>>)>,
 }
 
-const NO_SCRIPT_URL: Message = Message::new(
+const NO_SCRIPT_URL: &Message = &Message::new(
     "noScriptURL",
     "A future version of React will block javascript: URLs as a security precaution. Use event handlers instead if you can. If you need to generate unsafe HTML, try using dangerouslySetInnerHTML instead.",
 );
-const JSX_NO_SCRIPT_URL: Message = Message::new("", "React 19 disallows `javascript:` URLs as a security precaution.");
+const JSX_NO_SCRIPT_URL: &Message = &Message::new("", "React 19 disallows `javascript:` URLs as a security precaution.");
 
 impl Rule for JsxNoScriptUrl {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-no-script-url", Kind::None);

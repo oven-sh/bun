@@ -1,0 +1,33 @@
+# <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.
+# Open: a key that is built from a string and integers is not yet built in one piece.
+strings/strings-built-and-consumed-locally	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
+# `let s = "k" + n; if (flag) s += ":" + n; else s += "!"; const key = s + ";" + n`: a text that grows without a loop gets no builder. Each arm joins its parts, and what follows the arms joins again: two strings where one would do.
+strings/strings-built-and-consumed-locally	// IR@= 1 acrossBranches  = StringBuilderBegin
+strings/strings-built-and-consumed-locally	// IRT= 0 acrossBranches  = Strcat 
+# `s += "<" + firsts[i].id + ">" + seconds[i].id + ";"` in a loop: `s` grows in a builder, but what stands in front of the read of `seconds[i]`, which may throw, is joined to a string of its own at every turn and then appended.
+strings/strings-built-and-consumed-locally	// IRT= 0 readsBetween  = Strcat 
+# Open: `{ ...source, name }` where the copy turns out to be a compiled object of a layout that the code does not store into in place: that rare path still defines each name by a call. The copy of an ordinary object takes the names in the call that copies it (operationAOTCopyObjectAndDefine).
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- named PutBy
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- wide PutBy
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- both PutBy
+# Each group below is one thing that the compiler does not do today: the words above it say for which JavaScript, and what is made instead.
+# A line that says what must NOT be there (IR-, CALLS-, IR= 0) and fails names something that IS there.
+# `function f(x, ...rest) { return rest[x] }`: the rest list is a parameter of the body, and the generic entrypoint makes it (CreateRest: in the frame where nothing else takes it, on the heap in byBoolean, typedNumber and typedString).
+# A read goes to the arguments themselves (GetMyArgumentByVal) only where the body is copied into its entrypoint.
+# `function step(steps: MapIterator<number>) { return steps.next().value }`, and so for SetIterator and ArrayIterator: the parameter is not tested for the class of the engine, `next` is read by name and called as any function is.
+# The three lines were met by their own text, which the dump quotes.
+typed-objects/built-in-iterators-that-are-handed-on	// IR+ TypeTest .* testedType=ArrayIterator
+typed-objects/built-in-iterators-that-are-handed-on	// IR+ TypeTest .* testedType=MapIterator
+typed-objects/built-in-iterators-that-are-handed-on	// IR+ TypeTest .* testedType=SetIterator
+# twoUnits has no code of its own: it is copied into its callers, and nothing calls its entrypoint.
+strings/one-code-unit-compared	// CALLS+ twoUnits StringsAreEqual|StringEq
+# These state what the compiler does not do yet: each came with the report of a gain that is missed, and waits for the change that brings it.
+structural-types/package-runs-sources-typed-declaration	// IRT= 0 callNorm = TypeTest
+structural-types/package-runs-sources-typed-declaration	// IRT= 0 sumPoint = TypeTest
+structural-types/package-runs-sources-typed-declaration	// IRT= 1 sumPair = TypeTest
+structural-types/package-runs-sources-typed-declaration	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
+# These failed when generated-code-is-what-the-programs-say.test.ts first ran this script over every program. Nobody has looked at them one by one.
+# Open: `new Map([["one", 1], ["three", 3.5]])`: the keys and the values of a Map made from pairs that the program writes are not told apart, so what a step of it holds is tested.
+builtins/key-and-value-of-a-pair-read-by-index	// IR= 0 ofAMap TypeTest
+# Open: a view that a function is handed is tested three times in a loop where one test would do. The pass that let one test stand for the three gave wrong answers and is out.
+arrays/views-over-one-buffer	// IR= 1 lengthsOfGivenView IsPristine

@@ -1,0 +1,288 @@
+== a copy ends
+before headersSent: boolean false
+before writableNeedDrain: boolean false
+before writableFinished: boolean false
+before writableCorked: number 0
+before writableEnded: boolean false
+before finished: undefined undefined
+before destroyed: undefined undefined
+before closed: boolean false
+before statusCode: number 200
+before statusMessage: undefined undefined
+before shouldKeepAlive: boolean true
+before chunkedEncoding: boolean false
+before socket: string object
+before writableLength: string number
+before writableHighWaterMark: string number
+before getHeaders: string {}
+end: object ServerResponse
+after headersSent: boolean true
+after writableNeedDrain: boolean false
+after writableFinished: boolean true
+after writableCorked: number 0
+after writableEnded: boolean true
+after finished: undefined undefined
+after destroyed: undefined undefined
+after closed: boolean false
+after statusCode: number 200
+after statusMessage: undefined undefined
+after shouldKeepAlive: boolean true
+after chunkedEncoding: boolean false
+after socket: string object
+after writableLength: string number
+after writableHighWaterMark: string number
+after getHeaders: string {}
+the response headersSent: boolean false
+the response writableNeedDrain: boolean false
+the response writableFinished: boolean false
+the response writableCorked: number 0
+the response writableEnded: boolean false
+the response finished: undefined undefined
+the response destroyed: undefined undefined
+the response closed: boolean false
+the response statusCode: number 200
+the response statusMessage: undefined undefined
+the response shouldKeepAlive: boolean true
+the response chunkedEncoding: boolean false
+the response socket: string object
+the response writableLength: string number
+the response writableHighWaterMark: string number
+the response getHeaders: string {}
+the client reads "HTTP/1.1 200 OK\r\nDate: ..\r\nConnection: close\r\nContent-Length: 15\r\n\r\nended by a copy"
+== a copy sets a header, writes the head, writes and ends
+setHeader: object ServerResponse
+appendHeader: object ServerResponse
+writeHead: object ServerResponse
+setHeader late: throws Error ERR_HTTP_HEADERS_SENT: Cannot set headers after they are sent to the client
+write: boolean true
+between headersSent: boolean true
+between writableNeedDrain: boolean false
+between writableFinished: boolean false
+between writableCorked: number 0
+between writableEnded: boolean false
+between finished: undefined undefined
+between destroyed: undefined undefined
+between closed: boolean false
+between statusCode: number 200
+between statusMessage: undefined undefined
+between shouldKeepAlive: boolean true
+between chunkedEncoding: boolean false
+between socket: string object
+between writableLength: string number
+between writableHighWaterMark: string number
+between getHeaders: string {"x-one":["1","2"],"x-two":"2"}
+write with a callback: boolean true
+end: object ServerResponse
+after headersSent: boolean true
+after writableNeedDrain: boolean false
+after writableFinished: boolean true
+after writableCorked: number 0
+after writableEnded: boolean true
+after finished: undefined undefined
+after destroyed: undefined undefined
+after closed: boolean false
+after statusCode: number 200
+after statusMessage: undefined undefined
+after shouldKeepAlive: boolean true
+after chunkedEncoding: boolean false
+after socket: string object
+after writableLength: string number
+after writableHighWaterMark: string number
+after getHeaders: string {"x-one":["1","2"],"x-two":"2"}
+the response headersSent: boolean false
+the response writableNeedDrain: boolean false
+the response writableFinished: boolean false
+the response writableCorked: number 0
+the response writableEnded: boolean false
+the response finished: undefined undefined
+the response destroyed: undefined undefined
+the response closed: boolean false
+the response statusCode: number 200
+the response statusMessage: undefined undefined
+the response shouldKeepAlive: boolean true
+the response chunkedEncoding: boolean false
+the response socket: string object
+the response writableLength: string number
+the response writableHighWaterMark: string number
+the response getHeaders: string {}
+the callback of write runs
+the callback of end runs
+the client reads "HTTP/1.1 201 Made\r\nx-one: 1\r\nx-one: 2\r\nx-two: 2\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nfirst,\r\n7\r\nsecond,\r\n4\r\nlast\r\n0\r\n\r\n"
+== a spread response is entered by the methods of the prototype object
+setHeader: throws TypeError: what is called is not a function
+writeHead: throws TypeError: what is called is not a function
+flushHeaders: throws TypeError: what is called is not a function
+write: throws TypeError: what is called is not a function
+end: throws TypeError: what is called is not a function
+after headersSent: boolean false
+after writableNeedDrain: boolean false
+after writableFinished: boolean false
+after writableCorked: number 0
+after writableEnded: boolean false
+after finished: undefined undefined
+after destroyed: undefined undefined
+after closed: boolean false
+after statusCode: number 200
+after statusMessage: undefined undefined
+after shouldKeepAlive: boolean true
+after chunkedEncoding: boolean false
+after socket: string object
+after writableLength: string number
+after writableHighWaterMark: string number
+after getHeaders: string {}
+the response ends: object ServerResponse
+the client reads "HTTP/1.1 200 OK\r\nDate: ..\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+== a copy flushes the headers and the response ends
+setHeader: object ServerResponse
+flushHeaders: undefined undefined
+the copy headersSent: boolean true
+the copy writableNeedDrain: boolean false
+the copy writableFinished: boolean false
+the copy writableCorked: number 0
+the copy writableEnded: boolean false
+the copy finished: undefined undefined
+the copy destroyed: undefined undefined
+the copy closed: boolean false
+the copy statusCode: number 200
+the copy statusMessage: undefined undefined
+the copy shouldKeepAlive: boolean true
+the copy chunkedEncoding: boolean false
+the copy socket: string object
+the copy writableLength: string number
+the copy writableHighWaterMark: string number
+the copy getHeaders: string {"x-copy":"1"}
+the response headersSent: boolean false
+the response writableNeedDrain: boolean false
+the response writableFinished: boolean false
+the response writableCorked: number 0
+the response writableEnded: boolean false
+the response finished: undefined undefined
+the response destroyed: undefined undefined
+the response closed: boolean false
+the response statusCode: number 200
+the response statusMessage: undefined undefined
+the response shouldKeepAlive: boolean true
+the response chunkedEncoding: boolean false
+the response socket: string object
+the response writableLength: string number
+the response writableHighWaterMark: string number
+the response getHeaders: string {}
+the response ends: throws Error ERR_HTTP_HEADERS_SENT: Stream already started
+the client reads "HTTP/1.1 200 OK\r\nx-copy: 1\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+== a copy is destroyed
+destroy: object ServerResponse
+the copy headersSent: boolean false
+the copy writableNeedDrain: boolean false
+the copy writableFinished: boolean false
+the copy writableCorked: number 0
+the copy writableEnded: boolean false
+the copy finished: undefined undefined
+the copy destroyed: undefined undefined
+the copy closed: boolean false
+the copy statusCode: number 200
+the copy statusMessage: undefined undefined
+the copy shouldKeepAlive: boolean true
+the copy chunkedEncoding: boolean false
+the copy socket: string object
+the copy writableLength: string number
+the copy writableHighWaterMark: string number
+the copy getHeaders: string {}
+the response headersSent: boolean false
+the response writableNeedDrain: boolean false
+the response writableFinished: boolean false
+the response writableCorked: number 0
+the response writableEnded: boolean false
+the response finished: undefined undefined
+the response destroyed: undefined undefined
+the response closed: boolean false
+the response statusCode: number 200
+the response statusMessage: undefined undefined
+the response shouldKeepAlive: boolean true
+the response chunkedEncoding: boolean false
+the response socket: string object
+the response writableLength: string number
+the response writableHighWaterMark: string number
+the response getHeaders: string {}
+the copy closes
+the response closes
+the client reads ""
+== a copy writes a continue, a processing and early hints
+writeContinue: undefined undefined
+writeProcessing: boolean true
+writeEarlyHints: undefined undefined
+end: object ServerResponse
+the client reads "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nDate: ..\r\nConnection: close\r\nContent-Length: 11\r\n\r\nafter hints"
+== a copy corks, writes twice, uncorks and ends
+cork: undefined undefined
+write: boolean true
+write: boolean true
+uncork: undefined undefined
+end: object ServerResponse
+the client reads "HTTP/1.1 200 OK\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\n\r\n"
+== a copy adds trailers
+setHeader: object ServerResponse
+write: boolean true
+addTrailers: undefined undefined
+end: object ServerResponse
+the client reads "HTTP/1.1 200 OK\r\ntrailer: x-last\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nbody\r\n0\r\nx-last: 1\r\n\r\n"
+== a copy emits finish and close
+emit finish: boolean true
+emit close: boolean false
+the response ends: object ServerResponse
+the client reads ""
+== the listeners of finish are called with other receivers
+emitResponseFinish for {}: undefined undefined
+emitResponseFinish for a copy: undefined undefined
+the response ends: object ServerResponse
+the client reads ""
+== a plain object with the handle of the response
+writeHead: throws TypeError: what is called is not a function
+write: throws TypeError: undefined is not an object
+end: throws TypeError: undefined is not an object
+it holds req statusMessage statusCode [handle]
+the response ends: object ServerResponse
+the client reads "HTTP/1.1 200 OK\r\nDate: ..\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+== a server whose responses are made by NeverCallsTheConstructor
+setHeader: object NeverCallsTheConstructor
+write: throws TypeError: undefined is not an object
+end: throws TypeError: undefined is not an object
+headersSent: boolean true
+the client reads "HTTP/1.1 200 OK\r\nx-made-by: NeverCallsTheConstructor\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+setHeader: object NeverCallsTheConstructor
+write: throws TypeError: undefined is not an object
+end: throws TypeError: undefined is not an object
+headersSent: boolean true
+the client reads again "HTTP/1.1 200 OK\r\nx-made-by: NeverCallsTheConstructor\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+== a server whose responses are made by AnswersAProxy
+setHeader: object ServerResponse
+write: boolean true
+end: object ServerResponse
+headersSent: boolean true
+the client reads "HTTP/1.1 200 OK\r\nx-made-by: AnswersAProxy\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+setHeader: object ServerResponse
+write: boolean true
+end: object ServerResponse
+headersSent: boolean true
+the client reads again "HTTP/1.1 200 OK\r\nx-made-by: AnswersAProxy\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+== a server whose responses are made by AnswersAnHeir
+setHeader: object ServerResponse
+write: boolean true
+end: object ServerResponse
+headersSent: boolean true
+the client reads "HTTP/1.1 200 OK\r\nx-made-by: AnswersAnHeir\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+setHeader: object ServerResponse
+write: boolean true
+end: object ServerResponse
+headersSent: boolean true
+the client reads again "HTTP/1.1 200 OK\r\nx-made-by: AnswersAnHeir\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+== a server whose responses are made by AnswersACopy
+setHeader: object ServerResponse
+write: boolean true
+end: object ServerResponse
+headersSent: boolean true
+the client reads "HTTP/1.1 200 OK\r\nx-made-by: AnswersACopy\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"
+setHeader: object ServerResponse
+write: boolean true
+end: object ServerResponse
+headersSent: boolean true
+the client reads again "HTTP/1.1 200 OK\r\nx-made-by: AnswersACopy\r\nDate: ..\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nwritten,\r\n5\r\nended\r\n0\r\n\r\n"

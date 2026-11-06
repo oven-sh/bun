@@ -1374,9 +1374,17 @@ impl<'a> Scanner<'_, 'a> {
     fn is_next_to_block(&self, end: usize) -> bool {
         let is_element = |at: usize| self.at(at) == b'<' && self.at(at + 1).is_ascii_alphabetic();
         let is_block = |at: usize| {
+            // `element_at` says where the plain part of the name ends: `<div&>` is another element.
             is_element(at)
-                && (self.element_at(at, (&data::DEFAULT_TAG_DEFINITION, false)))
-                    .is_some_and(|element| element.display.is_block_like())
+                && (self.element_at(at, (&data::DEFAULT_TAG_DEFINITION, false))).is_some_and(
+                    |element| {
+                        element.display.is_block_like()
+                            && matches!(
+                                self.at(element.name_end),
+                                b' ' | b'\n' | b'\t' | b'>' | b'/'
+                            )
+                    },
+                )
         };
         match self.settings.parser {
             // `isVueSfcBlock`, given that it has been read.

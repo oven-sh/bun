@@ -2340,6 +2340,12 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "<div>\n  <p>a</p>\n  <p>b</p>\n</div>\n",
     // Another indentation, blank lines, tabs, white space at the ends of lines.
     "<div>\n<p>a</p>\n      <p>b</p>\n\n\n\t<p>c</p>  \n\n</div>\n",
+    // The name of an element ends where the lexer ends it.
+    "<span>a</span>\n<div&>b</div&>\n",
+    "<span>a</span>\n<div&\n>b</div&>\n",
+    "<div&>b</div&>\n<span>a</span>\n",
+    "<span>a</span>\n<div=>b</div=>\n",
+    "<span>a</span>\n<div/>\n",
     // Code that its formatter rejects is printed as it is written, without what all of its lines are indented by.
     "<p>a</p>\n<script>\n  let a = ;\n\n    b\n</script>\n<p>c</p>\n",
     "<div>\n  <p>a</p>\n  <script>\nlet a = ;  \n\n\n\tb\n  \n  </script>\n  <style>\n      a {\n\n    b\n  </style>\n  <script>let  a</script>\n</div>\n",

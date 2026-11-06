@@ -6079,6 +6079,11 @@ describe("what the quick way for scripts is asked about, and what is done around
         "",
         'someConfigurationOptionNameThatIsLongggg =\n  <SomeLongComponentName option={<Icon />} other="x">text</SomeLongComponentName> ? first : second;\n',
       ],
+      // The arguments of a hook at the end of a chain that is tried on one line: the array behind the function isn't measured there.
+      ["a.ts", "--print-width=20", 'a=a.b((f)).c((()=>{e}),[,"","",,""])\n'],
+      ["a.ts", "--print-width=21", "a=a.b(f).c(()=>{e},[a,b,c,d,e,f])\n"],
+      ["a.ts", "--print-width=21", "x={a:a.b(f).c(()=>{e},[a,b,c,d,e,f])}\n"],
+      ["a.ts", "--print-width=21", "a.b(f).c(()=>{e},[a,b,c,d,e,f])\n"],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

@@ -64,3 +64,15 @@ for (const expression of expressions)
   expect(withTheOption.hasFailed).toBe(false);
   expect(withTheOption.stdout.split("\n").length).toBe(13);
 });
+
+// What Node prints. `bun run` prints an escape for such a character, and the compiler gives the engine the same text.
+test("a backslash ahead of a non-ASCII character or a tab of a literal escapes that character", async () => {
+  const { withoutTheOption, withTheOption } = await compileAndRun(`
+console.log(/\\é/.test("é"), /^[a-z\\é]+$/.test("a09"), "xéy".replace(/\\é/g, "-"), /^\\\\\\é$/.test("\\\\é"), /^\\😀$/.test("😀"), /a\\\tb/.test("a\\tb"));
+`);
+  expect(withTheOption).toEqual(withoutTheOption);
+  expect({ stdout: withTheOption.stdout, hasFailed: withTheOption.hasFailed }).toEqual({
+    stdout: "true false x-y true true true\n",
+    hasFailed: false,
+  });
+});

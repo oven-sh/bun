@@ -1454,7 +1454,7 @@ mod win32 {
     use core::ffi::c_void;
     use core::iter::successors;
     use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    use core::ptr::null_mut;
+    use core::ptr::{null, null_mut};
 
     use bun_core::strings::element_length_utf16_into_utf8;
     use bun_sys::net::{sockaddr_in, sockaddr_in6};
@@ -1471,6 +1471,7 @@ mod win32 {
 
     type HKEY = *mut c_void;
     const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002_u32 as i32 as isize as HKEY;
+    const KEY_QUERY_VALUE: DWORD = 0x01;
     const RRF_RT_REG_SZ: DWORD = 0x02;
     const RRF_RT_REG_DWORD: DWORD = 0x10;
 
@@ -1584,6 +1585,14 @@ mod win32 {
 
     #[link(name = "advapi32")]
     unsafe extern "system" {
+        fn RegOpenKeyExW(
+            hKey: HKEY,
+            lpSubKey: *const u16,
+            ulOptions: DWORD,
+            samDesired: DWORD,
+            phkResult: *mut HKEY,
+        ) -> i32;
+        fn RegCloseKey(hKey: HKEY) -> i32;
         fn RegGetValueW(
             hkey: HKEY,
             lpSubKey: *const u16,
@@ -1615,64 +1624,68 @@ mod win32 {
         ) -> ULONG;
     }
 
-    /// A value under `HKEY_LOCAL_MACHINE`. `key` and `name` end with a NUL.
-    ///
-    /// # Safety
-    /// `data` is writable for `size` bytes.
-    unsafe fn read_registry(
-        key: &[u16],
-        name: &[u16],
-        kind: DWORD,
-        data: *mut c_void,
-        mut size: DWORD,
-    ) -> Result<(), Win32Error> {
-        debug_assert!(key.last() == Some(&0) && name.last() == Some(&0));
-        // SAFETY: both strings are NUL-terminated, and the caller vouches for `data`.
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_LOCAL_MACHINE,
-                key.as_ptr(),
-                name.as_ptr(),
-                kind,
-                null_mut(),
-                data,
-                &raw mut size,
-            )
-        };
-        match status {
-            0 => Ok(()),
-            _ => Err(Win32Error::from_u32(status as u32)),
+    /// A key under `HKEY_LOCAL_MACHINE`, open for reading its values. The names end with a NUL.
+    struct RegistryKey(HKEY);
+
+    impl RegistryKey {
+        fn open(path: &[u16]) -> Result<Self, Win32Error> {
+            debug_assert!(path.last() == Some(&0));
+            let mut key: HKEY = null_mut();
+            // SAFETY: the string is NUL-terminated, and `key` is a valid out-param.
+            let status = unsafe {
+                RegOpenKeyExW(
+                    HKEY_LOCAL_MACHINE,
+                    path.as_ptr(),
+                    0,
+                    KEY_QUERY_VALUE,
+                    &raw mut key,
+                )
+            };
+            match status {
+                0 => Ok(Self(key)),
+                _ => Err(Win32Error::from_u32(status as u32)),
+            }
+        }
+
+        fn read(&self, name: &[u16], kind: DWORD, data: &mut [u16]) -> Result<(), Win32Error> {
+            debug_assert!(name.last() == Some(&0));
+            let mut size = size_of_val(data) as DWORD;
+            // SAFETY: the string is NUL-terminated, and `data` is writable for `size` bytes.
+            let status = unsafe {
+                RegGetValueW(
+                    self.0,
+                    null(),
+                    name.as_ptr(),
+                    kind,
+                    null_mut(),
+                    data.as_mut_ptr().cast(),
+                    &raw mut size,
+                )
+            };
+            match status {
+                0 => Ok(()),
+                _ => Err(Win32Error::from_u32(status as u32)),
+            }
+        }
+
+        fn string(&self, name: &[u16]) -> Result<Vec<u16>, Win32Error> {
+            let mut value = [0u16; 256];
+            self.read(name, RRF_RT_REG_SZ, &mut value)?;
+            Ok(slice_to_nul_u16(&value).to_vec())
+        }
+
+        fn dword(&self, name: &[u16]) -> Result<u32, Win32Error> {
+            let mut halves = [0u16; 2];
+            self.read(name, RRF_RT_REG_DWORD, &mut halves)?;
+            Ok(u32::from(halves[0]) | u32::from(halves[1]) << 16)
         }
     }
 
-    fn registry_string(key: &[u16], name: &[u16]) -> Result<Vec<u16>, Win32Error> {
-        let mut value = [0u16; 256];
-        // SAFETY: the size is the size of `value`.
-        unsafe {
-            read_registry(
-                key,
-                name,
-                RRF_RT_REG_SZ,
-                value.as_mut_ptr().cast(),
-                size_of_val(&value) as DWORD,
-            )?;
+    impl Drop for RegistryKey {
+        fn drop(&mut self) {
+            // SAFETY: `open` opened it, and nothing else closes it.
+            unsafe { RegCloseKey(self.0) };
         }
-        Ok(slice_to_nul_u16(&value).to_vec())
-    }
-
-    fn registry_dword(key: &[u16], name: &[u16]) -> Result<u32, Win32Error> {
-        let mut value: u32 = 0;
-        // SAFETY: the size is the size of `value`.
-        unsafe {
-            read_registry(
-                key,
-                name,
-                RRF_RT_REG_DWORD,
-                (&raw mut value).cast(),
-                size_of_val(&value) as DWORD,
-            )?;
-        }
-        Ok(value)
     }
 
     pub(super) struct Cpu {
@@ -1706,13 +1719,14 @@ mod win32 {
             .iter()
             .enumerate()
             .map(|(index, times)| {
-                let key: Vec<u16> =
+                let path: Vec<u16> =
                     format!("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\{index}\0")
                         .encode_utf16()
                         .collect();
+                let key = RegistryKey::open(&path)?;
                 Ok(Cpu {
-                    model: registry_string(&key, bun_core::w!("ProcessorNameString\0"))?,
-                    speed: registry_dword(&key, bun_core::w!("~MHz\0"))?,
+                    model: key.string(bun_core::w!("ProcessorNameString\0"))?,
+                    speed: key.dword(bun_core::w!("~MHz\0"))?,
                     times: CPUTimes {
                         user: milliseconds(times.UserTime),
                         nice: 0,
@@ -1776,10 +1790,11 @@ mod win32 {
     pub(super) fn os_version_name() -> Vec<u16> {
         let info = os_version();
         let mut name = Vec::new();
-        if let Ok(product) = registry_string(
-            bun_core::w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\0"),
-            bun_core::w!("ProductName\0"),
-        ) {
+        if let Ok(product) = RegistryKey::open(bun_core::w!(
+            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\0"
+        ))
+        .and_then(|key| key.string(bun_core::w!("ProductName\0")))
+        {
             name = product;
             // Windows 11 kept the product name of Windows 10.
             if info.dwMajorVersion == 10

@@ -1160,8 +1160,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto* moduleLoader = moduleLoaderOfRequirer(globalObject, callFrame->argument(1));
     if (!moduleLoader)
         return JSValue::encode(jsBoolean(false));
-    // A module whose load is in flight is not in require.cache and is not evicted: a later import() or require() joins that load.
-    // removeEntry() takes every import type of the key, so each one has to be free.
+    // A module whose load is in flight is not in require.cache and is not evicted, under any import type of the key.
     using Type = JSC::ScriptFetchParameters::Type;
     static_assert(static_cast<unsigned>(Type::CSS) == 6, "every Type is listed below");
     for (Type type : { Type::JavaScript, Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::CSS, Type::None }) {

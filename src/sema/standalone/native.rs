@@ -637,17 +637,16 @@ unsafe extern "C" fn highway_yaml_marks(p: *const u8, len: usize, out: *mut u8, 
 unsafe extern "C" fn highway_html_marks(p: *const u8, len: usize, out: *mut u8, plane_len: usize) {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
-    // SAFETY: `out` has eight bitmaps, `plane_len` bytes apart, each with 8 bytes per 64 bytes of text.
+    // SAFETY: `out` has seven bitmaps, `plane_len` bytes apart, each with 8 bytes per 64 bytes of text.
     let planes =
-        unsafe { core::slice::from_raw_parts_mut(out, 7 * plane_len + len.div_ceil(64) * 8) };
+        unsafe { core::slice::from_raw_parts_mut(out, 6 * plane_len + len.div_ceil(64) * 8) };
     for (block, chunk) in text.chunks(64).enumerate() {
-        let mut marks = [0u64; 8];
+        let mut marks = [0u64; 7];
         // What is past the end of the text counts as NUL.
         let padded = chunk.iter().copied().chain(core::iter::repeat(0));
         for (i, c) in padded.take(64).enumerate() {
             let is_printable = matches!(c, b' '..=b'~');
             let is_odd = (!is_printable && c != b'\n') || matches!(c, b'&' | b'\\');
-            let ends_name = matches!(c, b' ' | b'>' | b'/' | b'=' | b'<' | b'"' | b'\'');
             marks[0] |= u64::from(is_odd) << i;
             marks[1] |= u64::from(matches!(c, b' ' | b'\t' | b'\n')) << i;
             marks[2] |= u64::from(c == b'\n') << i;
@@ -655,7 +654,6 @@ unsafe extern "C" fn highway_html_marks(p: *const u8, len: usize, out: *mut u8, 
             marks[4] |= u64::from(c == b'"') << i;
             marks[5] |= u64::from(c == b'{') << i;
             marks[6] |= u64::from(!matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-')) << i;
-            marks[7] |= u64::from(!is_printable || ends_name) << i;
         }
         for (plane, marks) in marks.iter().enumerate() {
             let at = plane * plane_len + block * 8;

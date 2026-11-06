@@ -726,12 +726,10 @@ pub struct HtmlMarks<'a> {
     pub braces: Stops<'a>,
     /// Anything but `a` to `z`, `0` to `9` and `-`.
     pub after_name: Stops<'a>,
-    /// Anything but a printable character of ASCII, a space, `>`, `/`, `=`, `<`, `"` and `'`.
-    pub after_attribute_name: Stops<'a>,
 }
 
 impl HtmlMarksBuffer {
-    const PLANES: usize = 8;
+    const PLANES: usize = 7;
 
     pub fn find(&mut self, text: &[u8]) -> HtmlMarks<'_> {
         // 16 bytes more than the kernel writes, so that `Stops::window` can load a whole word past the end.
@@ -742,9 +740,9 @@ impl HtmlMarksBuffer {
         self.plane_len = plane_len;
         let planes = &mut self.planes[..Self::PLANES * plane_len];
         for (index, plane) in planes.chunks_exact_mut(plane_len).enumerate() {
-            plane[plane_len - 16..].fill(if matches!(index, 0 | 6 | 7) { 0xFF } else { 0 });
+            plane[plane_len - 16..].fill(if matches!(index, 0 | 6) { 0xFF } else { 0 });
         }
-        // SAFETY: `text` is readable, and the kernel writes `plane_len - 16` bytes to each of the eight planes.
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 16` bytes to each of the seven planes.
         unsafe { highway_html_marks(text.as_ptr(), text.len(), planes.as_mut_ptr(), plane_len) };
         self.found()
     }
@@ -768,7 +766,6 @@ impl HtmlMarksBuffer {
             quotes: plane(4),
             braces: plane(5),
             after_name: plane(6),
-            after_attribute_name: plane(7),
         }
     }
 }

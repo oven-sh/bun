@@ -1100,7 +1100,7 @@ static HWY_INLINE void HtmlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8
         return hn::Le(hn::Sub(vec, hn::Set(d, static_cast<uint8_t>(first))), hn::Set(d, static_cast<uint8_t>(last - first)));
     };
 
-    uint64_t odd = 0, blank = 0, line_break = 0, tag = 0, quote = 0, brace = 0, after_name = 0, after_attribute_name = 0;
+    uint64_t odd = 0, blank = 0, line_break = 0, tag = 0, quote = 0, brace = 0, after_name = 0;
     for (size_t i = 0; i < 64; i += N) {
         const auto vec = hn::LoadU(d, block + i);
         const auto is_line_break = is(vec, '\n');
@@ -1110,8 +1110,6 @@ static HWY_INLINE void HtmlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8
         // Not a printable character of ASCII.
         const auto is_unprintable = hn::Not(is_between(vec, ' ', '~'));
         const auto is_in_name = hn::Or(hn::Or(is_between(vec, 'a', 'z'), is_between(vec, '0', '9')), is(vec, '-'));
-        const auto ends_attribute_name = hn::Or(hn::Or(hn::Or(is(vec, ' '), is(vec, '>')), hn::Or(is(vec, '/'), is(vec, '='))),
-            hn::Or(hn::Or(is_tag, is_quote), hn::Or(is(vec, '\''), is_unprintable)));
         odd |= hn::BitsFromMask(d, hn::Or(hn::AndNot(is_line_break, is_unprintable), hn::Or(is(vec, '&'), is(vec, '\\')))) << i;
         blank |= hn::BitsFromMask(d, is_blank) << i;
         line_break |= hn::BitsFromMask(d, is_line_break) << i;
@@ -1119,7 +1117,6 @@ static HWY_INLINE void HtmlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8
         quote |= hn::BitsFromMask(d, is_quote) << i;
         brace |= hn::BitsFromMask(d, is(vec, '{')) << i;
         after_name |= hn::BitsFromMask(d, hn::Not(is_in_name)) << i;
-        after_attribute_name |= hn::BitsFromMask(d, ends_attribute_name) << i;
     }
 
     std::memcpy(plane, &odd, 8);
@@ -1129,11 +1126,10 @@ static HWY_INLINE void HtmlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8
     std::memcpy(plane + 4 * plane_len, &quote, 8);
     std::memcpy(plane + 5 * plane_len, &brace, 8);
     std::memcpy(plane + 6 * plane_len, &after_name, 8);
-    std::memcpy(plane + 7 * plane_len, &after_attribute_name, 8);
 }
 
 // What src/format/html/runs.rs tells the lines of HTML apart by: one pass over the text instead of a loop over the
-// bytes of each name, value and word. Writes eight bitmaps, `plane_len` bytes apart, with one bit per byte of the
+// bytes of each name, value and word. Writes seven bitmaps, `plane_len` bytes apart, with one bit per byte of the
 // text (bit i of byte j is byte 8 * j + i):
 //   plane 0: anything but a printable character of ASCII and a line feed, `&` or `\`
 //   plane 1: a space, a tab or a line feed
@@ -1142,7 +1138,6 @@ static HWY_INLINE void HtmlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8
 //   plane 4: `"`
 //   plane 5: `{`
 //   plane 6: anything but `a` to `z`, `0` to `9` and `-`
-//   plane 7: anything but a printable character of ASCII, a space, `>`, `/`, `=`, `<`, `"` or `'`
 // Each plane gets ceil(text_len / 64) * 8 bytes. What is past the end of the text counts as NUL.
 void HtmlMarksImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
 {

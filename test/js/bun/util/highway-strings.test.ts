@@ -615,19 +615,18 @@ describe("htmlMarks", () => {
     isOneOf('"'),
     isOneOf("{"),
     (b: number) => !/[a-z0-9-]/.test(String.fromCharCode(b)),
-    (b: number) => !isPrintable(b) || isOneOf(" >/=<\"'")(b),
   ];
 
   function compareMarks(text: Uint8Array, at: string) {
     const planeLen = Math.ceil(text.length / 64) * 8;
-    const expected = new Uint8Array(planeLen * 8);
+    const expected = new Uint8Array(planeLen * MARKS.length);
     MARKS.forEach((isMark, plane) => {
       for (let i = 0; i < planeLen * 8; i++) {
         // What is past the end of the text counts as NUL.
         if (isMark(i < text.length ? text[i] : 0)) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
       }
     });
-    const out = new Uint8Array(planeLen * 8).fill(0xaa);
+    const out = new Uint8Array(planeLen * MARKS.length).fill(0xaa);
     compare("htmlMarks", hw("htmlMarks", text, out), 0, at);
     compare("htmlMarks", out.toHex(), expected.toHex(), at);
   }
@@ -652,7 +651,7 @@ describe("htmlMarks", () => {
   });
 
   it("rejects a buffer that is too small", () => {
-    expect(() => hw("htmlMarks", new Uint8Array(65), new Uint8Array(8 * 8))).toThrow(RangeError);
+    expect(() => hw("htmlMarks", new Uint8Array(65), new Uint8Array(7 * 8))).toThrow(RangeError);
   });
 });
 

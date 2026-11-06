@@ -140,7 +140,7 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         highway_yaml_marks(haystack, len, const_cast<uint8_t*>(needle), plane_len);
         result = 0;
     } else if (op == "htmlMarks"_s) {
-        size_t plane_len = needle_len / 8;
+        size_t plane_len = needle_len / 7;
         if (plane_len < (len + 63) / 64 * 8) {
             throwRangeError(globalObject, scope, "each bitmap needs 8 bytes per 64 bytes of text"_s);
             return {};

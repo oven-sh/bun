@@ -4253,6 +4253,105 @@ describe.concurrent("bun fmt", () => {
     expect(forOxfmt.exitCode).toBe(0);
   });
 
+  describe("MDX front matter behind lines of spaces and tabs", () => {
+    // Prettier's MDX parser looks for front matter at the first line that has something on it. Its Markdown parser
+    // looks at the start of the file only. Each row has the text and what Prettier 3.9.9 prints for it as MDX.
+    const texts: [before: string, after: string][] = [
+      ["\n---\ntitle:   x\n---\n\n# Hi\n", "---\ntitle: x\n---\n\n# Hi\n"],
+      ["  \n\t\n---\n\nfoo\n\n---\n", "---\nfoo\n---\n"],
+      ["\n+++\na   =  1\n+++\n\nBody\n", "+++\na   =  1\n+++\n\nBody\n"],
+      // As a rule and a paragraph, these lose the indentation that the YAML needs: `sidebar:\norder: 2`.
+      ["\n---\nsidebar:\n  order: 2\ntitle: x\n---\n\nBody\n", "---\nsidebar:\n  order: 2\ntitle: x\n---\n\nBody\n"],
+      [
+        "\n---\ndesc: |\n  line one\n  line two\ntitle: x\n---\n\n# Hi\n",
+        "---\ndesc: |\n  line one\n  line two\ntitle: x\n---\n\n# Hi\n",
+      ],
+      ["\n---\ntitle: x\n---text\n\nBody\n", "---\ntitle: x\n---\n\ntext\n\nBody\n"],
+      ["\n---\ntitle: x\n--- text\n\nBody\n", "---\ntitle: x\n---\n\ntext\n\nBody\n"],
+      ["\n---\na: 1\n--- * b\n * c\n", "---\na: 1\n---\n\n- b\n- c\n"],
+    ];
+    const files = Object.fromEntries(texts.map(([before], i) => [`${i}.mdx`, before]));
+    const written = Object.fromEntries(texts.map(([, after], i) => [`${i}.mdx`, after]));
+
+    test.each([
+      ["no config", {}],
+      [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
+    ])("is front matter with %s", async (_, config: Record<string, string>) => {
+      const result = await format({ ...config, ...files }, [], { reads: Object.keys(files) });
+      expect(result.files).toEqual(written);
+      expect(result.exitCode).toBe(0);
+      expect(await different({ ...config, ...written }, [])).toEqual([]);
+    });
+
+    test("is a rule and a heading in Markdown", async () => {
+      // As in Prettier 3.9.9, which reads front matter in what it has printed the next time it runs.
+      const first = "---\n\ntitle: x\n---\n\n# Hi\n";
+      const result = await format({ "a.md": texts[0][0], "b.md": first }, [], { reads: ["a.md", "b.md"] });
+      expect(result.files).toEqual({ "a.md": first, "b.md": "---\ntitle: x\n---\n\n# Hi\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("known issue: --insert-pragma writes the pragma before it, which makes it a rule and a heading", async () => {
+      // Prettier 3.9.9 prints the same.
+      const result = await format({ "a.mdx": texts[0][0] }, ["--insert-pragma"], { reads: ["a.mdx"] });
+      expect(result.files).toEqual({ "a.mdx": "<!-- @format -->\n\n---\n\n## title: x\n\n# Hi\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("--require-pragma and --check-ignore-pragma look for a pragma at the start of the file, as in Prettier", async () => {
+      // Prettier 3.9.9 finds neither pragma behind this front matter, so it leaves the first file as it is and formats
+      // the second.
+      const required = "\n---\ntitle:   x\n---\n\n<!-- @format -->\n\n# Hi   there\n";
+      const ignored = "\n---\ntitle:   x\n---\n\n<!-- @noformat -->\n\n# Hi   there\n";
+      const [withRequire, withIgnore] = await Promise.all([
+        format({ "a.mdx": required }, ["--require-pragma"], { reads: ["a.mdx"] }),
+        format({ "a.mdx": ignored }, ["--check-ignore-pragma"], { reads: ["a.mdx"] }),
+      ]);
+      expect(withRequire.files).toEqual({ "a.mdx": required });
+      expect(withRequire.exitCode).toBe(0);
+      expect(withIgnore.files).toEqual({ "a.mdx": "---\ntitle: x\n---\n\n<!-- @noformat -->\n\n# Hi there\n" });
+      expect(withIgnore.exitCode).toBe(0);
+    });
+
+    // Prettier 3.9.9 also reads front matter at the start of the first block quote and of the first footnote
+    // definition, because remark-parse 8 reads what is in them before it makes their node. Bun doesn't: the fences are
+    // a rule and the underline of a heading there. Each row has the text, Bun's output and Prettier's. In the last one
+    // Prettier prints the text outside of the quote.
+    test.each([
+      ["> ---\n> a:   1\n> ---\n", "> ---\n>\n> ## a: 1\n", "> ---\n> a: 1\n> ---\n"],
+      ["> > ---\n> > a:   1\n> > ---\n", "> > ---\n> >\n> > ## a: 1\n", "> > ---\n> > a: 1\n> > ---\n"],
+      ["[^a]: ---\n    a:   1\n    ---\n", "[^a]: ---\n\n    ## a: 1\n", "[^a]:\n    ---\n    a: 1\n    ---\n"],
+      ["> ---\n> **Note**: foo\n> ---\n", "> ---\n>\n> ## **Note**: foo\n", "> ---\n**Note**: foo\n---\n"],
+    ])("isn't read in a block quote or in a footnote definition: %j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
+      const result = await format({ "a.mdx": before, "b.mdx": after }, [], { reads: ["a.mdx", "b.mdx"] });
+      expect(result.files).toEqual({ "a.mdx": after, "b.mdx": after });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  test("what follows the front matter of MDX on its last line is not indented by that line", async () => {
+    // Prettier 3.9.9 reads Markdown with spaces in place of the front matter, so ` foo` behind the three spaces of the
+    // last line is indented code. Its MDX parser reads on behind the front matter. Each row has the text and what
+    // Prettier prints for it.
+    const texts: Record<string, [before: string, after: string]> = {
+      "0.mdx": ["---\na: 1\n--- foo\n", "---\na: 1\n---\n\nfoo\n"],
+      "1.mdx": ["---\na: 1\n---  # Hi\n", "---\na: 1\n---\n\n# Hi\n"],
+      "2.mdx": ['---\na: 1\n---import b from "b"\n', '---\na: 1\n---\n\nimport b from "b";\n'],
+      "3.mdx": ["---\na: 1\n---    foo\n", "---\na: 1\n---\n\n    foo\n"],
+      "4.mdx": ["+++\na = 1\n+++ foo\n", "+++\na = 1\n+++\n\nfoo\n"],
+      "5.mdx": ["---\na: 1\n... foo\n", "---\na: 1\n...\n\nfoo\n"],
+      "6.md": ["---\na: 1\n--- foo\n", "---\na: 1\n---\n\n```\nfoo\n```\n"],
+    };
+    const names = Object.keys(texts);
+    const before = Object.fromEntries(names.map(name => [name, texts[name][0]]));
+    const after = Object.fromEntries(names.map(name => [name, texts[name][1]]));
+    const result = await format(before, [], { reads: names });
+    expect(result.files).toEqual(after);
+    expect(result.exitCode).toBe(0);
+    expect(await different(after, [])).toEqual([]);
+  });
+
   test("skips unsupported languages and reports an error at the end, or a warning with --allow-unsupported", async () => {
     const left = { "a.astro": "<p   >a</p>\n", "b.astro": "<p   >b</p>\n" };
     const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', ...left, "c.js": ugly };

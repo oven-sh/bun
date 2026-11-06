@@ -1047,6 +1047,9 @@ it("chrome: onNavigated fires with committed URL", async () => {
 // which data: URLs do not exercise the same way.
 function navServer() {
   const page = (body: string) => new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+  // /late.gif answers once this resolves. holdImages() replaces it with a
+  // promise the test releases, so a load event waits for the test.
+  let imagesReleased: Promise<void> = Promise.resolve();
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -1070,14 +1073,32 @@ function navServer() {
           headers: { "content-type": "text/html; charset=utf-8" },
         });
       }
+      // A document that commits late, and loads later still: the server takes
+      // its time to answer, and then the image holds the load event back.
+      // no-store: a history traversal asks the server again, not the HTTP cache.
+      if (path === "/slow-doc") {
+        await Bun.sleep(150);
+        return new Response('<title>slow-doc</title><img src="/late.gif">', {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
       if (path === "/late.gif") {
-        await Bun.sleep(300);
+        await imagesReleased;
         return new Response("GIF89a", { headers: { "content-type": "image/gif", "cache-control": "no-store" } });
       }
       return page(`<title>T${path}</title><body>${path}</body>`);
     },
   });
-  return { server, base: `http://127.0.0.1:${server.port}`, [Symbol.dispose]: () => void server.stop(true) };
+  return {
+    server,
+    base: `http://127.0.0.1:${server.port}`,
+    holdImages() {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      imagesReleased = promise;
+      return resolve;
+    },
+    [Symbol.dispose]: () => void server.stop(true),
+  };
 }
 
 it("chrome: onNavigated fires once per main-frame commit; an iframe's navigation does not count", async () => {
@@ -1205,12 +1226,44 @@ it("chrome: a cross-document goBack() waits for the load when the page being lef
   // answered the traversal by then, so this commit lands behind the reply. It
   // is the page's own and must not end goBack() before the target has loaded.
   await view.evaluate("addEventListener('beforeunload', () => history.replaceState({ scroll: 1 }, '')), 0");
-  await view.goBack();
+  const release = srv.holdImages();
+  const committed = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => {
+    if (url === srv.base + "/slow-load") committed.resolve();
+  };
+  const started = view.goBack();
+  // The target has committed and its image is held: goBack() is still pending.
+  await committed.promise;
+  const whileHeld = await Promise.race([started.then(() => "goBack() settled"), view.evaluate("document.readyState")]);
+  expect(whileHeld).toBe("interactive");
+  release();
+  await started;
   expect({
     url: view.url,
     title: view.title,
     readyState: await view.evaluate("document.readyState"),
   }).toEqual({ url: srv.base + "/slow-load", title: "slow-load", readyState: "complete" });
+});
+
+it("chrome: a cross-document goBack() is not ended by a #fragment change of the page being left", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/slow-doc");
+  // An unload handler keeps the page out of the back-forward cache, and
+  // no-store keeps it out of the HTTP cache, so the traversal asks the server.
+  await view.evaluate("addEventListener('unload', () => {}), 0");
+  await view.navigate(srv.base + "/leaving");
+  // A page that rewrites its fragment all the time (a scroll spy). Chrome
+  // answers the traversal at once and commits it when the server has answered,
+  // so some of these commits land in between. They report "fragment", like a
+  // traversal's own commit, but they do not land on the entry it asked for.
+  await view.evaluate("setInterval(() => location.replace('#n' + performance.now()), 5), 0");
+  await view.goBack();
+  expect({
+    url: view.url,
+    title: view.title,
+    readyState: await view.evaluate("document.readyState"),
+  }).toEqual({ url: srv.base + "/slow-doc", title: "slow-doc", readyState: "complete" });
 });
 
 it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {

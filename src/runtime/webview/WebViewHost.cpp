@@ -244,6 +244,7 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
         return;
     }
     m_navPending = true;
+    m_navProvisional = false;
     m_webview.loadRequest(objc::NSURLRequest::fromURL(nsurl));
 }
 
@@ -696,34 +697,38 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
 // Sending the event first means both are in the same onData batch, processed
 // in order, callback fires before the promise microtask runs.
 
-void WebViewHost::onNavigationFinished()
+// NavEvent is unsolicited — fires for back()/forward()/reload() and the page's
+// own commits too, which don't set m_navPending. The parent updates url/title
+// and runs onNavigated from NavEvent; its trailing byte says whether this is
+// the end of the navigate() in the slot, which the NavDone then resolves.
+void WebViewHost::reportNavigation(bool endsNavigation)
 {
-    // NavEvent is unsolicited — fires for back()/forward()/reload() too,
-    // which Ack immediately and don't set m_navPending. The parent updates
-    // url/title and runs onNavigated from NavEvent; NavDone only resolves
-    // the navigate() promise.
     auto payload = pack2(url(), title());
+    payload.append(static_cast<uint8_t>(endsNavigation));
     hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
-    if (!std::exchange(m_navPending, false)) return;
-    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+    if (!endsNavigation) return;
+    m_navPending = false;
+    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size() - 1));
 }
+
+void WebViewHost::onNavigationFinished() { reportNavigation(m_navPending); }
+
+void WebViewHost::onProvisionalNavigationStarted() { m_navProvisional = true; }
 
 // A same-document navigation gets no didFinishNavigation:. WebKit reports every
 // one of them as SessionStatePop (FrameLoader::loadInSameDocument), and the
 // only AnchorNavigation it sends follows that report for the same URL, so the
 // anchor report is dropped. SessionStatePush and SessionStateReplace are the
-// page's own history.pushState()/replaceState(): they update url/title and run
-// onNavigated, and settle no navigate().
+// page's own history.pushState()/replaceState(). A report ends the pending
+// navigate() only while no document load has started for it: a document that
+// changes its own #fragment as it loads reports SessionStatePop too, and its
+// didFinishNavigation: ends the navigation.
 void WebViewHost::onSameDocumentNavigation(long type)
 {
     constexpr long anchorNavigation = 0;
     constexpr long sessionStatePop = 3;
     if (type == anchorNavigation) return;
-    auto payload = pack2(url(), title());
-    hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
-    if (type != sessionStatePop) return;
-    if (!std::exchange(m_navPending, false)) return;
-    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+    reportNavigation(type == sessionStatePop && m_navPending && !m_navProvisional);
 }
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)

@@ -194,7 +194,7 @@ test.concurrent("a load the page started on its own updates view.title", async (
     print({ url: view.url, title: view.title, loading: view.loading, titleFetches });
     view.close();
   `);
-  expect(result).toEqual({ url: "http://fake/own", title: "fake chrome", loading: false, titleFetches: 1 });
+  expect(result).toEqual({ url: "http://fake/own", title: "page's own", loading: false, titleFetches: 1 });
 });
 
 // goBack() fills the slot and then looks the history entry up before it asks
@@ -265,6 +265,42 @@ test.concurrent("goBack() is not settled by the page's own replaceState() behind
     view.close();
   `);
   expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b?scroll=1" });
+});
+
+// A #fragment change of the page being left (a scroll spy, a link the user
+// follows) reports "fragment" like a traversal's own commit does. The
+// traversal's commit lands on the entry it asked for, and this one does not.
+test.concurrent("goBack() is not settled by a #fragment change of the page being left", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/stall-on-return");
+    await view.navigate("http://fake/b");
+    const started = view.goBack();
+    // See the test above: the fake has answered the traversal by the second evaluate.
+    await view.evaluate("1");
+    await view.evaluate("__fake_hash_change('http://fake/b#section')");
+    const first = await Promise.race([
+      started.then(() => "goBack() settled", () => "goBack() rejected"),
+      view.evaluate("'goBack() still pending'"),
+    ]);
+    print({ first, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b#section" });
+});
+
+// The entry's URL comes from the history reply and the commit's from the
+// event. Chrome escapes a quote in both, so they have to be compared decoded.
+test.concurrent("goBack() settles over a same-document entry whose URL needs a JSON escape", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    await view.navigate('http://fake/page#"quoted"');
+    await view.navigate("http://fake/page#two");
+    print(await outcome(view.goBack()));
+    view.close();
+  `);
+  expect(result).toEqual({});
 });
 
 // The same window exists behind the reply of a #fragment navigate().

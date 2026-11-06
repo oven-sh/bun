@@ -204,6 +204,12 @@ static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navig
     if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
 }
 
+static void delegateDidStartProvisionalNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onProvisionalNavigationStarted();
+}
+
 // WKNavigationDelegatePrivate. The navigation argument is the document's
 // original WKNavigation (or nil), never the loadRequest: that caused the
 // fragment change, so it is not read.
@@ -539,6 +545,8 @@ bool ObjCRuntime::load()
     // Type encodings: v = void, @ = id, : = SEL.
     addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
         reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("webView:didStartProvisionalNavigation:"),
+        reinterpret_cast<IMP>(delegateDidStartProvisionalNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),

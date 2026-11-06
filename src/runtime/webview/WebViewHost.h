@@ -57,6 +57,8 @@ public:
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
     void onNavigationFinished();
+    // webView:didStartProvisionalNavigation: — a document load began.
+    void onProvisionalNavigationStarted();
     // _webView:navigation:didSameDocumentNavigation: (a #fragment change,
     // pushState, replaceState, or a history traversal within the document).
     // type is a _WKSameDocumentNavigationType.
@@ -77,10 +79,15 @@ private:
     void doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 
     uint32_t m_viewId = 0;
+    // NavEvent, then NavDone when the navigate() in the slot ends here.
+    void reportNavigation(bool endsNavigation);
     // One-at-a-time: the parent's WriteBarrier slot enforces serialization
     // (INVALID_STATE on overlap), and the block correlation in ObjCRuntime
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
+    // A document load started since navigateIPC: the navigation is not a
+    // same-document one, so didFinishNavigation: ends it.
+    bool m_navProvisional = false;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

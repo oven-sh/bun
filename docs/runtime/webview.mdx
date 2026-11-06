@@ -194,7 +194,7 @@ await view.navigate("file:///path/to/index.html");
 
 `navigate()` resolves when the main frame's `load` event fires. After it resolves, `view.url` and `view.title` reflect the new page, and `view.loading` is `false`.
 
-A URL that only adds or changes the `#fragment` of the current page stays in the same document. The browser fires no `load` event for it, so `navigate()` resolves as soon as the new URL is current. With the Chrome backend the same applies to `goBack()` and `goForward()` over an entry of the current document, such as a `#fragment` entry or one the page made with `history.pushState()`, and onto a page that Chrome kept whole in its back-forward cache. Telling such a traversal apart from a `history.pushState()` the page makes at the same time needs Chrome 129 or newer.
+A URL that only adds or changes the `#fragment` of the current page stays in the same document. The browser fires no `load` event for it, so `navigate()` resolves as soon as the new URL is current. If the browser loads the document again instead (Chrome does for a frameset page), `navigate()` resolves after that load. With the Chrome backend the same applies to `goBack()` and `goForward()` over an entry of the current document, such as a `#fragment` entry or one the page made with `history.pushState()`, and onto a page that Chrome kept whole in its back-forward cache. Telling such a traversal apart from a `history.pushState()` the page makes at the same time needs Chrome 129 or newer.
 
 If the navigation fails (DNS failure, connection refused, invalid URL), the promise rejects with an `Error` describing the failure.
 

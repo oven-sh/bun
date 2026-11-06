@@ -354,9 +354,12 @@ it("navigate() to a #fragment of the current page resolves and fires onNavigated
   expect(urls).toEqual([base + "#one", base + "#one", base + "#two", base + "#one"]);
 
   // A traversal between two #fragment entries reports through the same path.
+  // goBack() is acknowledged at once on WebKit, so wait for the report.
+  const traversed = Promise.withResolvers<string>();
+  view.onNavigated = (url: string) => traversed.resolve(url);
   await view.goBack();
+  expect(await traversed.promise).toBe(base + "#two");
   expect(await view.evaluate("location.hash")).toBe("#two");
-  expect(urls.at(-1)).toBe(base + "#two");
 });
 
 it("a pushState() by the page updates view.url and fires onNavigated", async () => {
@@ -406,8 +409,52 @@ it("a replaceState() while the document loads does not end navigate() or clear l
     loading: false,
     seen: [
       [base + "app/home", true],
-      [base + "app/home", true],
+      [base + "app/home", false],
     ],
+  });
+});
+
+// A hash router sets location.hash as its document loads. WebKit reports that
+// the same way as a #fragment navigate() of the view's own. The navigation
+// has a document load of its own, so only that load ends it.
+it("a location.hash change by the loading document does not end navigate() early", async () => {
+  let releaseImage = () => {};
+  const imageHeld = new Promise<void>(resolve => (releaseImage = resolve));
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/late.gif") {
+        await imageHeld;
+        return new Response("GIF89a", { headers: { "content-type": "image/gif" } });
+      }
+      return new Response("<title>router</title><script>location.hash = '#/home'</script><img src='/late.gif'>", {
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  const routed = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => {
+    if (url === base + "app#/home") routed.resolve();
+  };
+  const started = view.navigate(base + "app");
+  // The document has changed its hash and its image is held: navigate() is
+  // still pending.
+  await routed.promise;
+  const whileHeld = await Promise.race([
+    started.then(() => "navigate() settled"),
+    view.evaluate("document.readyState"),
+  ]);
+  expect(whileHeld).not.toBe("navigate() settled");
+  expect(view.loading).toBe(true);
+  releaseImage();
+  await started;
+  expect({ url: view.url, loading: view.loading, readyState: await view.evaluate("document.readyState") }).toEqual({
+    url: base + "app#/home",
+    loading: false,
+    readyState: "complete",
   });
 });
 

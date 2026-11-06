@@ -64,6 +64,8 @@ const onNext = new Map<string, string>();
 // How many document.title fetches the runtime has sent: one per navigation.
 let titleFetches = 0;
 let failNextTitleFetch = false;
+// What document.title answers.
+let documentTitle = "fake chrome";
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -99,9 +101,11 @@ Object.assign(globalThis, {
     failNextTitleFetch = true;
   },
   // The page navigates itself to a new document (a link, `location.href = ...`):
-  // it commits, and only __fake_load_event() finishes it.
+  // it commits, and only __fake_load_event() finishes it. The new document
+  // has a title of its own.
   __fake_page_commit(url: string) {
     loads++;
+    documentTitle = "page's own";
     pushEntry(url);
     event("Page.frameNavigated", {
       frame: { id: mainFrameId(), loaderId: "P" + loads, url, mimeType: "text/html" },
@@ -313,7 +317,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
           const error = { code: -32000, message: "Cannot find context with specified id" };
           return send({ id, error, sessionId });
         }
-        return reply({ result: { type: "string", value: "fake chrome" } });
+        return reply({ result: { type: "string", value: documentTitle } });
       }
       // This is the click(selector) actionability check. It needs a DOM, so
       // reply with a fixed [cx, cy] instead of running it.

@@ -3,6 +3,8 @@ BUN_1.2 {
 	napi*;
 	node_api_*;
 	node_module_register;
+	Py*;
+	_Py*;
 	# FreeBSD: crt1.o defines these, libc.so.7 references them dynamically.
 	# (Separate file from linker.lds because lld errors on Linux when a
 	# version-script symbol isn't defined.)

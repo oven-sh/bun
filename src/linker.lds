@@ -3,6 +3,8 @@ BUN_1.2 {
 	napi*;
 	node_api_*;
 	node_module_register;
+	Py*;
+	_Py*;
 
 
   uv_accept;

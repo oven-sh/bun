@@ -1,10 +1,11 @@
 // The first interpreter of the process is a ShadowRealm's, and nothing refers to the realm any more.
-// argv: the directory of the libraries, how many other realms there are, whether Python begins in the main realm too.
+// argv: the directory of the libraries, how many other realms there are, whether Python begins in the main realm too ("main too"), or a collection comes while the realm is there ("owes").
 // The first eight global objects of a VM are swept by the collection that finds them dead. A later one lies in a block, and stays there, dead, until somebody gets to it.
 import { dlopen } from "bun:ffi";
 import { fullGC, generateHeapSnapshotForDebugging } from "bun:jsc";
 
-const [libraries, numberOfOthers, mainToo] = process.argv.slice(2);
+const [libraries, numberOfOthers, how] = process.argv.slice(2);
+const mainToo = how === "main too";
 const c = dlopen(`${libraries}/libeverything.so`, {
   call_everything_with: { args: ["int"], returns: "cstring" },
   leave_a_str_in_the_indicator: {},
@@ -47,8 +48,10 @@ function whatLeadsToGlobalObjects() {
 
 // What C is told, each answer once.
 const told = new Set();
+let held;
 async function inRealm() {
   const realm = new ShadowRealm();
+  if (how === "owes") held = realm;
   const has_the_api = await realm.importValue(new URL("./in_two.py", import.meta.url).pathname, "has_the_api");
   console.log("realm has the API:", String(has_the_api(libraries)));
   told.add(String(c.call_everything_with(0)));
@@ -62,11 +65,17 @@ if (mainToo) console.log("main has the API:", String(main.has_the_api(libraries)
 c.leave_a_str_in_the_indicator();
 // C is served until a collection finds the realm dead, and refused from then on. These collections sweep no blocks.
 for (let turns = 0; turns < 3; turns++) await turn();
-for (let collections = 0; is_initialized() && collections < 20; collections++) {
+// A collection that finds something of the realm's dead while the realm is there leaves calls that its interpreter owes (here: the callbacks of importlib's weak references to the locks of the
+// modules). One of the collector's own may end at any time. This is one for sure.
+if (held) fullGC();
+held = undefined;
+// (As a rule the first or the second finds it dead. But code of JS's that the engine has compiled and not yet put in place holds its realm until any function of the VM is next compiled: 28 collections have been seen.)
+for (let collections = 0; is_initialized() && collections < 100; collections++) {
   fullGC();
   told.add(String(c.call_everything_with(0)));
-  // After main's import the realm lives for a turn or two more. Without these turns nothing else gets a chance to sweep.
-  if (mainToo && is_initialized()) await turn();
+  // What its interpreter owes holds the realm until the calls have been made, which is at a turn of the loop. After main's import the realm lives for a turn or two more as well.
+  // (There is no turn behind the collection that finds the realm dead.)
+  if (is_initialized()) await turn();
 }
 const hasGone = !is_initialized();
 const evidence = hasGone ? "" : whatLeadsToGlobalObjects();

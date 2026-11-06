@@ -401,18 +401,20 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     limit,
   );
 
-  for (const [others, mainToo] of [
-    [0, false],
-    [16, false],
-    [0, true],
-    [16, true],
+  for (const [others, how] of [
+    [0, ""],
+    [16, ""],
+    [0, "main too"],
+    [16, "main too"],
+    [0, "owes"],
   ] as const) {
+    const mainToo = how === "main too";
     const main = mainToo ? `main has the API: ImportError: ${notThisOne}\n` : "";
     test.concurrent(
       "from the collection that finds the realm dead whose interpreter had the API, nobody has the API " +
-        `(${others} other realms${mainToo ? ", Python in the main realm too" : ""})`,
+        `(${others} other realms${mainToo ? ", Python in the main realm too" : how ? ", and its interpreter owes calls" : ""})`,
       async () => {
-        expect(await runInTwo("realm_first.mjs", String(others), ...(mainToo ? ["main too"] : []))).toEqual({
+        expect(await runInTwo("realm_first.mjs", String(others), ...(how ? [how] : []))).toEqual({
           stdout:
             `realm has the API: True\n${main}the realm has gone: true ${others}\n` +
             `JS calls C: ${servedEverything(1)}\nJS calls C: ${refusedEverything(0)}\n${main}` +

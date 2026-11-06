@@ -2786,7 +2786,7 @@ impl Quick {
             return Ok(0);
         }
         // a call behind `new` and `extends`
-        if self.parse.is_operand
+        if self.text_is(self.lexer.prev_end - 7, self.lexer.prev_end, b"extends")
             || self.text_is(self.lexer.prev_end - 3, self.lexer.prev_end, b"new")
         {
             return Err(self.text_refuse());

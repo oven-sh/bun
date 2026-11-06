@@ -1,6 +1,6 @@
 # import Module from "node:module"; copy = { ...Module }; hide(copy); step0 = { next: () => copy.createRequire("/app/main.js")(globalThis.name) }; step1 = { next: () => step0.next() }; and so on
 # The copy and node:module are in unknown hands long before the function that calls createRequire is reached, so the callee may be anything beside createRequire.
-# Under this order flow does not find which call loads the code (the test beside this one that names the call is a TODO). That the program loads code by name is still found.
+# With some tables of built-ins, the callee set of the second call is the unknown object alone in this order, and the record has no call site. The call still loads code by name.
 # OPTIONS: testing=DelayFlowRules
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsCodeByName ModuleRequire

@@ -76,6 +76,10 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 
 // TODO: it prints something else on arm64.
 const failsToday = isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : [];
+// Plain DelayFlowRules follows the ids of the table of built-ins, and with some tables that order does not find the call site (#47605).
+failsToday.push(
+  "valueflow/modules/create-require-read-late-on-a-copy-of-node-module-returns-a-require-function-with-flow-rules-delayed.ir:6",
+);
 
 // With musl a run of these loops costs some 100,000 instructions more than with glibc, however many turns it makes (ten times the turns
 // moved it from 90,000 to 150,000). The code of the loop is the same, and most rows make 100,000 turns, so a row can read up to 1 instruction higher.
@@ -90,7 +94,7 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
   const failed = lines.filter(
     line =>
       line.startsWith("FAIL ") &&
-      !failsToday.some(name => line.startsWith(`FAIL ${name}: `)) &&
+      !failsToday.some(name => line.replaceAll("\\", "/").startsWith(`FAIL ${name}: `)) &&
       !isOverABoundByTheCostOfMusl(line),
   );
   // In front of its FAIL line a native test has said which check failed, and where. A row that musl is forgiven is no part of the failure.

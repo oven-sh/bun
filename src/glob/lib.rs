@@ -9,7 +9,7 @@ pub mod scan;
 pub use crate::glob_walker as walk;
 pub use crate::matcher::{Dots, MatchResult, r#match};
 pub use crate::pattern::{Candidate, Pattern};
-pub use walk::GlobWalker;
+pub use walk::{GlobWalker, SegmentBang};
 
 /// A pattern whose groups were found once. Use it to match one pattern against many paths.
 pub struct Prepared<P> {
@@ -49,6 +49,21 @@ pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 #[cfg_attr(mordant, allow(unused_pub))]
 pub fn walk_bun_glob(walker: &mut BunGlobWalker) -> Result<bun_sys::Result<()>, bun_core::Error> {
     walker.walk()
+}
+
+/// `glob` with a `\` before each `!` at its start that negates it, so that [`r#match`] reads them as characters.
+/// For a piece of a pattern that does not start where the pattern starts.
+pub fn literal_head(glob: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let bangs = matcher::negations(glob);
+    if bangs == 0 {
+        return std::borrow::Cow::Borrowed(glob);
+    }
+    let mut escaped = Vec::with_capacity(glob.len() + bangs);
+    for _ in 0..bangs {
+        escaped.extend_from_slice(b"\\!");
+    }
+    escaped.extend_from_slice(&glob[bangs..]);
+    std::borrow::Cow::Owned(escaped)
 }
 
 /// Returns true if `text` has an unescaped `@(`, `+(` or `!(`.

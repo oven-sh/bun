@@ -272,11 +272,16 @@ impl Pattern {
                 Some((segment, after)) => (segment, Some(after)),
                 None => (rest, None),
             };
-            if bun_glob::detect_glob_syntax(segment) {
+            // Only the `!` that starts a pattern excludes, and `expand` has taken that one off. `vite build` reads
+            // every other `!` as a character too. Vitest negates one that comes first after the directory.
+            if bun_glob::detect_glob_syntax(strings::trim_leading_char(segment, b'!')) {
                 return Some(Pattern {
                     negated,
                     dir: absolute_from(dir, &names)?,
-                    glob: rest.to_vec(),
+                    glob: match negated {
+                        true => bun_glob::literal_head(rest).into_owned(),
+                        false => rest.to_vec(),
+                    },
                     is_name: false,
                 });
             }
@@ -344,6 +349,7 @@ fn find_files(
 
         let walked = BunGlobWalker::init_with_cwd(
             &pattern.glob,
+            bun_glob::SegmentBang::Literal,
             &pattern.dir,
             exhaustive,
             true,
@@ -540,7 +546,7 @@ impl<'a> Arguments<'a, '_> {
                     Some(Pattern {
                         negated,
                         dir: Vec::new(),
-                        glob: glob.to_vec(),
+                        glob: without_extglobs(glob).into_owned(),
                         is_name: false,
                     })
                 } else {

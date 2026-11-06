@@ -24,6 +24,14 @@ export const tree = {
   "proj/src/üñí/😀.ts": "export default 'emoji';",
   "proj/src/üñí/a b.ts": "export default 'space';",
   "proj/src/üñí/it's.ts": "export default 'apostrophe';",
+  "proj/src/bang/k.ts": "export default 'k';",
+  "proj/src/bang/l.ts": "export default 'l';",
+  "proj/src/bang/(k).ts": "export default '(k)';",
+  "proj/src/bang/!k.ts": "export default '!k';",
+  "proj/src/bang/!(k).ts": "export default '!(k)';",
+  "proj/src/bang/x!k.ts": "export default 'x!k';",
+  "proj/src/bang/!sub/m.ts": "export default '!sub/m';",
+  "proj/src/bang/sub/!k.ts": "export default 'sub/!k';",
   "proj/src/harness.js": `
     const plain = v => (v && v[Symbol.toStringTag] === "Module" ? { ...v } : v);
     export async function describeGlob(object) {
@@ -130,4 +138,24 @@ export const cases: Case[] = [
   ['import.meta.glob(["./dir/*.ts", "!./dir/a.ts", "!./dir/Upper.ts"])', [["./dir/b.ts", "lazy", B], ["./dir/c.ts", "lazy", C], ["./dir/skip.ts", "lazy", {"default":"skip"}]]],
   ['import.meta.glob("./main.ts")', []],
   ['import.meta.glob("./dir/a.ts", { eager: true, import: "name" })', [["./dir/a.ts", "eager", "a"]]],
+  // A `!` that doesn't start the pattern is a character, and so are parentheses. These are what `vite build` 8.3
+  // evaluates. Vitest 5 negates a `!` that comes first after the directory, and reads `!(k)` as a group.
+  ['import.meta.glob("./bang/!k.ts")', [["./bang/!k.ts", "lazy", {"default":"!k"}]]],
+  ['import.meta.glob("./bang/!k.ts", { eager: true, import: "default" })', [["./bang/!k.ts", "eager", "!k"]]],
+  ['import.meta.glob("./bang/!(k).ts")', [["./bang/!(k).ts", "lazy", {"default":"!(k)"}]]],
+  ['import.meta.glob("./bang/!!k.ts")', []],
+  ['import.meta.glob("./!bang/*.ts")', []],
+  ['import.meta.glob("./bang/!*.ts")', [["./bang/!(k).ts", "lazy", {"default":"!(k)"}], ["./bang/!k.ts", "lazy", {"default":"!k"}]]],
+  ['import.meta.glob("./bang/!sub/*.ts")', [["./bang/!sub/m.ts", "lazy", {"default":"!sub/m"}]]],
+  ['import.meta.glob("./*/!k.ts")', [["./bang/!k.ts", "lazy", {"default":"!k"}]]],
+  ['import.meta.glob("./bang/**/!k.ts")', [["./bang/!k.ts", "lazy", {"default":"!k"}], ["./bang/sub/!k.ts", "lazy", {"default":"sub/!k"}]]],
+  ['import.meta.glob("./!k.ts", { base: "./bang" })', [["./!k.ts", "lazy", {"default":"!k"}]]],
+  ['import.meta.glob("/src/bang/!k.ts")', [["/src/bang/!k.ts", "lazy", {"default":"!k"}]]],
+  ['import.meta.glob(["./bang/*.ts", "!./bang/!k.ts"], { import: "default", eager: true })', [["./bang/!(k).ts", "eager", "!(k)"], ["./bang/(k).ts", "eager", "(k)"], ["./bang/k.ts", "eager", "k"], ["./bang/l.ts", "eager", "l"], ["./bang/x!k.ts", "eager", "x!k"]]],
+  ['import.meta.glob(["./bang/*.ts", "!./bang/!*.ts"], { import: "default", eager: true })', [["./bang/(k).ts", "eager", "(k)"], ["./bang/k.ts", "eager", "k"], ["./bang/l.ts", "eager", "l"], ["./bang/x!k.ts", "eager", "x!k"]]],
+  ['import.meta.glob(["./bang/*.ts", "!**/!(k).ts"], { import: "default", eager: true })', [["./bang/!k.ts", "eager", "!k"], ["./bang/(k).ts", "eager", "(k)"], ["./bang/k.ts", "eager", "k"], ["./bang/l.ts", "eager", "l"], ["./bang/x!k.ts", "eager", "x!k"]]],
+  ['import.meta.glob("./bang/(k).ts")', [["./bang/(k).ts", "lazy", {"default":"(k)"}]]],
+  ['import.meta.glob("./bang/{!k,l}.ts", { import: "default", eager: true })', [["./bang/!k.ts", "eager", "!k"], ["./bang/l.ts", "eager", "l"]]],
+  ['import.meta.glob("./bang/x!k.ts")', [["./bang/x!k.ts", "lazy", {"default":"x!k"}]]],
+  ['import.meta.glob(["./bang/*.ts", "!./bang/k.ts"], { import: "default", eager: true })', [["./bang/!(k).ts", "eager", "!(k)"], ["./bang/!k.ts", "eager", "!k"], ["./bang/(k).ts", "eager", "(k)"], ["./bang/l.ts", "eager", "l"], ["./bang/x!k.ts", "eager", "x!k"]]],
 ];

@@ -538,6 +538,7 @@ impl WorkspaceMap {
 
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
+                    glob::SegmentBang::Negates,
                     root_dir,
                     false,
                     false,

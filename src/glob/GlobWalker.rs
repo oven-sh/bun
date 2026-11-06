@@ -226,6 +226,16 @@ pub type MatchedPath = Box<[u8]>;
 
 type IgnoreFilterFn = fn(&[u8]) -> bool;
 
+/// What a `!` at the start of a path segment of the pattern does. A `!(` starts a group either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SegmentBang {
+    /// It negates that segment: `src/!a*/x.ts` lists `x.ts` in each directory of `src` that `a*` does not match.
+    /// `Bun.Glob.scan` has done this since 1.0.14, and build scripts rely on it.
+    Negates,
+    /// It is a character. For a caller whose patterns have no such negation, or that passes a piece of a pattern.
+    Literal,
+}
+
 /// Set of active component indices during traversal. At `**/X`
 /// boundaries the walker needs to both advance past X and keep the
 /// outer `**` alive; rather than visiting the directory twice, both
@@ -240,6 +250,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     // global allocator; an arena could bulk-free them — profile if hot.
     /// not owned by this struct
     pub(crate) pattern: Box<[u8]>,
+    /// Of the pattern as the caller wrote it. `SegmentBang::Literal` can put a `\` at the start of `pattern`.
+    pattern_is_absolute: bool,
 
     pub(crate) end_byte_of_basename_excluding_special_syntax: u32,
     pub(crate) basename_excluding_special_syntax_component_idx: u32,
@@ -386,14 +398,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         );
         let mut was_absolute = false;
         let root_work_item: WorkItem<A> = 'brk: {
-            let is_absolute = if cfg!(unix) {
-                bun_paths::is_absolute(&self.walker.pattern)
-            } else {
-                bun_paths::is_absolute(&self.walker.pattern)
-                    || bun_paths::is_absolute_posix(&self.walker.pattern)
-            };
-
-            if !is_absolute {
+            if !self.walker.pattern_is_absolute {
                 break 'brk WorkItem::new(
                     self.walker.cwd.clone(),
                     self.walker.single_set(0),
@@ -1393,6 +1398,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     // Note: out-param constructor reshaped to return Self.
     pub fn init(
         pattern: &[u8],
+        segment_bang: SegmentBang,
         dot: bool,
         absolute: bool,
         follow_symlinks: bool,
@@ -1404,6 +1410,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // DirEntry cache stays in `bun_resolver`).
         Self::init_with_cwd(
             pattern,
+            segment_bang,
             bun_paths::fs::FileSystem::instance().top_level_dir(),
             dot,
             absolute,
@@ -1439,6 +1446,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     // Note: out-param constructor reshaped to return Self.
     pub fn init_with_cwd(
         pattern: &[u8],
+        segment_bang: SegmentBang,
         cwd: &[u8],
         dot: bool,
         absolute: bool,
@@ -1451,6 +1459,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut this = Self {
             cwd: Box::from(cwd),
             pattern: Box::from(pattern),
+            pattern_is_absolute: bun_paths::is_absolute(pattern)
+                || (cfg!(not(unix)) && bun_paths::is_absolute_posix(pattern)),
             dot,
             absolute,
             follow_symlinks,
@@ -1475,6 +1485,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
+        if segment_bang == SegmentBang::Literal {
+            escape_segment_bangs(&mut this.pattern, &mut this.pattern_components);
+        }
         for (index, component) in this.pattern_components.iter_mut().enumerate() {
             component.index = index as u32;
             this.component_shapes
@@ -2273,6 +2286,40 @@ pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
 
 pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
+}
+
+/// [`SegmentBang::Literal`]: the matcher negates a pattern that starts with `!`, and it gets one component at a time.
+/// An escaped `!` is a character to it on every platform, because the pattern is already cut into components here.
+fn escape_segment_bangs(pattern: &mut Box<[u8]>, components: &mut [Component]) {
+    let starts_with_bang = |it: &Component| pattern[it.start as usize] == b'!';
+    if components.iter().any(starts_with_bang) {
+        *pattern = with_escaped_segment_bangs(pattern, components);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn with_escaped_segment_bangs(pattern: &[u8], components: &mut [Component]) -> Box<[u8]> {
+    let mut escaped = Vec::with_capacity(pattern.len() + components.len());
+    let mut copied = 0;
+    for component in components.iter_mut() {
+        let start = component.start as usize;
+        let bangs = crate::matcher::negations(component.pattern_slice(pattern));
+        escaped.extend_from_slice(&pattern[copied..start]);
+        component.start = u32::try_from(escaped.len()).expect("int cast");
+        component.len = u32::try_from(component.len as usize + bangs).expect("int cast");
+        for _ in 0..bangs {
+            escaped.extend_from_slice(b"\\!");
+        }
+        copied = start + bangs;
+    }
+    escaped.extend_from_slice(&pattern[copied..]);
+    debug_assert!(
+        components
+            .iter()
+            .all(|it| crate::matcher::negations(it.pattern_slice(&escaped)) == 0)
+    );
+    escaped.into_boxed_slice()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

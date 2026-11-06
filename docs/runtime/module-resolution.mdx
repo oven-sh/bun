@@ -451,7 +451,7 @@ A pattern starts with one of these:
 - `/` or `**`, relative to the directory Bun runs in
 - An alias from `paths` in `tsconfig.json` or `imports` in `package.json`
 
-Dotfiles, `node_modules` and the file itself aren't matched. Parentheses are literal characters, so write alternatives as `{a,b}`, not `(a|b)` or `@(a|b)`.
+Dotfiles, `node_modules` and the file itself aren't matched. Parentheses are literal characters, so write alternatives as `{a,b}`, not `(a|b)` or `@(a|b)`. A `!` that doesn't start the pattern is a literal character too.
 
 | Option       | Description                                                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |

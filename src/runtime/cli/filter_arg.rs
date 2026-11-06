@@ -370,6 +370,7 @@ impl<'a> PackageFilterIterator<'a> {
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
         let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
             pattern,
+            glob::SegmentBang::Negates,
             self.root_dir,
             true,
             true,

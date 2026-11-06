@@ -980,6 +980,23 @@ fn pattern_without_match_is_an_error() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn bang_in_a_pattern_is_a_character() {
+    let files = ["plugins/a.cjs", "plugins/!b.cjs", "!lib/c.cjs", "lib/d.cjs"];
+    let project = TemporaryProject::new("bang", &files);
+    let (entries, messages) = project.expand(&[b"plugins/!*.cjs", b"!lib/*.cjs"]);
+    let expected = ["plugins/!b.cjs", "!lib/c.cjs"];
+    assert_eq!(entries, Some(byte_lists(&expected)), "{messages:?}");
+
+    let (entries, messages) = project.expand(&[b"!plugins/*.cjs"]);
+    assert_eq!(entries, None);
+    assert_eq!(
+        messages,
+        ["no file matches the entry point \"!plugins/*.cjs\""]
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_and_written_files_get_equal_names() {
     let project = TemporaryProject::new("names", &["apps/a/main.ts", "apps/b/main.ts"]);
     let from_pattern = project.convert_paths(&[b"apps/*/main.ts"]);

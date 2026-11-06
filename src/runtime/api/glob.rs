@@ -1,4 +1,5 @@
 use bun_glob::BunGlobWalker as GlobWalker;
+use bun_glob::SegmentBang;
 use bun_glob::walk;
 use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
@@ -383,6 +384,7 @@ impl Glob {
             let result = match &opts.cwd {
                 Some(cwd) => walk::GlobWalker::<A, false>::init_with_cwd(
                     pattern,
+                    SegmentBang::Negates,
                     cwd,
                     opts.dot,
                     opts.absolute,
@@ -393,6 +395,7 @@ impl Glob {
                 ),
                 None => walk::GlobWalker::<A, false>::init(
                     pattern,
+                    SegmentBang::Negates,
                     opts.dot,
                     opts.absolute,
                     opts.follow_symlinks,

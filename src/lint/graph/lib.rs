@@ -21,7 +21,7 @@
 #![deny(clippy::iter_over_hash_type)]
 
 use bun_core::strings;
-use bun_glob::{BunGlobWalker, Pattern};
+use bun_glob::{BunGlobWalker, Pattern, SegmentBang};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -470,7 +470,15 @@ impl<'h> Graph<'h> {
             let is_ignored = |name: &[u8]| name == b"node_modules";
             let (cwd, is_ignored) = (typescript_path(cwd), Some(is_ignored as fn(&[u8]) -> bool));
             let walker = BunGlobWalker::init_with_cwd(
-                project, cwd, true, true, false, false, false, is_ignored,
+                project,
+                SegmentBang::Literal,
+                cwd,
+                true,
+                true,
+                false,
+                false,
+                false,
+                is_ignored,
             );
             let Ok(Ok(mut walker)) = walker else {
                 continue;

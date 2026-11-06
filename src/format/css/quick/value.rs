@@ -272,6 +272,17 @@ fn read_string(css: &[u8], start: usize) -> Option<StringRead> {
             b'\\' if byte(css, p + 1).is_ascii_alphanumeric() => is_plain = false,
             b'\\' | b'!' => return None,
             b'#' if byte(css, p + 1) == b'{' => return None,
+            // `postcss-less` looks for `extend(..)` in all of a value's text.
+            b'(' if p >= 6 && css[p - 6..p].eq_ignore_ascii_case(b"extend") => return None,
+            // In the params of an at-rule of SCSS, the blanks between what follows a `$` and `...` move, wherever that is.
+            b'$' => {
+                let rest = &css[p..];
+                let len = strings::index_of_char_usize(rest, quote).unwrap_or(rest.len());
+                if strings::contains(&rest[..len], b"...") {
+                    return None;
+                }
+                is_plain = false;
+            }
             0x20..=0x7E => is_plain = false,
             0x80.. => (is_plain, is_ascii) = (false, false),
             _ => return None,

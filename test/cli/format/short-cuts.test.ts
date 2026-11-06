@@ -1327,6 +1327,10 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "number-behind-an-interpolation.scss":
       "a {\n  b: #{$c}1e03 #{$c}1q;\n  b: #{$c}1.50;\n  b: #{$c}-1e03 #{$c}--1q;\n  b: #{$c}px #{$c}e03 #{$c}-a1e03 #{$c}_1;\n  b: a-#{$c}-1 a-#{$c}1;\n}\n",
     "url-in-a-guard.less": '.a when ((@a) = url) {\n  @x: (a")");\n}\n',
+    "extend-in-a-string.less":
+      'a {\n  content: "extend(b)";\n  content: "EXTEND(b)" c;\n  content: "extend (b)";\n  @d: "extend(b)";\n}\n',
+    "dollar-and-dots-in-a-string.scss":
+      '@include a("$b ...");\n@include a("$b  ...", $c...);\n@include a("$b", "...");\n@return "$b ...";\na {\n  c: "$b ...";\n  c: "$";\n}\n',
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

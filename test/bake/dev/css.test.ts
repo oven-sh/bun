@@ -890,3 +890,110 @@ function extractCssUrl(backgroundImage: string): string {
   }
   return url[2];
 }
+devTest("css module binding survives an edit of the importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .a { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("v1:" + Object.keys(styles).join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1:a");
+    // The css module is cached in the incremental graph and is not parsed
+    // again here. The importer must still list it as a dependency.
+    await dev.patch("index.ts", { find: "v1", replace: "v2" });
+    await c.expectMessage("v2:a");
+    await dev.patch("index.ts", { find: "v2", replace: "v3" });
+    await c.expectMessage("v3:a");
+    await dev.patch("styles.module.css", { find: "red", replace: "blue" });
+    await dev.write(
+      "styles.module.css",
+      `
+        .a { color: red; }
+        .b { color: blue; }
+      `,
+    );
+    await c.expectMessage("v3:a,b");
+  },
+});
+devTest("css module that was only composed from gets imported directly", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "base.module.css": `
+      .base { font-weight: 700; }
+    `,
+    "button.module.css": `
+      .btn { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      console.log("btn:" + styles.btn.split(" ").length);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("btn:1");
+    // base.module.css enters the graph as a child of button.module.css only.
+    await dev.write(
+      "button.module.css",
+      `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
+      `,
+    );
+    await c.expectMessage("btn:2");
+    // Now a module imports it directly. It has no module of its own yet, so it
+    // must be bundled again instead of being treated as cached.
+    await dev.write(
+      "index.ts",
+      `
+        import styles from "./button.module.css";
+        import base from "./base.module.css";
+        console.log("base:" + Object.keys(base).join(",") + " " + (styles.btn.split(" ")[0] === base.base));
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("base:base true");
+  },
+});
+devTest("plain css imported with a binding is an empty module, as in bun build", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "plain.css": `
+      body { color: red; }
+    `,
+    "other.css": `
+      h1 { color: blue; }
+    `,
+    "index.ts": `
+      import sheet from "./plain.css";
+      import * as ns from "./other.css";
+      console.log(JSON.stringify({ sheet, ns: Object.keys(ns), nsDefault: ns.default }));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
+    await c.style("body").color.expect.toBe("red");
+    await c.style("h1").color.expect.toBe("#00f");
+    // The same holds when the importer is bundled again and the stylesheets are cached.
+    await dev.patch("index.ts", { find: "JSON.stringify({", replace: `"again:" + JSON.stringify({` });
+    await c.expectMessage("again:" + JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
+  },
+});

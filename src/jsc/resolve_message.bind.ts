@@ -27,10 +27,21 @@ export const ResolveMessage = b.class({
     message: { ...text, writable: true },
     position,
     referrer: text,
-    requireStack: { getter: b.array(b.string.utf8).optional, cache: true },
     specifier: text,
     stack: { ...text, writable: true },
     ...methods,
+    toJSON: { ...methods.toJSON, passThis: true },
+  },
+  calledFromCpp: {
+    /** What the own properties of a thrown error hold, each for its first read. */
+    lazyCode: { returns: b.any, ...js },
+    lazyMessage: { returns: b.any, capability: "heap", throws: true },
+    lazyRequireStack: { returns: b.any, capability: "heap", throws: true },
+    lazyStack: { returns: b.any, capability: "heap", throws: true },
+  },
+  calledFromRust: {
+    /** Gives an error that is about to be thrown the own properties that Node.js gives its error. `ResolveMessage.cpp` has it. */
+    defineNodeErrorProperties: { args: { hasRequireStack: b.bool } },
   },
 });
 

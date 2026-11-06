@@ -11,7 +11,7 @@ await ask("import() of a relative path", new Worker('data:text/javascript,import
 await ask("import() of a package", new Worker('data:text/javascript,import("some-package").then(m => postMessage(m.default), e => postMessage([e.name, e.code, e.constructor.name, Object.keys(e).join(), e.message.slice(0, 70), e.specifier, e.referrer.slice(0, 22)]))'));
 await ask("await import()", new Worker('data:text/javascript,try { postMessage((await import("./beside.mjs")).beside) } catch (e) { postMessage([e.name, e.code, e.constructor.name, Object.keys(e).join(), e.message.slice(0, 70), e.specifier, e.referrer.slice(0, 22)]) }'));
 /* Output:
-import() of a relative path: ["ResolveMessage","ERR_MODULE_NOT_FOUND","ResolveMessage","","Cannot find module './beside.mjs' imported from data:","./beside.mjs","data:"]
-import() of a package: ["ResolveMessage","ERR_MODULE_NOT_FOUND","ResolveMessage","","Cannot find package 'some-package' imported from data:","some-package","data:"]
-await import(): ["ResolveMessage","ERR_MODULE_NOT_FOUND","ResolveMessage","","Cannot find module './beside.mjs' imported from data:","./beside.mjs","data:"]
+import() of a relative path: ["ResolveMessage","ERR_MODULE_NOT_FOUND","ResolveMessage","code","Cannot find module './beside.mjs' imported from data:","./beside.mjs","data:"]
+import() of a package: ["ResolveMessage","ERR_MODULE_NOT_FOUND","ResolveMessage","code","Cannot find package 'some-package' imported from data:","some-package","data:"]
+await import(): ["ResolveMessage","ERR_MODULE_NOT_FOUND","ResolveMessage","code","Cannot find module './beside.mjs' imported from data:","./beside.mjs","data:"]
 */

@@ -1053,6 +1053,13 @@ declare class ResolveMessage {
     | "url"
     | "internal";
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  /**
+   * The file whose `require()` failed, as on the error of Node.js.
+   *
+   * Only the error that a failed `require()` or `require.resolve()` throws with the code `MODULE_NOT_FOUND` has it.
+   * A log of `Bun.build()` does not.
+   */
+  requireStack?: string[];
 
   toString(): string;
 }

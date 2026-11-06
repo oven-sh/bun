@@ -346,3 +346,14 @@ expectType<BunConsumerConvenienceMethods>();
   expectType(a.slice()).is<Blob>();
   expectType(a.slice(1, 2, "text/plain")).is<Blob>();
 }
+
+{
+  try {
+    require("./does-not-exist");
+  } catch (error) {
+    if (error instanceof ResolveMessage) {
+      expectType(error.requireStack).is<string[] | undefined>();
+      error.requireStack = [];
+    }
+  }
+}

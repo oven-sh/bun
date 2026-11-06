@@ -1313,7 +1313,7 @@ fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
             BuildMessage::create(global, msg.clone())
         }
-        bun_ast::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
+        bun_ast::Metadata::Resolve(_) => ResolveMessage::create_for_log(global, msg),
     }
 }
 impl LogJsc for bun_ast::Log {

@@ -3310,6 +3310,7 @@ impl<'a> Scanner<'_, 'a> {
             quick,
             formatted: printed,
             name: before,
+            has_refused_next: _,
         } = &mut **scripts;
         before.clear();
         before.extend_from_slice(rest.get(..len + 2)?);

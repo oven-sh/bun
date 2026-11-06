@@ -169,9 +169,11 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 parser,
                 source_type,
             );
-            // What cannot be formatted is printed as it is written, which is not for here.
-            self.has_wrong_short_cut |=
-                !self.out.end_attempt(attempt, is_written) || u32::from(code.tag_level) < level;
+            // What cannot be formatted is printed as it is written.
+            if !self.out.end_attempt(attempt, is_written) {
+                self.print_lines_without_indentation(code.span.of(self.options.original_text));
+            }
+            self.has_wrong_short_cut |= u32::from(code.tag_level) < level;
             // The line break in front of the end tag is written with it.
             while indents > u32::from(code.tag_level).saturating_sub(level) {
                 self.out.end_indent();
@@ -337,6 +339,28 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         result
     }
 
+    /// The lines of a text in which white space counts and the indentation doesn't: `getTextValueParts`.
+    fn print_lines_without_indentation(&mut self, value: &[u8]) {
+        let value = html_trim_preserve_indentation(value);
+        let dedent = min_indentation(value);
+        // Where lines start at the margin and none ends in white space, which a line break removes, the lines are
+        // printed as they are written. A host tells a line break in a text from the others.
+        if dedent == 0
+            && self.out.indent_level() == Some(0)
+            && !self.options.format.no_short_cuts
+            && !strings::contains(value, b" \n")
+            && !strings::contains(value, b"\t\n")
+        {
+            return self.out.lines(value);
+        }
+        for (index, line) in strings::split(value, b"\n").enumerate() {
+            if index > 0 {
+                self.out.hardline();
+            }
+            self.out.text(line.get(dedent..).unwrap_or_default());
+        }
+    }
+
     fn print_text(&mut self, id: Id) {
         let (tags, node) = (self.tags(), &self.tree[id]);
         let value = &node.value[..];
@@ -359,27 +383,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.out.built_text(|out| tags.opening_tag_prefix(id, out));
             match parent.has(Flags::IS_INDENTATION_SENSITIVE) {
                 true => self.out.text(value),
-                false => {
-                    let value = html_trim_preserve_indentation(value);
-                    let dedent = min_indentation(value);
-                    // Where lines start at the margin and none ends in white space, which a line break removes, the
-                    // lines are printed as they are written.
-                    if dedent == 0
-                        && self.out.indent_level() == Some(0)
-                        && !self.options.format.no_short_cuts
-                        && !strings::contains(value, b" \n")
-                        && !strings::contains(value, b"\t\n")
-                    {
-                        self.out.lines(value);
-                        return self.out.built_text(|out| tags.closing_tag_suffix(id, out));
-                    }
-                    for (index, line) in strings::split(value, b"\n").enumerate() {
-                        if index > 0 {
-                            self.out.hardline();
-                        }
-                        self.out.text(line.get(dedent..).unwrap_or_default());
-                    }
-                }
+                false => self.print_lines_without_indentation(value),
             }
             return self.out.built_text(|out| tags.closing_tag_suffix(id, out));
         }

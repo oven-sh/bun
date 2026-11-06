@@ -2283,6 +2283,10 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "<div>\n  <p>a</p>\n  <p>b</p>\n</div>\n",
     // Another indentation, blank lines, tabs, white space at the ends of lines.
     "<div>\n<p>a</p>\n      <p>b</p>\n\n\n\t<p>c</p>  \n\n</div>\n",
+    // Code that its formatter rejects is printed as it is written, without what all of its lines are indented by.
+    "<p>a</p>\n<script>\n  let a = ;\n\n    b\n</script>\n<p>c</p>\n",
+    "<div>\n  <p>a</p>\n  <script>\nlet a = ;  \n\n\n\tb\n  \n  </script>\n  <style>\n      a {\n\n    b\n  </style>\n  <script>let  a</script>\n</div>\n",
+    "<script>let a = ;</script>\n<style>a {</style>\n<script>\n\n  let a = ;\n\n</script>\n<script>\n  let  a\n</script>\n",
     " a\n",
     "\na\n<b></b>\n",
     "a\n<b></b>\n",
@@ -2818,6 +2822,21 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
     `${script}${template}${style}`,
     `${script}\n\n\n${template}\n\n\n\n${style}\n\n`,
     `${template}\n${script}\n${style}`.trimEnd(),
+    // A block that takes a document, or that its formatter rejects, among blocks that do not.
+    ...[
+      "<script>\nlet a = ;\n\n  b\n</script>\n",
+      "<script>\n  let a = ;  \n\n\n\tb\n \n</script>\n",
+      '<script lang="ts">\nlet a: = 1;\n</script>\n',
+      "<script>\nlet  a = css`a{b:c}`\n</script>\n",
+      "<script>\nlet  a = '<!--'\n</script>\n",
+      "<style>\na {\n\n  b\n</style>\n",
+      '<style lang="scss">\n/* a\n\n b */\na{b:c}\n</style>\n',
+    ].flatMap(block => [
+      block,
+      `${script}\n${block}\n${style}`,
+      `${block}\n${script}\n${template}`,
+      `${template}\n${block}\n${block}\n${script}`,
+    ]),
     `${template}\n${script}`.trimEnd(),
     `\n${template}\n${script}`,
     `﻿${template}\n${script}`,
@@ -3003,6 +3022,45 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
   ])("the same with and without short cuts: %j", async (...options: string[]) => {
     const { short, long } = await bothWays(files, options);
     expect(short).toEqual(long);
+  });
+
+  test("no block is formatted twice where another one takes a document", async () => {
+    const refused = "<script>\nlet  a = css`a{b:c}`\n</script>\n";
+    const rejected = "<script>\nlet a = ;\n</script>\n";
+    for (const [text, flags, taken, asked] of [
+      [`${script}\n${refused}\n${style}`, [], 1, 2],
+      [`${script}\n${rejected}\n${style}`, [], 1, 2],
+      [`${refused}\n${script}`, [], 1, 2],
+      [`${script}\n${style}`, ["--vue-indent-script-and-style"], 1, 1],
+    ] as const) {
+      using dir = tempDir("fmt-short-cuts", { "a.vue": text });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "fmt",
+          "--check",
+          "--bench=1",
+          "--threads=1",
+          "--no-config",
+          "--no-editorconfig",
+          ...flags,
+          "a.vue",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const said = (await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited])).slice(0, 2).join("");
+      const counts = [...said.matchAll(/^(the quick way|  refused, \w+): (\d+) scripts/gm)].map(match =>
+        Number(match[2]),
+      );
+      expect({ text, taken: counts[0], asked: counts.reduce((sum, count) => sum + count, 0) }).toEqual({
+        text,
+        taken,
+        asked,
+      });
+    }
   });
 
   test("a file that is read from the bytes is formatted", async () => {

@@ -129,6 +129,8 @@ pub(crate) struct Scripts {
     pub(crate) formatted: Vec<u8>,
     /// The name of an attribute with code in it.
     pub(crate) name: Vec<u8>,
+    /// The quick way has refused the script that is written next, so it isn't asked again.
+    pub(crate) has_refused_next: bool,
 }
 
 /// The `options` that Prettier's functions receive.
@@ -531,23 +533,26 @@ fn write_document_with_cursor<'w, 'f>(
 
 /// Appends what is printed for `text`, a Vue file called `name` that is one run, for which `lines` is printed: lines, and
 /// between them code, which its formatter prints as a text. `options` are those that the caller has asked for,
-/// `options_of_text` makes those of the text. Returns false if it takes a document.
-fn write_lines_and_code(
-    mut lines: &[u8],
+/// `options_of_text` makes those of the text. Where code takes a document, it returns the rest of `lines` from that code
+/// on: what is in front of it has been appended, with a line break at its end.
+fn write_lines_and_code<'l>(
+    mut lines: &'l [u8],
     (text, name): (&[u8], &[u8]),
     options: &FormatOptions,
     options_of_text: &dyn Fn() -> FormatOptions,
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
-) -> bool {
+) -> Option<&'l [u8]> {
     use runs::Language;
+    let (all, start) = (lines, out.len());
     let formatted = &mut scratch.scripts.formatted;
     while let Some((before, code, after)) = runs::Code::split(lines) {
         out.extend_from_slice(before);
         out.push(b'\n');
+        let rest = lines.get(before.len()..);
         let source = code.span.of(text);
         let style_sheet = match code.language {
-            Language::Script => return false,
+            Language::Script => return rest,
             Language::JavaScript | Language::TypeScript => None,
             Language::Css => Some(crate::css::Parser::Css),
             Language::Scss => Some(crate::css::Parser::Scss),
@@ -563,7 +568,10 @@ fn write_lines_and_code(
                     indentation: u32::from(code.level),
                 };
                 let quick = &mut scratch.scripts.quick;
-                crate::js::quick::format_script(script, options, quick, formatted).is_ok()
+                let is_formatted =
+                    crate::js::quick::format_script(script, options, quick, formatted).is_ok();
+                scratch.scripts.has_refused_next = !is_formatted;
+                is_formatted
             }
             // Its lines would have to be indented.
             Some(_) if code.level != 0 => false,
@@ -589,7 +597,7 @@ fn write_lines_and_code(
             || printed.is_empty()
             || formatted.get(printed.len()..) != Some(b"\n")
         {
-            return false;
+            return rest;
         }
         match options.indent_style.is_tab() {
             true => out.extend(std::iter::repeat_n(b'\t', usize::from(code.level))),
@@ -604,7 +612,12 @@ fn write_lines_and_code(
     }
     out.extend_from_slice(lines);
     out.push(b'\n');
-    !crate::is_too_long(out.len())
+    // The printer says so.
+    crate::is_too_long(out.len()).then(|| {
+        out.truncate(start);
+        out.push(b'\n');
+        all
+    })
 }
 
 /// Formats `text`, an Angular expression, and appends it to `out` without a final line break.
@@ -835,14 +848,23 @@ fn format_once(
                 scratch.runs = Some((runs, printed));
                 return Ok(None);
             }
+            let (mut whole, mut lines_so_far) = (whole, Vec::new());
             if front_matter_len == 0 && parser == Parser::Vue {
                 let written = out.len();
                 let named = (&text[..], options.filepath.as_deref().unwrap_or(path));
-                if write_lines_and_code(whole, named, options, &options_of_text, scratch, out) {
+                let Some(rest) =
+                    write_lines_and_code(whole, named, options, &options_of_text, scratch, out)
+                else {
                     scratch.runs = Some((runs, printed));
                     return Ok(None);
-                }
+                };
+                // What has been printed are lines like the others. Nothing is formatted twice.
+                let lines = out.get(written..out.len() - 1).unwrap_or_default();
+                lines_so_far.reserve(lines.len() + rest.len());
+                lines_so_far.extend_from_slice(lines);
+                lines_so_far.extend_from_slice(rest);
                 out.truncate(written);
+                whole = &lines_so_far;
             }
             let options = options_of_text();
             let mut context =

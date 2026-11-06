@@ -349,7 +349,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let Some(indentation) = self.out.indent_level() else {
             return false;
         };
-        if self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+        if std::mem::take(&mut self.scripts.has_refused_next)
+            || self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
             || self.options.has_parent_parser
             || self.options.script_flavor.is_oxfmt()
             // What only a script can have is an error there.

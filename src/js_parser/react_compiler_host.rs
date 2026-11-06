@@ -212,17 +212,15 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let Some((parts, at)) = &mut self.requires else {
             return false;
         };
-        self.p
-            .generate_require_stmt(
-                module,
-                imports,
-                parts,
-                at,
-                js_ast::LocalKind::KVar,
-                false,
-                bun_ast::PartTag::ReactCompiler,
-            )
-            .expect("oom");
+        bun_core::handle_oom(self.p.generate_require_stmt(
+            module,
+            imports,
+            parts,
+            at,
+            js_ast::LocalKind::KVar,
+            false,
+            bun_ast::PartTag::ReactCompiler,
+        ));
         true
     }
 }

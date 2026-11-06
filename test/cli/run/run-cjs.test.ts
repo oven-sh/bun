@@ -195,10 +195,12 @@ describe.concurrent("run-cjs", () => {
       ...fakeReact,
       "app.tsx": `
         import process = require("node:process");
+        import importedPath = require("node:path");
         function App() {
           return (
             <>
               <h1>{typeof process.platform}</h1>
+              <p>{importedPath.basename("/a/b.txt")}</p>
             </>
           );
         }
@@ -207,7 +209,7 @@ describe.concurrent("run-cjs", () => {
     });
 
     expect(await run(String(dir), ["app.tsx"])).toEqual({
-      stdout: `{"type":"fragment","props":{"children":{"type":"h1","props":{"children":"string"}}}}\n`,
+      stdout: `{"type":"fragment","props":{"children":[{"type":"h1","props":{"children":"string"}},{"type":"p","props":{"children":"b.txt"}}]}}\n`,
       stderr: "",
       exitCode: 0,
     });
@@ -303,6 +305,29 @@ describe.concurrent("run-cjs", () => {
     });
 
     const { stderr, exitCode } = await run(String(dir), ["test", "./component.test.jsx"]);
+    expect(stderr).toContain(" 1 pass\n");
+    expect(stderr).toContain(" 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A hoisted jest.mock() runs ahead of the require() of the JSX runtime, so
+  // the JSX of the test file itself uses the mock, as it does in an ES module.
+  test("commonjs test file mocking the JSX runtime under bun test", async () => {
+    using dir = tempDir("run-cjs-jsx-bun-test-mock", {
+      ...fakeReact,
+      "mocked.test.jsx": `
+        const { basename } = require("node:path");
+        jest.mock("react/jsx-dev-runtime", () => ({
+          Fragment: "fragment",
+          jsxDEV: (type, props) => ({ mocked: type, props }),
+        }));
+        test("renders with the mock", () => {
+          expect(<div title={basename("/a/b.txt")} />).toEqual({ mocked: "div", props: { title: "b.txt" } });
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await run(String(dir), ["test", "./mocked.test.jsx"]);
     expect(stderr).toContain(" 1 pass\n");
     expect(stderr).toContain(" 0 fail\n");
     expect(exitCode).toBe(0);

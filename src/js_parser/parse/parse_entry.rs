@@ -2329,6 +2329,9 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // In a module that is wrapped as CommonJS, the hoisted mocks go ahead of the `require()` of the JSX runtime and of the React Compiler runtime, so that each answers what a mock of it made, as an `import` of it does.
+        let requires_of_jsx_at = require_at;
+
         // handle new way to do automatic JSX imports which fixes symbol collision issues
         if p.options.jsx.parse
             && p.options.features.auto_import_jsx
@@ -2512,8 +2515,15 @@ impl<'a> Parser<'a> {
             )?;
         }
 
+        let hoisted_mocks_at = if wrap_mode == WrapMode::BunCommonjs {
+            require_at += hoisted_mocks.len();
+            requires_of_jsx_at
+        } else {
+            before.len()
+        };
         p.append_hoisted_mocks(
             &mut before,
+            hoisted_mocks_at,
             &mut hoisted_mocks,
             &mut imports_after_hoisted_mocks,
             exports_kind,

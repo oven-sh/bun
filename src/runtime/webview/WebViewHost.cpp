@@ -245,7 +245,15 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
     }
     m_navPending = true;
     m_navProvisional = false;
+    m_navTargetUrl = urlString;
     m_webview.loadRequest(objc::NSURLRequest::fromURL(nsurl));
+}
+
+// The document of a URL: everything before the '#'.
+static WTF::StringView documentOf(const WTF::String& url)
+{
+    auto hash = url.find('#');
+    return StringView(url).left(hash == WTF::notFound ? url.length() : hash);
 }
 
 void WebViewHost::evaluateIPC(const WTF::String& script)
@@ -712,13 +720,15 @@ void WebViewHost::onNavigationFinished() { reportNavigation(m_navPending); }
 
 void WebViewHost::onProvisionalNavigationStarted() { m_navProvisional = true; }
 
-// WebKit reports every same-document navigation as SessionStatePop (AnchorNavigation follows it for the same URL); Push/Replace are the page's own; a report ends the navigate() only before a document load started for it.
+// Ends the pending navigate() only when the commit is a same-document change of its target and no document load started for it (loadRequest: is async, so the old document can change its fragment before didStartProvisionalNavigation:). SessionStatePush/Replace are the page's own.
 void WebViewHost::onSameDocumentNavigation(long type)
 {
     constexpr long anchorNavigation = 0;
     constexpr long sessionStatePop = 3;
     if (type == anchorNavigation) return;
-    reportNavigation(type == sessionStatePop && m_navPending && !m_navProvisional);
+    bool ownNavigation = type == sessionStatePop && m_navPending && !m_navProvisional
+        && documentOf(url()) == documentOf(m_navTargetUrl);
+    reportNavigation(ownNavigation);
 }
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)

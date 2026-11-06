@@ -1073,8 +1073,7 @@ function navServer() {
           headers: { "content-type": "text/html; charset=utf-8" },
         });
       }
-      // A document that commits late, and loads later still: the server takes
-      // its time to answer, and then the image holds the load event back.
+      // A document that commits late: the server takes its time to answer.
       // no-store: a history traversal asks the server again, not the HTTP cache.
       if (path === "/slow-doc") {
         await Bun.sleep(150);
@@ -1255,15 +1254,21 @@ it("chrome: a cross-document goBack() is not ended by a #fragment change of the 
   await view.navigate(srv.base + "/leaving");
   // A page that rewrites its fragment all the time (a scroll spy). Chrome
   // answers the traversal at once and commits it when the server has answered,
-  // so some of these commits land in between. They report "fragment", like a
+  // so these commits land in between. They report "fragment", like a
   // traversal's own commit, but they do not land on the entry it asked for.
   await view.evaluate("setInterval(() => location.replace('#n' + performance.now()), 5), 0");
+  // A fragment commit lands every 5 ms while the server holds /slow-doc for
+  // 150 ms, so many report "fragment" during the traversal. None ends it: the
+  // final state is the target document, loaded, not a /leaving#n fragment.
+  const fragments: string[] = [];
+  view.onNavigated = (url: string) => void fragments.push(url.replace(srv.base, ""));
   await view.goBack();
   expect({
     url: view.url,
     title: view.title,
     readyState: await view.evaluate("document.readyState"),
-  }).toEqual({ url: srv.base + "/slow-doc", title: "slow-doc", readyState: "complete" });
+    sawFragment: fragments.some(u => u.startsWith("/leaving#n")),
+  }).toEqual({ url: srv.base + "/slow-doc", title: "slow-doc", readyState: "complete", sawFragment: true });
 });
 
 it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {

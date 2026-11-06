@@ -85,6 +85,8 @@ private:
     bool m_navPending = false;
     // A document load started since navigateIPC, so didFinishNavigation: ends the navigation.
     bool m_navProvisional = false;
+    // The URL the pending navigate() asked for; its document correlates a same-document commit.
+    WTF::String m_navTargetUrl;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

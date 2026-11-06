@@ -298,6 +298,7 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     }
     #[cfg(windows)]
     {
+        // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`.
         unsafe { (*uws).uv_loop() }
     }
 }

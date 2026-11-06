@@ -221,10 +221,10 @@ impl Cp {
                     let ignorable = t
                         .tgt_absolute
                         .as_ref()
-                        .map_or(false, |p| eb.absolute_targets.contains(p))
+                        .is_some_and(|p| eb.absolute_targets.contains(p))
                         || t.src_absolute
                             .as_ref()
-                            .map_or(false, |p| eb.absolute_srcs.contains(p));
+                            .is_some_and(|p| eb.absolute_srcs.contains(p));
                     (t, ignorable)
                 })
             };

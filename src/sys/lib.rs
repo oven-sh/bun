@@ -3118,8 +3118,8 @@ mod posix_impl {
             },
             bytes: [0; bun_core::MAX_PATH_BYTES],
         };
-        // SAFETY: `path` is NUL-terminated, and `request` and `reply` are valid for the sizes passed.
         check_p!(
+            // SAFETY: `path` is NUL-terminated, and `request` and `reply` are valid for the sizes passed.
             unsafe {
                 libc::getattrlist(
                     path.as_ptr(),

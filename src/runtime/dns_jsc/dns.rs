@@ -249,6 +249,7 @@ pub(crate) mod lib_uv_backend {
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this, global_this, context);
             let promise = dns_lookup.promise.value();
+            // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(promise);
         }
@@ -4536,7 +4537,7 @@ impl Resolver {
                 if unsafe {
                     uv::uv_poll_init_socket(
                         (*Loop::get()).uv_loop(),
-                        &mut (*new_poll).poll,
+                        &raw mut (*new_poll).poll,
                         fd as _,
                     )
                 } < 0

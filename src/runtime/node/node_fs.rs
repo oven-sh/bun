@@ -1080,7 +1080,7 @@ mod _async_tasks {
                         // SAFETY: identity write — `R == ret::Open` for this `F`.
                         unsafe {
                             core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
+                                (&raw mut task.result).cast::<Maybe<ret::Open>>(),
                                 answer,
                             )
                         };

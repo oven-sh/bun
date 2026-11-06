@@ -232,7 +232,7 @@ impl FileSystemRouter {
             let Some(joined) =
                 path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     Fs::FileSystem::get().top_level_dir(),
-                    &mut out_buf,
+                    &mut out_buf[..],
                     &[options.dir],
                 )
             else {

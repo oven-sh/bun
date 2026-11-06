@@ -1188,10 +1188,6 @@ impl<'a> Linker<'a> {
     }
 
     #[cfg(windows)]
-    #[expect(
-        clippy::large_stack_frames,
-        reason = "the 64 KiB shim buffer, which the debug build also copies"
-    )]
     fn create_windows_shim(
         &mut self,
         target: &sys::File,

@@ -2490,7 +2490,7 @@ mod spawn_process_body {
                     argv0: self.argv0,
                     new_process_group,
                     #[cfg(windows)]
-                    windows: self.windows.clone(),
+                    windows: self.windows,
                     #[cfg(windows)]
                     extra_fds: self
                         .inherited_extra_fds

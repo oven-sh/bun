@@ -586,7 +586,9 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 #[cfg(target_arch = "aarch64")]
                 let frame_pointer = ctx.Fp;
                 let load = |address: usize| {
-                    if address % core::mem::size_of::<usize>() != 0 || !is_valid_memory(address) {
+                    if !address.is_multiple_of(core::mem::size_of::<usize>())
+                        || !is_valid_memory(address)
+                    {
                         return None;
                     }
                     // SAFETY: the word is aligned, so it lies in the one page that is_valid_memory found committed and readable.

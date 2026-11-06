@@ -75,15 +75,18 @@ impl ScanOpts {
             return Ok(Some(Box::from(cwd)));
         }
 
-        let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
+        let mut path_buf2 = bun_core::boxed_zeroed::<[u8; MAX_PATH_BYTES * 2]>();
         let in_executable = bun_core::working_directory_in_executable();
         let cwd_str: Box<[u8]> = if let Some(directory) = in_executable {
             Box::from(join_string_buf::<platform::Auto>(
-                &mut path_buf2,
+                &mut path_buf2[..],
                 &[directory, cwd],
             ))
         } else if !absolute {
-            Box::from(join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd]))
+            Box::from(join_string_buf::<platform::Auto>(
+                &mut path_buf2[..],
+                &[cwd],
+            ))
         } else {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let cwd_len = bun_sys::getcwd(&mut path_buf[..]).map_err(ScanError::Sys)?;

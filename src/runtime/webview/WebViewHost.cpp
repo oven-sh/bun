@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <malloc/malloc.h>
 #include <unistd.h>
 #include <wtf/text/MakeString.h>
 
@@ -82,7 +83,8 @@ HostBlockHandle makeHostBlock(WebViewHost& host)
             static_cast<Block*>(const_cast<void*>(p))->host.~Ref();
         }
     };
-    auto* b = static_cast<Block*>(malloc(sizeof(Block)));
+    // libBlocksRuntime releases the block with the system's free, so it comes from the system's zone.
+    auto* b = static_cast<Block*>(malloc_zone_malloc(malloc_default_zone(), sizeof(Block)));
     b->isa = _NSConcreteMallocBlock;
     b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1); // refcount=1
     b->reserved = 0;

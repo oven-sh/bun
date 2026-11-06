@@ -13,12 +13,12 @@ pub struct NoFallthrough {
     report_unused_fallthrough_comment: bool,
 }
 
-const UNUSED_FALLTHROUGH_COMMENT: Message = Message::new(
+const UNUSED_FALLTHROUGH_COMMENT: &Message = &Message::new(
     "unusedFallthroughComment",
     "Found a comment that would permit fallthrough, but case cannot fall through.",
 );
-const CASE: Message = Message::new("case", "Expected a 'break' statement before 'case'.");
-const DEFAULT: Message = Message::new("default", "Expected a 'break' statement before 'default'.");
+const CASE: &Message = &Message::new("case", "Expected a 'break' statement before 'case'.");
+const DEFAULT: &Message = &Message::new("default", "Expected a 'break' statement before 'default'.");
 
 /// Without `commentPattern`, oxlint requires a comment to be one of these, ignoring case.
 const OXLINT_COMMENTS: [&[u8]; 4] = [b"falls through", b"fall through", b"fallsthrough", b"fallthrough"];

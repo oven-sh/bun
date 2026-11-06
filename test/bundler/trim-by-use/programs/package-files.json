@@ -1,0 +1,1 @@
+{ "build": ["--compile-autoload-package-json", "--compile-autoload-tsconfig"] }

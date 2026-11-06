@@ -3954,7 +3954,11 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
   });
 
   // A process that answers on its stdout is alive.
-  const echo = `Bun.spawn({ cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"], stdin: "pipe", stdout: "pipe" })`;
+  const echo = `Bun.spawn({
+    cmd: [process.execPath, "-e", "for await (const chunk of Bun.stdin.stream()) await Bun.write(Bun.stdout, chunk);"],
+    stdin: "pipe",
+    stdout: "pipe",
+  })`;
   const answer = `async child => {
     child.stdin.write("alive");
     child.stdin.flush();
@@ -3986,7 +3990,7 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
           const child = ${echo};
           await sleep(${due1});
           console.log("the process answers:", await (${answer})(child));
-        }, ${limit});`,
+        }, 0);`,
       results: ["(fail) a", "(pass) b"],
     });
     expect(stdout).toContain("the process answers: alive");

@@ -7051,6 +7051,9 @@ exports.format = async text => "by Prettier";
     "async function f(a = await b) {}",
     "function* f(a = yield) {}",
     "class A extends B { #a; b() { super.#a; } }",
+    "class A extends B { #a; b() { super./* c */ #a; } }",
+    "class A extends B { #a; b() { super // c\n.#a; } }",
+    "class A extends B { #a; b() { super.\u00a0#a; } }",
     "class A { constructor() {} constructor() {} }",
     "class A { #a; #a; }",
     "({ a = 1 })",
@@ -7072,6 +7075,25 @@ exports.format = async text => "by Prettier";
     expect(result.files).toEqual(files);
     expect(result.stderr).toMatch(syntaxErrorIn("a.js"));
     expect(result.stderr).toMatch(syntaxErrorIn("flow.js"));
+    expect(result.exitCode).toBe(2);
+  });
+
+  // What only Flow has is checked like what stands for it in the tree, and the parser says nothing about it beforehand.
+  // With the other kind of ternaries a file goes the long way.
+  test.each([
+    "type A = { get a(b: number): number };",
+    "type A = { set a(): void };",
+    "declare class A { static prototype: T }",
+    "declare class A { get a(b: T): T }",
+    "async function f() { component A(a = await b) {} }",
+    "function* f() { component A(a = yield) {} }",
+    'component A(a = 1) { "use strict"; }',
+    "component A() { break; }",
+  ])("Flow that Prettier rejects is a syntax error: %j", async code => {
+    const files = { "a.js.flow": code + "\n" };
+    const result = await format(files, ["a.js.flow", "--experimental-ternaries"], { reads: ["a.js.flow"] });
+    expect(result.files).toEqual(files);
+    expect(result.stderr).toMatch(syntaxErrorIn("a.js.flow"));
     expect(result.exitCode).toBe(2);
   });
 

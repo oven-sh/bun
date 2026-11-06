@@ -222,7 +222,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let end = self.prev_end();
         let kind = self.f.dot(obj, name, end);
         let dot = self.add_expr(kind, pos, end);
-        self.note_private_name(dot, name.1);
+        self.note_private_name(dot, obj.0, name.1);
         dot
     }
 

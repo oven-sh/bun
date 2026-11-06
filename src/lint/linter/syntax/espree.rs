@@ -263,8 +263,14 @@ pub(super) fn babel_rejection<'a>(
     found
 }
 
+/// False for Flow: what only Flow has (the accessors of an object type, the parameters of a component, the members of
+/// a `declare class`) is checked like what stands for it in the tree, and sets no bit of [`hir::rare`].
+fn notes_rare_syntax(file: &File) -> bool {
+    !file.is_flow()
+}
+
 fn babel_rejection_with<'a>(file: &'a File<'a>, finds_candidates: bool) -> Option<SyntaxError> {
-    let candidates = finds_candidates.then(|| Candidates::scan(file, true));
+    let candidates = finds_candidates.then(|| Candidates::scan(file, notes_rare_syntax(file)));
     let mut checks = Checks {
         file,
         candidates: candidates.as_ref(),
@@ -949,7 +955,7 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     /// See [`babel_rejection`]. A check all of whose messages Babel doesn't have (`REJECTED_BY_BABEL`) is skipped.
     fn is_quick_for_babel(&self) -> bool {
-        self.is_babel && self.candidates.is_some()
+        self.is_babel && self.candidates.is_some() && notes_rare_syntax(self.file)
     }
 
     /// The source type the emulated parser uses for the file.

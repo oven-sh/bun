@@ -320,37 +320,45 @@ impl ExecutionSequence {
         self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
-    /// The callbacks that run after this read the result, so the first call of an attempt decides.
-    fn check_expect_assertions(&mut self) {
-        if let Some(context) = self.test_context()
-            && !context.start_count_check(self.attempt, self.expect_assertions, self.expect_call_count)
-        {
+    /// `is_last`: the hooks of the test are done. The deferred callbacks read the result, so nothing is checked after this.
+    fn check_expect_assertions(&mut self, is_last: bool) {
+        if self.count_is_final() {
             return;
         }
         let failure = match self.expect_assertions {
-            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Result::FailBecauseExpectedHasAssertions,
+            ExpectAssertions::NotSet => None,
+            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Some(Result::FailBecauseExpectedHasAssertions),
             ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
-                Result::FailBecauseExpectedAssertionCount
+                Some(Result::FailBecauseExpectedAssertionCount)
             }
-            _ => return,
+            ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => {
+                // A count that is met when the callback of a "vitest" test ends stays met, whatever its hooks assert.
+                if !is_last {
+                    self.expect_assertions = ExpectAssertions::NotSet;
+                }
+                None
+            }
         };
-        if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
+        let failure = failure.filter(|_| self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip);
+        if let Some(context) = self.test_context() {
+            let compared = failure.map(|_| (self.expect_assertions, self.expect_call_count));
+            context.count_checked(self.attempt, is_last, compared);
+        }
+        if let Some(failure) = failure {
             self.result = failure;
         }
     }
 
-    /// The expectation and the number of `expect()` calls that `check_expect_assertions` compared for this attempt.
+    /// The expectation and the number of `expect()` calls that the check which failed this attempt compared.
     pub(crate) fn checked_count(&self) -> (ExpectAssertions, u32) {
         self.test_context()
-            .and_then(|context| context.checked_count(self.attempt))
+            .and_then(|context| context.failed_count(self.attempt))
             .unwrap_or((self.expect_assertions, self.expect_call_count))
     }
 
-    /// Whether a new expectation comes after the check of a test from "bun:test". Vitest takes such a call and ignores it.
+    /// Whether the last check of the count is done. What runs after it can't ask for a count.
     pub(crate) fn count_is_final(&self) -> bool {
-        // SAFETY: arena-owned entry
-        let is_vitest = self.test_entry.is_some_and(|test| unsafe { test.as_ref() }.calling.is_vitest());
-        !is_vitest && self.test_context().is_some_and(|context| context.checked_count(self.attempt).is_some())
+        self.test_context().is_some_and(|context| context.count_is_final(self.attempt))
     }
 }
 
@@ -678,7 +686,7 @@ impl Execution {
             }
             if entry.calling.is_vitest() {
                 if Some(entry_ptr) == sequence.test_entry {
-                    sequence.check_expect_assertions();
+                    sequence.check_expect_assertions(false);
                 }
                 let left_around_all = entry.around == Some((Around::All, AroundPhase::TearDown));
                 if let (true, Some(scope)) = (left_around_all, entry.base.parent) {
@@ -696,7 +704,7 @@ impl Execution {
 
         if sequence.active_entry.is_none() {
             // Jest counts the assertions of a test until its last hook is done. The deferred callbacks come after that.
-            sequence.check_expect_assertions();
+            sequence.check_expect_assertions(true);
             sequence.active_entry = sequence.take_deferred();
         }
 

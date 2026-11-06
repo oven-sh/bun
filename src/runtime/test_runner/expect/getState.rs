@@ -149,22 +149,26 @@ impl Expect {
             return Ok(());
         }
         let applied = with_sequence(test, |sequence| {
-            if (expected_assertions_number.is_some() || is_expecting_assertions.is_some()) && sequence.count_is_final() {
+            let mut expected = sequence.expect_assertions;
+            match (expected_assertions_number, expected) {
+                (Some(Some(count)), _) => expected = ExpectAssertions::Exact(count),
+                (Some(None), ExpectAssertions::Exact(_)) => expected = ExpectAssertions::NotSet,
+                _ => {}
+            }
+            match (is_expecting_assertions, expected) {
+                (Some(true), ExpectAssertions::NotSet) => expected = ExpectAssertions::AtLeastOne,
+                (Some(false), ExpectAssertions::AtLeastOne) => expected = ExpectAssertions::NotSet,
+                _ => {}
+            }
+            // A helper that puts back the state it saved, or that clears it, asks for nothing new.
+            let asks = expected != sequence.expect_assertions && expected != ExpectAssertions::NotSet;
+            if asks && sequence.count_is_final() {
                 return false;
             }
             if let Some(count) = assertion_calls {
                 sequence.expect_call_count = count;
             }
-            match (expected_assertions_number, sequence.expect_assertions) {
-                (Some(Some(count)), _) => sequence.expect_assertions = ExpectAssertions::Exact(count),
-                (Some(None), ExpectAssertions::Exact(_)) => sequence.expect_assertions = ExpectAssertions::NotSet,
-                _ => {}
-            }
-            match (is_expecting_assertions, sequence.expect_assertions) {
-                (Some(true), ExpectAssertions::NotSet) => sequence.expect_assertions = ExpectAssertions::AtLeastOne,
-                (Some(false), ExpectAssertions::AtLeastOne) => sequence.expect_assertions = ExpectAssertions::NotSet,
-                _ => {}
-            }
+            sequence.expect_assertions = expected;
             true
         });
         match applied {

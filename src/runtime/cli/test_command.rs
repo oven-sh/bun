@@ -3092,6 +3092,21 @@ pub(crate) struct ReportersConfig {
 }
 
 impl CommandLineReporter {
+    /// A user who saw an assertion run needs to know why it is not in the count that failed the test.
+    fn note_late_assertions(sequence: &bun_test::Execution::ExecutionSequence) {
+        let late = sequence
+            .expect_call_count
+            .saturating_sub(sequence.checked_count().1);
+        if late > 0 {
+            bun_core::note!(
+                "{} assertion{} ran after the count was checked and {} not counted",
+                late,
+                if late == 1 { "" } else { "s" },
+                if late == 1 { "was" } else { "were" },
+            );
+        }
+    }
+
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
         sequence: &mut bun_test::Execution::ExecutionSequence,
@@ -3141,6 +3156,7 @@ impl CommandLineReporter {
                                 if call_count == 1 { "" } else { "s" },
                             ),
                         );
+                        Self::note_late_assertions(sequence);
                         Output::flush();
                     }
                 }
@@ -3150,6 +3166,7 @@ impl CommandLineReporter {
                         "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n",
                         (),
                     );
+                    Self::note_late_assertions(sequence);
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout

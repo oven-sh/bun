@@ -19,7 +19,7 @@ use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
-use crate::scan::scan_imports::ts_import_equals;
+use crate::scan::scan_imports::{TsImportEquals, ts_import_equals};
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
@@ -10274,7 +10274,7 @@ fn remove_unused_ts_import_equals<'a>(symbols: &[Symbol], stmts: &'a mut [Stmt])
     let mut index_of: HashMap<Ref, u32> = HashMap::default();
     for (at, stmt) in stmts.iter().enumerate() {
         if let js_ast::StmtData::SLocal(local) = stmt.data
-            && let Some((alias, root)) = ts_import_equals(&local)
+            && let Some(TsImportEquals { alias, root }) = ts_import_equals(&local)
         {
             let reads = symbols[alias.inner_index() as usize].use_count_estimate;
             index_of.insert(alias, aliases.len() as u32);

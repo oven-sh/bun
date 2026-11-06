@@ -24,8 +24,13 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
     js_ast::StoreStr::new(s)
 }
 
-/// `a` and `b` of an `import a = b.c` that isn't exported.
-pub(crate) fn ts_import_equals(st: &S::Local) -> Option<(Ref, Ref)> {
+/// `alias` and `root` of an `import alias = root.c` that isn't exported.
+pub(crate) struct TsImportEquals {
+    pub alias: Ref,
+    pub root: Ref,
+}
+
+pub(crate) fn ts_import_equals(st: &S::Local) -> Option<TsImportEquals> {
     if !st.origin.is_ts_import_equals() || st.is_export || st.decls.len_u32() == 0 {
         return None;
     }
@@ -42,7 +47,10 @@ pub(crate) fn ts_import_equals(st: &S::Local) -> Option<(Ref, Ref)> {
 
     // Is this an identifier reference and not a require() call?
     match value.map(|it| it.data) {
-        Some(js_ast::ExprData::EIdentifier(id)) => Some((alias.r#ref, id.ref_)),
+        Some(js_ast::ExprData::EIdentifier(root)) => Some(TsImportEquals {
+            alias: alias.r#ref,
+            root: root.ref_,
+        }),
         _ => None,
     }
 }
@@ -679,7 +687,7 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if let Some((alias, root)) = ts_import_equals(&st) {
+                    if let Some(TsImportEquals { alias, root }) = ts_import_equals(&st) {
                         // Is this import statement unused?
                         if p.symbols[alias.inner_index() as usize].use_count_estimate == 0 {
                             p.ignore_usage(root);

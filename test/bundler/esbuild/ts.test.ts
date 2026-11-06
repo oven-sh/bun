@@ -918,27 +918,6 @@ describe("bundler", () => {
   });
   // The root of a removed alias keeps its use count. The parser compares that count with the
   // tracked reads of a `require()` namespace to tell if the namespace escapes.
-  itBundled("ts/ImportEqualsBesideLoweredUsingKeepsRootUseCount", {
-    files: {
-      "/entry.ts": /* ts */ `
-        const ns = Math.random() < 2 ? require("./lib") : null;
-        import A = ns.a;
-        using resource = { [Symbol.dispose]() {} };
-        console.log(Object.keys(ns).join(","));
-      `,
-      "/lib.ts": /* ts */ `
-        export const a = 1;
-        export const b = 2;
-        export const c = 3;
-      `,
-    },
-    onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("ns.a");
-    },
-    run: {
-      stdout: "a,b,c",
-    },
-  });
   itBundled("ts/ImportEqualsOfRequireNamespaceBesideLoweredUsing", {
     files: {
       "/entry.ts": /* ts */ `

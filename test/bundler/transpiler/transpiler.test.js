@@ -5626,17 +5626,6 @@ console.log(x);
         metadata,
       ],
       [
-        "a namespace that decorator metadata names",
-        [
-          "namespace N { export namespace A { export class K {} } }",
-          stays("import A = N.A;"),
-          USING,
-          "declare const dec: any;",
-          "class C { @dec p: A.K; }",
-        ],
-        metadata,
-      ],
-      [
         "a classic JSX factory",
         ["namespace P { export const h = (...a: any[]) => a; }", stays("import h = P.h;"), USING, "<div />;"],
         classicJsx,

@@ -16,7 +16,7 @@ import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
+import { cc, cxx, embedCompiledLibraryPath, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
@@ -305,6 +305,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.debug) {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
@@ -452,6 +453,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
     trimmable: true,
+    embedsCompiledLibrary: true,
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
@@ -488,12 +490,13 @@ function emitJscPrograms(
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
+    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
     for (const { header, files } of program.pch ?? []) {
       const base = prefixes[0]?.prefix;
       const prefix = pch(n, cfg, header, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(base !== undefined && { base }),
       });
       prefixes.unshift({ prefix, files });
@@ -502,11 +505,14 @@ function emitJscPrograms(
       const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
       return cxx(n, cfg, src, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
-    const from = (["WebKit", "mimalloc", ...(program.deps ?? [])] as const).map(name => deps.get(name)!);
+    objects.push(
+      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
+    );
+    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),
@@ -876,12 +882,16 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     // embedded — so the stripped `bun` needs its own postlink pass.
     // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
-      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}`,
+      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}${cfg.compiledLibrary ? ` && ${cfg.jsRuntime} ${quote(embedCompiledLibraryPath, false)} $out --from $in` : ""}`,
       description: "strip $out",
     });
   }
 
-  const postlinkInputs = [...machoPostlinkImplicitInputs(cfg), ...(cfg.hardened ? [closeElfGapsPath] : [])];
+  const postlinkInputs = [
+    ...machoPostlinkImplicitInputs(cfg),
+    ...(cfg.hardened ? [closeElfGapsPath] : []),
+    ...(cfg.compiledLibrary ? [embedCompiledLibraryPath] : []),
+  ];
   const verified = strippedVerifyStamp(cfg);
   const node = {
     outputs: [out],

@@ -120,7 +120,7 @@ function f2 name="emptiedLike" module=m0 position=723 flags=[IsChecked, HasExpli
 # CHECK-NEXT: Branch v13 -> taken b1(| 0), notTaken b21(| 0)
 # CHECK-NEXT: b1(v14: Array):
 # CHECK-NEXT: v15: boolean = IsPristine v14 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v15 -> taken b2(), notTaken b38(v14)
+# CHECK-NEXT: Branch v15 -> taken b2(), notTaken b39(v14)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v16: 0 = Integer
 # CHECK-NEXT: Jump -> next b3(v12, v16)
@@ -199,7 +199,7 @@ function f2 name="emptiedLike" module=m0 position=723 flags=[IsChecked, HasExpli
 # CHECK-NEXT: Jump -> next b3(v64, v66)
 # CHECK-NEXT: b21(v73: string|object ~ string) frequency=Unlikely:
 # CHECK-NEXT: v74: boolean ~ true = TypeTest v73 testedType=string
-# CHECK-NEXT: Branch v74 -> taken b22(| 0), notTaken b37(| 0)
+# CHECK-NEXT: Branch v74 -> taken b22(| 0), notTaken b38(| 0)
 # CHECK-NEXT: b22(v75: string) frequency=Unlikely:
 # CHECK-NEXT: v76: 0 = Integer
 # CHECK-NEXT: Jump -> next b23(v12, v76)
@@ -209,95 +209,95 @@ function f2 name="emptiedLike" module=m0 position=723 flags=[IsChecked, HasExpli
 # CHECK-NEXT: b24():
 # CHECK-NEXT: v80: true = Boolean boolean=true
 # CHECK-NEXT: v81: undefined = Undefined
-# CHECK-NEXT: Jump -> next b36(v80, v81, v78)
+# CHECK-NEXT: Jump -> next b37(v80, v81, v78)
 # CHECK-NEXT: b25():
 # CHECK-NEXT: v82: int[0, 2147483647] = GetStringLength v75
 # CHECK-NEXT: v83: boolean = Less v78, v82
-# CHECK-NEXT: Branch v83 -> taken b26(| 0), notTaken b35()
+# CHECK-NEXT: Branch v83 -> taken b26(| 0), notTaken b36()
 # CHECK-NEXT: b26(v84: int[0, 2147483646]):
 # CHECK-NEXT: v85: int[0, 65535] = GetStringCodeUnit v75, v84
 # CHECK-NEXT: v86: 55296 = Integer integer=55296
 # CHECK-NEXT: v87: boolean = Less v85, v86
 # CHECK-NEXT: Branch v87 -> taken b27(), notTaken b28()
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v88: 65535 = Integer integer=65535
-# CHECK-NEXT: v89: boolean = Greater v85, v88
-# CHECK-NEXT: Jump -> next b31(v89)
+# CHECK-NEXT: Jump -> next b34()
 # CHECK-NEXT: b28() frequency=Unlikely:
-# CHECK-NEXT: v90: 64512 = Integer integer=64512
-# CHECK-NEXT: v91: int[0, 64512] = BitAnd v85, v90
-# CHECK-NEXT: v92: 55296 = Integer integer=55296
-# CHECK-NEXT: v93: boolean = StrictEq v91, v92
-# CHECK-NEXT: Branch v93 -> taken b29(), notTaken b30()
+# CHECK-NEXT: v88: 64512 = Integer integer=64512
+# CHECK-NEXT: v89: int[0, 64512] = BitAnd v85, v88
+# CHECK-NEXT: v90: 55296 = Integer integer=55296
+# CHECK-NEXT: v91: boolean = StrictEq v89, v90
+# CHECK-NEXT: Branch v91 -> taken b29(), notTaken b33()
 # CHECK-NEXT: b29() frequency=Unlikely:
-# CHECK-NEXT: v94: undefined|int[0, 1114111] = CallBuiltin v75, v84 overload=StringPrototypeCodePointAt/0
+# CHECK-NEXT: v92: undefined|int[0, 1114111] = CallBuiltin v75, v84 overload=StringPrototypeCodePointAt/0
+# CHECK-NEXT: v93: boolean = TypeTest v92 testedType=int[0, 1114111]
+# CHECK-NEXT: Branch v93 -> taken b30(| 0), notTaken b31()
+# CHECK-NEXT: b30(v94: int[0, 1114111]) frequency=Unlikely:
 # CHECK-NEXT: v95: 65535 = Integer integer=65535
 # CHECK-NEXT: v96: boolean = Greater v94, v95
-# CHECK-NEXT: Jump -> next b31(v96)
-# CHECK-NEXT: b30() frequency=Unlikely:
-# CHECK-NEXT: v97: 65535 = Integer integer=65535
-# CHECK-NEXT: v98: boolean = Greater v85, v97
-# CHECK-NEXT: Jump -> next b31(v98)
-# CHECK-NEXT: b31(v99: boolean):
-# CHECK-NEXT: Branch v99 -> taken b32(), notTaken b33()
+# CHECK-NEXT: Branch v96 -> taken b32(), notTaken b34()
+# CHECK-NEXT: b31() frequency=Unlikely:
+# CHECK-NEXT: v97: undefined = Undefined
+# CHECK-NEXT: v98: 65535 = Integer integer=65535
+# CHECK-NEXT: v99: boolean = Greater v97, v98
+# CHECK-NEXT: Branch v99 -> taken b32(), notTaken b34()
 # CHECK-NEXT: b32() frequency=Unlikely:
 # CHECK-NEXT: v100: 2 = Integer integer=2
 # CHECK-NEXT: v101: int[2, 2147483648] = Add v84, v100
-# CHECK-NEXT: Jump -> next b34(v101)
-# CHECK-NEXT: b33():
+# CHECK-NEXT: Jump -> next b35(v101)
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b34()
+# CHECK-NEXT: b34():
 # CHECK-NEXT: v102: 1 = Integer integer=1
 # CHECK-NEXT: v103: int[1, 2147483647] = Add v84, v102
-# CHECK-NEXT: Jump -> next b34(v103)
-# CHECK-NEXT: b34(v104: int[1, 2147483648]):
+# CHECK-NEXT: Jump -> next b35(v103)
+# CHECK-NEXT: b35(v104: int[1, 2147483648]):
 # CHECK-NEXT: v105: string = Substring v75, v84, v104
 # CHECK-NEXT: v106: false = Boolean
-# CHECK-NEXT: Jump -> next b36(v106, v105, v104)
-# CHECK-NEXT: b35():
+# CHECK-NEXT: Jump -> next b37(v106, v105, v104)
+# CHECK-NEXT: b36():
 # CHECK-NEXT: v107: true = Boolean boolean=true
 # CHECK-NEXT: v108: undefined = Undefined
-# CHECK-NEXT: Jump -> next b36(v107, v108, v78)
-# CHECK-NEXT: b36(v109: boolean, v110: undefined|string, v111: int[0, 2147483648]):
+# CHECK-NEXT: Jump -> next b37(v107, v108, v78)
+# CHECK-NEXT: b37(v109: boolean, v110: undefined|string, v111: int[0, 2147483648]):
 # CHECK-NEXT: v112: 3 = Integer integer=3
 # CHECK-NEXT: v113: anything ~ undefined = ElemGet v5, v112 accessSite=4 [keyIsIntegral]
 # CHECK-NEXT: v114: undefined|null|string ~ undefined = AssumeType v113 provenType=undefined|null|string
 # CHECK-NEXT: v115: string = CallDirect v110, v114 function=f2 accessSite=5
 # CHECK-NEXT: Jump -> next b23(v109, v111)
-# CHECK-NEXT: b37(v116: object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b38(v116)
-# CHECK-NEXT: b38(v117: object ~ Array) frequency=Unlikely:
+# CHECK-NEXT: b38(v116: object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b39(v116)
+# CHECK-NEXT: b39(v117: object ~ Array) frequency=Unlikely:
 # CHECK-NEXT: v118: undefined = CallDirect v117 function=f6 [isNeverInlined]
 # CHECK-NEXT: v119: object = ResultAt v118
 # CHECK-NEXT: v120: anything = ResultAt v118 index=1
-# CHECK-NEXT: Jump -> next b39(v12)
-# CHECK-NEXT: b39(v121: boolean) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b40(v12)
+# CHECK-NEXT: b40(v121: boolean) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v121 -> taken b40(), notTaken b41()
-# CHECK-NEXT: b40() frequency=Unlikely:
+# CHECK-NEXT: Branch v121 -> taken b41(), notTaken b42()
+# CHECK-NEXT: b41() frequency=Unlikely:
 # CHECK-NEXT: v123: true = Boolean boolean=true
 # CHECK-NEXT: v124: undefined = Undefined
-# CHECK-NEXT: Jump -> next b44(v123, v124)
-# CHECK-NEXT: b41() frequency=Unlikely:
-# CHECK-NEXT: v125: anything = Call v120, v119
-# CHECK-NEXT: v126: object = RequireObject v125 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v127: anything = PropGet v126 key="done"
-# CHECK-NEXT: v128: boolean = ToBoolean v127
-# CHECK-NEXT: Branch v128 -> taken b42(), notTaken b43()
+# CHECK-NEXT: Jump -> next b45(v123, v124)
 # CHECK-NEXT: b42() frequency=Unlikely:
-# CHECK-NEXT: v129: true = Boolean boolean=true
-# CHECK-NEXT: v130: undefined = Undefined
-# CHECK-NEXT: Jump -> next b44(v129, v130)
+# CHECK-NEXT: v125: undefined = CallDirect v119, v120 function=f7 [isNeverInlined]
+# CHECK-NEXT: v126: boolean = ResultAt v125
+# CHECK-NEXT: Branch v126 -> taken b43(), notTaken b44()
 # CHECK-NEXT: b43() frequency=Unlikely:
-# CHECK-NEXT: v131: anything = PropGet v126 key="value"
-# CHECK-NEXT: v132: false = Boolean
-# CHECK-NEXT: Jump -> next b44(v132, v131)
-# CHECK-NEXT: b44(v133: boolean, v134: anything) frequency=Unlikely:
-# CHECK-NEXT: v135: 3 = Integer integer=3
-# CHECK-NEXT: v136: anything ~ undefined = ElemGet v5, v135 accessSite=4 [keyIsIntegral]
-# CHECK-NEXT: v137: fact = Specified
-# CHECK-NEXT: v138: undefined|null|boolean|number|string|object = AssumeType v134, v137 provenType=undefined|null|boolean|number|string|object
-# CHECK-NEXT: v139: undefined|null|string ~ undefined = AssumeType v136 provenType=undefined|null|string
-# CHECK-NEXT: v140: string = CallDirect v138, v139 function=f2 accessSite=5
-# CHECK-NEXT: Jump -> next b39(v133)
+# CHECK-NEXT: v127: true = Boolean boolean=true
+# CHECK-NEXT: v128: undefined = Undefined
+# CHECK-NEXT: Jump -> next b45(v127, v128)
+# CHECK-NEXT: b44() frequency=Unlikely:
+# CHECK-NEXT: v129: anything = ResultAt v125 index=1
+# CHECK-NEXT: v130: false = Boolean
+# CHECK-NEXT: Jump -> next b45(v130, v129)
+# CHECK-NEXT: b45(v131: boolean, v132: anything) frequency=Unlikely:
+# CHECK-NEXT: v133: 3 = Integer integer=3
+# CHECK-NEXT: v134: anything ~ undefined = ElemGet v5, v133 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v135: fact = Specified
+# CHECK-NEXT: v136: undefined|null|boolean|number|string|object = AssumeType v132, v135 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: v137: undefined|null|string ~ undefined = AssumeType v134 provenType=undefined|null|string
+# CHECK-NEXT: v138: string = CallDirect v136, v137 function=f2 accessSite=5
+# CHECK-NEXT: Jump -> next b40(v131)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fill"
 # CHECK: module=m0 position=257 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array|Object}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array|Object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

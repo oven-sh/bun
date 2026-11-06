@@ -98,7 +98,7 @@ function f1 name="names" module=m0 position=39 flags=[IsChecked, HasExplicitName
 # CHECK: Int64 b@[[array]] = Patchpoint(b@{{*}}:SomeRegister, runsWithoutFrame, resultConstraints = SomeEarlyRegister, numGPScratchRegisters = 1, Terminal|Writes:{collectorState, AllocatorState}|Reads:{collectorState, AllocatorState})
 # CHECK-NEXT: Successors: #{{*}}, Rare:#
 # CHECK: Store(b@{{*}}, b@[[array]], ControlDependent|Writes:JSCell_header)
-# CHECK-NEXT: Store(b@{{*}}, b@[[array]], offset = 8, ControlDependent|Writes:JSObject_butterfly)
+# CHECK-NEXT: Store(b@{{*}}, b@[[array]], offset = 8, ControlDependent|Writes:JSArray_butterfly)
 # CHECK-LABEL: end of function
 # One call into the run time serves every miss. Object.keys cannot be replaced: nothing makes its function object or tests which function the member holds.
 # CALLS-LABEL: name="names" role=Source
@@ -108,4 +108,4 @@ function f1 name="names" module=m0 position=39 flags=[IsChecked, HasExplicitName
 # CALLS-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
 # X64: instructions: 33, patchpoints: 1, rare instructions: 4
-# ARM64: instructions: 33, patchpoints: 1, rare instructions: 6
+# ARM64: instructions: 32, patchpoints: 1, rare instructions: 6

@@ -10,7 +10,7 @@ export const knownChanges: ReadonlyMap<string, readonly OperandUse[]> = new Map(
   ["NodeStream/0", storesIntoReceiver],
   ["Node_stream_wrap/0", storesIntoReceiver],
   // With another constructor as the receiver they fill what it constructs.
-  ["ArrayFrom/4", definesOnNewInstance],
+  ["ArrayFrom/5", definesOnNewInstance],
   ["ArrayFromAsync/1", definesOnNewInstance],
   ["ArrayOf/1", definesOnNewInstance],
   // It defines the matchers on expect itself and on the prototypes behind it.

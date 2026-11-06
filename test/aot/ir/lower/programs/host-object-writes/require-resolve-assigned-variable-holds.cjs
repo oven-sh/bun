@@ -38,7 +38,7 @@ console.log("the next file");
 // CHECK-NEXT: v17 = StrictEq v14, v16
 // CHECK-NEXT: Branch v17 -> taken b2(), notTaken b3(| 0)
 // CHECK-NEXT: b2():
-// CHECK-NEXT: v18 = ResolveModule module=[[m_6]] referrer=[[m_0]] specifier="./next.cjs"
+// CHECK-NEXT: v18 = String string="{{*}}next.cjs"
 // CHECK-NEXT: Jump -> next b4(v18)
 // CHECK-NEXT: b3(v19):
 // CHECK-NEXT: v20 = Call v19, v4, v15 calleeName="load.resolve"
@@ -53,7 +53,7 @@ console.log("the next file");
 // CHECK-NEXT: v28 = StrictEq v25, v27
 // CHECK-NEXT: Branch v28 -> taken b5(), notTaken b6(| 0)
 // CHECK-NEXT: b5():
-// CHECK-NEXT: v29 = ResolveModule module=[[m_6]] referrer=[[m_0]] specifier="./next.cjs"
+// CHECK-NEXT: v29 = String string="{{*}}next.cjs"
 // CHECK-NEXT: Jump -> next b7(v29)
 // CHECK-NEXT: b6(v30):
 // CHECK-NEXT: v31 = Call v30, v23, v26 calleeName="require.resolve"

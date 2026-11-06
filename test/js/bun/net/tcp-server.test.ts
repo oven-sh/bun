@@ -302,7 +302,6 @@ it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close 
       bunExe(),
       "-e",
       `
-        import { expect } from "bun:test";
         const events = [];
         const { promise: bothOpen, resolve: onBothOpen } = Promise.withResolvers();
         let opened = 0;
@@ -317,14 +316,15 @@ it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close 
             close() {
               events.push("close");
               if (events.length === 1) {
-                // "timer" before "ticked" proves that the wait ticked the loop.
-                const timer = new Promise(resolve =>
-                  setTimeout(() => {
-                    events.push("timer");
-                    resolve();
-                  }),
-                );
-                expect(timer).resolves.toBeUndefined();
+                // Bun.build() waits for an async setup() by ticking the loop. "timer" before "ticked" proves that it did.
+                const setup = () =>
+                  new Promise(resolve =>
+                    setTimeout(() => {
+                      events.push("timer");
+                      resolve();
+                    }),
+                  );
+                Bun.build({ entrypoints: ["missing.js"], plugins: [{ name: "waits for a timer", setup }] }).catch(() => {});
                 events.push("ticked");
               }
             },

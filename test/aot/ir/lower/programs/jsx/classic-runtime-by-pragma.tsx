@@ -49,5 +49,5 @@ console.log(scoped((tag: string) => "inner " + tag))
 // CHECK-NEXT: v1 = String string="p"
 // CHECK-NEXT: v2 = Null
 // CHECK-NEXT: v3 = Call v0, -, v1, v2 calleeName="h"
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: ReturnCall v3
 // CHECK-NEXT: }

@@ -87,7 +87,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=number site=[[w_1]]}] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=number site=[[w_1]] variableName="n"}] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: number, v1: function, v2: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -118,7 +118,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=[[f_6]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=[[f_6]] flags=[IsFromCompiler] variableName="C"}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_14]]] {
 // CHECK-NEXT: b0(v0: env [[L_5]], v1: [[f_6]], v2: function, v3: anything, v4: undefined|null|Array<undefined|null|string>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -141,6 +141,12 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v17
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v18 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v18
+// CHECK-NEXT: v18 = TypeTest v1 testedType=undefined|null
+// CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v19):
+// CHECK-NEXT: v20 = PropGet v19 key="#o"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v21):
+// CHECK-NEXT: v22 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v22
 // CHECK-NEXT: }

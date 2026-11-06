@@ -37,6 +37,11 @@ pub struct FileAnalysis<'s> {
     alternatives: &'s [ImportSpecifier],
     paths_from_own_directory: &'s [ExprId],
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
+    names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    /// `writeFileSync(path, text)`, `rmSync(path)`, `Bun.write(path, text)`: each operand that names a file which the call writes, moves or removes, with what it may be,
+    /// where that is known. `is_path_from_own_directory` and `find_resolved_form` say how it is written, as of the specifier of a site.
+    pub paths_of_changed_files: &'s [(ExprId, ImportSpecifier)],
+    keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],
@@ -84,6 +89,20 @@ impl FileAnalysis<'_> {
         let answers = self.answers_of_resolvers;
         let index = answers.binary_search_by_key(&argument, |&(argument, _)| argument);
         index.ok().map(|index| answers[index].1)
+    }
+
+    /// What `argument` may be, the first one of a `new Worker()`, where it is no constant and is known in part. `is_path_from_own_directory` and `find_resolved_form` say how it is written, as of the specifier of a site.
+    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&ImportSpecifier> {
+        let names = self.names_of_workers;
+        let index = names.binary_search_by_key(&argument, |&(argument, _)| argument);
+        index.ok().map(|index| &names[index].1)
+    }
+
+    /// `require.cache[key] = entry`. Unlike the specifier of a site, a `Pattern` may have an empty prefix, and a `OneOf` may be empty.
+    pub fn find_key_stored_in_cache(&self, key: ExprId) -> Option<&ImportSpecifier> {
+        let keys = self.keys_stored_in_caches;
+        let index = keys.binary_search_by_key(&key, |&(key, _)| key);
+        index.ok().map(|index| &keys[index].1)
     }
 
     /// What a name that is no constant may be hangs on more of a folding than the specifiers that it finds.

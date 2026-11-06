@@ -8,7 +8,7 @@
 // CHECK-LABEL: function {{*}}name="h"
 // CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}] thisType
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="a"}] thisType
 
 declare function g(): unknown;
 

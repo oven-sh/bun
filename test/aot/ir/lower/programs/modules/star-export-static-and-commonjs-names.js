@@ -149,8 +149,10 @@ export { shared } from "./dynamic.cjs";
 // CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v9 = PropHas v0 key="both"
 // CHECK-NEXT: v10 = PropGet v0 key="both"
-// CHECK-NEXT: v11 = PropGet v0 key="onlyDynamic"
-// CHECK-NEXT: v12 = NewArray v8, v9, v10, v11 contents=anything
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: Return v13
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|"both from dynamic"|"both from shadows"|"both from static" flags=[IsExpected]}
+// CHECK-NEXT: v12 = PropGet v0 key="onlyDynamic"
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|"only dynamic"|"only dynamic from hides" flags=[IsExpected]}
+// CHECK-NEXT: v14 = NewArray v8, v9, v11, v13 contents=anything
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array flags=[IsExpected]}
+// CHECK-NEXT: Return v15
 // CHECK-NEXT: }

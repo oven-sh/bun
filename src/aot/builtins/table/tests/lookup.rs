@@ -358,7 +358,7 @@ fn members_of_locked_object_are_locked() {
     assert_mutability(&[BuiltinId::ErrorCaptureStackTrace], ConstantUnlessWritten);
 }
 
-const MEMBERS_LEFT_WRITABLE: [BuiltinId; 55] = [
+const MEMBERS_LEFT_WRITABLE: [BuiltinId; 65] = [
     BuiltinId::BufferPoolSize,
     BuiltinId::DateNow,
     BuiltinId::DateParse,
@@ -414,6 +414,16 @@ const MEMBERS_LEFT_WRITABLE: [BuiltinId; 55] = [
     BuiltinId::SetPrototypeIsSubsetOf,
     BuiltinId::SetPrototypeIsSupersetOf,
     BuiltinId::SetPrototypeIsDisjointFrom,
+    BuiltinId::IntlDateTimeFormatPrototypeFormat,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatRange,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatRangeToParts,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatToParts,
+    BuiltinId::IntlDateTimeFormatPrototypeResolvedOptions,
+    BuiltinId::IntlNumberFormatPrototypeFormat,
+    BuiltinId::IntlNumberFormatPrototypeFormatRange,
+    BuiltinId::IntlNumberFormatPrototypeFormatRangeToParts,
+    BuiltinId::IntlNumberFormatPrototypeFormatToParts,
+    BuiltinId::IntlNumberFormatPrototypeResolvedOptions,
 ];
 
 #[test]

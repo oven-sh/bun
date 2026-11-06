@@ -5,8 +5,8 @@ use rustc_hash::FxHashSet;
 /// Disallow `catch` clause parameters from shadowing variables in the outer scope.
 pub struct NoCatchShadow;
 
-const MUTABLE: Message =
-    Message::new("mutable", "Value of '{{name}}' may be overwritten in IE 8 and earlier.");
+const MUTABLE: &Message =
+    &Message::new("mutable", "Value of '{{name}}' may be overwritten in IE 8 and earlier.");
 
 /// ESLint's `getVariableByName(scope, name) !== null`, where `scope` is the scope that contains `stmt`. That also finds
 /// things that aren't a scope's `Symbol` here: the name of an enclosing function or class expression, a function's

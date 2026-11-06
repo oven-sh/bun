@@ -8,18 +8,18 @@ const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "shell-"))
 fs.mkdirSync(path.join(scratch, "data"));
 fs.writeFileSync(path.join(scratch, "data", "note.txt"), "a note on disk\n");
 const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "shell-")));
-const clean = text => text.trim().replaceAll(scratch, "<scratch>").replaceAll(other, "<other>").replaceAll(__dirname, "<root>");
+const clean = text => text.trim().replaceAll(scratch, "<scratch>").replaceAll(other, "<other>").replaceAll(module.path, "<root>");
 const run = command => command.quiet().text().then(clean, error => "failed: " + (error.exitCode ?? error.code));
 (async () => {
   process.chdir(scratch);
-  process.chdir(__dirname);
+  process.chdir(module.path);
   console.log("process.cwd():", clean(process.cwd()));
   console.log("readFileSync:", fs.readFileSync("data/note.txt", "utf8").trim());
   console.log("pwd:", await run(Bun.$`pwd`));
   console.log("cat of a relative path:", await run(Bun.$`cat data/note.txt`));
-  console.log("cat of an embedded file:", await run(Bun.$`cat ${path.join(__dirname, "data", "note.txt")}`));
+  console.log("cat of an embedded file:", await run(Bun.$`cat ${path.join(module.path, "data", "note.txt")}`));
   console.log("pwd with cwd:", await run(Bun.$`pwd`.cwd(other)));
-  console.log("cwd in the executable:", await run(Bun.$`pwd`.cwd(__dirname)));
+  console.log("cwd in the executable:", await run(Bun.$`pwd`.cwd(module.path)));
   process.chdir(os.tmpdir());
   fs.rmSync(scratch, { recursive: true, force: true });
   fs.rmSync(other, { recursive: true, force: true });

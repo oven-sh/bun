@@ -11,6 +11,7 @@ use bun_paths::fs::Path;
 use bun_resolver::compiled_program::compare_source_paths;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::util::SharedSort;
 
 use super::assets::EmbeddedFiles;
 use super::data_values::{data_value_from_expr, report_not_data};
@@ -193,16 +194,7 @@ fn run<'h>(
     bundle.process_files_to_copy(&reachable_files)?;
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
-    // SAFETY: as in `run_from_js_in_new_thread`: every borrow comes from the one raw pointer, so projecting `linker`
-    // does not invalidate `entry_points` or `boundaries`.
-    let mut chunks = unsafe {
-        let bundle_pointer: *mut BundleV2<'_> = &raw mut *bundle;
-        let entry_points = (*bundle_pointer).graph.entry_points.as_slice();
-        let boundaries = &(*bundle_pointer).graph.server_component_boundaries;
-        (*bundle_pointer)
-            .linker
-            .link(bundle_pointer, entry_points, boundaries, &reachable_files)?
-    };
+    let mut chunks = bundle.link(&reachable_files)?;
     if bundle.transpiler.log().errors > 0 {
         return Err(crate::Error::BuildFailed);
     }
@@ -235,7 +227,7 @@ fn write_page_manifests(
     }
 
     let mut positions_by_path: Vec<(&[u8], usize)> = pages.iter().copied().zip(0..).collect();
-    positions_by_path.sort_unstable_by(|a, b| compare_source_paths(a.0, b.0));
+    positions_by_path.shared_sort_unstable_by(|a, b| compare_source_paths(a.0, b.0));
 
     let sources = bundle.graph.input_files.items_source();
     let mut manifests: Vec<Option<Vec<u8>>> = vec![None; pages.len()];

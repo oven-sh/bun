@@ -1,0 +1,1 @@
+{ "name": "layouts", "private": true, "type": "module", "workspaces": ["packages/*"] }

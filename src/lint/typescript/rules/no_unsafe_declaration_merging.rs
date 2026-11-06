@@ -4,8 +4,8 @@ use smallvec::SmallVec;
 /// Disallow unsafe declaration merging.
 pub struct NoUnsafeDeclarationMerging;
 
-const UNSAFE_MERGING: Message =
-    Message::new("unsafeMerging", "Unsafe declaration merging between classes and interfaces.");
+const UNSAFE_MERGING: &Message =
+    &Message::new("unsafeMerging", "Unsafe declaration merging between classes and interfaces.");
 
 fn check_unsafe_declaration<'a>(
     scope: Scope<'a>,

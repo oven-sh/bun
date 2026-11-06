@@ -64,13 +64,10 @@ impl<'a> JsHeap<'a> {
 
     /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
     fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
-        // SAFETY: the global object is live.
-        unsafe {
-            extern_types::Bun__Bindgen__exceptionPresenceMatches(
-                self.global_ptr(),
-                should_have_exception,
-            )
-        }
+        extern_types::Bun__Bindgen__exceptionPresenceMatches(
+            self.global_object(),
+            should_have_exception,
+        )
     }
 
     /// `owner` has come to own `size` more bytes since it was created. From `estimated_size` alone the GC learns that
@@ -1146,15 +1143,14 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 
     #[inline(always)]
     fn payload(self) -> *mut T {
-        // SAFETY: generated offset inside the cell.
-        unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
+        self.payload_ptr().as_ptr()
     }
 
     /// The payload's address, which does not change. It is valid while the wrapper is alive.
     #[inline(always)]
     pub fn payload_ptr(self) -> NonNull<T> {
-        // SAFETY: inside the cell, which is not null.
-        unsafe { NonNull::new_unchecked(self.payload()) }
+        // SAFETY: generated offset inside the cell.
+        unsafe { self.0.byte_add(T::PAYLOAD_OFFSET).cast() }
     }
 }
 

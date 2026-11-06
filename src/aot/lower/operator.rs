@@ -6,7 +6,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::Parent;
 use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, StmtId, StmtKind, UnOp, is_parenthesized};
-use bun_sema::module_format::main_module_operand;
+use bun_sema::module_format::settled_main_module_operand;
 use smallvec::{SmallVec, smallvec};
 
 pub(in crate::lower) use self::concatenation::PrintedOperand;
@@ -95,7 +95,8 @@ pub(in crate::lower) fn lower_binary(
     };
     match classify_operator(op) {
         OperatorClass::Equality { .. } => {
-            if main_module_operand(lowering.file.hir, lowering.file.bound, expression).is_some() {
+            let (hir, bound) = (lowering.file.hir, lowering.file.bound);
+            if settled_main_module_operand(hir, bound, expression).is_some() {
                 return lowering.lower_main_module_comparison(expression, op);
             }
             if let Some(test) = lowering.try_lower_test_value(expression) {
@@ -185,14 +186,69 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_unary_operand(&mut self, expression: ExprId, operand: ExprId) -> ValueId {
         let value = self.lower_expression(operand);
-        let position = self.file.hir[expression].pos;
+        let position = self.find_prefix_operator_position(expression);
         self.set_position(position);
         self.builder.record_position(position);
         value
     }
 
+    // JSC's parser gives all prefix operators that stand in a row the position of the first: `!+a`, `typeof -a`.
+    fn find_prefix_operator_position(&self, expression: ExprId) -> u32 {
+        let hir = self.file.hir;
+        let file = &*self.file;
+        let is_written = file.runs_as_written();
+        let mut first = expression;
+        let mut operand = expression;
+        loop {
+            let parent = match file.bound.parent_of_expr(operand) {
+                Parent::Expr(parent) if !(is_written && is_parenthesized(hir, operand)) => parent,
+                Parent::VarInit(_) => {
+                    let transpiled = file.transpiled.as_ref();
+                    match transpiled.and_then(|it| it.find_name_replaced_by(operand)) {
+                        Some(name) => {
+                            operand = name;
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
+                _ => break,
+            };
+            let is_printed_as_operand = file.find_operand_printed_alone(parent) == Some(operand);
+            match hir[parent].kind {
+                _ if is_printed_as_operand => {}
+                ExprKind::Unary {
+                    op:
+                        UnOp::Not
+                        | UnOp::BitNot
+                        | UnOp::Minus
+                        | UnOp::Plus
+                        | UnOp::Typeof
+                        | UnOp::Void
+                        | UnOp::Delete,
+                    ..
+                } => first = parent,
+                _ if hir.type_assertion_operand(parent).is_some() => {}
+                _ => break,
+            }
+            operand = parent;
+        }
+        hir[first].pos
+    }
+
     fn lower_main_module_comparison(&mut self, expression: ExprId, op: BinOp) -> ValueId {
         self.set_position(self.file.hir[expression].pos);
+        // `require("./main.cjs?again")`: `import.meta.main` goes by the file, and `require.main` is the module without a query.
+        if self.file.inputs.sources.has_query(self.file.file) {
+            let is_negated = matches!(
+                classify_operator(op),
+                OperatorClass::Equality {
+                    is_negated: true,
+                    ..
+                }
+            );
+            return self.builder.boolean(is_negated);
+        }
         let meta = self.lower_import_meta();
         let key = self.file.atom_key(known::main);
         let is_main = self.emit_get(meta, PropertyName::Constant(key));
@@ -222,8 +278,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 _ => None,
             };
         }
+        let transpiled = self.file.transpiled.as_ref();
         let mut operand = expression;
-        while let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) {
+        loop {
+            let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) else {
+                // An initializer that is printed in place of a name stands among the operators around the name.
+                operand = transpiled?.find_name_replaced_by(operand)?;
+                continue;
+            };
             match hir[parent].kind {
                 ExprKind::Binary {
                     op: BinOp::Comma, ..
@@ -241,7 +303,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 _ => return None,
             }
         }
-        None
     }
 
     // `(a + b) * c`, `(a + b).x * c`: the first token that Bun's transpiler prints is a parenthesis, which its source map does not know.
@@ -312,8 +373,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 Parent::FnBody(function) => return Some(file.parameters_position(function)),
                 Parent::VarInit(declaration) => {
-                    let position = file.find_return_printed_with(declaration);
-                    return Some(position.unwrap_or(hir[hir[declaration].pat].pos));
+                    if let Some(position) = file.find_return_printed_with(declaration) {
+                        return Some(position);
+                    }
+                    let transpiled = file.transpiled.as_ref();
+                    match transpiled.and_then(|it| it.find_name_replaced_by(first)) {
+                        Some(name) => {
+                            first = name;
+                            continue;
+                        }
+                        None => return Some(hir[hir[declaration].pat].pos),
+                    }
                 }
                 Parent::Prop(property) => return Some(hir[property].pos),
                 Parent::Expr(parent) => parent,

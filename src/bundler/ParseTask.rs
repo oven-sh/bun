@@ -109,7 +109,7 @@ pub struct ParseTask<'a> {
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -243,7 +243,7 @@ impl<'a> ParseTask<'a> {
     ///
     /// If `ctx` is `None`.
     #[inline]
-    pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
+    pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'a> {
         // SAFETY: caller upholds: bundle outlives `'r`.
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
@@ -252,28 +252,19 @@ impl<'a> ParseTask<'a> {
         resolve_result: &_resolver::Result<'_>,
         path: Fs::Path<'a>,
         source_index: Index,
-        // Take `*mut` so the stored BACKREF retains
+        // Take `&mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
-        ctx: *mut BundleV2<'a>,
+        ctx: &mut BundleV2<'a>,
     ) -> ParseTask<'a> {
         let (package_name, package_version) = match resolve_result.package_json {
-            // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
-            // arena outlives the bundle pass, so deref'ing the raw pointer here to
-            // borrow `name`/`version` is sound.
-            Some(pj) => unsafe {
-                let pj = &*pj;
-                (
-                    ast::StoreStr::new(&pj.name[..]),
-                    ast::StoreStr::new(&pj.version[..]),
-                )
-            },
+            Some(pj) => (
+                ast::StoreStr::new(&pj.name[..]),
+                ast::StoreStr::new(&pj.version[..]),
+            ),
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
-        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
-        // write provenance from the `*mut BundleV2` parameter; caller passes a
-        // live `&mut BundleV2` coerced to `*mut`.
-        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let ctx_ref = bun_ptr::ParentRef::from_ref_mut(ctx);
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
             ctx: Some(ctx_ref),
@@ -316,7 +307,7 @@ impl<'a> ParseTask<'a> {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource<'a> {
         parse_worker::get_runtime_source(target)
     }
 }
@@ -410,8 +401,8 @@ unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 // RuntimeSource
 // ───────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct RuntimeSource {
-    pub(crate) parse_task: ParseTask<'static>,
+pub(crate) struct RuntimeSource<'a> {
+    pub(crate) parse_task: ParseTask<'a>,
     pub(crate) source: Source<'static>,
 }
 
@@ -570,7 +561,7 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
+    fn get_runtime_source_comptime<'a>(target: options::Target) -> RuntimeSource<'a> {
         // The runtime module is the shared `runtime.js` body, the helpers that only
         // bundles use (`runtime.tla.js`) and a per-target `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
@@ -667,7 +658,7 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source<'a>(target: options::Target) -> RuntimeSource<'a> {
         get_runtime_source_comptime(target)
     }
 
@@ -1136,10 +1127,7 @@ pub mod parse_worker {
                     },
                     Loc { start: 0 },
                 );
-                let require_args = bump.alloc_slice_fill_default::<Expr>(2);
-                require_args[0] = import_path;
-                let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
-                object_properties[0] = G::Property {
+                let object_property = G::Property {
                     key: Some(Expr::init(
                         E::String {
                             data: b"type".into(),
@@ -1156,10 +1144,9 @@ pub mod parse_worker {
                     )),
                     ..Default::default()
                 };
-                require_args[1] = Expr::init(
+                let object = Expr::init(
                     E::Object {
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
+                        properties: G::PropertyList::init_one(object_property),
                         is_single_line: true,
                         ..Default::default()
                     },
@@ -1168,8 +1155,7 @@ pub mod parse_worker {
                 let require_call = Expr::init(
                     E::Call {
                         target: require_property,
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                        args: bun_ast::ExprNodeList::from_arena_slice(&[import_path, object]),
                         ..Default::default()
                     },
                     Loc { start: 0 },
@@ -2261,7 +2247,7 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn run_with_source_code(
+    pub(crate) fn run_with_source_code(
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
         step: &mut Step,
@@ -2462,6 +2448,8 @@ pub mod parse_worker {
             ))
         };
         opts.package_version = task.package_version.slice();
+        // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+        opts.import_meta_glob = Some(unsafe { Resolver::import_meta_glob_host(resolver) });
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
@@ -2506,6 +2494,7 @@ pub mod parse_worker {
         // JavaScriptCore implements `using` / `await using` natively, so when
         // targeting Bun there is no need to lower them.
         opts.features.lower_using = !target.is_bun();
+        opts.features.ascii_only = target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =
@@ -2954,7 +2943,7 @@ pub mod parse_worker {
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
         // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
-        // (`from_raw_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
+        // (`from_ref_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });

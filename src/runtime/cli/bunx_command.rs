@@ -943,7 +943,7 @@ impl BunxCommand {
 
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
 
-        let root_dir_info = Run::configure_env_for_run(
+        let (this_transpiler, root_dir_info) = Run::configure_env_for_run(
             ctx,
             &mut this_transpiler_slot,
             None,
@@ -952,8 +952,6 @@ impl BunxCommand {
                 store_root_fd: false,
             },
         )?;
-        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is initialized.
-        let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(

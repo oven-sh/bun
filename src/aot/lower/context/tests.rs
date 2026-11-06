@@ -55,6 +55,7 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
+        counts_executions: false,
     }
 }
 
@@ -258,10 +259,6 @@ fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> 
     let modes: Vec<ECMAMode> = modes.collect();
     assert_eq!(modes.len(), 1, "one store to {property}");
     modes[0]
-}
-
-fn nesting_limit() -> usize {
-    LimitValues::for_host().get(LimitId::MaxNestingDepth) as usize
 }
 
 fn nested_function(name: &str, depth: usize) -> String {
@@ -505,50 +502,26 @@ fn entry_block_ends_in_jump() {
 fn text_range_is_cleared_without_function_text() {
     let files = [("main.ts", "export function f() {}\n")];
     let without_text = take_only_file(lower_program(&files, lowering_options(false))).fragment;
-    assert!(without_text.module.function_text.is_empty());
+    assert!(without_text.module.types_in_function_text.is_none());
     for (id, function) in &without_text.functions {
         assert_eq!(function.text, SourceRange::default(), "{id}");
     }
 
     let with_text = take_only_file(lower_program(&files, lowering_options(true))).fragment;
     let range = find_function(&with_text, "f").text;
-    let text = &with_text.module.function_text[range.start as usize..range.end as usize];
+    let types = with_text.module.types_in_function_text.unwrap();
+    let source = files[0].1.as_bytes();
+    let mut text = vec![0; types.kept_len(source.len())];
+    types.remove_from(source, &mut text);
+    let text = &text[range.start as usize..range.end as usize];
     assert_eq!(text, b"function f() {}");
 }
 
 #[test]
-fn nesting_limit_is_reported_once_per_function() {
-    let maximum = nesting_limit();
-    let lowered = lower_file("main.js", &nested_function("probe", maximum + 100));
-    let reports = nesting_reports(&lowered);
-    assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].arguments, [maximum.to_string().into_bytes()]);
-    let loss = find_loss(&lowered, LimitId::MaxNestingDepth);
-    let loss = loss.expect("the limit was hit");
-    assert_eq!(loss.count, 1);
-    assert_eq!(loss.subject, reports[0].span);
-    find_function(&lowered.fragment, "probe");
-}
-
-#[test]
-fn deep_code_in_two_functions_is_reported_twice() {
-    let depth = nesting_limit() + 100;
-    let source = [
-        nested_function("first", depth),
-        nested_function("second", depth),
-    ]
-    .concat();
-    let lowered = lower_file("main.js", &source);
-    assert_eq!(nesting_reports(&lowered).len(), 2);
-    let loss = find_loss(&lowered, LimitId::MaxNestingDepth);
-    assert_eq!(loss.map(|loss| loss.count), Some(2));
-}
-
-#[test]
-fn code_below_limit_is_not_reported() {
-    let lowered = lower_file("main.js", &nested_function("probe", nesting_limit() / 2));
+fn deep_code_is_not_reported() {
+    let lowered = lower_file("main.js", &nested_function("probe", 1000));
     assert!(nesting_reports(&lowered).is_empty());
-    assert_eq!(find_loss(&lowered, LimitId::MaxNestingDepth), None);
+    find_function(&lowered.fragment, "probe");
 }
 
 #[test]

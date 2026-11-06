@@ -847,12 +847,7 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
   $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
 
   let doEnd = !pipeOpts || pipeOpts.end !== false;
-  if (doEnd) {
-    const isStandardOutput = isStandardOutputStream(dest);
-    // Making process.stdout or process.stderr would have loaded all of node:stream.
-    if (isStandardOutput === undefined) require("internal/stream");
-    doEnd = !isStandardOutput;
-  }
+  if (doEnd) doEnd = !isStandardOutputStream(dest);
 
   const endFn = doEnd ? onend : unpipe;
   if ((state[kState] & Flag.EndEmitted) !== 0) process.nextTick(endFn);

@@ -48,7 +48,7 @@ const kSessions = Symbol("sessions");
 const kOptions = Symbol("options");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
-const Stream = require("node:stream");
+const Stream = require("internal/streams/legacy").Stream;
 const dc = require("node:diagnostics_channel");
 
 // Built-in HTTP/2 diagnostics channels (mirror node's lib/internal/http2/core.js).
@@ -64,7 +64,7 @@ const onServerStreamStartChannel = dc.channel("http2.server.stream.start");
 const onServerStreamErrorChannel = dc.channel("http2.server.stream.error");
 const onServerStreamFinishChannel = dc.channel("http2.server.stream.finish");
 const onServerStreamCloseChannel = dc.channel("http2.server.stream.close");
-const { Readable } = Stream;
+const Readable = require("internal/streams/readable");
 type Http2ConnectOptions = {
   settings?: Settings;
   protocol?: "https:" | "http:";
@@ -83,7 +83,8 @@ type Http2ConnectOptions = {
 };
 const TLSSocket = tls.TLSSocket;
 const EventEmitter = require("node:events");
-const { Duplex } = Stream;
+const Duplex = require("internal/streams/duplex");
+const Writable = require("internal/streams/writable");
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
 
@@ -3256,7 +3257,7 @@ function doSendFileFD(
     end: typeof statOptions.length === "number" ? statOptions.length + (statOptions.offset || 0) - 1 : undefined,
     emitClose: false,
   });
-  const sink = new Stream.Writable({
+  const sink = new Writable({
     write(chunk, _encoding, cb) {
       const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
       if (!native || stream.destroyed || stream.closed) {

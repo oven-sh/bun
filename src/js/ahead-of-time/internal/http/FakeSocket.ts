@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http/FakeSocket.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d93d41b56254446c0d11f40b311ed02bf9cfaa57ccb434b01ead3347bc42ae05.
+// Written against that file with the SHA-256 d79bf935ca6a02c399b85ffe2c13528fbc2b33db039aabef40f744e72704a8fd.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const http = require("internal/http");

@@ -1298,12 +1298,20 @@ function globSync(pattern: string | string[], options?) {
   return Array.from(require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject));
 }
 
-// The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or
+// The stream classes are accessors on `exports` so that loading node:fs does not load the stream classes. The first read, or
 // an assignment, replaces the accessor with a data property. Once user code has sealed or frozen `exports` the accessor
 // is not configurable: Reflect.defineProperty returns false instead of throwing and the accessor stays in place.
 function materializeStream<T>(name: string, value: T): T {
   Reflect.defineProperty(exports, name, { value, writable: true, configurable: true });
   return value;
+}
+
+// internal/fs/streams puts ReadStream below Readable at the first read of its `prototype`, so that a WriteStream alone
+// (process.stdout) loads no Readable. What node:fs hands out is the whole class.
+function readStream() {
+  const { ReadStream } = require("internal/fs/streams");
+  ReadStream.prototype;
+  return ReadStream;
 }
 
 var exports = {
@@ -1411,7 +1419,7 @@ var exports = {
   Dir,
   Stats,
   get ReadStream() {
-    return materializeStream("ReadStream", require("internal/fs/streams").ReadStream);
+    return materializeStream("ReadStream", readStream());
   },
   set ReadStream(value) {
     materializeStream("ReadStream", value);
@@ -1423,7 +1431,7 @@ var exports = {
     materializeStream("WriteStream", value);
   },
   get FileReadStream() {
-    return materializeStream("FileReadStream", require("internal/fs/streams").ReadStream);
+    return materializeStream("FileReadStream", readStream());
   },
   set FileReadStream(value) {
     materializeStream("FileReadStream", value);

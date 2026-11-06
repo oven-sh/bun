@@ -1,6 +1,6 @@
 const { kInternalSocketData, serverSymbol } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
-const { Duplex } = require("internal/stream");
+const Duplex = require("internal/streams/duplex");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {

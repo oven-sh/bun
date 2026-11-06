@@ -71,8 +71,9 @@ export function getStdioWriteStream(
     });
     stream._type = "tty";
   } else {
-    const fs = require("node:fs");
-    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+    // The class itself, not fs.WriteStream: the stream does not load node:fs.
+    const { WriteStream } = require("internal/fs/streams");
+    stream = new WriteStream(null, { autoClose: false, fd, $fastPath: true });
     stream.readable = false;
     stream._type = "fs";
 

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d0db488b007e89d3a4d2860862da8f1fab686ae43d22ed1d97780059237bfbb2.
+// Written against that file with the SHA-256 2adac2eb2901568a81275c802d8395a0e73ab46ff797da103cfaa1bd84e760ee.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");

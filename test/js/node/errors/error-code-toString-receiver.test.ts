@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect, type AddressInfo } from "node:net";
+import { join } from "node:path";
 import { setTimeout as sleepWithSignal } from "node:timers/promises";
 
 // Errors with a Node `code` get their prototype, including `toString`, from the native
@@ -77,14 +78,15 @@ describe("node error toString()", () => {
   });
 });
 
-// Node defines the `name [code]: message` toString() on the NodeError classes that makeNodeErrorWithCode makes, and on no other error with a `code`:
+// Node defines the `name [code]: message` toString() on the NodeError classes that makeNodeErrorWithCode makes:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L462-L464
+// The errors below are of no such class in Node.
 describe("an error that is no NodeError in Node inherits Error.prototype.toString", () => {
   function expectInheritedToString(err: any) {
     expect(err).toBeInstanceOf(Error);
+    expect(String(err)).toBe(`${err.name}: ${err.message}`);
     expect(err.toString).toBe(Error.prototype.toString);
     expect(Object.hasOwn(Object.getPrototypeOf(err), "toString")).toBe(false);
-    expect(String(err)).toBe(`${err.name}: ${err.message}`);
     // The first line of the stack never had the code.
     expect(err.stack.split("\n")[0]).toBe(String(err));
   }
@@ -200,6 +202,49 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       prototypeHasToString: false,
     };
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // Such an error is a plain error that gets a `code`: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L143-L167
+  test.concurrent("the errors that Node throws from native code", async () => {
+    // --no-addons is for ERR_DLOPEN_DISABLED.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", join(import.meta.dir, "error-code-toString-fixture.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = [
+      ["ERR_CLOSED_MESSAGE_PORT", "Error"],
+      ["ERR_CONSTRUCT_CALL_INVALID", "TypeError"],
+      ["ERR_CRYPTO_INVALID_AUTH_TAG", "TypeError"],
+      ["ERR_CRYPTO_INVALID_CURVE", "TypeError"],
+      ["ERR_CRYPTO_INVALID_IV", "TypeError"],
+      ["ERR_CRYPTO_INVALID_KEYLEN", "RangeError"],
+      ["ERR_CRYPTO_INVALID_KEYPAIR", "RangeError"],
+      ["ERR_CRYPTO_INVALID_KEYTYPE", "RangeError"],
+      ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", "RangeError"],
+      ["ERR_CRYPTO_JWK_UNSUPPORTED_CURVE", "Error"],
+      ["ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE", "Error"],
+      ["ERR_CRYPTO_UNKNOWN_CIPHER", "Error"],
+      ["ERR_CRYPTO_UNKNOWN_DH_GROUP", "Error"],
+      ["ERR_CRYPTO_UNSUPPORTED_OPERATION", "Error"],
+      ["ERR_DLOPEN_DISABLED", "Error"],
+      ["ERR_INVALID_OBJECT_DEFINE_PROPERTY", "TypeError"],
+      ["ERR_LOAD_SQLITE_EXTENSION", "Error"],
+      ["ERR_OSSL_EVP_INVALID_DIGEST", "Error"],
+      ["ERR_SCRIPT_EXECUTION_TIMEOUT", "Error"],
+      ["ERR_SQLITE_ERROR", "Error"],
+      ["ERR_SSL_NO_CIPHER_MATCH", "Error"],
+      ["ERR_TLS_INVALID_PROTOCOL_METHOD", "TypeError"],
+      ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
+      ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
+    ].map(([code, name]) => JSON.stringify({ code, name, string: "name: message", inheritsToString: true }));
+    expect({ lines: stdout.trimEnd().split(/\r?\n/), stderr, exitCode }).toEqual({
+      lines: expected,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("a NodeError keeps `name [code]: message`", () => {

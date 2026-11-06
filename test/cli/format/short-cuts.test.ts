@@ -4318,6 +4318,67 @@ describe("JavaScript that is deep, long or full of comments", () => {
         .concat([513, 3000].flatMap(count => rows(beyondAscii, count))),
       [[]],
     ));
+
+  // What is asked about every item of a list, every comment of a row or every token of a line is not answered by going through the list, the row or the line.
+  // A row has the name of the file, what stands before the unit, the unit, what stands behind it, how many units the shorter text has, and flags. A unit "a¦b¦c" is a
+  // nest: so many times "a", then "b", then so many times "c". With these numbers the longer text took 12 to 16 times as long as the shorter one, between 0.3 s and 2 s in a
+  // release build, when the time grew with the square of the length.
+  type Shape = [name: string, before: string, unit: string, after: string, count: number, flags?: string[]];
+  const textOf = ([, before, unit, after]: Shape, count: number) => {
+    const [open, middle, close] = unit.includes("¦") ? unit.split("¦") : [unit, "", ""];
+    return before + open.repeat(count) + middle + close.repeat(count) + after;
+  };
+  const shapes: Shape[] = [
+    // whether TypeScript without a name is tried with JSX first
+    ["a.vue", '<script lang="ts">\nx = \'', "</b>", "';\n</script>\n", 5000],
+    ["a.vue", '<script lang="ts">\n// ', "<a/> ", "\n</script>\n", 4000],
+  ];
+  describe("four times the text takes about four times as long", () => {
+    test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {
+      const [name, , , , count, flags = []] = shape;
+      const short = Math.ceil(count / (isDebug || isASAN ? 2 : 1));
+      using dir = tempDir("format-short-cuts", {
+        [`1/${name}`]: textOf(shape, short),
+        [`4/${name}`]: textOf(shape, 4 * short),
+      });
+      const cpu = async (file: string) => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "fmt",
+            "--check",
+            "--no-config",
+            "--no-editorconfig",
+            "--log-level=silent",
+            "--threads=1",
+            ...flags,
+            file,
+          ],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        await proc.exited;
+        // (Windows counts in ticks of 1/64 s)
+        return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+      };
+      expect((await cpu(`4/${name}`)) / (await cpu(`1/${name}`))).toBeLessThan(8);
+    });
+  });
+  describe("the same shapes, short", () => {
+    for (const name of new Set(shapes.map(shape => shape[0]))) {
+      describe(name, () =>
+        expectSame(
+          name,
+          shapes
+            .filter(shape => shape[0] === name)
+            .flatMap(shape => [1, 2, 3, 4, 40].map(count => textOf(shape, count))),
+          [[], ["--print-width=20"]],
+        ),
+      );
+    }
+  });
 });
 
 describe("JavaScript and TypeScript in a host", () => {

@@ -2567,6 +2567,180 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect([written.exitCode, same.exitCode, other.exitCode]).toEqual([0, 0, 1]);
   });
 
+  test("of a DOMException holds its name and its message, and fails when either is another", async () => {
+    using dir = tempDir("snapshot-domexception", {
+      "a.test.js": `
+          const error = () => new DOMException(process.env.ERROR_MESSAGE, process.env.ERROR_NAME);
+          test("alone", () => {
+            expect(error()).toMatchSnapshot();
+          });
+          test("inside", () => {
+            const real = new RangeError(process.env.ERROR_MESSAGE);
+            expect({ error: error(), real, list: [error()], sample: expect.objectContaining(error()) }).toMatchSnapshot();
+            expect(new Map([["key", error()]])).toMatchSnapshot();
+            expect(new Set([error()])).toMatchSnapshot();
+          });
+          test("made by the runtime", () => {
+            let thrown;
+            try { atob("***"); } catch (error) { thrown = error; }
+            expect(thrown).toMatchSnapshot();
+            expect(AbortSignal.abort().reason).toMatchSnapshot();
+          });
+        `,
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    const run = (CI: string, ERROR_MESSAGE: string, ERROR_NAME: string) =>
+      runTests(String(dir), { CI, ERROR_MESSAGE, ERROR_NAME });
+
+    const written = await run("false", "a", "DataError");
+    const stored = snap();
+    expect(stored).toBe(
+      headers.bun +
+        "\nexports[`alone 1`] = `[DataError: a]`;\n" +
+        "\nexports[`inside 1`] = `\n" +
+        '{\n  "error": [DataError: a],\n  "list": [\n    [DataError: a],\n  ],\n  "real": [RangeError: a],\n' +
+        '  "sample": ObjectContaining [DataError: a],\n}\n`;\n' +
+        '\nexports[`inside 2`] = `\nMap {\n  "key" => [DataError: a],\n}\n`;\n' +
+        "\nexports[`inside 3`] = `\nSet {\n  [DataError: a],\n}\n`;\n" +
+        // Not the path, the line and the column of the call that threw, which are its own properties.
+        "\nexports[`made by the runtime 1`] = `[InvalidCharacterError: The string contains invalid characters.]`;\n" +
+        "\nexports[`made by the runtime 2`] = `[AbortError: The operation was aborted.]`;\n",
+    );
+
+    const same = await run("true", "a", "DataError");
+    const otherMessage = await run("true", "b", "DataError");
+    const otherName = await run("true", "a", "AbortError");
+    expect(otherMessage.stderr).toContain("Expected: [DataError: a]\nReceived: [DataError: b]\n");
+    expect(otherName.stderr).toContain("Expected: [DataError: a]\nReceived: [AbortError: a]\n");
+    expect(snap()).toBe(stored);
+    expect(
+      [written, same, otherMessage, otherName].map(({ pass, fail, exitCode }) => ({ pass, fail, exitCode })),
+    ).toEqual([
+      { pass: 3, fail: 0, exitCode: 0 },
+      { pass: 3, fail: 0, exitCode: 0 },
+      { pass: 1, fail: 2, exitCode: 1 },
+      { pass: 1, fail: 2, exitCode: 1 },
+    ]);
+  });
+
+  test("of a DOMException passes when it is what an older Bun wrote, for any name and message, until --update-snapshots", async () => {
+    const file = (alone: string, subclass: string) => `
+        class Subclass extends DOMException {
+          constructor(message) {
+            super(message, "SubclassError");
+            this.own = 1;
+          }
+        }
+        const error = () => new DOMException(process.env.ERROR_MESSAGE, "DataError");
+        test("in a file", () => {
+          expect(error()).toMatchSnapshot();
+          expect({ error: error(), list: [error()] }).toMatchSnapshot();
+          expect(new Subclass(process.env.ERROR_MESSAGE)).toMatchSnapshot();
+        });
+        test("inline", () => {
+          expect(error()).toMatchInlineSnapshot(\`${alone}\`);
+          expect(new Subclass(process.env.ERROR_MESSAGE)).toMatchInlineSnapshot(\`${subclass}\`);
+        });
+      `;
+    const snap = (alone: string, subclass: string) =>
+      headers.bun +
+      `\nexports[\`in a file 1\`] = \`${alone}\`;\n` +
+      `\nexports[\`in a file 2\`] = \`\n{\n  "error": ${alone},\n  "list": [\n    ${alone},\n  ],\n}\n\`;\n` +
+      `\nexports[\`in a file 3\`] = \`${subclass}\`;\n`;
+    // Bun 1.4.4 wrote these. It printed the own properties, and the name and the message are none of them.
+    const older = ["DOMException {}", 'DOMException \nSubclass {\n  "own": 1,\n}\n'] as const;
+    const now = ["[DataError: a]", "[SubclassError: a]"] as const;
+
+    using dir = tempDir("snapshot-domexception-older-bun", {
+      "a.test.js": file(...older),
+      "__snapshots__/a.test.js.snap": snap(...older),
+      // With the path, the line and the column of the call that threw, so it only ever passed where it was written.
+      "runtime.test.js": `
+          test("made by the runtime", () => {
+            let thrown;
+            try { atob("***"); } catch (error) { thrown = error; }
+            const { line, column, sourceURL, stack } = thrown;
+            expect(thrown).toMatchInlineSnapshot(
+              'DOMException \\nDOMException {\\n  "column": ' + column + ',\\n  "line": ' + line + ',\\n' +
+                '  "sourceURL": "' + sourceURL + '",\\n  "stack": \\n"' + stack + '"\\n,\\n}\\n',
+            );
+          });
+        `,
+    });
+    const contents = () =>
+      ["a.test.js", join("__snapshots__", "a.test.js.snap")].map(name => readFileSync(join(String(dir), name), "utf8"));
+    const run = (ERROR_MESSAGE: string, ...args: string[]) =>
+      runTests(String(dir), { CI: "true", ERROR_MESSAGE }, ...args);
+
+    const stale = await run("b");
+    expect({ pass: stale.pass, stderr: stale.exitCode ? stale.stderr : "" }).toEqual({ pass: 3, stderr: "" });
+    expect(contents()).toEqual([file(...older), snap(...older)]);
+
+    const first = await run("a", "--update-snapshots", "./a.test.js");
+    expect(contents()).toEqual([file(...now), snap(...now)]);
+    const second = await run("a", "--update-snapshots", "./a.test.js");
+    const other = await run("b", "./a.test.js");
+    expect(contents()).toEqual([file(...now), snap(...now)]);
+    expect([first, second, other].map(({ pass, fail, exitCode }) => ({ pass, fail, exitCode }))).toEqual([
+      { pass: 2, fail: 0, exitCode: 0 },
+      { pass: 2, fail: 0, exitCode: 0 },
+      { pass: 0, fail: 2, exitCode: 1 },
+    ]);
+  });
+
+  test("of a DOMException reads its name and its message once, and is otherwise as before", async () => {
+    const { log, stderr, exitCode } = await logOf({
+      "a.test.js": `
+          const error = () => new DOMException("a", "DataError");
+          const reads = [];
+          class Counted extends DOMException {
+            get name() { reads.push("name"); return "CountedError"; }
+            get message() { reads.push("message"); return "counted"; }
+          }
+          test("reads once, and not again for what an older Bun wrote", () => {
+            expect(new Counted()).toMatchSnapshot();
+            expect(reads.splice(0)).toEqual(["name", "message"]);
+            expect(new Counted()).toMatchSnapshot();
+            expect(reads.splice(0)).toEqual(["name", "message"]);
+          });
+          test("as Error.prototype.toString() joins the two", () => {
+            expect([new DOMException(), new DOMException("a"), new DOMException("", "AbortError")]).toMatchSnapshot();
+          });
+          test("its own properties are not printed, as for an Error", () => {
+            expect(Object.assign(error(), { cause: new RangeError("inner"), own: 1 })).toMatchSnapshot();
+          });
+          test("its prototype is no DOMException", () => {
+            let message;
+            try { expect(DOMException.prototype).toMatchSnapshot(); } catch (error) { message = error.message; }
+            expect(message).toContain('"ABORT_ERR": 20,');
+          });
+          test("a failure message does not print what the comparison does not read", () => {
+            let message;
+            try { expect({ error: error(), n: 1 }).toEqual({ error: new DOMException("b", "AbortError"), n: 2 }); } catch (error) { message = error.message; }
+            expect(message).toContain('"error": DOMException {},');
+          });
+          test("a property matcher for its message is checked and not stored", () => {
+            expect(error()).toMatchSnapshot({ message: expect.any(String) });
+            expect(() => expect(error()).toMatchSnapshot({ message: expect.any(Number) })).toThrow();
+          });
+          test("a serializer is asked first", () => {
+            expect.addSnapshotSerializer({ test: value => value instanceof DOMException, serialize: value => "serialized " + value.name });
+            expect({ error: error() }).toMatchSnapshot();
+          });
+        `,
+      "__snapshots__/a.test.js.snap":
+        headers.bun +
+        "\nexports[`reads once, and not again for what an older Bun wrote 1`] = `[CountedError: counted]`;\n" +
+        "\nexports[`reads once, and not again for what an older Bun wrote 2`] = `Counted {}`;\n" +
+        "\nexports[`as Error.prototype.toString() joins the two 1`] = `\n[\n  [Error],\n  [Error: a],\n  [AbortError],\n]\n`;\n" +
+        "\nexports[`its own properties are not printed, as for an Error 1`] = `[DataError: a]`;\n" +
+        "\nexports[`its prototype is no DOMException 1`] = `other`;\n" +
+        "\nexports[`a property matcher for its message is checked and not stored 1`] = `[DataError: a]`;\n" +
+        '\nexports[`a serializer is asked first 1`] = `\n{\n  "error": serialized DataError,\n}\n`;\n',
+    });
+    expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+  });
+
   test("keeps its message whatever runs when the value is printed as an older Bun did", async () => {
     const { log, stderr, exitCode } = await logOf({
       "a.test.js": `

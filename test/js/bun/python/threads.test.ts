@@ -595,6 +595,64 @@ print(got)
   expect(exitCode).toBe(0);
 });
 
+it("cyclic garbage of one class that two threads have made goes to each its own", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "m.py": `
+import threading
+
+by = {}
+class D:
+    def __init__(self): self.maker = threading.current_thread().name
+    def __del__(self):
+        key = "%s's by %s" % (self.maker, threading.current_thread().name)
+        by[key] = by.get(key, 0) + 1
+def pair():
+    a = D()
+    b = D()
+    a.other = b
+    b.other = a
+def deep(n):
+    return deep(n - 1) + 1 if n else 0
+stop = threading.Event()
+ready = threading.Event()
+def work():
+    pair()
+    deep(50)
+    ready.set()
+    stop.wait()
+thread = threading.Thread(target=work, name="the other")
+
+def make():
+    thread.start()
+    ready.wait()
+    for _ in range(100):
+        pair()
+    deep(50)
+def report():
+    # (No instance is left, so the engine's record of their shape has died with them.)
+    for _ in range(10000000):
+        if sum(by.values()) >= 202:
+            break
+    stop.set()
+    thread.join()
+    return str(sorted(by.items()))
+`,
+      "main.js": `
+const { make, report } = await import("./m.py");
+make();
+// A collection of the engine's own: it hands out, each finalizer to the thread that made the object.
+Bun.gc(true);
+console.log(report());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`[("MainThread's by MainThread", 200), ("the other's by the other", 2)]\n`);
+  expect(exitCode).toBe(0);
+});
+
 it("a thread that ran Python in a realm that is gone starts it again with a state of its own", async () => {
   // The states of the threads go with the last runtime of the VM. Here strings get their memory before Python starts again.
   const { stdout, stderr, exitCode } = await run(

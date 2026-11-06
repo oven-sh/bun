@@ -2235,6 +2235,13 @@ class Test extends Bar {
         expect(print(star, options)).toBe('import"./m";\nvar M;\n((M) => M.x = 1)(M ||= {});\n');
         expect(print(named, options)).toBe('import { real } from "./m";\nvar M;\n((M) => M.x = real)(M ||= {});\n');
         expect(new Bun.Transpiler(options).scanImports(star)).toEqual([{ kind: "import-statement", path: "./m" }]);
+        // The same where only code that never runs names the alias.
+        expect(
+          print(
+            `import * as n from "./m";\nnamespace M { import V = n.v; if (false) emit(V); export const x = 1; }`,
+            options,
+          ),
+        ).toBe('import"./m";\nvar M;\n((M) => M.x = 1)(M ||= {});\n');
       });
 
       it("goes before a `using` of its list is lowered", () => {

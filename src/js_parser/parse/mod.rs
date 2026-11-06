@@ -860,7 +860,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+            // "for (using of xs)" iterates the identifier "using"; "for (using of = x;;)" declares "of"
+            if p.lexer.token == T::TIdentifier
+                && !p.lexer.has_newline_before
+                && (!opts.is_for_loop_init
+                    || p.lexer.raw() != b"of"
+                    || p.next_token_matches(|p| {
+                        p.lexer.token == T::TEquals
+                            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+                    }))
+            {
                 if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }

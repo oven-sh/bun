@@ -3968,6 +3968,10 @@ console.log(resolve.length)
           "function f() { let { a }; }",
           "var g = () => { var { a }; };",
           "class K { static { var { a }; } }",
+          // `of` on the next line starts a statement. Only the head of a loop continues with it.
+          "var [a]\nof;",
+          "let { a }\nof = 1;",
+          "{ var [a]\nof }",
         ];
         expect(errorsOfEach(sources)).toEqual(eachHas(sources, [missingInitializer]));
         expect(errorsOf("var { a }, [b];")).toEqual([missingInitializer, missingInitializer]);
@@ -3985,6 +3989,9 @@ console.log(resolve.length)
           "for (var { a } = {}, [b]; c; ) {}",
           "{ for (var { a }; c; ) {} }",
           "function f() { for (var { a }; c; ) {} }",
+          // A function body and a class body in the head are not the head.
+          "for (var f = function () { var [a]\nof }; ;) break;",
+          "for (var x = class { static { var [a]\nof } }; ;) break;",
         ];
         expect(errorsOfEach(sources)).toEqual(eachHas(sources, [missingInitializer]));
 
@@ -4000,6 +4007,20 @@ console.log(resolve.length)
 
         const usingSources = ["for (using x; c; ) {}", "async function f() { for (await using x; c; ) {} }"];
         expect(errorsOfEach(usingSources)).toEqual(eachHas(usingSources, ['The declaration "x" must be initialized']));
+      });
+
+      it("`for (using of xs)` stores to a variable named `using`", () => {
+        expectPrintedNoTrim("for (using of xs) {}", "for (using of xs) {}\n");
+        expectPrintedNoTrim(
+          "async function f() { for await (using of xs) {} }",
+          "async function f() {\n  for await (using of xs) {}\n}\n",
+        );
+        // `=`, or `:` in TypeScript, behind `of` makes it a declaration of `of`.
+        expectPrintedNoTrim("for (using of = f(); c; ) {}", "for (using of = f();c; ) {}\n");
+        ts.expectPrinted_("for (using of: T = f(); c; ) {}", "for (using of = f();c; ) {}");
+        expect(errorsOf("for (using of of xs) {}")).toEqual(['Expected ")" but found "xs"', "Unexpected )"]);
+        // Outside the head of a loop, `using of` always declares `of`.
+        expect(errorsOf("{ using of; }")).toEqual(['The declaration "of" must be initialized']);
       });
 
       it("the error is at the pattern", () => {

@@ -363,6 +363,9 @@ impl<'d> Printer<'d> {
                 return Ok(self.fits_text(measure, TextWidth::single(token.len() as u32)));
             }
             FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
+                if text.width == TextWidth::single(0) && text.len > 0 {
+                    return Ok(self.fits_text_without_width(measure));
+                }
                 return Ok(self.fits_text(measure, text.width));
             }
             FormatElement::LineSuffixBoundary => {
@@ -454,6 +457,23 @@ impl<'d> Printer<'d> {
             },
         }
         Ok(Fits::Maybe)
+    }
+
+    /// A text of combining marks or control characters. It has no column, but the blank before it has one, and is not
+    /// the same as a blank after it. oxfmt takes such a text for an empty one.
+    #[cold]
+    fn fits_text_without_width(&self, measure: &mut Measure<'d>) -> Fits {
+        if self.options.flavor.is_oxfmt() {
+            return Fits::Maybe;
+        }
+        measure.line_width += measure.pending_indent + usize::from(measure.pending_space);
+        measure.pending_indent = 0;
+        if measure.line_width > self.options.print_width {
+            return Fits::No;
+        }
+        measure.pending_space = false;
+        measure.is_space_element_pending = false;
+        Fits::Maybe
     }
 
     #[inline]

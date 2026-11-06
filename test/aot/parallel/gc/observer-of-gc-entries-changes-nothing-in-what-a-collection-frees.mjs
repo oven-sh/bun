@@ -25,12 +25,19 @@ function round(first) {
 const observer = new PerformanceObserver(() => {});
 let same = 0;
 let named = 0;
+let differs;
 for (let first = 1; first < 12; first++) {
+  // The same calls come before both rounds.
+  observer.observe({ type: "gc" });
+  observer.disconnect();
   const without = round(first);
   observer.observe({ type: "gc" });
   const observed = round(first);
   observer.disconnect();
   if (without === observed) same++;
+  else differs ??= without + " without an observer, " + observed + " with one";
   if (observed.slice(first, first + 5) === "#####") named++;
 }
 console.log(same, "rounds of 11 free the same with an observer;", named, "keep what has a name");
+if (differs) console.log("the first round that differs:", differs);
+if (same !== 11 || named !== 11) process.exitCode = 1;

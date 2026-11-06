@@ -76,7 +76,7 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 
 // TODO: it prints something else on arm64.
 const failsToday = isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : [];
-// Plain DelayFlowRules follows the ids of the table of built-ins, and with some tables that order does not find the call site (#47605).
+// Plain DelayFlowRules follows the ids of the table of built-ins, and with some tables that order does not find the call site.
 failsToday.push(
   "valueflow/modules/create-require-read-late-on-a-copy-of-node-module-returns-a-require-function-with-flow-rules-delayed.ir:6",
 );

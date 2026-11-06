@@ -707,8 +707,7 @@ describe.concurrent("require.cache", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      return JSON.parse(stdout);
+      return { result: JSON.parse(stdout), exitCode };
     }
 
     // The dependency has loaded, but the importer's load waits for a sibling.
@@ -761,8 +760,12 @@ describe.concurrent("require.cache", () => {
         `,
         "slow.mjs": ``,
       });
-      const result = await runMain(String(dir), { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
+      const { result, exitCode } = await runMain(String(dir), {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+      });
       expect(result).toEqual({ evaluated: 2, entry: 1, slow: 2, dep: 2 });
+      expect(exitCode).toBe(0);
     });
 
     // entry.mjs is evaluating when deleter.mjs runs, and dep.mjs is linked but
@@ -794,7 +797,9 @@ describe.concurrent("require.cache", () => {
           export const value = 1;
         `,
       });
-      expect(await runMain(String(dir))).toEqual({ evaluated: 2, entry: 1, dep: 2 });
+      const { result, exitCode } = await runMain(String(dir));
+      expect(result).toEqual({ evaluated: 2, entry: 1, dep: 2 });
+      expect(exitCode).toBe(0);
     });
 
     // The key is registered twice: evaluated as JavaScript, and fetching as text
@@ -834,7 +839,9 @@ describe.concurrent("require.cache", () => {
         "importer.mjs": `import text from "./a.mjs" with { type: "text" }; export default text;`,
         "importer2.mjs": `import text from "./a.mjs" with { type: "text" }; export default text;`,
       });
-      expect(await runMain(String(dir))).toEqual({ onLoadCalls: 1, importer: "text 1", importer2: "text 1" });
+      const { result, exitCode } = await runMain(String(dir));
+      expect(result).toEqual({ onLoadCalls: 1, importer: "text 1", importer2: "text 1" });
+      expect(exitCode).toBe(0);
     });
   });
 

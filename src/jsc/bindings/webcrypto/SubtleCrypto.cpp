@@ -737,6 +737,28 @@ static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params,
     return true;
 }
 
+void SubtleCrypto::PendingPromises::add(DeferredPromise* index, Ref<DeferredPromise>&& promise)
+{
+    JSC::Strong<JSC::Unknown> root { promise->globalObject()->vm(), promise->promise() };
+    m_entries.add(index, Entry { WTF::move(promise), WTF::move(root) });
+}
+
+RefPtr<DeferredPromise> SubtleCrypto::PendingPromises::get(DeferredPromise* index) const
+{
+    auto entry = m_entries.find(index);
+    return entry == m_entries.end() ? nullptr : entry->value.promise;
+}
+
+RefPtr<DeferredPromise> SubtleCrypto::PendingPromises::take(DeferredPromise* index)
+{
+    return m_entries.take(index).promise;
+}
+
+void SubtleCrypto::PendingPromises::remove(DeferredPromise* index)
+{
+    m_entries.remove(index);
+}
+
 RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto> weakThis)
 {
     if (weakThis)
@@ -1166,9 +1188,8 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
-// raw-public stands for raw where the key is public and raw-secret where it is secret. The ML
-// algorithms take the three formats themselves, and the other secret keys take raw-secret.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/webcrypto.js#L955-L1116
+// The formats that stand for raw in Node's importKeySync():
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/webcrypto.js#L955-L1107
 // Shared by importKey and unwrapKey; returns false after rejecting the promise.
 static bool aliasImportKeyFormat(CryptoAlgorithmIdentifier identifier, SubtleCrypto::KeyFormat& format, DeferredPromise& promise)
 {
@@ -1194,6 +1215,7 @@ static bool aliasImportKeyFormat(CryptoAlgorithmIdentifier identifier, SubtleCry
         alias = KeyFormat::RawSecret;
         break;
     default:
+        // The importKey() of the algorithm takes or refuses these itself.
         if (isAkpAlgorithm(identifier) || format == KeyFormat::RawSecret)
             return true;
         break;
@@ -1212,32 +1234,29 @@ static bool aliasImportKeyFormat(CryptoAlgorithmIdentifier identifier, SubtleCry
 static bool aliasExportKeyFormat(const CryptoKey& key, SubtleCrypto::KeyFormat& format, DeferredPromise& promise)
 {
     using KeyFormat = SubtleCrypto::KeyFormat;
-    if (!isAkpAlgorithm(key.algorithmIdentifier()) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
-        bool aliasesRawPublic = false;
-        switch (key.algorithmIdentifier()) {
-        case CryptoAlgorithmIdentifier::ECDSA:
-        case CryptoAlgorithmIdentifier::ECDH:
-        case CryptoAlgorithmIdentifier::Ed25519:
-        case CryptoAlgorithmIdentifier::X25519:
-            aliasesRawPublic = true;
+    if (isAkpAlgorithm(key.algorithmIdentifier()) || (format != KeyFormat::RawPublic && format != KeyFormat::RawSeed))
+        return true;
+
+    switch (key.algorithmIdentifier()) {
+    case CryptoAlgorithmIdentifier::ECDSA:
+    case CryptoAlgorithmIdentifier::ECDH:
+    case CryptoAlgorithmIdentifier::Ed25519:
+    case CryptoAlgorithmIdentifier::X25519:
+        if (format != KeyFormat::RawPublic)
             break;
-        default:
-            break;
-        }
-        if (format == KeyFormat::RawPublic && aliasesRawPublic) {
-            if (key.type() != CryptoKeyType::Public) {
-                promise.reject(InvalidAccessError, "Key must be a public key"_s);
-                return false;
-            }
-            format = KeyFormat::Raw;
-        } else {
-            auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s
-                                                                                                                 : "secret"_s;
-            promise.reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
+        if (key.type() != CryptoKeyType::Public) {
+            promise.reject(InvalidAccessError, "Key must be a public key"_s);
             return false;
         }
+        format = KeyFormat::Raw;
+        return true;
+    default:
+        break;
     }
-    return true;
+    auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s
+                                                                                                         : "secret"_s;
+    promise.reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
+    return false;
 }
 
 void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDataVariant&& keyDataVariant, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
@@ -1525,11 +1544,6 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         return;
     }
 
-    // unwrapKey re-uses the importKey machinery, so it needs the same
-    // raw-secret/raw-public aliasing that importKey applies.
-    if (!aliasImportKeyFormat(unwrappedKeyAlgorithm->identifier, format, promise.get()))
-        return;
-
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(unwrappedKeyAlgorithm->identifier);
     if (!importAlgorithm) [[unlikely]] {
         promise->reject(Exception { NotSupportedError });
@@ -1582,11 +1596,22 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
+                    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk
+                    if (jwk.kty.isNull()) {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(DataError, "Invalid wrapped JWK key"_s);
+                        return;
+                    }
                     normalizeJsonWebKey(jwk);
 
                     keyData = jwk;
                     break;
                 }
+                }
+
+                if (!aliasImportKeyFormat(importAlgorithm->identifier(), format, *promise)) {
+                    weakThis->m_pendingPromises.remove(index);
+                    return;
                 }
 
                 auto callback = [index, weakThis](CryptoKey& key) mutable {

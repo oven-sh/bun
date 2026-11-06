@@ -150,11 +150,6 @@ inline void importAkpKey(CryptoAlgorithmIdentifier identifier, const AkpAlgorith
 inline void exportAkpKey(CryptoAlgorithmIdentifier identifier, CryptoKeyFormat format, Ref<CryptoKey>&& key, CryptoAlgorithm::KeyDataCallback&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback)
 {
     const auto& akpKey = downcast<CryptoKeyAKP>(key.get());
-    String name = CryptoAlgorithmRegistry::singleton().name(identifier);
-    auto type = akpKey.type() == CryptoKeyType::Private ? "private"_s : "public"_s;
-    auto unableToExport = [&](ASCIILiteral formatName) {
-        exceptionCallback(NotSupportedError, makeString("Unable to export "_s, name, ' ', type, " key using "_s, formatName, " format"_s));
-    };
 
     KeyData result;
     switch (format) {
@@ -220,10 +215,8 @@ inline void exportAkpKey(CryptoAlgorithmIdentifier identifier, CryptoKeyFormat f
         break;
     }
     case CryptoKeyFormat::Raw:
-        unableToExport("raw"_s);
-        return;
     case CryptoKeyFormat::RawSecret:
-        unableToExport("raw-secret"_s);
+        exceptionCallback(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(identifier), ' ', akpKey.type() == CryptoKeyType::Private ? "private"_s : "public"_s, " key using "_s, format == CryptoKeyFormat::Raw ? "raw"_s : "raw-secret"_s, " format"_s));
         return;
     }
 

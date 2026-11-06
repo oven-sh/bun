@@ -197,6 +197,7 @@ static std::optional<uint32_t> exponentVectorToUInt32(const Vector<uint8_t>& exp
 
 static std::optional<std::pair<EvpPKeyPtr, EvpPKeyPtr>> generatePublicAndPrivateKey(unsigned modulusLength, const Vector<uint8_t>& publicExponent)
 {
+    // On a pool thread: the guard in SubtleCrypto::generateKey() does not cover its error queue.
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     auto exponent = convertToBigNumber(publicExponent);

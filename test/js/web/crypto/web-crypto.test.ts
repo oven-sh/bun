@@ -145,18 +145,20 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // With kty optional, a foreign object converts into an (empty-ish) JWK and
-    // rejects from the import algorithm itself.
-    it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
+    // "encrypt" is no usage of an ML-DSA key: the kty comes first.
+    it.each(["AES-GCM", "ML-DSA-44"])("rejects a wrapped JWK without kty for %s", async algorithm => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ foo: "bar" })));
       const err = await crypto.subtle
-        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, algorithm, true, ["encrypt"])
         .then(
           () => null,
           e => e,
         );
       expect(err).toBeInstanceOf(DOMException);
-      expect(err.name).toBe("DataError");
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "DataError",
+        message: "Invalid wrapped JWK key",
+      });
     });
 
     // Previously this promise never settled: the error thrown during
@@ -579,64 +581,65 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   it("raw-public stands for raw only for public keys, and raw-secret only for secrets", async () => {
     const generated = async (algorithm: AlgorithmIdentifier | webcrypto.EcKeyGenParams, usages: KeyUsage[]) => {
       const { publicKey } = (await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair;
-      return new Uint8Array(await crypto.subtle.exportKey("raw", publicKey));
+      return await crypto.subtle.exportKey("raw", publicKey);
     };
     const ecdsa = { name: "ECDSA", namedCurve: "P-256" };
     const ecdh = { name: "ECDH", namedCurve: "P-256" };
-    const rsa = { name: "RSA-OAEP", hash: "SHA-256" };
-    const cases: [string, AlgorithmIdentifier | webcrypto.EcKeyImportParams, Uint8Array, KeyUsage[], string][] = [
-      ["raw-public", ecdsa, await generated(ecdsa, ["sign", "verify"]), ["verify"], "public"],
-      ["raw-public", ecdh, await generated(ecdh, ["deriveBits"]), [], "public"],
-      ["raw-public", "Ed25519", await generated("Ed25519", ["sign", "verify"]), ["verify"], "public"],
-      ["raw-public", "X25519", await generated("X25519", ["deriveBits"]), [], "public"],
-      ["raw-secret", "HKDF", new Uint8Array(32), ["deriveBits"], "secret"],
-      ["raw-secret", "PBKDF2", new Uint8Array(32), ["deriveBits"], "secret"],
+    const cases: ["public" | "secret", AlgorithmIdentifier | webcrypto.EcKeyImportParams, ArrayBuffer, KeyUsage[]][] = [
+      ["public", ecdsa, await generated(ecdsa, ["sign", "verify"]), ["verify"]],
+      ["public", ecdh, await generated(ecdh, ["deriveBits"]), []],
+      ["public", "Ed25519", await generated("Ed25519", ["sign", "verify"]), ["verify"]],
+      ["public", "X25519", await generated("X25519", ["deriveBits"]), []],
+      ["secret", "HKDF", new ArrayBuffer(32), ["deriveBits"]],
+      ["secret", "PBKDF2", new ArrayBuffer(32), ["deriveBits"]],
     ];
-    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey", "unwrapKey"]);
-    const wrapped = async (keyData: Uint8Array) => {
-      const key = await crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
-      return await crypto.subtle.wrapKey("raw", key, kek, "AES-KW");
-    };
-    for (const [format, algorithm, keyData, usages, type] of cases) {
+    const gcm = { name: "AES-GCM", iv: new Uint8Array(12) };
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-GCM", false, ["encrypt", "unwrapKey"]);
+    for (const [type, algorithm, keyData, usages] of cases) {
       const extractable = type === "public";
-      const name = typeof algorithm === "string" ? algorithm : algorithm.name;
-      expect((await crypto.subtle.importKey(format as "raw", keyData, algorithm, extractable, usages)).type).toBe(type);
+      expect((await crypto.subtle.importKey(`raw-${type}`, keyData, algorithm, extractable, usages)).type).toBe(type);
 
-      const other = (format === "raw-public" ? "raw-secret" : "raw-public") as "raw";
+      const other = type === "public" ? "raw-secret" : "raw-public";
+      const name = typeof algorithm === "string" ? algorithm : algorithm.name;
       const error = { name: "NotSupportedError", message: `Unable to import ${name} using ${other} format` };
       await expect(crypto.subtle.importKey(other, keyData, algorithm, extractable, usages)).rejects.toMatchObject(
         error,
       );
-      // AES-KW takes whole 8-byte blocks, which leaves out the 65 bytes of a P-256 point.
-      if (keyData.length % 8 === 0) {
-        await expect(
-          crypto.subtle.unwrapKey(other, await wrapped(keyData), kek, "AES-KW", algorithm, extractable, usages),
-        ).rejects.toMatchObject(error);
-      }
+      const wrapped = await crypto.subtle.encrypt(gcm, kek, keyData);
+      await expect(
+        crypto.subtle.unwrapKey(other, wrapped, kek, gcm, algorithm, extractable, usages),
+      ).rejects.toMatchObject(error);
     }
-    for (const format of ["raw", "raw-public", "raw-secret", "raw-seed"]) {
-      await expect(crypto.subtle.importKey(format as "raw", new Uint8Array(32), rsa, false, [])).rejects.toMatchObject({
+    const rsa = { name: "RSA-OAEP", hash: "SHA-256" };
+    for (const format of ["raw", "raw-public", "raw-secret", "raw-seed"] as const) {
+      await expect(crypto.subtle.importKey(format, new Uint8Array(32), rsa, false, [])).rejects.toMatchObject({
         name: "NotSupportedError",
         message: `Unable to import RSA-OAEP using ${format} format`,
       });
     }
   });
 
+  it("unwrapKey unwraps the key before it refuses the format", async () => {
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["unwrapKey"]);
+    for (const [format, algorithm] of [
+      ["raw-secret", "Ed25519"],
+      ["raw-public", "HKDF"],
+      ["raw-seed", "Ed25519"],
+    ] as const) {
+      await expect(
+        crypto.subtle.unwrapKey(format, new Uint8Array(40), kek, "AES-KW", algorithm, false, []),
+      ).rejects.toMatchObject({ name: "OperationError" });
+    }
+  });
+
   it("exportKey and wrapKey report a key of the wrong type as an InvalidAccessError", async () => {
+    const gcm = { name: "AES-GCM", iv: new Uint8Array(12) };
     const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, false, ["wrapKey"]);
-    const both = async (format: string, key: CryptoKey) => {
-      const rejection = (promise: Promise<unknown>) =>
-        promise.then(
-          () => "resolved",
-          e => `${e.name}: ${e.message}`,
-        );
-      return [
-        await rejection(crypto.subtle.exportKey(format as "raw", key)),
-        await rejection(crypto.subtle.wrapKey(format as "raw", key, kek, { name: "AES-GCM", iv: new Uint8Array(12) })),
-      ];
+    const needs = async (type: "public" | "private", format: Exclude<webcrypto.KeyFormat, "jwk">, key: CryptoKey) => {
+      const error = { name: "InvalidAccessError", message: `Key must be a ${type} key` };
+      await expect(crypto.subtle.exportKey(format, key)).rejects.toMatchObject(error);
+      await expect(crypto.subtle.wrapKey(format, key, kek, gcm)).rejects.toMatchObject(error);
     };
-    const needsPublic = new Array(2).fill("InvalidAccessError: Key must be a public key");
-    const needsPrivate = new Array(2).fill("InvalidAccessError: Key must be a private key");
 
     const akp: [string, KeyUsage[]][] = [
       ["ML-DSA-44", ["sign", "verify"]],
@@ -644,10 +647,10 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     ];
     for (const [algorithm, usages] of akp) {
       const { publicKey, privateKey } = (await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair;
-      expect(await both("spki", privateKey)).toEqual(needsPublic);
-      expect(await both("raw-public", privateKey)).toEqual(needsPublic);
-      expect(await both("pkcs8", publicKey)).toEqual(needsPrivate);
-      expect(await both("raw-seed", publicKey)).toEqual(needsPrivate);
+      await needs("public", "spki", privateKey);
+      await needs("public", "raw-public", privateKey);
+      await needs("private", "pkcs8", publicKey);
+      await needs("private", "raw-seed", publicKey);
     }
 
     const rawPublic: [AlgorithmIdentifier | webcrypto.EcKeyGenParams, KeyUsage[]][] = [
@@ -658,7 +661,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     ];
     for (const [algorithm, usages] of rawPublic) {
       const { privateKey } = (await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair;
-      expect(await both("raw-public", privateKey)).toEqual(needsPublic);
+      await needs("public", "raw-public", privateKey);
     }
   });
 
@@ -674,6 +677,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
       expect(jwk.key_ops).toBeArray();
       await expect(crypto.subtle.importKey("jwk", jwk, algorithm, true, unsupported)).rejects.toMatchObject({
         name: "SyntaxError",
+        message: `Unsupported key usage for a ${algorithm} key`,
       });
     }
   });
@@ -1536,77 +1540,86 @@ it("RSA importKey with an unsupported usage names the algorithm", async () => {
 });
 
 describe("generateKey of an RSA key", () => {
-  const publicExponent = new Uint8Array([1, 0, 1]);
-  const script = (body: string) => `
-    const algorithm = modulusLength => ({ name: "RSA-PSS", modulusLength, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" });
-    ${body}`;
+  const rsa = (name: string, modulusLength: number) => ({
+    name,
+    modulusLength,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+  });
+  const run = async (script: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const rsa = ${rsa};\n${script}`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
 
   it.each([
     ["RSASSA-PKCS1-v1_5", ["sign", "verify"]],
     ["RSA-PSS", ["sign", "verify"]],
     ["RSA-OAEP", ["encrypt", "decrypt"]],
   ] satisfies [string, KeyUsage[]][])("%s returns before the key is made", async (name, usages) => {
-    const algorithm = { name, modulusLength: 1024, publicExponent, hash: "SHA-256" };
+    const algorithm = rsa(name, 1024);
     const promise = crypto.subtle.generateKey(algorithm, true, usages);
     expect(Bun.peek.status(promise)).toBe("pending");
     const { publicKey, privateKey } = await promise;
     expect(publicKey.type).toBe("public");
     expect(privateKey.type).toBe("private");
-    expect(privateKey.algorithm).toEqual({ ...algorithm, hash: { name: "SHA-256" } });
+    expect<object>(privateKey.algorithm).toEqual({ ...algorithm, hash: { name: "SHA-256" } });
     expect([...publicKey.usages, ...privateKey.usages].sort()).toEqual([...usages].sort());
   });
 
   it("rejects when the key cannot be made", async () => {
-    const promise = crypto.subtle.generateKey(
-      { name: "RSA-PSS", modulusLength: 8, publicExponent, hash: "SHA-256" },
-      true,
-      ["sign"],
-    );
+    const promise = crypto.subtle.generateKey(rsa("RSA-PSS", 8), true, ["sign"]);
     expect(Bun.peek.status(promise)).toBe("pending");
     await expect(promise).rejects.toMatchObject({ name: "OperationError" });
   });
 
   it.concurrent("keeps the process alive until the key is made", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        script(
-          `crypto.subtle.generateKey(algorithm(1024), true, ["sign"]).then(pair => console.log(pair.privateKey.type));`,
-        ),
-      ],
-      env: bunEnv,
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("private\n");
-    expect(exitCode).toBe(0);
+    expect(
+      await run(
+        `crypto.subtle.generateKey(rsa("RSA-PSS", 1024), true, ["sign"]).then(pair => console.log(pair.privateKey.type));`,
+      ),
+    ).toEqual({ stdout: "private\n", stderr: "", exitCode: 0 });
   });
 
   it.concurrent("a Worker can be terminated while it makes a key", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        script(`
-          const { Worker } = require("node:worker_threads");
-          const worker = new Worker(
-            'const algorithm = ' + algorithm + ';' +
-            'crypto.subtle.generateKey(algorithm(4096), true, ["sign"]);' +
-            'require("node:worker_threads").parentPort.postMessage("started");',
-            { eval: true },
-          );
-          worker.once("message", async message => {
-            await worker.terminate();
-            console.log(message, "and terminated");
-          });`),
-      ],
-      env: bunEnv,
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("started and terminated\n");
-    expect(exitCode).toBe(0);
+    expect(
+      await run(`
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          'crypto.subtle.generateKey((' + rsa + ')("RSA-PSS", 2048), true, ["sign"]);' +
+          'require("node:worker_threads").parentPort.postMessage("started");',
+          { eval: true },
+        );
+        worker.once("message", async message => {
+          await worker.terminate();
+          console.log(message, "and terminated");
+        });`),
+    ).toEqual({ stdout: "started and terminated\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe("an operation on the thread pool, in a ShadowRealm that nothing else holds", () => {
+  function start(operation: string, resolve: (outcome: string) => void) {
+    new ShadowRealm().evaluate(
+      `resolve => void ${operation}.then(() => resolve("settled"), error => resolve(error.name))`,
+    )(resolve);
+  }
+
+  it.each([
+    ["digest", `crypto.subtle.digest("SHA-256", new Uint8Array(32 << 20))`],
+    [
+      "generateKey",
+      `crypto.subtle.generateKey({ name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign"])`,
+    ],
+  ])("%s settles", async (_, operation) => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    start(operation, resolve);
+    Bun.gc(true);
+    expect(await promise).toBe("settled");
   });
 });
 

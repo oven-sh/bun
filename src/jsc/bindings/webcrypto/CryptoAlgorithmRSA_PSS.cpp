@@ -175,8 +175,7 @@ void CryptoAlgorithmRSA_PSS::importKey(CryptoKeyFormat format, KeyData&& data, c
         break;
     }
     default:
-        // Only raw reaches here: raw-secret/raw-public alias to raw and
-        // raw-seed is rejected by aliasImportKeyFormat before dispatch.
+        // Only raw reaches here: aliasImportKeyFormat rejects raw-secret, raw-public and raw-seed.
         exceptionCallback(NotSupportedError, "Unable to import RSA-PSS using raw format"_s);
         return;
     }

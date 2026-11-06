@@ -2,17 +2,16 @@
 # still suspended and can be gone on with.
 try: import sys
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: import sys')
-try: log = []
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: log = []')
+# (Each has a log of its own: what is still suspended when a function is done is closed whenever the collector finds it.)
 try:
-    def g():
+    def g(log):
         try:
             yield 0
             yield 1
             yield 2
         finally:
             log.append('finally')
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def g():')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def g(log):')
 try: F = []
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: F = []')
 try:
@@ -22,8 +21,9 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def grab(x):')
 try:
     def by_getframe():
-        del F[:], log[:]
-        first = next(grab(x) for x in g())
+        del F[:]
+        log = []
+        first = next(grab(x) for x in g(log))
         before = list(log)
         rest = next(F[0].f_locals['.0'])
         return first, before, rest, list(log)
@@ -37,8 +37,9 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def grab_further_down(x):')
 try:
     def by_f_back():
-        del F[:], log[:]
-        first = next(grab_further_down(x) for x in g())
+        del F[:]
+        log = []
+        first = next(grab_further_down(x) for x in g(log))
         before = list(log)
         rest = next(F[0].f_locals['.0'])
         return first, before, rest, list(log)
@@ -53,16 +54,18 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def grab_from_a_traceback(x):')
 try:
     def by_tb_frame():
-        del F[:], log[:]
-        first = next(grab_from_a_traceback(x) for x in g())
+        del F[:]
+        log = []
+        first = next(grab_from_a_traceback(x) for x in g(log))
         before = list(log)
         rest = next(F[0].f_locals['.0'])
         return first, before, rest, list(log)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def by_tb_frame():')
 try:
     def by_gi_frame():
-        del F[:], log[:]
-        e = (x for x in g())
+        del F[:]
+        log = []
+        e = (x for x in g(log))
         F.append(e.gi_frame)
         first = next(e)
         e.close()
@@ -70,16 +73,18 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def by_gi_frame():')
 try:
     def any_with_a_kept_frame():
-        del F[:], log[:]
-        found = any(grab(x) == 0 for x in g())
+        del F[:]
+        log = []
+        found = any(grab(x) == 0 for x in g(log))
         before = list(log)
         rest = next(F[0].f_locals['.0'])
         return found, before, rest, list(log)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def any_with_a_kept_frame():')
 try:
     def a_loop_with_a_kept_frame():
-        del F[:], log[:]
-        for first in (grab(x) for x in g()):
+        del F[:]
+        log = []
+        for first in (grab(x) for x in g(log)):
             break
         before = list(log)
         rest = next(F[0].f_locals['.0'])
@@ -87,30 +92,33 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def a_loop_with_a_kept_frame():')
 try:
     def a_search_with_a_kept_frame():
-        del F[:], log[:]
-        found = 0 in (grab(x) for x in g())
+        del F[:]
+        log = []
+        found = 0 in (grab(x) for x in g(log))
         before = list(log)
         rest = next(F[0].f_locals['.0'])
         return found, before, rest, list(log)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def a_search_with_a_kept_frame():')
 try:
     def a_tracer_that_keeps_nothing():
-        del F[:], log[:]
+        del F[:]
+        log = []
         seen = []
         def trace(frame, event, argument):
             seen.append((frame.f_code.co_name, event))
             return None
         sys.settrace(trace)
         try:
-            first = next(x for x in g())
+            first = next(x for x in g(log))
         finally:
             sys.settrace(None)
         return first, list(log), seen
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def a_tracer_that_keeps_nothing():')
 try:
     def nobody_keeps_it():
-        del F[:], log[:]
-        first = next(x for x in g())
+        del F[:]
+        log = []
+        first = next(x for x in g(log))
         return first, list(log)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def nobody_keeps_it():')
 try:

@@ -1070,6 +1070,150 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 });
 
+// A matcher that settles asks the runner for a step, which can run after other code of the same callback. The step reads
+// no clock: only the runner's timer, by the clock of its fire, times out a test or a wait of the runner.
+describe.concurrent("a matcher that settles does not time out what still runs", () => {
+  // Milliseconds. The files hold the thread with Bun.sleepSync(), as slow synchronous code does.
+  const short = 250; // the limit of an earlier test
+  const limit = 1000; // the limit of the test in question, and --timeout for the wait after a file's tests
+  const over = limit + 100;
+  const [due1, due2] = [300, 350]; // timers that are due in this order, both after `short`
+  const body = 450; // a body holds the thread this long, so that `short` and the timers are all due in one timer pass
+  const holds = `
+    const holdUntil = end => {
+      while (performance.now() < end) Bun.sleepSync(Math.max(1, end - performance.now()));
+    };
+    const hold = ms => holdUntil(performance.now() + ms);
+    // When the body of the test in question began. Its limit has passed at \`start + ${over}\`.
+    let start;
+    let resolve;
+    const settles = new Promise(r => { resolve = r; });
+  `;
+  const passes = async (results: string[], source: string, ...flags: string[]) => {
+    const { stderr, exitCode } = await run(["test", ...flags], { "a.test.js": prelude + holds + source });
+    expect({
+      results: stderr.match(/^\((pass|fail)\) \w+/gm),
+      errors: stderr.match(/^error: .*/gm) ?? [],
+      exitCode,
+    }).toEqual({ results, errors: [], exitCode: 0 });
+  };
+
+  test("a concurrent test whose own code holds the thread after it awaited the matcher", async () => {
+    await passes(
+      ["(pass) other", "(pass) a"],
+      `
+      test.concurrent("other", () => {});
+      test.concurrent("a", async () => {
+        start = performance.now();
+        await later(0, 50);
+        await expect(Promise.resolve(1).then(value => value)).resolves.toBe(1);
+        holdUntil(start + ${over});
+      }, ${limit});`,
+    );
+  });
+
+  test("a concurrent test that ends in the turn in which another test's matcher settles, and then holds the thread", async () => {
+    await passes(
+      ["(pass) a", "(pass) b"],
+      `
+      test.concurrent("a", async () => {
+        await later(0, 20);
+        await expect(settles).resolves.toBe(1);
+      }, ${10 * limit});
+      test.concurrent("b", done => {
+        start = performance.now();
+        let chain = settles;
+        for (let i = 0; i < 12; i++) chain = chain.then(value => value);
+        chain.then(() => {
+          done();
+          holdUntil(start + ${over});
+        });
+        setTimeout(() => resolve(1), 50);
+      }, ${limit});`,
+    );
+  });
+
+  // `rejects` is the example of docs/test/writing-tests.mdx, slow but inside its own limit. The timer of `b` was due in time.
+  const slowBeforeTheMatcher = `
+    const fetchUser = async id => {
+      await later(0, 50);
+      holdUntil(start + ${over});
+      throw new Error("User not found");
+    };
+    test("rejects", async () => {
+      await 0;
+      await expect(fetchUser("invalid-id")).rejects.toThrow("User not found");
+    }, ${10 * limit});
+    test("b", done => {
+      start = performance.now();
+      setTimeout(done, 100);
+    }, ${limit});`;
+
+  test("a concurrent test beside one that is slow before it awaits a matcher", async () => {
+    await passes(["(pass) rejects", "(pass) b"], slowBeforeTheMatcher.replaceAll("test(", "test.concurrent("));
+  });
+
+  test("a test beside one that is slow before it awaits a matcher, with --concurrent", async () => {
+    await passes(["(pass) rejects", "(pass) b"], slowBeforeTheMatcher, "--concurrent");
+  });
+
+  test("a test that ends in the turn in which a matcher outside a test settles, and then holds the thread", async () => {
+    await passes(
+      ["(pass) t"],
+      `
+      expect(settles).resolves.toBe(1);
+      test("t", done => {
+        start = performance.now();
+        setTimeout(() => {
+          resolve(1);
+          let chain = Promise.resolve();
+          for (let i = 0; i < 20; i++) chain = chain.then(() => {});
+          chain.then(() => {
+            done();
+            holdUntil(start + ${over});
+          });
+        }, 50);
+      }, ${limit});`,
+    );
+  });
+
+  // The runner's timer fires for the limit that `a` or `first` left behind. The matcher's promise settles from a timer
+  // that was due in time, behind a callback that holds the thread until the wait's limit has passed.
+  test("the wait of a concurrent group for a matcher that none of its tests awaits", async () => {
+    await passes(
+      ["(pass) a", "(pass) b"],
+      `
+      test.concurrent("a", () => {}, ${short});
+      test.concurrent("b", done => {
+        start = performance.now();
+        setTimeout(() => {
+          expect(settles).resolves.toBe(1);
+          setTimeout(() => holdUntil(start + ${over}), ${due1});
+          setTimeout(() => resolve(1), ${due2});
+          done();
+          hold(${body});
+        }, 10);
+      }, ${limit});`,
+    );
+  });
+
+  test("the wait of a file for a matcher outside a test", async () => {
+    await passes(
+      ["(pass) first", "(pass) second"],
+      `
+      expect(settles).resolves.toBe(1);
+      test("first", () => {}, ${short});
+      test("second", () => {
+        start = performance.now();
+        setTimeout(() => holdUntil(start + ${body + over}), ${due1});
+        setTimeout(() => resolve(1), ${due2});
+        hold(${body});
+      });`,
+      `--timeout=${limit}`,
+    );
+  });
+});
+
 describe.concurrent("matchers that have to wait for a promise", () => {
   test("toThrow() only treats the first error its function reports as the thrown one", async () => {
     const { report, exitCode, signalCode } = await runTests(`

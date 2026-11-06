@@ -8071,22 +8071,27 @@ try {
     const ordinary =
       "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
-      const run = (text: (index: number) => string) =>
-        format(
-          {
-            ...configuration,
-            ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
-          },
-          ["--check", "--log-level", "silent"],
-        );
-      const odd = await run(index => texts[index]);
-      const plain = await run(() => ordinary.repeat(length / ordinary.length));
-      // The ordinary code goes the quick way, which takes a third of the time of the long way. Most of the odd shapes are refused by
-      // it, and so pay for both ways. That makes 6.5 to 7.5 on Linux when all is well. A shape adds 1.7 for each second that it
-      // takes, so this sees one that takes many seconds and not one that takes 1.5 s where 0.1 s is right. Where everything goes the
-      // long way it is 2.3 to 3 on Linux and 8.3 on Windows, which is where the 40 comes from.
-      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 40 : 16);
+    const configurations = [{}, { ".oxfmtrc.json": "{}\n" }];
+    const run = (configuration: Record<string, string>, text: (index: number) => string) =>
+      format(
+        {
+          ...configuration,
+          ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
+        },
+        ["--check", "--log-level", "silent"],
+      );
+    // The ordinary code goes the quick way, which takes a third of the time, refuses most of the shapes, and isn't there
+    // in the flavor of oxfmt. The shapes are compared with the long way.
+    let plain = { cpu: 0 };
+    for (const configuration of configurations) {
+      const result = await run(configuration, () => ordinary.repeat(length / ordinary.length));
+      if (result.cpu > plain.cpu) plain = result;
+    }
+    for (const configuration of configurations) {
+      const odd = await run(configuration, index => texts[index]);
+      // 1.7 to 2.2 on Linux when all is well, and 8.3 on Windows where everything goes the long way. One shape that takes
+      // quadratic time adds 7 or more.
+      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
     }
   }, 120_000);
 

@@ -19,7 +19,7 @@ use bun_lint::ast::{
     TypeKind, TypeNode,
 };
 use bun_lint::span::{Span, Spanned};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 
 /// Prettier's `enclosingNode`, `precedingNode` and `followingNode`.
@@ -50,11 +50,15 @@ pub(super) struct AttachContext<'a, 'c> {
     pub(super) has_following_node: AnswerForAncestors,
 }
 
-/// Caches the last answer to a question about a node, where the answer is the same for its parent, its grandparent, and
-/// so on up to the node that decides it. `a()()()..` can be thousands of nested calls with a comment in each, so the
-/// walk up happens once for all of them instead of once for each.
+/// Caches the answers to a question about a node, where the answer is the same for its parent, its grandparent, and so
+/// on up to the node that decides it. `a()()()..` can be thousands of nested calls with a comment in each, so the walk
+/// up happens once for all of them instead of once for each.
+///
+/// Each entry is where a walk started last, where it ended, and the answer. An entry is inside the one before it:
+/// `a()(b()())(c()())..` asks about `a()(..)`, about `b()()`, and about `a()(..)(..)` again. Comments come in the order of
+/// the text, so an entry is dropped with the first question about a node that isn't inside it.
 #[derive(Default)]
-pub(super) struct AnswerForAncestors(Cell<Option<(Span, Span, bool)>>);
+pub(super) struct AnswerForAncestors(RefCell<Vec<(Span, Span, bool)>>);
 
 impl AnswerForAncestors {
     /// `step` returns the node's parent if it has the same answer, or else the answer.
@@ -63,21 +67,31 @@ impl AnswerForAncestors {
         start: T,
         step: impl Fn(T) -> Result<T, bool>,
     ) -> bool {
+        // `step` finds nothing here if it asks the same question.
+        let mut walks = self.0.take();
+        while walks
+            .pop_if(|(_, last, _)| !last.contains(start.span()))
+            .is_some()
+        {}
         let mut node = start;
-        let (last, answer) = loop {
+        let answer = loop {
             // A node that contains `first` and is inside `last` is on the cached path between them.
-            if let Some((first, last, answer)) = self.0.get()
-                && node.span().contains(first)
+            if let Some((first, last, answer)) = walks.last_mut()
+                && node.span().contains(*first)
                 && last.contains(node.span())
             {
-                break (last, answer);
+                *first = start.span();
+                break *answer;
             }
             match step(node) {
                 Ok(parent) => node = parent,
-                Err(answer) => break (node.span(), answer),
+                Err(answer) => {
+                    walks.push((start.span(), node.span(), answer));
+                    break answer;
+                }
             }
         };
-        self.0.set(Some((start.span(), last, answer)));
+        self.0.replace(walks);
         answer
     }
 }

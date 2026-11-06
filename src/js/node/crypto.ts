@@ -408,7 +408,9 @@ Object.assign(Hash.prototype, {
     return new Hash(this[kHandle], options);
   },
   _transform: function (this: $Node.Hash, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-    this[kHandle].update(undefined, chunk, encoding, false);
+    if (this[kHandle].update(undefined, chunk, encoding, false) === false) {
+      return callback($ERR_CRYPTO_HASH_UPDATE_FAILED("Hash update failed"));
+    }
     callback();
   },
   _flush: function (this: $Node.Hash, callback: DoneCallback) {
@@ -449,10 +451,7 @@ Object.assign(Hmac.prototype, {
   digest: function (this: $Node.Hmac, outputEncoding?: string) {
     return this[kHandle].digest(outputEncoding);
   },
-  _transform: function (this: $Node.Hmac, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-    this[kHandle].update(undefined, chunk, encoding, false);
-    callback();
-  },
+  _transform: Hash.prototype._transform,
   _flush: function (this: $Node.Hmac, callback: DoneCallback) {
     this.push(this[kHandle].digest());
     callback();
@@ -651,11 +650,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
       if (normalizedEncoding === undefined) {
         throw $ERR_UNKNOWN_ENCODING(encoding);
       }
-
-      // there's a test for this
-      // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/lib/internal/crypto/cipher.js#L100
-      // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/test/parallel/test-crypto-encoding-validation-error.js#L31
-      throw $ERR_INTERNAL_ASSERTION("Cannot change encoding");
+      throw $ERR_INVALID_ARG_VALUE("outputEncoding", encoding, `cannot be changed from '${decoder.encoding}'`);
     }
     return decoder;
   }
@@ -694,7 +689,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
       return this;
     },
     _transform: function (this: $Node.Cipher, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-      this.push(this[kHandle].update(chunk, encoding));
+      this.push(this[kHandle].update(chunk, encoding, false));
       callback();
     },
     _flush: function (this: $Node.Cipher, callback: DoneCallback) {

@@ -2748,18 +2748,19 @@ declare namespace $Node {
     verify(options: unknown, signature: CryptoData, signatureEncoding?: string): boolean;
   }
   interface NativeHash {
-    /** `throwIfFinalized` false: a chunk that comes after `digest()` is dropped, and the answer is `undefined`. */
+    /** `checked` false is for `_transform`: after `digest()` the answer is `false`, and hex may have an odd length. */
     update<T>(self: T, data: CryptoData, encoding?: string): T;
-    update<T>(self: T, data: CryptoData, encoding: string | undefined, throwIfFinalized: false): T | undefined;
+    update<T>(self: T, data: CryptoData, encoding: string | undefined, checked: false): T | false;
     digest(outputEncoding?: string | null, finalize?: boolean): Buffer | string;
   }
   interface NativeHmac {
     update<T>(self: T, data: CryptoData, encoding?: string): T;
-    update<T>(self: T, data: CryptoData, encoding: string | undefined, throwIfFinalized: false): T | undefined;
+    update<T>(self: T, data: CryptoData, encoding: string | undefined, checked: false): T | false;
     digest(outputEncoding?: string | null): Buffer | string;
   }
   interface NativeCipher {
-    update(data: CryptoData, inputEncoding?: string): Buffer;
+    /** `checked` false is for `_transform`: hex may have an odd length. */
+    update(data: CryptoData, inputEncoding?: string, checked?: false): Buffer;
     final(): Buffer;
     setAutoPadding(autoPadding?: boolean): void;
     getAuthTag(): Buffer;

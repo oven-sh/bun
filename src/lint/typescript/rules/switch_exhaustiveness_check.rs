@@ -20,13 +20,13 @@ pub struct SwitchExhaustivenessCheck {
     require_default_for_non_union: bool,
 }
 
-const ADD_MISSING_CASES: Message =
-    Message::new("addMissingCases", "Add branches for missing cases.");
-const DANGEROUS_DEFAULT_CASE: Message = Message::new(
+const ADD_MISSING_CASES: &Message =
+    &Message::new("addMissingCases", "Add branches for missing cases.");
+const DANGEROUS_DEFAULT_CASE: &Message = &Message::new(
     "dangerousDefaultCase",
     "The switch statement is exhaustive, so the default case is unnecessary.",
 );
-const SWITCH_IS_NOT_EXHAUSTIVE: Message = Message::new(
+const SWITCH_IS_NOT_EXHAUSTIVE: &Message = &Message::new(
     "switchIsNotExhaustive",
     "Switch is not exhaustive. Cases not matched: {{missingBranches}}",
 );

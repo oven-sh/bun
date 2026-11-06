@@ -10,7 +10,7 @@
 //! `getCandidateForOverloadFailure` in its checker.go. `getJsxNamespaceContainerForImplicitImport` mirrors TypeScript
 //! 7.1.
 
-use super::call::{CallLike, ExpectsReturn};
+use super::call::{CallLike, ExpectsReturn, ResolvedMeanwhile};
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
 use super::infer::Inference;
 use super::jsx::{JsxName, JsxReferenceKind};
@@ -18,7 +18,7 @@ use super::relate::Relation;
 use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{Parent, ScopeId};
-use crate::resolve::JsxEmit;
+use crate::resolve::{JsxEmit, Options};
 use crate::util::SharedSort;
 
 impl Checker<'_, '_> {
@@ -27,7 +27,7 @@ impl Checker<'_, '_> {
         if hir.jsx.is_empty() {
             return;
         }
-        let options = &self.p.files.options;
+        let options = self.module_options(file);
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.atoms();
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
@@ -40,8 +40,8 @@ impl Checker<'_, '_> {
         let runtime_is_missing =
             runtime.is_some_and(|spec| self.files().module_of_specifier(file, spec).is_none());
         let (factory, fragment_factory) = (
-            jsx_namespace(self.files(), self.atoms(), hir, false),
-            jsx_namespace(self.files(), self.atoms(), hir, true),
+            jsx_namespace(options, self.atoms(), hir, false),
+            jsx_namespace(options, self.atoms(), hir, true),
         );
         let names_fragment_factory = atoms.bytes(fragment_factory) != b"null";
         // `markJsxAliasReferenced`: an unresolved module is treated as if none were requested.
@@ -330,7 +330,7 @@ impl Checker<'_, '_> {
         // `checkGrammarJsxName`: a namespaced name `a:b` is lowered to a string. `IsIntrinsicJsxName` tests the
         // namespace.
         if matches!(
-            self.p.files.options.jsx,
+            self.module_options(file).jsx,
             JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
         ) && let ExprKind::String(name) = hir[jsx.tag].kind
         {
@@ -357,7 +357,7 @@ impl Checker<'_, '_> {
             // The parser places the `Missing` of `name={}` at the `{`.
             if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
                 let at = (file, hir[attr.value].pos, attr.end);
-                return self.grammar_error_at(at, 17000, &[]);
+                return self.early_grammar_error_at(at, 17000, &[]);
             }
         }
         false
@@ -438,11 +438,11 @@ impl Checker<'_, '_> {
                 ret: self.sig_return(fake_signature),
             };
             // As in `resolve_call`: expressions checked only to produce an error use the signature.
-            self.resolved_meanwhile.push((file, e, resolved));
+            self.push_resolved_meanwhile(file, e, resolved);
             let relation = Relation::Assignable;
             let at = Some(error_node);
             self.check_jsx_attributes_related_to(file, e, source, result, relation, at);
-            self.resolved_meanwhile.pop();
+            self.pop_resolved_meanwhile();
             if let Some(first) = hir.ids(jsx.type_args).next() {
                 let end = self.end_of_type_argument_list(file, jsx.type_args);
                 let args = [Arg::Number(0), Arg::Number(jsx.type_args.len())];
@@ -512,7 +512,7 @@ impl Checker<'_, '_> {
         // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` isn't resolved again. That state belongs to this
         // checker, so it's read from its own query stack. Like `anySignature` and `unknownSignature`, it has no
         // parameters.
-        let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
+        let is_this_element = |entry: &ResolvedMeanwhile| entry.file == file && entry.call == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
             && self.stack.contains(&Query::Call(file, e))
         {
@@ -676,7 +676,7 @@ impl Checker<'_, '_> {
             let args = [Arg::Bytes(&name), least, Arg::Bytes(&factory), most];
             let mut diagnostic = self.new_diagnostic(error_node, 6229, &args);
             // `getSymbolAtLocation(tagName).ValueDeclaration`
-            let declared = match hir[tag].kind {
+            let declared = match hir.checked_kind(tag) {
                 ExprKind::Ident(name) => self
                     .symbol_of_identifier(file, tag, name)
                     .filter(|&sym| self.files().flags(sym).intersects(SymFlags::VALUE))
@@ -764,7 +764,7 @@ impl Checker<'_, '_> {
         if ways.is_empty() {
             return None;
         }
-        let names = jsx_factory_entity(files, self.atoms(), hir, true);
+        let names = jsx_factory_entity(self.module_options(file), self.atoms(), hir, true);
         let scope = self
             .bound(file)
             .expr_scope
@@ -1096,8 +1096,7 @@ impl Checker<'_, '_> {
     /// `checkSpreadPropOverrides`: 2783 for a property that a later spread overwrites.
     pub(super) fn check_spread_overrides(&mut self, file: FileId, props: Span<PropId>) {
         let hir = self.hir(file);
-        if !self.p.files.options.strict_null_checks
-            || !props.iter().any(|p| hir[p].kind == PropKind::Spread)
+        if !self.reports_null_checks(file) || !props.iter().any(|p| hir[p].kind == PropKind::Spread)
         {
             return;
         }
@@ -1221,7 +1220,7 @@ impl Checker<'_, '_> {
 
 /// `getJsxNamespace`
 pub(super) fn jsx_namespace(
-    files: &Files,
+    options: &Options,
     atoms: Atoms<'_, '_>,
     hir: &hir::File,
     is_opening_fragment: bool,
@@ -1233,24 +1232,23 @@ pub(super) fn jsx_namespace(
         let text = if pragma.is_some() {
             atoms.bytes(pragma)
         } else {
-            &files.options.jsx_fragment_factory
+            &options.jsx_fragment_factory
         };
         if let Some(entity) = parse_isolated_entity_name(atoms, text) {
             return entity[0];
         }
     }
-    jsx_factory_entity(files, atoms, hir, !is_opening_fragment)[0]
+    jsx_factory_entity(options, atoms, hir, !is_opening_fragment)[0]
 }
 
 /// `getJsxFactoryEntity`, returned as its identifiers from left to right. If `is_local`, `localJsxFactory` is
 /// considered, which is the `@jsx` pragma if it parses.
 fn jsx_factory_entity(
-    files: &Files,
+    options: &Options,
     atoms: Atoms<'_, '_>,
     hir: &hir::File,
     is_local: bool,
 ) -> Vec<Atom> {
-    let options = &files.options;
     let pragma = hir.jsx_pragmas.factory;
     if is_local
         && pragma.is_some()
@@ -1279,9 +1277,9 @@ fn text_of<'a>(hir: &'a hir::File<'_>, start: u32, end: u32) -> &'a [u8] {
     &hir.text[start as usize..end as usize]
 }
 
-/// True if the `child` of an element is `JsxText`: a string that isn't in braces.
+/// True if the `child` of an element is `JsxText`.
 fn is_jsx_text(hir: &hir::File, child: ExprId) -> bool {
-    matches!(hir[child].kind, ExprKind::String(_)) && jsx_expression_around(hir, child).is_none()
+    matches!(hir[child].kind, ExprKind::JsxText(_))
 }
 
 /// The span of the `child` of an element, including its braces if it has any.
@@ -1311,7 +1309,7 @@ fn get_elaboration_element_for_jsx_child(
     let inner_expression = match hir[child].kind {
         // `{}`
         ExprKind::Missing => ExprId::NONE,
-        ExprKind::String(_) if is_text => ExprId::NONE,
+        ExprKind::JsxText(_) => ExprId::NONE,
         // `{...x}`
         ExprKind::Spread(x) => x,
         _ => child,

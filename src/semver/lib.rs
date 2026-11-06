@@ -159,6 +159,7 @@ pub mod external_string {
         pub value: String,
         pub hash: u64,
     }
+    bun_core::impl_pod!(ExternalString);
 
     impl ExternalString {
         #[inline]
@@ -229,6 +230,7 @@ pub mod semver_string {
         /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
         pub bytes: [u8; String::MAX_INLINE_LEN],
     }
+    bun_core::impl_pod!(String);
 
     impl fmt::Debug for String {
         // Buffer-relative `String` cannot be sliced without its arena, so debug

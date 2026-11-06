@@ -5,7 +5,7 @@ use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
-use super::expect::JSValueTestExt as _;
+use super::pretty_format::JestPrettyFormat;
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
 /// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
@@ -17,6 +17,7 @@ pub(crate) struct DiffFormatter<'a> {
 }
 
 impl<'a> DiffFormatter<'a> {
+    #[optimize(size)]
     pub(crate) fn new(
         global_this: &JSGlobalObject,
         received: JSValue,
@@ -24,9 +25,9 @@ impl<'a> DiffFormatter<'a> {
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
         let mut received_buf: Vec<u8> = Vec::new();
-        received.jest_snapshot_pretty_format(&mut received_buf, global_this)?;
+        JestPrettyFormat::print_in_diff(global_this, received, &mut received_buf)?;
         let mut expected_buf: Vec<u8> = Vec::new();
-        expected.jest_snapshot_pretty_format(&mut expected_buf, global_this)?;
+        JestPrettyFormat::print_in_diff(global_this, expected, &mut expected_buf)?;
         Ok(DiffFormatter {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),
@@ -54,6 +55,7 @@ fn trim_one_newline(mut buf: Vec<u8>) -> Vec<u8> {
 }
 
 impl<'a> fmt::Display for DiffFormatter<'a> {
+    #[optimize(size)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());

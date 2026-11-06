@@ -160,7 +160,9 @@ impl Route {
         Self::on_any_request(this, req, resp, true);
     }
 
+    #[inline(never)]
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
@@ -465,7 +467,7 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                completion_task.log.clone_to_with_recycled(&mut log, true);
+                completion_task.log.append_to(&mut log);
                 self.set_build_error(server, log);
             }
             BundleV2Result::Value(bundle) => 'bundle: {

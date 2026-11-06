@@ -30,6 +30,7 @@ use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
 use core::cell::Cell;
 use core::fmt;
+use core::ops::ControlFlow;
 use std::sync::atomic::Ordering;
 
 use bun_sys::{self, Fd};
@@ -53,7 +54,6 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ShellErr, ast};
 
 bun_core::declare_scope!(SHELL, visible);
-bun_core::declare_scope!(CowFd, hidden);
 
 /// `log!("...")` — scoped debug logger for the shell interpreter. Expands to
 /// nothing in release; the `SHELL` static is referenced by absolute path so
@@ -694,15 +694,7 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // The closure captures a raw pointer so borrowck doesn't see an
-        // overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
-            // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
-            // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
-        });
+        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
         Ok(interp.exit_code.get().expect("exit_code set by finish()"))
     }
@@ -805,8 +797,7 @@ impl Interpreter {
     /// freed slots when available.
     pub(crate) fn alloc_node(&self, node: Node) -> NodeId {
         if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
-            // SAFETY: no other borrow of `nodes` is live across this store.
-            unsafe { self.nodes_mut()[slot as usize] = node };
+            self.nodes.with_mut(|n| n[slot as usize] = node);
             return NodeId(slot);
         }
         self.nodes.with_mut(|n| {
@@ -1124,10 +1115,9 @@ impl Interpreter {
     /// `captured` slot is also wired to `_buffered_stdout/err` so
     /// `Bun.$` callers can read it back.
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
-        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
         // Root stdin's async poll callbacks drive `Yield::run` through it.
         if let crate::shell::io::InKind::Fd(ref r) = self.root_io.get().stdin {
-            r.set_interp(interp_ptr);
+            r.set_interp(self);
         }
         if self.flags.get().quiet() {
             return Ok(());
@@ -1165,8 +1155,7 @@ impl Interpreter {
             },
             event_loop,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stdout_writer.set_interp(interp_ptr);
+        stdout_writer.set_interp(self);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1175,8 +1164,7 @@ impl Interpreter {
             },
             event_loop,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stderr_writer.set_interp(interp_ptr);
+        stderr_writer.set_interp(self);
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1207,7 +1195,7 @@ impl Interpreter {
         self.setup_io_before_run()?;
 
         let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
+        let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
@@ -1392,12 +1380,12 @@ impl Interpreter {
         self.this_value.with_mut(|r| r.upgrade(global_this));
         let vm = global_this.bun_vm();
         self.context.set(
-            vm.as_graph_context(vm.context_of_caller_no_frame())
+            vm.as_graph_context(vm.context_of_caller())
                 .map(bun_jsc::ScriptExecutionContext::id),
         );
 
         let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
+        let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
@@ -1429,7 +1417,7 @@ impl Interpreter {
             });
         }
 
-        // Cannot be safely called multiple times: drops the `Arc<IOReader>`/`Arc<IOWriter>` refs.
+        // Cannot be safely called multiple times: drops the `Rc<IOReader>`/`Rc<IOWriter>` refs.
         self.root_io.set(IO::default());
         self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
 
@@ -1520,10 +1508,7 @@ impl Interpreter {
                     int -= 1;
                 }
 
-                if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                if let Some(worker) = vm.worker_ref() {
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
@@ -2069,43 +2054,6 @@ pub(crate) struct ShellArgs {
 pub(crate) use bun_event_loop::EventLoopHandle;
 
 // ────────────────────────────────────────────────────────────────────────────
-// CowFd
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Copy-on-write file descriptor: avoids multiple non-blocking writers on the
-/// same fd (which breaks epoll/kqueue).
-pub(crate) struct CowFd {
-    __fd: Fd,
-    refcount: u32,
-}
-
-impl CowFd {
-    pub(crate) fn init(fd: Fd) -> *mut CowFd {
-        let new = bun_core::heap::into_raw(Box::new(CowFd {
-            __fd: fd,
-            refcount: 1,
-        }));
-        bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
-        new
-    }
-
-    /// # Safety
-    /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
-    /// refcount to 0, `this` is freed and must not be used again.
-    pub(crate) fn deref(this: *mut CowFd) {
-        // SAFETY: caller upholds the precondition above (`this` is a live `CowFd`).
-        unsafe {
-            (*this).refcount -= 1;
-            if (*this).refcount == 0 {
-                // Close the fd before freeing; `closefd` tolerates EBADF.
-                closefd((*this).__fd);
-                drop(bun_core::heap::take(this));
-            }
-        }
-    }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Convenience re-exports for state modules
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -2390,64 +2338,57 @@ pub(crate) fn shell_openat(
 
 /// Custom parse error for invalid options.
 ///
-/// Payload slices borrow from the builtin's argv (NUL-terminated arena strings)
-/// or are `'static` literals; the builtin formats them into an error message
-/// before the next argv mutation, so a raw fat pointer is safe.
-pub(crate) enum ParseError {
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
+/// Payload slices borrow from the builtin's argv (NUL-terminated `Vec<u8>` in
+/// `Cmd::args`) or are `'static` literals.
+pub(crate) enum ParseError<'a> {
+    IllegalOption(&'a [u8]),
+    Unsupported(&'a [u8]),
     ShowUsage,
 }
 
-impl ParseError {
-    /// Borrow the option-name payload. The pointer borrows either a `'static`
-    /// literal (e.g. `b"-"`) or the owning `Builtin`'s argv storage
-    /// (NUL-terminated `Vec<u8>` in `Cmd::args`, live for the `Builtin`'s
-    /// lifetime — see [`Builtin::arg_bytes`](crate::shell::builtin::Builtin::arg_bytes)).
-    /// Builtins format the error before any argv mutation.
+impl<'a> ParseError<'a> {
+    /// The option-name payload.
     #[inline]
-    pub(crate) fn opt(&self) -> &[u8] {
-        match self {
-            // SAFETY: see doc comment.
-            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => unsafe { &**s },
+    pub(crate) fn opt(&self) -> &'a [u8] {
+        match *self {
+            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => s,
             ParseError::ShowUsage => b"",
         }
     }
 }
 
-pub(crate) enum ParseFlagResult {
+pub(crate) enum ParseFlagResult<'a> {
     ContinueParsing,
     Done,
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
-}
-
-/// Returns just `name` and lets the caller's `fmt_error_arena` add the
-/// "unsupported option" prefix once.
-#[inline]
-pub(crate) const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
-    std::ptr::from_ref::<[u8]>(name)
+    IllegalOption(&'a [u8]),
+    Unsupported(&'a [u8]),
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
 pub(crate) trait FlagParser {
     /// Handle a `--long` flag. Return `None` to fall through to short parsing.
-    fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
+    fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>>;
     /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>>;
 }
 
 /// Returns the trailing non-flag args (`args[idx..]`) on success.
 pub(crate) fn parse_flags<'a, O: FlagParser>(
     opts: &mut O,
     args: &'a [*const core::ffi::c_char],
-) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError> {
+) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError<'a>> {
     if args.is_empty() {
         return Ok(None);
     }
     let mut idx = 0usize;
     while idx < args.len() {
-        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
+        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init) that stay
+        // put until `Cmd::deinit`; every caller is done with `'a` inside the builtin's `start`.
         let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
@@ -2460,12 +2401,12 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
     Err(ParseError::ShowUsage)
 }
 
-fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
+fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> ParseFlagResult<'a> {
     if flag.is_empty() || flag[0] != b'-' {
         return ParseFlagResult::Done;
     }
     if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
+        return ParseFlagResult::IllegalOption(b"-");
     }
     if flag.len() > 2 && flag[1] == b'-' {
         if let Some(r) = opts.parse_long(flag) {
@@ -2511,30 +2452,29 @@ pub(crate) enum OutputTaskState {
 /// take `(&mut Interpreter, NodeId)` (NodeId style — the parent builtin lives
 /// inside the interpreter's node arena).
 ///
-/// `child` is the heap-allocated `OutputTask` itself, passed so `write_*` can
-/// register it as the IOWriter callback target.
+/// `child` is the `OutputTask` itself: `write_*` keep it until the IOWriter
+/// chunk completes (`Break`), or hand it back after a synchronous write (`Continue`).
 pub(crate) trait OutputTaskVTable: Sized {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield>;
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>>;
     fn on_write_err(interp: &Interpreter, cmd: NodeId);
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield>;
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>>;
     fn on_write_out(interp: &Interpreter, cmd: NodeId);
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
 /// A task that can write to stdout and/or stderr.
 ///
-/// Heap-allocated (`heap::alloc`) so the IOWriter can hold a raw pointer to
-/// it across async chunks; freed by `deinit`.
+/// Owned by the running frame, or by the builtin while an IOWriter chunk is
+/// in flight; freed by `deinit`.
 pub(crate) struct OutputTask<P: OutputTaskVTable> {
     /// Owning Cmd node (the builtin's `cmd` id).
     pub(crate) parent: NodeId,
@@ -2554,83 +2494,73 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     }
 
     /// Takes the freshly-constructed task by `Box` (callers always pair `new`
-    /// → `start`), leaks it to the raw `*mut Self` the IOWriter callback chain
-    /// needs, and drives the first state transition. The box is reclaimed by
-    /// [`Self::deinit`] (via `heap::take`) when the task reaches `Done`.
-    pub(crate) fn start(me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
-        // Leak so `P::write_*` can stash `this` as the IOWriter's `ChildPtr`;
-        // address is stable for the task's lifetime. Re-derive `&mut` per
-        // step (the `P::*` callbacks re-enter via raw `this`, not a reborrow
-        // of `me`).
-        let this = bun_core::heap::into_raw(me);
-        // SAFETY: `this` is a fresh, uniquely-owned heap allocation.
-        unsafe {
-            let me = &mut *this;
-            log!(
-                "OutputTask(0x{:x}) start errbuf={:?}",
-                this as usize,
-                errbuf.map(|b| b.len())
-            );
-            me.state = OutputTaskState::WaitingWriteErr;
-            if let Some(err) = errbuf {
-                if let Some(y) = P::write_err(interp, me.parent, this, err) {
-                    return y;
-                }
-                return Self::next(this, interp);
+    /// → `start`) and drives the first state transition. The box is dropped by
+    /// [`Self::deinit`] when the task reaches `Done`.
+    pub(crate) fn start(mut me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
+        log!(
+            "OutputTask(0x{:x}) start errbuf={:?}",
+            std::ptr::from_ref(&*me) as usize,
+            errbuf.map(|b| b.len())
+        );
+        me.state = OutputTaskState::WaitingWriteErr;
+        if let Some(err) = errbuf {
+            return match P::write_err(interp, me.parent, me, err) {
+                ControlFlow::Break(y) => y,
+                ControlFlow::Continue(me) => Self::next(me, interp),
+            };
+        }
+        me.state = OutputTaskState::WaitingWriteOut;
+        let mut me = match P::write_out(interp, me.parent, me) {
+            ControlFlow::Break(y) => return y,
+            ControlFlow::Continue(me) => me,
+        };
+        P::on_write_out(interp, me.parent);
+        me.state = OutputTaskState::Done;
+        Self::deinit(me, interp)
+    }
+
+    pub(crate) fn next(mut me: Box<Self>, interp: &Interpreter) -> Yield {
+        match me.state {
+            OutputTaskState::WaitingWriteErr => {
+                P::on_write_err(interp, me.parent);
+                me.state = OutputTaskState::WaitingWriteOut;
+                let mut me = match P::write_out(interp, me.parent, me) {
+                    ControlFlow::Break(y) => return y,
+                    ControlFlow::Continue(me) => me,
+                };
+                P::on_write_out(interp, me.parent);
+                me.state = OutputTaskState::Done;
+                Self::deinit(me, interp)
             }
-            me.state = OutputTaskState::WaitingWriteOut;
-            if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                return y;
+            OutputTaskState::WaitingWriteOut => {
+                P::on_write_out(interp, me.parent);
+                me.state = OutputTaskState::Done;
+                Self::deinit(me, interp)
             }
-            P::on_write_out(interp, me.parent);
-            me.state = OutputTaskState::Done;
-            Self::deinit(this, interp)
+            OutputTaskState::Done => panic!("Invalid state"),
         }
     }
 
-    pub(crate) unsafe fn next(this: *mut Self, interp: &Interpreter) -> Yield {
-        // SAFETY: caller contract — see `start`.
-        unsafe {
-            let me = &mut *this;
-            match me.state {
-                OutputTaskState::WaitingWriteErr => {
-                    P::on_write_err(interp, me.parent);
-                    me.state = OutputTaskState::WaitingWriteOut;
-                    if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                        return y;
-                    }
-                    P::on_write_out(interp, me.parent);
-                    me.state = OutputTaskState::Done;
-                    Self::deinit(this, interp)
-                }
-                OutputTaskState::WaitingWriteOut => {
-                    P::on_write_out(interp, me.parent);
-                    me.state = OutputTaskState::Done;
-                    Self::deinit(this, interp)
-                }
-                OutputTaskState::Done => panic!("Invalid state"),
-            }
-        }
-    }
-
-    pub(crate) unsafe fn on_io_writer_chunk(
-        this: *mut Self,
+    pub(crate) fn on_io_writer_chunk(
+        me: Box<Self>,
         interp: &Interpreter,
         _written: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
-        // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
-        // this fn's caller contract; forwarded unchanged to `next`.
-        unsafe { Self::next(this, interp) }
+        log!(
+            "OutputTask(0x{:x}) onIOWriterChunk",
+            std::ptr::from_ref(&*me) as usize
+        );
+        Self::next(me, interp)
     }
 
-    /// Fires `on_done` then frees.
-    unsafe fn deinit(this: *mut Self, interp: &Interpreter) -> Yield {
-        // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
-        let me = unsafe { bun_core::heap::take(this) };
+    /// Frees, then fires `on_done`.
+    fn deinit(me: Box<Self>, interp: &Interpreter) -> Yield {
         debug_assert!(me.state == OutputTaskState::Done);
-        log!("OutputTask(0x{:x}) deinit", this as usize);
+        log!(
+            "OutputTask(0x{:x}) deinit",
+            std::ptr::from_ref(&*me) as usize
+        );
         let parent = me.parent;
         drop(me);
         P::on_done(interp, parent)
@@ -2974,10 +2904,9 @@ pub(crate) fn create_shell_interpreter<'a>(
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
     interp.this_value.set(JsRef::init_weak(js_value));
-    interp.keep_alive.with_mut(|k| {
-        // SAFETY: `bun_vm_ptr()` is the live per-thread VM singleton.
-        k.ref_(unsafe { crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()) })
-    });
+    interp
+        .keep_alive
+        .with_mut(|k| k.ref_(global.bun_vm().loop_ctx()));
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)
 }

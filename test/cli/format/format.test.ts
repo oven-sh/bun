@@ -7026,6 +7026,14 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
+  // Prettier prints `catch ({} // comment⏎: T) {}`.
+  test("a line comment alone in the pattern of a catch clause that has a type stays in the braces", async () => {
+    const code = "try {\n} catch ({\n  // comment\n}: T) {}\n";
+    const result = await format({ "a.ts": "try {} catch ({ // comment\n}: T) {}\n" }, ["a.ts"], { reads: ["a.ts"] });
+    expect(result.files).toEqual({ "a.ts": code });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("the same kinds of expressions are formatted where they are valid", async () => {
     const code =
       'a++;\nb.c--;\n++d[e];\nf!++;\nclass A {\n  #x;\n  m() {\n    return #x in this;\n  }\n}\nimport("a");\ng`h`;\n(i?.j)`k`;\n';

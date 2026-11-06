@@ -111,7 +111,9 @@ fn write_catch_clause<'a>(param: Option<VarDecl<'a>>, body: Stmt<'a>, f: &mut Fo
                 write!(f, [param.pat(), param.ty().map(FormatTypeAnnotation)]);
             });
         });
-        match !f.is_quiet() && has_comment_with_line_break(node, param.pat(), f) {
+        // With a type, the comment in `catch ({ // comment⏎}: A)` leads the type for Prettier.
+        let pattern = param.ty().is_none().then(|| param.pat());
+        match !f.is_quiet() && has_comment_with_line_break(node, pattern, f) {
             true => write!(f, [space(), "(", soft_block_indent(&parameter), ")"]),
             false => write!(f, [space(), "(", parameter, ")"]),
         }
@@ -124,7 +126,7 @@ fn write_catch_clause<'a>(param: Option<VarDecl<'a>>, body: Stmt<'a>, f: &mut Fo
 /// One that is all there is in the braces or brackets of `pattern` is on the parameter too.
 fn has_comment_with_line_break<'a>(
     node: AstNodes<'a>,
-    pattern: Pat<'a>,
+    pattern: Option<Pat<'a>>,
     f: &Formatter<'a>,
 ) -> bool {
     let owned = f.comments().of_node(node);
@@ -133,6 +135,8 @@ fn has_comment_with_line_break<'a>(
     leading.any(|comment| comment.is_line() || comment.has_newline_after())
         || trailing.any(|comment| comment.is_line() || comment.has_newline_before())
         || (!f.options().flavor.is_oxfmt()
-            && (f.comments().of_node(pattern.as_ast_nodes()).dangling.iter())
-                .any(|comment| comment.is_line()))
+            && pattern.is_some_and(|pattern| {
+                (f.comments().of_node(pattern.as_ast_nodes()).dangling.iter())
+                    .any(|comment| comment.is_line())
+            }))
 }

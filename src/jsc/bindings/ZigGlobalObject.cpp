@@ -4258,8 +4258,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
     }
-    Bun::willResolveImport(globalObject, resolved, referrer);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        Bun::willResolveImport(globalObject, resolved, referrer);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return resolvedKey;
 }
 
@@ -4279,8 +4281,10 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
                     // The graph's spelling is the printed specifier's on POSIX; on Windows it fixes the separator form.
                     bool isCanonical = canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength);
                     Identifier resolved = isCanonical ? Identifier::fromString(globalObject->vm(), string->tryGetValue()) : Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
-                    Bun::willResolveImport(zigGlobalObject, resolved.string(), referrer);
-                    RETURN_IF_EXCEPTION(scope, {});
+                    if (Bun::hasCompiledModules()) [[unlikely]] {
+                        Bun::willResolveImport(zigGlobalObject, resolved.string(), referrer);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
                     return resolved;
                 }
             }

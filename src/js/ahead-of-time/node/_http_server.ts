@@ -12,8 +12,9 @@ function PlainStream() {}
 $toClass(PlainStream, "PlainStream", StreamOfLibrary);
 if (Stream !== StreamOfLibrary) Object.setPrototypeOf(PlainStream.prototype, StreamPrototype);
 const plainStream: any = new PlainStream();
-const DuplexPrototype = Stream.Duplex.prototype;
-const ReadablePrototype = Stream.Readable.prototype;
+// The library's own classes, which stand above the server's socket whatever a program has laid on node:stream.
+const DuplexPrototype = require("internal/streams/duplex").prototype;
+const ReadablePrototype = require("internal/streams/readable").prototype;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
 // As the streams defined it: the program may have stored another before this file was loaded.
 const duplexResume = streamInternals.readableMethods!.resume;

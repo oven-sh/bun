@@ -4428,6 +4428,9 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     is_commonjs_require: bool,
     loader: Loader,
 ) -> Option<JSValue> {
+    if !DATA_ONLY && bun_jsc::compiled_program::compiled_program().is_none() {
+        return None;
+    }
     let code = if is_commonjs_require {
         bun_jsc::ErrCode::MODULE_NOT_FOUND
     } else {

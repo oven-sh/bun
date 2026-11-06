@@ -6,3 +6,7 @@ const read = shape => shape.sides + " " + shape.name;
 console.log(read(one), read(one));
 for (const key in Shape.prototype) Shape.prototype[key] = key === "sides" ? 4 : "square";
 console.log(read(one), read(new Shape()));
+/* Output:
+3 triangle 3 triangle
+4 square 4 square
+*/

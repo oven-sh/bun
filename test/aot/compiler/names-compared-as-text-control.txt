@@ -387,6 +387,12 @@ allows src/aot/lower/quoted_text.rs an identifier that the build has made
     return written_name_of_local(self.file.queries.atom_bytes(name)).starts_with(b"%");
 finds src/aot/lower/quoted_text.rs starts_with
     return self.file.queries.atom_bytes(name).starts_with(b"_");
+allows src/aot/builtins/resolve/mentions.rs the kind of an event that a listener on the global object is added for
+    const EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT: [&[u8]; 3] = [b"error", b"message", b"messageerror"];
+    let text = self.input.atoms.bytes(text);
+    !EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT.contains(&text)
+finds src/aot/builtins/resolve/mentions.rs ==
+    return self.input.atoms.bytes(name) == b"error";
 allows src/aot/load/made_own_require.rs a member of the require that the binder has answered for
     return name == known::createRequire && requires_node_module(hir, bound, obj);
 finds src/aot/load/made_own_require.rs ==

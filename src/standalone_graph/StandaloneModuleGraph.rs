@@ -345,11 +345,11 @@ impl StandaloneModuleGraph {
         let mut buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
-        if !self.files.contains_key(name) {
-            let key = self.key_of_asset_named_at_root(name)?;
-            return self.files.get_mut(&key);
+        if self.compiled_program.is_none() || self.files.contains_key(name) {
+            return self.files.get_mut(name);
         }
-        self.files.get_mut(name)
+        let key = self.key_of_asset_named_at_root(name)?;
+        self.files.get_mut(&key)
     }
 }
 

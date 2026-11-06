@@ -580,6 +580,7 @@ Few programs notice these.
 | `new Below()` after `Object.setPrototypeOf(Below, CString)`, of `bun:ffi`         | The string that `new CString()` returns                                      | Throws a `TypeError`: `this` has to be an object |
 | A name imported from a CommonJS file that was still running, after a later import | What the file had exported when that import was linked                       | What the file had exported when it ended         |
 | `res.write()` after `req.socket._writableState = copy`, in `node:http`            | Goes by the `highWaterMark` of the copy                                      | Goes by the one that the socket had              |
+| `require("node:http")` after `stream.Stream = Mine` or `stream.Duplex = Mine`     | Its classes extend yours                                                     | A `TypeError`: add to its `prototype` instead    |
 | `{ [key]: value }`, where `key` has a `toString()` that you can watch             | The value is evaluated, then the key is converted                            | The key is converted first, as the language says |
 | `using x = value`, where a getter for `Symbol.dispose` reads `x`                  | `x` already holds the value                                                  | A `ReferenceError`, as the language says         |
 | `let [a = late] = iterator; let late`, which throws a `ReferenceError`            | The iterator's `return()` isn't called                                       | It is called first, as the language says         |

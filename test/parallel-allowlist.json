@@ -1521,6 +1521,7 @@
     "aot/every-module-of-the-library-loads-from-its-text-where-code-from-disk-asks-for-it.test.ts",
     "aot/plain-bun-builds-with-a-key-that-begins-with-aot-in-capitals.test.ts",
     "aot/plain-bun-passes-over-a-flag-that-begins-with-aot-in-capitals.test.ts",
-    "aot/what-bun-ffi-deletes-is-gone-for-compiled-code-too-where-code-from-disk-loads-it.test.ts"
+    "aot/what-bun-ffi-deletes-is-gone-for-compiled-code-too-where-code-from-disk-loads-it.test.ts",
+    "aot/a-spread-of-an-instance-lays-undefined-or-null-under-a-name-that-the-literal-writes-behind-it.test.ts"
   ]
 }

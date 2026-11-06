@@ -247,11 +247,15 @@ impl Collector<'_, '_> {
             | ModuleRef::Check(target) => target,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => return None,
         };
+        let loader = self.sources.loader(target);
         Some(ModuleImport {
             target: ImportTarget::Input(self.input_of_file[target.idx()]?),
-            kind,
+            kind: match loader {
+                Loader::Html => ModuleImportKind::HtmlManifest,
+                _ => kind,
+            },
             original: original.to_vec(),
-            data_type: match self.sources.loader(target) {
+            data_type: match loader {
                 Loader::Json => Some(DataType::Json),
                 Loader::Toml => Some(DataType::Toml),
                 Loader::Text => Some(DataType::Text),

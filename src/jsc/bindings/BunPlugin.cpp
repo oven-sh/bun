@@ -5158,7 +5158,7 @@ extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)
 extern "C" uint8_t Bun__onResolveNamespaces(Zig::GlobalObject* globalObject)
 {
 #if ENABLE(AOT)
-    if (Bun::holdsAnswersForLoader()) [[unlikely]]
+    if (Bun::hasCompiledModules() && Bun::holdsAnswersForLoader()) [[unlikely]]
         return 3;
 #endif
     auto& plugins = globalObject->onResolvePlugins;

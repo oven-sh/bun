@@ -73,6 +73,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   { paths: /^aot\/builtins\/AOTBuiltin(Table\w*|NameSlots)\.(h|cpp)$/, reason: "the same table in the engine" },
   {
+    paths: /^src\/aot\/builtins\/resolve\/mentions\.rs$/,
+    lines: /EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT\.contains\(&text\)/,
+    reason:
+      "the kind of an event is a text that the program hands over, no name: in front of it stands the built-in that adds a listener to the global object",
+  },
+  {
     paths: /^aot\/ir\/AOTNameClass\.(h|cpp)$|^src\/aot\/ir\/name_class\.rs$/,
     reason:
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",

@@ -3,3 +3,6 @@ const above = new Proxy({ far: "found" }, { getPrototypeOf() { return { never: t
 const point = new Point();
 Object.setPrototypeOf(Point.prototype, above);
 console.log(point.x, point.far, point.never, "far" in point, "never" in point);
+/* Output:
+1 found undefined true false
+*/

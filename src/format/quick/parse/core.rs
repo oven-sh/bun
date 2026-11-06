@@ -2487,59 +2487,35 @@ impl Quick {
         ));
     }
 
-    /// Does `n` end with something in parentheses that stands where an arrow function could?
-    fn ends_with_parentheses(&self, n: i32) -> bool {
-        self.ends_where_an_arrow_function_could_start(n, true)
-    }
-
-    fn ends_with_call_of_async(&self, n: i32) -> bool {
-        self.ends_where_an_arrow_function_could_start(n, false)
-    }
-
-    fn ends_where_an_arrow_function_could_start(
-        &self,
-        mut n: i32,
-        parentheses_count: bool,
-    ) -> bool {
+    /// `n` stands in front of a `:`. TypeScript's parser, and the long way in JavaScript too, tries `(a): T` and `async (a): T` as the
+    /// head of an arrow function wherever an expression that can be assigned starts, and takes it for one if a `{` or a `=>` follows what
+    /// it has read as the return type: `case (a): { if (b) {} }`. Does `n` end with such a head?
+    /// `is_allowed`: parentheses count where `n` starts (TypeScript's `allowReturnTypeInArrowFunction`). They do not in the branch of a
+    /// conditional expression in front of its `:`, nor in what that branch hands it down to; they do again in the operand of `yield` and in
+    /// the body of what can only be an arrow function: `a ? () => (b) : c => d`, `a ? yield (b) : c => d`. (In Flow whoever reads the
+    /// parentheses tries the same.)
+    fn ends_with_head_of_arrow_function(&self, mut n: i32, mut is_allowed: bool) -> bool {
         loop {
             let head = self.n.at(n);
             if (head & F_PAREN) != 0 {
-                return parentheses_count;
+                return is_allowed;
             }
             n = match head & 0xff {
-                k::ArrowFunctionExpression | k::AssignmentExpression => self.n.at(n + 5),
+                k::ArrowFunctionExpression => {
+                    is_allowed |= self.parse.typed != TYPED_FLOW;
+                    self.n.at(n + 5)
+                }
+                k::YieldExpression => {
+                    is_allowed |= self.parse.typed != TYPED_FLOW;
+                    self.n.at(n + 4)
+                }
+                k::AssignmentExpression => self.n.at(n + 5),
                 k::ConditionalExpression => self.n.at(n + 6),
-                k::YieldExpression => self.n.at(n + 4),
-                // `async (a)`
+                // `async (a)`, allowed or not
                 k::CallExpression => {
                     let callee = self.n.at(n + 4);
                     return self.text_is(self.n.at(callee + 1), self.n.at(callee + 2), b"async");
                 }
-                k::SequenceExpression => {
-                    let list = self.n.at(n + 4);
-                    self.n.at(list + self.n.at(list))
-                }
-                _ => return false,
-            };
-        }
-    }
-
-    /// Does `n` end with something in parentheses that ends the body of an arrow function in it?
-    fn ends_with_parentheses_in_arrow_function(&self, mut n: i32) -> bool {
-        let mut is_in_arrow_function = false;
-        loop {
-            let head = self.n.at(n);
-            if (head & F_PAREN) != 0 {
-                return is_in_arrow_function;
-            }
-            n = match head & 0xff {
-                k::ArrowFunctionExpression => {
-                    is_in_arrow_function = true;
-                    self.n.at(n + 5)
-                }
-                k::AssignmentExpression => self.n.at(n + 5),
-                k::ConditionalExpression => self.n.at(n + 6),
-                k::YieldExpression => self.n.at(n + 4),
                 k::SequenceExpression => {
                     let list = self.n.at(n + 4);
                     self.n.at(list + self.n.at(list))
@@ -2564,9 +2540,9 @@ impl Quick {
             let mut test: i32 = 0;
             if self.eat(tk::Case)? {
                 test = self.parse_expression()?;
-                // `case (a): { if (b) {} }`: TypeScript's parser, and the long way in JavaScript too, tries `(a): {..` as the head of an
-                // arrow function, and takes it for one if a `{` or a `=>` follows what it has read as the return type.
-                if self.t.at(self.lexer.prev_end - 1) == 41 && self.ends_with_parentheses(test) {
+                if self.t.at(self.lexer.prev_end - 1) == 41
+                    && self.ends_with_head_of_arrow_function(test, true)
+                {
                     return Err(self.rare(rare::OTHER));
                 }
             } else {
@@ -4149,46 +4125,13 @@ impl Quick {
         self.parse.no_in = NO_IN_CONSEQUENT;
         let consequent = self.parse_maybe_assign()?;
         self.parse.no_in = saved_no_in;
-        // `a ? async() : b`: the head of an arrow function with a return type for TypeScript's parser, and for the long way everywhere
-        if self.t.at(self.lexer.prev_end - 1) == 41 && self.ends_with_call_of_async(consequent) {
-            return Err(self.rare(rare::OTHER));
-        }
-        // In the body of what can only be an arrow function, `(b): T` is the head of another one if T can be read as a type and a `{` or
-        // a `=>` follows it: `a ? () => (b) : () => class {}`, `a ? c = () => (b) : void {}`,
-        // `a ? () => (b) : () => { if (c) { d } { e } }`, `a ? () => (b) : c`, the end of the line, `{}`.
         if self.t.at(self.lexer.prev_end - 1) == 41
-            && self.parse.typed != TYPED_FLOW
-            && self.ends_with_parentheses_in_arrow_function(consequent)
+            && self.ends_with_head_of_arrow_function(consequent, false)
         {
             return Err(self.rare(rare::OTHER));
         }
         self.expect(tk::Colon)?;
         let alternate = self.parse_maybe_assign()?;
-        // `a ? () => (b) : c => d`: TypeScript's parser, and the long way in JavaScript too, takes `(b): c => d` for an arrow function
-        // with a return type where it is the body of what can only be an arrow function.
-        if self.parse.typed == 0
-            && (self.n.at(alternate) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
-            // (`(c) => d` is a type, which is one that is returned if another `=>` follows)
-            && (self.t.at(self.n.at(alternate + 1)) != 40
-                || (self.n.at(self.n.at(alternate + 5)) & (0xff | F_PAREN))
-                    == k::ArrowFunctionExpression)
-            && (self.n.at(consequent) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
-            && self.ends_with_parentheses(consequent)
-        {
-            return Err(self.rare(rare::OTHER));
-        }
-        // `a ? () => (b) : class {}`: the same in TypeScript, where no type starts and the `{` is taken for a body
-        if self.parse.typed == TYPED_TS
-            && self.text_is(
-                self.n.at(alternate + 1),
-                self.n.at(alternate + 1) + 5,
-                b"class",
-            )
-            && (self.n.at(consequent) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
-            && self.ends_with_parentheses(consequent)
-        {
-            return Err(self.text_refuse());
-        }
         return Ok(self.node3(
             k::ConditionalExpression,
             start,
@@ -4583,8 +4526,16 @@ impl Quick {
         let mut result: i32 = 0;
         let v0 = (|| -> R<Option<i32>> {
             let return_type = self.ts_parse_arrow_return_type()?;
-            if self.lexer.tok != tk::Arrow || self.lexer.tok_nl != 0 {
+            // `a ? (b) : c`, the end of the line, `{}`: TypeScript's parser misses a `=>`
+            if self.lexer.tok == tk::BraceL && self.parse.typed == TYPED_TS {
+                return Err(self.text_refuse());
+            }
+            if self.lexer.tok != tk::Arrow {
                 return Err(self.unexpected());
+            }
+            // (a function for the long way, which then minds the line break)
+            if self.lexer.tok_nl != 0 {
+                return Err(self.text_refuse());
             }
             // `a ? (b) : c => d`: to whom the colon belongs is decided in more than one way
             if (context & (NO_IN_CONSEQUENT << 4)) != 0 && list_top != list_mark {
@@ -4629,6 +4580,16 @@ impl Quick {
             self.rewind(m);
             self.restore_context(context);
             self.list_truncate(list_top);
+            // `a ? (b) : class {}`: the same, any word being the name of a type for TypeScript's parser
+            if self.parse.typed == TYPED_TS {
+                let saved = self.save();
+                self.next()?;
+                let is_body = self.lexer.tok >= tk::In && self.peek()? == tk::BraceL;
+                self.restore(saved);
+                if is_body {
+                    return Err(self.text_refuse());
+                }
+            }
             return Ok(0);
         }
         self.unmark(m);

@@ -5214,6 +5214,12 @@ describe("TypeScript that the long way rejects", () => {
     "type A = { [declare as a]: T }\n",
     "interface A { [static as a]: T }\n",
     "class A { [abstract as a]: T }\n",
+    // parentheses before the `:` of a conditional expression, and a word before a `{`
+    "x = a ? b ? (c0) : class {} : z;\n",
+    "x = a ? b ? (c, d) : void {} : z;\n",
+    "x = a ? b ? x = ({ c }) : delete {} : z;\n",
+    "function* g() { x = a ? yield (b) : class {}; }\n",
+    "switch (x) { case <T>(b, c): void {}; }\n",
   ]);
   expectRejected("a.tsx", [
     // a comment directly behind the `<` of type arguments in a tag
@@ -6673,6 +6679,10 @@ describe("JavaScript and Flow that the long way rejects", () => {
     // `async <`, which starts a function for TypeScript's parser
     "x = [async<o, p]\n",
     "x = [async < o, p];\n",
+    // parentheses as the operand of `yield` before the `:` of a conditional expression
+    "function* f() { x = a ? yield (b) : c => d }\n",
+    "function* f() { x = a ? yield* (b) : c => {} }\n",
+    "function* f() { x = a ? y = yield (b = 1) : c => d => e }\n",
   ]);
   expectRejected("a.js.flow, what only Flow has", "a.js.flow", [
     // two expressions behind `%checks`
@@ -6766,6 +6776,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
     'x = <a b = "\\u" />;\n',
     'x = <a b=\n"\\@" />;\n',
     'x = <a b=\n\n"aa\\@bb" c="d" />;\n',
+    // a line break in front of the `=>` behind a return type
+    "a ? ((b): c\n => d) : e;\n",
   ]);
   expectRejected(
     "a.js with @flow, what only Flow has",

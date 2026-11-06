@@ -194,7 +194,7 @@ impl<'t, 'o> Lines<'t, 'o> {
     fn comment(&self, at: usize) -> Option<usize> {
         let rest = self.text.get(at + 1..)?;
         let content = rest.get(..strings::index_of_char_usize(rest, b'\n')?)?;
-        let is_as_printed = !content.last().is_some_and(u8::is_ascii_whitespace)
+        let is_as_printed = strings::js_whitespace_len_back(content) == 0
             && !(self.options.flavor).is_ignore_comment(strings::trim_js_whitespace(content));
         is_as_printed.then_some(at + 1 + content.len())
     }

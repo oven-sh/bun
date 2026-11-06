@@ -602,6 +602,14 @@ describe("GraphQL", () => {
     "subscription($a: Int) @b {\n  a\n}\n",
     "query(\n  $someLongVariable: SomeLongType\n  $anotherLongVariable: AnotherLongType\n  $c: D\n) {\n  a\n}\n",
     "query ($a: Int) {\n  a\n}\n\nquery A($a: Int) {\n  a\n}\n\nquery A ($a: Int) {\n  a\n}\n",
+    // A comment that ends with white space that isn't ASCII.
+    ...["\u2028", "\u2029", "\u00a0", "\ufeff", "\u3000", "\u0085", "\u200b"].flatMap(space => [
+      `{\n  a\n  # x${space}\n  # c\n}\n`,
+      `{\n  a\n  # x${space}\n  b\n}\n`,
+      `{\n  a # x${space}\n  b\n}\n`,
+      `# x${space}\n# y\n{\n  a\n}\n`,
+      `{\n  a\n}\n# x${space}\n\n# y\n`,
+    ]),
     // Errors.
     "{ a",
     "{ a }}",

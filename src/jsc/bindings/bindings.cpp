@@ -5989,6 +5989,7 @@ restart:
     if (fast) {
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
+        const bool isPrototypeLayer = objectToUse != object;
 
         // The iter callback can run user code (a nested value's inspect.custom, Proxy
         // traps) that adds properties to this object, rehashing the PropertyTable
@@ -6005,14 +6006,10 @@ restart:
             if ((attributes & (PropertyAttribute::Function)) == 0 && (attributes & (PropertyAttribute::Builtin)) != 0)
                 return;
 
-            if (prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
-                return;
-
-            // Hide the `constructor` back-reference every prototype carries (non-enumerable,
-            // or reached by walking the prototype chain). An enumerable own `constructor`
-            // is ordinary user data, so it prints like any other key.
-            if (prop == propertyNames->constructor && (objectToUse != object || (attributes & PropertyAttribute::DontEnum) != 0))
+            // Only a prototype's `constructor` is left out. An own one prints like any other key, also when it holds the class.
+            if ((isPrototypeLayer && (prop == propertyNames->constructor || prop == propertyNames->__esModule))
+                || prop == propertyNames->underscoreProto
+                || prop == propertyNames->toStringTagSymbol)
                 return;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -6130,11 +6127,8 @@ restart:
                 if (property.isNull()) [[unlikely]]
                     continue;
 
-                if (builtinNames.bunNativePtrPrivateName() == property)
-                    continue;
-
-                // Same rule as the fast path above: only an enumerable own `constructor` is shown.
-                if (property == propertyNames->constructor && iterating != object)
+                // As in the quick walk: only a prototype's `constructor` is left out.
+                if ((property == propertyNames->constructor && iterating != object) || builtinNames.bunNativePtrPrivateName() == property)
                     continue;
 
                 if constexpr (nonIndexedOnly) {
@@ -6151,8 +6145,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == propertyNames->constructor
-                        || property == propertyNames->underscoreProto
+                    if (property == propertyNames->underscoreProto
                         || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;
                 }
@@ -6286,7 +6279,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false, bool* hasKeyOlderBunLeftOut = nullptr)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6319,15 +6312,21 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         if (clientData->builtinNames().bunNativePtrPrivateName() == property)
             continue;
 
+        // Older Bun left out every key spelled `constructor`, a symbol with that description too.
+        if (property == vm.propertyNames->constructor || (property.isSymbol() && WTF::equal(property.impl(), "constructor"_s))) [[unlikely]] {
+            if (withNonEnumerable)
+                continue;
+            if (hasKeyOlderBunLeftOut)
+                *hasKeyOlderBunLeftOut = true;
+        }
+
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
         bool hasProperty = object->getPropertySlot(globalObject, property, slot);
         (void)scope.tryClearException();
         if (!hasProperty) {
             continue;
         }
-        // A non-enumerable `constructor` is the back-reference every prototype carries;
-        // an enumerable one is user data that deepEquals compares, so it has to show up in diffs.
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0 && (property == vm.propertyNames->constructor || property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol))
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0 && (property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol))
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();
@@ -6374,8 +6373,9 @@ extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJ
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true);
-    return hasOnlyEnumerableValues;
+    bool hasKeyOlderBunLeftOut = false;
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true, false, &hasKeyOlderBunLeftOut);
+    return hasOnlyEnumerableValues && !hasKeyOlderBunLeftOut;
 }
 
 extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))

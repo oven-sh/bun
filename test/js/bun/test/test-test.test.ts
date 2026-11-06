@@ -588,47 +588,61 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   expect(err).not.toContain("undefined");
 });
 
-it("expect() diffs print an own enumerable 'constructor' property", async () => {
-  // The messages are printed by the fixture (rather than read off the failing test output) so the
-  // snapshot holds only the diffs. bunEnv sets NO_COLOR, so they carry no ANSI codes.
-  using dir = tempDir("diff-constructor-key", {
-    "constructor-key.test.js": /*js*/ `
-      import { expect, test } from "bun:test";
+it("expect() failure messages print an own enumerable 'constructor' property", async () => {
+  // The fixtures print the messages themselves, so the snapshot holds nothing else.
+  // bunEnv sets NO_COLOR, so the messages carry no ANSI codes.
+  const fixture = (module: string) => /*js*/ `
+    import { expect, test } from ${JSON.stringify(module)};
 
-      function failureMessage(fn) {
-        try {
-          fn();
-        } catch (e) {
-          return e.message;
-        }
-        throw new Error("expected the matcher to fail");
+    function failureMessage(fn) {
+      try {
+        fn();
+      } catch (e) {
+        return e.message;
       }
+      throw new Error("expected the matcher to fail");
+    }
 
-      test("diffs", () => {
-        const received = JSON.parse('{"constructor":"_class","a":1}');
-        console.log(failureMessage(() => expect(received).toEqual({ constructor: "K", a: 1 })));
-        console.log(failureMessage(() => expect(received).toStrictEqual({ constructor: "K", a: 1 })));
-        console.log(failureMessage(() => expect(received).toMatchObject({ constructor: "K", a: 1 })));
-        console.log(failureMessage(() => expect({ outer: received }).toEqual({ outer: { constructor: "K", a: 1 } })));
+    test("messages", () => {
+      const received = JSON.parse('{"constructor":"_class","a":1}');
+      const expected = { constructor: "K", a: 1 };
+      console.log(failureMessage(() => expect(received).toEqual(expected)));
+      console.log(failureMessage(() => expect(received).toStrictEqual(expected)));
+      console.log(failureMessage(() => expect(received).toMatchObject(expected)));
+      console.log(failureMessage(() => expect({ outer: received }).toEqual({ outer: expected })));
+      console.log(failureMessage(() => expect(received).toBe(expected)));
 
-        // The non-enumerable constructor that classes put on their prototype is not compared by
-        // toEqual, so it stays out of the diff.
-        class Foo {}
-        console.log(failureMessage(() => expect(Foo.prototype).toEqual({ x: 1 })));
-      });
-    `,
+      // toEqual does not compare the non-enumerable constructor of a class prototype,
+      // so it stays out of the diff.
+      class Foo {}
+      console.log(failureMessage(() => expect(Foo.prototype).toEqual({ x: 1 })));
+
+      // decimal.js and big.js give each instance an own constructor that holds its class.
+      function Big(value) {
+        this.c = [value];
+        this.constructor = Big;
+      }
+      console.log(failureMessage(() => expect(new Big(7)).toEqual({ c: [7] })));
+    });
+  `;
+  using dir = tempDir("diff-constructor-key", {
+    "bun.test.js": fixture("bun:test"),
+    "vitest.test.js": fixture("vitest"),
   });
+  const run = async (file: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", file],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout), stderr, exitCode };
+  };
+  const [bun, vitest] = await Promise.all([run("bun.test.js"), run("vitest.test.js")]);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "constructor-key.test.js"],
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+  expect(bun.stdout).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
     expect(received).toEqual(expected)
 
@@ -676,6 +690,17 @@ it("expect() diffs print an own enumerable 'constructor' property", async () => 
     - Expected  - 1
     + Received  + 1
 
+    expect(received).toBe(expected)
+
+    Expected: {
+      constructor: "K",
+      a: 1,
+    }
+    Received: {
+      constructor: "_class",
+      a: 1,
+    }
+
     expect(received).toEqual(expected)
 
     - {
@@ -684,10 +709,25 @@ it("expect() diffs print an own enumerable 'constructor' property", async () => 
     + Foo {}
 
     - Expected  - 3
-    + Received  + 1"
+    + Received  + 1
+
+    expect(received).toEqual(expected)
+
+    - {
+    + Big {
+        "c": [
+          7,
+        ],
+    +   "constructor": [Function: Big],
+      }
+
+    - Expected  - 1
+    + Received  + 2"
   `);
-  expect(stderr).toContain("1 pass");
-  expect(exitCode).toBe(0);
+  expect(vitest.stdout).toBe(bun.stdout);
+  expect(bun.stderr).toContain("1 pass");
+  expect(vitest.stderr).toContain("1 pass");
+  expect([bun.exitCode, vitest.exitCode]).toEqual([0, 0]);
 });
 
 it("test --preload supports global lifecycle hooks", () => {

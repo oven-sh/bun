@@ -78,7 +78,18 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
 
 exports[`an own enumerable 'constructor' property is part of the snapshot 1`] = `
 {
-  "a": 1,
-  "constructor": "K",
+  "list": [
+    {
+      "constructor": "K",
+    },
+  ],
+  "object": {
+    "a": 1,
+    "constructor": "K",
+  },
+  "parsed": {
+    "constructor": "_class",
+  },
+  "prototype": Foo {},
 }
 `;

@@ -1414,11 +1414,11 @@ describe("expect()", () => {
       // A constructor, an Error instance, an asymmetric matcher that wraps a
       // constructor and a plain object still go down their usual paths.
       function Ctor() {}
-      expect(() => expect(thrower).toThrow(Ctor)).toThrow("Expected constructor: Ctor");
+      await expectFailure(() => expect(thrower).toThrow(Ctor)).toThrow("Expected constructor: Ctor");
       expect(thrower).toThrow(Error);
       expect(thrower).toThrow(new Error("boom"));
       expect(thrower).toThrow(expect.any(Error));
-      expect(() => expect(thrower).toThrow({})).toThrow("Expected constructor: Object");
+      await expectFailure(() => expect(thrower).toThrow({})).toThrow("Expected constructor: Object");
       expect(() => expect(thrower).toThrow(42)).toThrow("Expected value must be string or Error: 42");
     });
   }

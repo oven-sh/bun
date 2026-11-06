@@ -610,6 +610,20 @@ describe("GraphQL", () => {
       `# x${space}\n# y\n{\n  a\n}\n`,
       `{\n  a\n}\n# x${space}\n\n# y\n`,
     ]),
+    // How many blanks there are is only known for fewer than 57.
+    ...[55, 56, 57, 60, 63, 64, 65].flatMap(blanks => {
+      const indentation = " ".repeat(blanks);
+      return [
+        `type A implements B &\n${indentation}Cccc\n`,
+        `type A implements B &\n${indentation}Cccc {\n${indentation}d: E\n}\n`,
+        `union A =\n${indentation}| Bbbb\n${indentation}| Cccc\n`,
+        `{\n${indentation}a\n}\n`,
+        `{\n${" ".repeat(32)}a {\n${indentation}b\n${" ".repeat(32)}}\n}\n`,
+        `{\n${" ".repeat(32)}a(\n${indentation}b: 1\n${" ".repeat(32)})\n}\n`,
+        `type A {\n${" ".repeat(32)}a: B\n${indentation}@c\n${indentation}@d\n}\n`,
+        `type A {\n${indentation}"a"\n${indentation}b: C\n}\n`,
+      ];
+    }),
     // Errors.
     "{ a",
     "{ a }}",
@@ -644,6 +658,8 @@ describe("GraphQL", () => {
         ["--tab-width=4"],
         ["--tab-width=0"],
         ["--tab-width=5000", "--print-width=20"],
+        ["--tab-width=64", "--print-width=5"],
+        ["--tab-width=32", "--print-width=40"],
         ["--use-tabs"],
         ["--use-tabs", "--tab-width=8", "--print-width=30"],
         ["--no-bracket-spacing"],

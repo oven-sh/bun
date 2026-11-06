@@ -59,9 +59,16 @@ struct OnLines {
     is_forced: bool,
 }
 
-/// No line is indented further than this: how many blanks there are is only known for fewer than 57. It bounds how deep
-/// blocks and lists on lines are in each other too.
-const MAX_INDENTATION: usize = 48;
+/// No line is indented further than this: how many blanks there are is only known for fewer than 57.
+const MAX_INDENTATION: usize = 56;
+
+/// How far the lines of a block or of a list on lines are indented, and those of what's in them. Neither is more than
+/// `MAX_INDENTATION`, which bounds how deep blocks and lists are in each other too: `Lines::level` makes them all.
+#[derive(Copy, Clone)]
+struct Level {
+    indentation: usize,
+    inner: usize,
+}
 
 /// Lists and objects in each other on one line.
 const MAX_NESTING: u32 = 8;
@@ -96,12 +103,16 @@ impl<'t, 'o> Lines<'t, 'o> {
         if self.tab_width == 0 {
             return 0;
         }
+        let levels = (self.level(0)).and_then(|top| Some((top, self.level(top.inner)?)));
+        let Some((top, in_block)) = levels else {
+            return 0;
+        };
         let (mut at, mut end_of_last) = (0, 0);
         loop {
             let is_comment = self.at(at) == b'#';
             let end = match is_comment {
                 true => self.comment(at),
-                false => self.definition(at),
+                false => self.definition(at, top, in_block),
             };
             let Some(end) = end.filter(|end| self.at(*end) == b'\n') else {
                 return end_of_last;
@@ -154,10 +165,17 @@ impl<'t, 'o> Lines<'t, 'o> {
         self.text.get(at..).is_some_and(|it| it.starts_with(bytes))
     }
 
-    /// How many blanks there are at `at`, or something above `MAX_INDENTATION`.
+    /// The level of lines that are indented by `indentation` blanks.
     #[inline(always)]
-    fn blanks(&self, at: usize) -> usize {
-        self.stops.after_blanks.run(at) as usize
+    fn level(&self, indentation: usize) -> Option<Level> {
+        let inner = indentation + self.tab_width;
+        (inner <= MAX_INDENTATION).then_some(Level { indentation, inner })
+    }
+
+    /// True if the line that starts at `line` starts with `indentation` blanks and no more. It's that of a `Level`.
+    #[inline(always)]
+    fn is_indented_by(&self, line: usize, indentation: usize) -> bool {
+        self.stops.after_blanks.run(line) as usize == indentation
     }
 
     /// Returns the end of the name at `at`.
@@ -182,6 +200,13 @@ impl<'t, 'o> Lines<'t, 'o> {
     #[inline(always)]
     fn fits(&self, line: usize, end: usize) -> bool {
         !self.has_group.get() || end - line <= self.width
+    }
+
+    /// True if `list` is printed on several lines. Its opening bracket is `before` columns into its line, and `rest`
+    /// columns follow it up to the next place where a line can break.
+    #[inline(always)]
+    fn stays_on_lines(&self, list: &OnLines, before: usize, rest: usize) -> bool {
+        list.is_forced || before + list.flat_width + rest > self.width
     }
 
     /// ` {` at the end of a line.
@@ -344,15 +369,15 @@ impl<'t, 'o> Lines<'t, 'o> {
     /// If a description starts at `at`, at `level`, returns where the line behind it starts, behind its indentation.
     /// Else `at`.
     #[inline(always)]
-    fn description(&self, at: usize, level: usize) -> Option<usize> {
+    fn description(&self, at: usize, level: Level) -> Option<usize> {
         match self.at(at) {
             b'"' => self.end_of_description(at, level),
             _ => Some(at),
         }
     }
 
-    fn end_of_description(&self, at: usize, level: usize) -> Option<usize> {
-        let indentation = level * self.tab_width;
+    fn end_of_description(&self, at: usize, level: Level) -> Option<usize> {
+        let indentation = level.indentation;
         let end = match self.starts_with(at, b"\"\"\"") {
             true => {
                 let (end, on_lines) = end_of_block_string(self.text, self.stops, at)?;
@@ -360,16 +385,14 @@ impl<'t, 'o> Lines<'t, 'o> {
             }
             false => self.string(at)?,
         };
-        (self.at(end) == b'\n' && self.blanks(end + 1) == indentation)
+        (self.at(end) == b'\n' && self.is_indented_by(end + 1, indentation))
             .then_some(end + 1 + indentation)
     }
 
     /// The list whose opening bracket is at `open`, at the end of a line at `level`.
-    fn list_on_lines(&self, open: usize, level: usize, item: Item) -> Option<OnLines> {
-        let (outer, indentation) = (level * self.tab_width, (level + 1) * self.tab_width);
-        if indentation > MAX_INDENTATION {
-            return None;
-        }
+    fn list_on_lines(&self, open: usize, level: Level, item: Item) -> Option<OnLines> {
+        let (outer, indentation) = (level.indentation, level.inner);
+        let inner = self.level(indentation)?;
         let (close, keeps_empty_lines) = match self.at(open) {
             b'(' => (b')', !matches!(item, Item::Variable)),
             bracket => (bracket + 2, false),
@@ -378,10 +401,10 @@ impl<'t, 'o> Lines<'t, 'o> {
         let (mut flat_width, mut is_forced) = (if has_blanks { 2 } else { 0 }, false);
         let mut line = open + 2;
         loop {
-            if self.blanks(line) != indentation {
+            if !self.is_indented_by(line, indentation) {
                 return None;
             }
-            let read = self.item_on_lines(line + indentation, level + 1, item)?;
+            let read = self.item_on_lines(line + indentation, inner, item)?;
             if self.at(read.end) != b'\n' {
                 return None;
             }
@@ -389,7 +412,7 @@ impl<'t, 'o> Lines<'t, 'o> {
             flat_width += read.flat_width + 2;
             is_forced |= read.is_forced;
             line = read.end + 1;
-            if self.blanks(line) == outer && self.at(line + outer) == close {
+            if self.is_indented_by(line, outer) && self.at(line + outer) == close {
                 return Some(OnLines {
                     end: line + outer + 1,
                     flat_width,
@@ -406,8 +429,8 @@ impl<'t, 'o> Lines<'t, 'o> {
     }
 
     /// An item that starts its line, at `level`, and ends one.
-    fn item_on_lines(&self, start: usize, level: usize, item: Item) -> Option<OnLines> {
-        let indentation = level * self.tab_width;
+    fn item_on_lines(&self, start: usize, level: Level, item: Item) -> Option<OnLines> {
+        let indentation = level.indentation;
         let (mut at, mut flat_width, mut is_forced) = (start, 0, false);
         if matches!(item, Item::InputValue) && self.at(at) == b'"' {
             is_forced = self.starts_with(at, b"\"\"\"");
@@ -442,7 +465,7 @@ impl<'t, 'o> Lines<'t, 'o> {
                     && (self.starts_with(list.end, b" @")
                         || self.is_followed_by_directives(list.end, level));
                 let rest = usize::from(has_directives);
-                if !list.is_forced && value - line + list.flat_width + rest <= self.width {
+                if !self.stays_on_lines(&list, value - line, rest) {
                     return None;
                 }
                 flat_width += value - counted_to + list.flat_width;
@@ -473,10 +496,10 @@ impl<'t, 'o> Lines<'t, 'o> {
 
     /// True if directives are on the lines behind the line at `level` that ends at `end`.
     #[inline(always)]
-    fn is_followed_by_directives(&self, end: usize, level: usize) -> bool {
-        let indentation = (level + 1) * self.tab_width;
+    fn is_followed_by_directives(&self, end: usize, level: Level) -> bool {
+        let indentation = level.inner;
         self.at(end) == b'\n'
-            && self.blanks(end + 1) == indentation
+            && self.is_indented_by(end + 1, indentation)
             && self.at(end + 1 + indentation) == b'@'
     }
 
@@ -486,12 +509,12 @@ impl<'t, 'o> Lines<'t, 'o> {
         &self,
         line: usize,
         end: usize,
-        level: usize,
+        level: Level,
         is_const: bool,
     ) -> Option<OnLines> {
-        let indentation = (level + 1) * self.tab_width;
+        let indentation = level.inner;
         // The blank in front of them has to fit for the groups on that line to stay there.
-        if indentation > MAX_INDENTATION || !self.fits(line, end + 1) {
+        if !self.fits(line, end + 1) {
             return None;
         }
         let (mut flat_width, mut is_forced) = (0, false);
@@ -505,10 +528,9 @@ impl<'t, 'o> Lines<'t, 'o> {
             if self.at(name_end) == b'(' {
                 let item = Item::NamedValue { is_const };
                 if self.at(name_end + 1) == b'\n' {
-                    let list = self.list_on_lines(name_end, level + 1, item)?;
+                    let list = self.list_on_lines(name_end, self.level(indentation)?, item)?;
                     let rest = if self.is_at_block(list.end) { 2 } else { 0 };
-                    if !list.is_forced && indentation + width + list.flat_width + rest <= self.width
-                    {
+                    if !self.stays_on_lines(&list, indentation + width, rest) {
                         return None;
                     }
                     is_forced |= list.is_forced;
@@ -537,22 +559,19 @@ impl<'t, 'o> Lines<'t, 'o> {
 
     /// The items of a block, which are at `level`, from the line behind the `{` on, which starts at `line`. Returns
     /// where the `}` ends.
-    fn block(&self, block: Block, level: usize, mut line: usize) -> Option<usize> {
-        let indentation = level * self.tab_width;
-        if indentation > MAX_INDENTATION {
-            return None;
-        }
+    fn block(&self, block: Block, level: Level, mut line: usize) -> Option<usize> {
+        let indentation = level.indentation;
         let (mut has_item, mut follows_empty_line) = (false, false);
         loop {
-            let blanks = self.blanks(line);
-            let start = line + blanks;
-            if blanks != indentation {
-                let is_end = blanks + self.tab_width == indentation
-                    && self.at(start) == b'}'
+            if !self.is_indented_by(line, indentation) {
+                let outer = indentation.saturating_sub(self.tab_width);
+                let is_end = self.is_indented_by(line, outer)
+                    && self.at(line + outer) == b'}'
                     && has_item
                     && !follows_empty_line;
-                return is_end.then_some(start + 1);
+                return is_end.then_some(line + outer + 1);
             }
+            let start = line + indentation;
             let mut end = match self.at(start) {
                 b'#' => self.comment(start)?,
                 _ => {
@@ -590,7 +609,7 @@ impl<'t, 'o> Lines<'t, 'o> {
 
     /// `a: A`, `a(b: B): A` with `has_arguments`, `a: A = 1` without, and directives.
     #[inline(always)]
-    fn field(&self, start: usize, level: usize, has_arguments: bool) -> Option<usize> {
+    fn field(&self, start: usize, level: Level, has_arguments: bool) -> Option<usize> {
         let name_end = self.name(start)?;
         if let Some(end) = self.type_behind_colon(name_end)
             && self.at(end) == b'\n'
@@ -605,8 +624,8 @@ impl<'t, 'o> Lines<'t, 'o> {
     }
 
     #[inline(never)]
-    fn field_with_more(&self, start: usize, name_end: usize, level: usize) -> Option<usize> {
-        let indentation = level * self.tab_width;
+    fn field_with_more(&self, start: usize, name_end: usize, level: Level) -> Option<usize> {
+        let indentation = level.indentation;
         let mut line = start - indentation;
         self.has_group.set(false);
         let mut at = name_end;
@@ -616,7 +635,7 @@ impl<'t, 'o> Lines<'t, 'o> {
             let has_directives =
                 self.starts_with(end, b" @") || self.is_followed_by_directives(end, level);
             let rest = end - list.end + usize::from(has_directives);
-            if !list.is_forced && at - line + list.flat_width + rest <= self.width {
+            if !self.stays_on_lines(&list, at - line, rest) {
                 return None;
             }
             self.has_group.set(false);
@@ -627,6 +646,18 @@ impl<'t, 'o> Lines<'t, 'o> {
             }
             at = self.type_behind_colon(at)?;
         }
+        self.constant_directives_to_end_of_item(line, at, level)
+    }
+
+    /// The directives of an item of a type at `level`, if it has any. Its last line so far starts at `line` and has been
+    /// read up to `at`. Returns where the item ends.
+    #[inline(always)]
+    fn constant_directives_to_end_of_item(
+        &self,
+        line: usize,
+        at: usize,
+        level: Level,
+    ) -> Option<usize> {
         if self.is_followed_by_directives(at, level) {
             return Some(self.directives_on_lines(line, at, level, true)?.end);
         }
@@ -634,7 +665,7 @@ impl<'t, 'o> Lines<'t, 'o> {
         self.fits(line, end).then_some(end)
     }
 
-    fn enum_value(&self, start: usize, level: usize) -> Option<usize> {
+    fn enum_value(&self, start: usize, level: Level) -> Option<usize> {
         let name_end = self.name(start)?;
         if matches!(
             self.text.get(start..name_end),
@@ -642,13 +673,9 @@ impl<'t, 'o> Lines<'t, 'o> {
         ) {
             return None;
         }
-        let line = start - level * self.tab_width;
+        let line = start - level.indentation;
         self.has_group.set(false);
-        if self.is_followed_by_directives(name_end, level) {
-            return Some(self.directives_on_lines(line, name_end, level, true)?.end);
-        }
-        let end = self.directives(name_end, true)?;
-        self.fits(line, end).then_some(end)
+        self.constant_directives_to_end_of_item(line, name_end, level)
     }
 
     /// `query: A`
@@ -665,21 +692,21 @@ impl<'t, 'o> Lines<'t, 'o> {
     }
 
     #[inline(always)]
-    fn selection(&self, start: usize, level: usize) -> Option<usize> {
+    fn selection(&self, start: usize, level: Level) -> Option<usize> {
         if let Some(end) = self.name(start) {
             if self.at(end) == b'\n' && !self.is_followed_by_directives(end, level) {
                 return Some(end);
             }
             if self.is_at_block(end) {
-                return self.block(Block::Selections, level + 1, end + 3);
+                return self.block(Block::Selections, self.level(level.inner)?, end + 3);
             }
         }
         self.selection_with_more(start, level)
     }
 
     #[inline(never)]
-    fn selection_with_more(&self, start: usize, level: usize) -> Option<usize> {
-        let indentation = level * self.tab_width;
+    fn selection_with_more(&self, start: usize, level: Level) -> Option<usize> {
+        let indentation = level.indentation;
         let mut line = start - indentation;
         self.has_group.set(false);
         // A fragment has no block, an inline fragment has one, a field can have one.
@@ -713,7 +740,7 @@ impl<'t, 'o> Lines<'t, 'o> {
                     (b' ', b'@') => 1,
                     _ => usize::from(self.is_followed_by_directives(list.end, level)),
                 };
-                if !list.is_forced && at - line + list.flat_width + rest <= self.width {
+                if !self.stays_on_lines(&list, at - line, rest) {
                     return None;
                 }
                 self.has_group.set(false);
@@ -731,7 +758,9 @@ impl<'t, 'o> Lines<'t, 'o> {
             return None;
         }
         match is_block {
-            true if self.fits(line, at + 2) => self.block(Block::Selections, level + 1, at + 3),
+            true if self.fits(line, at + 2) => {
+                self.block(Block::Selections, self.level(level.inner)?, at + 3)
+            }
             false if self.fits(line, at) => Some(at),
             _ => None,
         }
@@ -739,15 +768,15 @@ impl<'t, 'o> Lines<'t, 'o> {
 
     // ───────────────────────────── definitions ─────────────────────────────
 
-    /// The definition that starts at `at`, which starts a line.
-    fn definition(&self, at: usize) -> Option<usize> {
+    /// The definition that starts at `at`, which starts a line. Its level is `top`, and that of its block `in_block`.
+    fn definition(&self, at: usize, top: Level, in_block: Level) -> Option<usize> {
         if self.at(at) == b'{' {
             return match self.at(at + 1) {
-                b'\n' => self.block(Block::Selections, 1, at + 2),
+                b'\n' => self.block(Block::Selections, in_block, at + 2),
                 _ => None,
             };
         }
-        let mut line = self.description(at, 0)?;
+        let mut line = self.description(at, top)?;
         let has_description = line > at;
         let mut start = line;
         let mut at = self.name(start)?;
@@ -772,10 +801,10 @@ impl<'t, 'o> Lines<'t, 'o> {
                 }
                 if self.at(at) == b'(' {
                     if self.at(at + 1) == b'\n' {
-                        let list = self.list_on_lines(at, 0, Item::Variable)?;
+                        let list = self.list_on_lines(at, top, Item::Variable)?;
                         // The line can break in front of directives.
                         let rest = if self.is_at_block(list.end) { 2 } else { 0 };
-                        if !list.is_forced && at - line + list.flat_width + rest <= self.width {
+                        if !self.stays_on_lines(&list, at - line, rest) {
                             return None;
                         }
                         self.has_group.set(false);
@@ -815,7 +844,7 @@ impl<'t, 'o> Lines<'t, 'o> {
                 if self.starts_with(at, b" implements ") {
                     at = self.name(at + 12)?;
                     if self.starts_with(at, b" &\n") {
-                        return self.interfaces_on_lines(line, at);
+                        return self.interfaces_on_lines(line, at, in_block);
                     }
                     self.has_group.set(true);
                     while self.starts_with(at, b" & ") {
@@ -825,7 +854,7 @@ impl<'t, 'o> Lines<'t, 'o> {
                 at = self.directives(at, true)?;
                 (Block::Fields, is_extension && at == name_end)
             }
-            b"union" => return self.union(line, self.name_behind_blank(at)?, is_extension),
+            b"union" => return self.union(line, self.name_behind_blank(at)?, is_extension, top),
             b"enum" | b"input" => {
                 let name_end = self.name_behind_blank(at)?;
                 at = self.directives(name_end, true)?;
@@ -863,7 +892,7 @@ impl<'t, 'o> Lines<'t, 'o> {
         };
         if self.is_at_block(at) {
             return match self.fits(line, at + 2) {
-                true => self.block(block, 1, at + 3),
+                true => self.block(block, in_block, at + 3),
                 false => None,
             };
         }
@@ -871,11 +900,11 @@ impl<'t, 'o> Lines<'t, 'o> {
     }
 
     /// The rest of `type A implements B &`, which starts at `line`. The name of the first interface ends at `at`.
-    fn interfaces_on_lines(&self, line: usize, mut at: usize) -> Option<usize> {
+    fn interfaces_on_lines(&self, line: usize, mut at: usize, in_block: Level) -> Option<usize> {
         let mut flat_width = at - line;
         while self.starts_with(at, b" &\n") {
-            let start = at + 3 + self.tab_width;
-            if self.blanks(at + 3) != self.tab_width {
+            let start = at + 3 + in_block.indentation;
+            if !self.is_indented_by(at + 3, in_block.indentation) {
                 return None;
             }
             at = self.name(start)?;
@@ -886,13 +915,13 @@ impl<'t, 'o> Lines<'t, 'o> {
             return None;
         }
         match has_block {
-            true => self.block(Block::Fields, 1, at + 3),
+            true => self.block(Block::Fields, in_block, at + 3),
             false => Some(at),
         }
     }
 
     /// The rest of `union A`, which starts at `line` and ends at `name_end`.
-    fn union(&self, line: usize, name_end: usize, is_extension: bool) -> Option<usize> {
+    fn union(&self, line: usize, name_end: usize, is_extension: bool, top: Level) -> Option<usize> {
         self.has_group.set(true);
         let mut at = self.directives(name_end, true)?;
         if self.starts_with(at, b" =\n") {
@@ -903,10 +932,10 @@ impl<'t, 'o> Lines<'t, 'o> {
             let mut flat_width = at + 2 - line;
             at += 2;
             while self.at(at) == b'\n'
-                && self.blanks(at + 1) == self.tab_width
-                && self.starts_with(at + 1 + self.tab_width, b"| ")
+                && self.is_indented_by(at + 1, top.inner)
+                && self.starts_with(at + 1 + top.inner, b"| ")
             {
-                let start = at + 1 + self.tab_width + 2;
+                let start = at + 1 + top.inner + 2;
                 at = self.name(start)?;
                 // ` | `, or a blank in front of the first one.
                 flat_width += 3 + at - start;

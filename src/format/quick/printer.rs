@@ -52,6 +52,8 @@ pub(crate) struct Printer {
     pub(crate) x_stub: i32,
     /// slow_step() is called from inside a group that is printed flat without a look at the column
     pub(crate) x_all_flat: bool,
+    /// A measurement has met a text of fitted() that it could not judge: the file is formatted again without guesses.
+    pub(crate) has_wrong_guess: bool,
     pub(crate) words_pos: i32,
     // ---- printDocToString() in the middle of the work
     pub(crate) printed_start: i32,
@@ -85,6 +87,7 @@ impl Printer {
             cursor_count: 0,
             x_stub: 0,
             x_all_flat: false,
+            has_wrong_guess: false,
             words_pos: 0,
             printed_start: 0,
             printed_end: 0,
@@ -619,6 +622,12 @@ impl Quick {
                         rem = rem - ((w as u32) >> 6) as i32 - pending_space;
                         pending_space = 0;
                         if rem < 0 {
+                            // It stands for a group. What is measured here is what follows something on its line, up to the first place where
+                            // the line can end, and there may be one in the group: in a tag of JSX, which does not start a line wherever
+                            // it does in the source. (Behind everything else that is read there is a line, or all lines are taken out.)
+                            if mode == BREAK && self.t.at(self.d.at(pc + 1)) == 60 {
+                                self.printer.has_wrong_guess = true;
+                            }
                             return false;
                         }
                         pc += 1;
@@ -677,6 +686,7 @@ impl Quick {
         self.printer.sx_end = 0;
         self.printer.sx_start = 0;
         self.printer.cursor_count = 0;
+        self.printer.has_wrong_guess = false;
         self.printer.x_stub = stub;
         let sixteen_spaces = u128::from_le_bytes([32; 16]);
         let mut st_limit = self.printer.st.len() as i32 - 16;
@@ -1015,7 +1025,12 @@ impl Quick {
                                                                 - space;
                                                             space = 0;
                                                             if rem < 0 {
-                                                                verdict = BREAK;
+                                                                // (fits() knows what to do about it)
+                                                                verdict = if rest_mode == BREAK {
+                                                                    3
+                                                                } else {
+                                                                    BREAK
+                                                                };
                                                             }
                                                             q += 1;
                                                         }
@@ -2141,6 +2156,9 @@ impl Quick {
                         self.printer.sx_start = self.printer.sx_end;
                         waiting &= !WAIT_SUFFIX;
                         break 's0;
+                    }
+                    if self.printer.has_wrong_guess {
+                        return Err(self.stop(why::REDO));
                     }
                     self.printer.out_length = o;
                     return Ok(true);

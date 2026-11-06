@@ -6022,6 +6022,12 @@ describe("what the quick way for scripts is asked about, and what is done around
       // Two doc comments that are one, and two blanks at the end of a line.
       ["a.ts", "", "/*\n * a\n *//**\n * b  \n * c\n */\nx;\n"],
       ["a.ts", "", "/**\n * a  \n * b\n *//*\n * c  \n * d\n */\nx;\n"],
+      // The start tag of an element that starts a line in the source and none in the output.
+      [
+        "a.jsx",
+        "",
+        'someConfigurationOptionNameThatIsLongggg =\n  <SomeLongComponentName option={<Icon />} other="x">text</SomeLongComponentName> ? first : second;\n',
+      ],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

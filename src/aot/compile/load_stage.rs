@@ -127,23 +127,17 @@ fn collect_entry_point_aliases(
     files: &Files<'_>,
     sources: &Sources,
     levels_during_load: usize,
-    names_written: Vec<EntryPointPaths>,
+    mut names_written: Vec<EntryPointPaths>,
 ) -> (Vec<EntryPointPaths>, Vec<Diagnostic>) {
     let root = sources.root_of_executable().unwrap_or_default().iter();
     let root: Vec<u8> = root
         .map(|&byte| if byte == b'\\' { b'/' } else { byte })
         .collect();
-    let spell = |name: &[u8]| {
-        spell_with_other_levels(&root, name, levels_during_load, sources.levels_above_root())
-    };
-    let names_written = names_written.into_iter().filter_map(|alias| {
-        let public_path = spell(&alias.public_path)?;
-        Some(EntryPointPaths {
-            public_path,
-            ..alias
-        })
-    });
-    let mut names_written: Vec<EntryPointPaths> = names_written.collect();
+    let levels = sources.levels_above_root();
+    for alias in &mut names_written {
+        let name = &alias.public_path;
+        alias.public_path = spell_with_other_levels(&root, name, levels_during_load, levels);
+    }
     names_written.shared_sort_unstable();
     names_written.dedup();
     let begun_at = files.entry_points().iter();
@@ -438,7 +432,6 @@ impl<'a> Build<'a> {
                 };
                 let application = self.load_application(shared, project, &request_that_finds)?;
                 let names_written = finder.take_names_written();
-
                 let found = FoundByLoad {
                     entry_points: finder.finish(application.files(), options.entry_points.len()),
                     names_written,
@@ -510,8 +503,17 @@ impl<'a> Build<'a> {
             loads_code_by_unknown_names_alone,
             ..
         } = inputs;
-        let input =
+        let mut input =
             self.create_freeze_input(shared, application, None, &contents.found_entry_points);
+        input.levels_above_root = host.levels_above_root();
+        let lost = host.file_lost_with_texts_of_other_levels();
+        self.stop_at_internal_error(lost.map_or(Ok(()), |file| {
+            let message = b"only at the depth of the disk does the code of a Worker lead to ";
+            Err(InternalError {
+                stage: Stage::Load,
+                message: [&message[..], &file].concat(),
+            })
+        }))?;
         steps.end("roots of the library");
         let (frozen_application, runtime) = run_beside(
             &self.beside_runner(),
@@ -726,6 +728,7 @@ impl<'a> Build<'a> {
             host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
             modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
             found_entry_points,
+            levels_above_root: None,
         }
     }
 

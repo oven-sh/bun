@@ -11,7 +11,8 @@ use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
 pub(crate) use self::freeze::{
-    FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources,
+    FreezeInput, FrozenSources, check_unique_paths_across_projects, count_levels_above_root,
+    freeze_sources,
 };
 use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
 use crate::diagnostics::FileDiagnostic;

@@ -131,7 +131,7 @@ await import(process.env.PLUGIN || "./plugins/a.ts"); // compiles plugins/a.ts
 await import(name); // finds the entry points, and files whose path is a string in your code
 ```
 
-The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
+The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. A path that starts with a folder or with the start of a file's name, like `"./locales/" + lang` or `"./lang-" + code`, embeds every file it may name, code and data, and the build lists the ones that aren't code (`TS100088`). A path that starts with nothing but `./` or `../` embeds code only, going by the loader of each file, and a data file, like a `.json`, `.toml` or `.txt` file, only if the path ends in its extension, as in `"./" + name + ".json"`. A file or folder whose name begins with a dot is never found that way. To embed any other file, write its path out, `import data from "./data.json"`, name it in an `import.meta.glob()`, or pass it to [`--asset`](/compiler/executables#embed-directories). `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
 
 `import.meta.glob()` is expanded at build time, as in `bun build`, and every file that matches is compiled. A call that can't be expanded, like one whose pattern isn't a string literal, gets a warning from the build and throws a `TypeError` when your program reaches it.
 
@@ -169,7 +169,7 @@ error: Cannot load '/home/me/late.ts': it isn't in this executable ...
 | One of your files                    | Pass it as another entry point       |
 | A package with a dynamic name        | Pass its main file as an entry point |
 | A `node:` module with a dynamic name | `import "node:dgram"` somewhere      |
-| JSON, TOML, YAML or text             | Nothing. Data files load from disk   |
+| JSON, TOML, YAML or text from disk   | Give an absolute path                |
 | One package from disk                | `--external <package>`               |
 | Any file from disk                   | `--aot-allow-code-from-disk`         |
 
@@ -177,7 +177,7 @@ error: Cannot load '/home/me/late.ts': it isn't in this executable ...
 bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 ```
 
-A dynamic name finds the file that `bun run` would have found when you built. If that file isn't in the executable, the name finds nothing, even if the executable holds another file the name could mean. So if your tree has two copies of a package, pass the copy that the file which asks for it would get: for `node_modules/orm`, that's `node_modules/orm/node_modules/pg` if it exists, not `node_modules/pg`. And if `lib.js` lies beside `lib/index.js`, `"./lib"` means `lib.js`.
+A dynamic name finds the file that `bun run` would have found when you built. If that file isn't in the executable, the name finds nothing, even if the executable holds another file the name could mean. So if your tree has two copies of a package, pass the copy that the file which asks for it would get: for `node_modules/orm`, that's `node_modules/orm/node_modules/pg` if it exists, not `node_modules/pg`. And if `lib.js` lies beside `lib/index.js`, `"./lib"` means `lib.js`. A relative path is never looked up on disk, unless you build with `--aot-allow-code-from-disk`: `bun run` looks beside the file that asks, and that folder exists only in the executable.
 
 An absolute path finds a compiled file only if it's the path the file had when you built it, which is what you get from `import.meta.dir` and `__dirname`. A path made from the working directory, like `path.resolve("lib/a.js")` or `process.cwd() + "/lib/a.js"`, names the file on disk, as in `bun build --compile`: it may belong to the project your program was started in. Data there is read from disk. Code there is loaded with `--aot-allow-code-from-disk` and refused without it, also if you passed your own `lib/a.js` as an entry point. What's loaded that way is a second module with its own state, even if the file is the very source that was compiled.
 

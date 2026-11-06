@@ -139,6 +139,7 @@ pub struct NamingLoad {
 #[derive(Default)]
 pub struct EntryPointsFound {
     pub paths: Vec<Vec<u8>>,
+    pub dropped: Vec<Vec<u8>>,
     pub named_by: Vec<(Vec<u8>, Option<NamingLoad>)>,
 }
 

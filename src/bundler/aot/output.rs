@@ -26,7 +26,6 @@ impl EntryPointNames<'_> {
         for (shown, embedded) in self.shown.iter().zip(self.embedded) {
             let folders = bun_core::strings::split(shown, b"/");
             let level = folders.take_while(|&folder| folder == b"..").count();
-
             let below = &shown[shown.len().min(3 * level)..];
             let source_name = [&b"_.._/".repeat(level)[..], below].concat();
             names.entry(source_name).or_insert(&embedded[..]);

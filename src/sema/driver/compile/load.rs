@@ -137,7 +137,10 @@ pub fn load_program<'s>(
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, find) => {
             let found = find(code);
-            found_entry_paths.lock().extend_from_slice(&found.paths);
+            let mut paths = found_entry_paths.lock();
+            paths.retain(|path| !found.dropped.contains(path));
+            paths.extend_from_slice(&found.paths);
+            drop(paths);
             found
         }
         _ => EntryPointsFound::default(),

@@ -30,6 +30,8 @@ export type Shape = {
   growsSoFar?: string;
   /** The same for a growth in instructions: the case is expected to fail where instructions are counted, and is an ordinary case elsewhere. */
   growsSoFarInInstructions?: string;
+  /** The same for a growth in instructions that shows under musl alone. */
+  growsSoFarInInstructionsUnderMusl?: string;
   /** The same for a growth that shows in the code for arm64 on Linux alone. */
   growsSoFarOnLinuxArm64?: string;
   write(size: number): Record<string, string>;
@@ -1074,6 +1076,7 @@ export const shapes: Shape[] = [
     size: flags.length ? 900 : 600,
     entry: "main.ts",
     flags,
+    growsSoFarInInstructionsUnderMusl: flags.length ? undefined : "2.12 times in instructions",
     write: (size: number) => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts":
@@ -2126,6 +2129,7 @@ export const shapes: Shape[] = [
     counted: "lines",
     size: 5000,
     entry: "main.ts",
+    growsSoFarInInstructionsUnderMusl: "2.25 times in instructions",
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts": `${declaredConsole}let seen = 0;\nfunction use(text: string) {\n  seen += text.length;\n}\nfunction atTheEnd(a: string, n: number): string {\n  let s = a;\n  let t = a;\n${lines(size, index => (index % 2 ? `  s = s + (n + ${index}) + a;\n  use(s);` : `  t = t + (n + ${index}) + a;\n  use(t);`))}  return s + t;\n}\nconsole.log(atTheEnd("x", 1).length);\n`,
@@ -2136,6 +2140,7 @@ export const shapes: Shape[] = [
     counted: "lines",
     size: 5000,
     entry: "main.ts",
+    growsSoFarInInstructionsUnderMusl: "2.58 times in instructions",
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts": `${declaredConsole}let seen = 0;\nfunction use(text: string) {\n  seen += text.length;\n}\nfunction atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n  use(s);\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length, seen);\n`,
@@ -2245,18 +2250,24 @@ export const shapes: Shape[] = [
     },
   },
   // Loops with their test in front, nested in one another: ../parallel/what-a-build-takes-grows-with-its-program/loops-nested-hundreds-deep.js, which holds them to the square that they are today.
+  // Two nests: one adds 267 M instructions at 400 deep, less than is judged.
   {
     name: "loops that test at their end, nested in one another",
     counted: "loops",
     size: 200,
     entry: "main.js",
+    growsSoFarInInstructions: "3.11 times in instructions",
     write: size => ({
       "main.js":
-        `function run() {\n  let sum = 0;\n` +
-        lines(size, index => `let i${index} = 0; do {`) +
-        `sum++;\n` +
-        lines(size, index => `} while (++i${size - 1 - index} < 1);`) +
-        `  return sum;\n}\nconsole.log(run());\n`,
+        lines(
+          2,
+          nest =>
+            `function run${nest}() {\n  let sum = 0;\n` +
+            lines(size, index => `let i${index} = 0; do {`) +
+            `sum++;\n` +
+            lines(size, index => `} while (++i${size - 1 - index} < 1);`) +
+            `  return sum;\n}`,
+        ) + `console.log(run0() + run1());\n`,
     }),
   },
   // A loop is walked under what is assumed of it, held against that at its back edge, and undone and walked again where it does not fit. A nest climbs together: three walks a loop at any
@@ -2295,6 +2306,7 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 400,
     entry: "main.js",
+    growsSoFarInInstructionsUnderMusl: "2.10 times in instructions",
     counts: ["WalksOfLoops", "ValuesWalked"],
     write: size => ({
       "main.js":
@@ -2543,6 +2555,7 @@ console.log(typeof outmost.inner);
     counted: "cases",
     size: 3000,
     entry: "main.js",
+    growsSoFarInInstructionsUnderMusl: "2.11 times in instructions",
     write: size => ({
       "main.js": `function pick(n) {\n  let picked = "t";\n  switch (n) {\n${lines(size, index => `    case ${index}: picked = "t${index}"; break;`)}  }\n  return picked;\n}\nconsole.log(pick(process.argv.length));\n`,
     }),
@@ -3521,6 +3534,7 @@ console.log(typeof outmost.inner);
     counted: "objects",
     size: 2000,
     entry: "main.js",
+    growsSoFarInInstructionsUnderMusl: "2.13 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `sum += pick({ k: ${index}, next: null }, 0).k;`),
     }),
@@ -3577,6 +3591,7 @@ console.log(typeof outmost.inner);
     counted: "closures",
     size: 2000,
     entry: "main.js",
+    growsSoFarInInstructionsUnderMusl: "2.11 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `{ let c = ${index}; const f = () => c++; pick({ k: f, next: null }, 0); c += 1; }`),
     }),
@@ -3587,6 +3602,7 @@ console.log(typeof outmost.inner);
     counted: "objects",
     size: 4000,
     entry: "main.js",
+    growsSoFarInInstructionsUnderMusl: "2.20 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `{ const o = pick({ k: ${index}, next: null }, 0); if (o.k > sum) sum += 1; }`),
     }),
@@ -3726,6 +3742,7 @@ console.log(typeof outmost.inner);
     counted: "loops",
     size: 2000,
     entry: "main.ts",
+    growsSoFarInInstructionsUnderMusl: "2.11 times in instructions",
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts":

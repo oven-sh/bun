@@ -190,8 +190,12 @@ impl<'a> PluginModules<'a> {
         virtual_path
     }
 
-    pub(crate) fn add_entry_text(&self, text: &EntryText) -> Vec<u8> {
-        let virtual_path = create_virtual_path(ENTRY_TEXT_NAMESPACE, &text.name);
+    pub(crate) fn add_entry_text(&self, text: &EntryText, levels: Option<usize>) -> Vec<u8> {
+        let place = match levels {
+            None => text.name.clone(),
+            Some(levels) => [format!("levels-{levels}/").as_bytes(), &text.name].concat(),
+        };
+        let virtual_path = create_virtual_path(ENTRY_TEXT_NAMESPACE, &place);
         let module = StoredModule {
             loader: text.loader,
             is_from_plugin: false,

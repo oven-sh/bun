@@ -167,6 +167,7 @@ export const buildScaling = (part: number, parts: number) =>
       const growsSoFar =
         shape.growsSoFar ??
         (countsInstructionsHere ? shape.growsSoFarInInstructions : undefined) ??
+        (countsInstructionsHere && isMusl ? shape.growsSoFarInInstructionsUnderMusl : undefined) ??
         (isLinux && process.arch === "arm64" ? shape.growsSoFarOnLinuxArm64 : undefined);
       (growsSoFar ? test.concurrent.failing : test.concurrent)(
         growsSoFar ? `${shape.name}: ${growsSoFar}; the bound is ${mostGrowth}` : shape.name,

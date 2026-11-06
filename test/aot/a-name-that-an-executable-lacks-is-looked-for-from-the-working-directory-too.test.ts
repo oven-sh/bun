@@ -118,11 +118,15 @@ test.each([
   600_000,
 );
 
-test.each(["import of data", "require of data"])(
+// `bun run` looks beside the importer, and a closed executable knows of no folder on disk that stands for that one.
+test.each([
+  ["import of data", "ERR_MODULE_NOT_FOUND"],
+  ["require of data", "MODULE_NOT_FOUND"],
+])(
   "a closed executable: %s",
-  async road => {
+  async (road, code) => {
     const ask = await setUp();
-    expect(await ask("closed", road)).toEqual(await ask("bundle", road));
+    expect(await ask("closed", road)).toEqual({ threw: code });
   },
   600_000,
 );

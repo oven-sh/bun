@@ -11,6 +11,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span};
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
+use crate::load::loaders::gives_data;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId};
 use crate::modules::{
@@ -20,7 +21,8 @@ use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::hir::{ExprId, NodeData};
-use bun_sema::program::FileId;
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId};
+use bun_sema::util::SharedSort;
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.looked_at {
@@ -70,6 +72,42 @@ fn warn_where_modules_are_reset(
                 let code = Code::ModulesLoadAgainUncompiled;
                 diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
             }
+        }
+    }
+}
+
+fn name_data_files_found_by_patterns(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    left_out: &LeftOutCode,
+) {
+    let (files, sources) = (view.files(), view.sources);
+    let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
+    for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
+        let Some((answers, _)) = files.answers(file) else {
+            continue;
+        };
+        let sites = files.analysis(file).import_sites.iter().zip(answers);
+        for (site, answer) in sites.filter(|(site, _)| site.kind.loads_module()) {
+            let CodeAnswer::Computed(ComputedTargets::Modules { files: found, .. }) = *answer
+            else {
+                continue;
+            };
+            let data = found
+                .iter()
+                .filter(|&&found| is_kept(found) && gives_data(sources.loader(found)));
+            let mut names: Vec<&[u8]> = data
+                .map(|&found| sources.module_paths(found).display_path)
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            names.shared_sort_unstable();
+            let node = NodeData::Expr(site.specifier_node);
+            let span = Span::of_node(files.hir(file), file, node);
+            let code = Code::DataFilesFoundByPattern;
+            let note = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..])]);
+            diagnostics.add(Some(view), note);
         }
     }
 }
@@ -396,6 +434,9 @@ impl Build<'_> {
                 }
                 steps.end_with(|| format!("{project_name}: root folders that paths spell"));
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
+                if !self.options.aot.runs_in_place {
+                    name_data_files_found_by_patterns(&mut self.diagnostics, view, &left_out);
+                }
                 crate::test_run_loads::warn_where_every_file_may_load_again(
                     &mut self.diagnostics,
                     view,

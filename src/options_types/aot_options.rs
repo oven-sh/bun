@@ -85,6 +85,8 @@ pub struct AotOptions {
     /// `bun test --aot` without `--aot-allow-code-from-disk`: `loads_code_from_disk` holds for the files of the tests. A file that an executable would hold too finds what it finds there.
     pub only_tests_load_code_from_disk: bool,
     pub ir_output_path: Option<Box<[u8]>>,
+    /// The absolute paths of what the build writes besides the executable: the metafiles, the map of `--sourcemap=external`. What an earlier build left there is not what a computed path means.
+    pub other_products: Vec<Vec<u8>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable.
     pub writes_no_executable: bool,
     /// `--aot-testing=DiscardsFirstVisits`: the first visit of every file is thrown away, as one is that ends with an invalid commit, and the file is visited again. The program is the same.
@@ -168,6 +170,7 @@ impl Default for AotOptions {
             isolates_code_from_disk: false,
             only_tests_load_code_from_disk: false,
             ir_output_path: None,
+            other_products: Vec::new(),
             writes_no_executable: false,
             discards_first_visits: false,
             type_errors_warn: false,
@@ -231,6 +234,7 @@ mod tests {
             isolates_code_from_disk,
             only_tests_load_code_from_disk,
             ir_output_path,
+            other_products,
             writes_no_executable,
             discards_first_visits,
             type_errors_warn,
@@ -283,6 +287,7 @@ mod tests {
         assert!(!isolates_code_from_disk);
         assert!(!only_tests_load_code_from_disk);
         assert!(ir_output_path.is_none());
+        assert!(other_products.is_empty());
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
         assert!(!type_errors_warn);

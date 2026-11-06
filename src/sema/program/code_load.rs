@@ -144,6 +144,16 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         Some(target)
     }
 
+    pub(super) fn drop_found_entry_point(&self, path: &[u8]) -> Option<CodeTarget<'r>> {
+        let mut found = self.found_entry_points.lock();
+        let place = found.iter().position(|it| it.key.path == path)?;
+        let dropped = found.remove(place);
+        let key = to_path(dropped.key.path, self.is_case_sensitive);
+        let mut keys = self.keys_of_found_entry_points.lock();
+        keys.retain(|it| it.0 != key || it.1 != dropped.key.loader);
+        Some(dropped)
+    }
+
     pub(super) fn note_load_that_names(&self, path: &[u8], load: Option<NamingLoad>) -> bool {
         let request = (self.resolver).loader_request(path, CodeImportKind::EntryPoint, None, None);
         let path = to_path(path, self.is_case_sensitive).into_owned();

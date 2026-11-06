@@ -51,6 +51,10 @@ pub trait CodeHost: Host {
         false
     }
 
+    fn is_data_file(&self, _path: &[u8], _kind: CodeImportKind) -> bool {
+        false
+    }
+
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         None
     }

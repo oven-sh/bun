@@ -119,6 +119,10 @@ pub trait SourceProvider: Sync {
         None
     }
 
+    fn outfile(&self) -> Option<&[u8]> {
+        None
+    }
+
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;
 
     fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {

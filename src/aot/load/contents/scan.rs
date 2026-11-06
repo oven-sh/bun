@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, File};
@@ -16,7 +18,7 @@ pub(crate) struct ScanInput<'a> {
     pub loads_code_from_disk: bool,
     pub is_file: &'a dyn Fn(&[u8]) -> bool,
     pub is_data: &'a dyn Fn(&[u8]) -> bool,
-    pub find_path_at_run_time: &'a dyn Fn() -> Option<Vec<u8>>,
+    pub find_path_at_run_time: &'a dyn Fn(Option<usize>) -> Result<Vec<u8>, Range<usize>>,
     pub sees_backslashes: Option<bool>,
     pub write_url: &'a dyn Fn(&[u8], Option<&[u8]>) -> Option<Vec<u8>>,
 }
@@ -27,6 +29,7 @@ pub(super) struct ContentsScan<'a, 's> {
     pub(super) input: &'a ScanInput<'a>,
     pub(super) found: FileContents,
     pub(super) holders_of_own_file: Vec<SymbolId>,
+    pub(super) levels_above_root: Option<usize>,
 }
 
 #[derive(Copy, Clone)]
@@ -181,6 +184,7 @@ pub(crate) fn scan_file(
         input,
         found: FileContents::default(),
         holders_of_own_file: Vec::new(),
+        levels_above_root: None,
     };
     for index in 0..analysis.import_sites.len() {
         scan.look_at_site(index);

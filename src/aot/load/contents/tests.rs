@@ -661,7 +661,11 @@ fn build_outside_the_root_directory_looks_from_the_working_directory_first() {
 #[test]
 fn what_is_left_of_a_path_that_goes_up_past_the_root_is_written_down_in_each_form() {
     let job = ("/jobs/job.ts", "one/jobs/job.ts");
-    let rows: [(&str, &[(&str, &str)]); 7] = [
+    let rows: [(&str, &[(&str, &str)]); 8] = [
+        (
+            r#""/$bunfs/root/_.._/beside.ts""#,
+            &[("/$bunfs/root/_.._/beside.ts", "one/two/beside.ts")],
+        ),
         (r#"import.meta.dir + "/../../jobs/job.ts""#, &[job]),
         (r#"new URL("../../jobs/job.ts", import.meta.url)"#, &[job]),
         (r#"import.meta.resolve("../../jobs/job.ts")"#, &[job]),

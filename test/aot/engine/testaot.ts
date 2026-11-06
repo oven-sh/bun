@@ -9,7 +9,7 @@
 //   testaot native <part of a name>                   tests written in C++
 import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { declare } from "../harness/capabilities";
 import { slot, slots } from "../harness/commands";
@@ -155,9 +155,12 @@ export function nativeTests(part: number, parts: number) {
   const sharesUnderWay = join(dirname(testaot!), "native-tests-under-way");
   const images = tempDir("native-test-images", {});
   afterAll(() => images[Symbol.dispose]());
-  const env = isWindows ? {} : { AOT_TEST_IMAGES: String(images) };
   for (let slice = 0; slice < sharesOfAFile; slice++) {
     const share = `${(part - 1) * sharesOfAFile + slice + 1}/${parts * sharesOfAFile}`;
+    // Tests that write the same image share its file, and some lay files of their own beside it under its name: shares run at once, so each has a folder.
+    const imagesOfShare = join(String(images), String(slice));
+    mkdirSync(imagesOfShare);
+    const env = isWindows ? {} : { AOT_TEST_IMAGES: imagesOfShare };
     test.concurrent(
       `native tests: --part=${share}`,
       () =>

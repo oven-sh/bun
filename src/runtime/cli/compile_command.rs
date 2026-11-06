@@ -89,6 +89,8 @@ pub(crate) struct ExecutableSettings<'r> {
     pub(crate) flags: Flags,
     pub(crate) runtime_options: RuntimeOptions,
     pub(crate) assets: &'r [Box<[u8]>],
+    /// Where the caller writes the metafiles behind the build, seen from the working directory. An empty path: no such file.
+    pub(crate) metafiles: [&'r [u8]; 2],
     pub(crate) embeds_source_maps: bool,
 }
 

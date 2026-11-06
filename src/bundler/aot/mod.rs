@@ -121,6 +121,9 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         typescript_libs,
     } = request;
 
+    if let Some(outfile) = outfile {
+        transpiler.resolver.pass_over_outfile(outfile);
+    }
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points,
@@ -234,10 +237,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 .collect();
             let resolver = &mut bundle.transpiler.resolver;
             let names = add_hidden_names(package_names, resolver.find_nearer_packages(&folders));
-            add_hidden_names(
-                names,
-                resolver.find_names_that_lead_outside(&files, outfile),
-            )
+            add_hidden_names(names, resolver.find_names_that_lead_outside(&files))
         }
         Ok(_) | Err(_) => package_names,
     };

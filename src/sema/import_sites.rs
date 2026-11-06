@@ -77,6 +77,15 @@ pub enum ImportSiteKind {
 }
 
 impl ImportSiteKind {
+    pub fn loads_module(self) -> bool {
+        !matches!(
+            self,
+            ImportSiteKind::RequireResolve(_)
+                | ImportSiteKind::ImportMetaResolve(_)
+                | ImportSiteKind::MockModule(_)
+        )
+    }
+
     pub fn call(self) -> Option<ExprId> {
         match self {
             ImportSiteKind::ImportCall(call)

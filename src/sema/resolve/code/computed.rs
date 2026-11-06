@@ -48,6 +48,7 @@ struct CandidateSearch<'a, 'h> {
     extensions: Vec<Vec<u8>>,
     stays_out_of_other_packages: bool,
     leaves_installed_packages_on_disk: bool,
+    start_names_nothing: bool,
     tried: FxHashSet<Vec<u8>>,
     runtime_modules: Vec<ComputedCandidate<'h>>,
     candidates: Vec<ComputedCandidate<'h>>,
@@ -165,6 +166,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             extensions: extensions.concat(),
             stays_out_of_other_packages: false,
             leaves_installed_packages_on_disk: false,
+            start_names_nothing: false,
             tried: FxHashSet::default(),
             runtime_modules: Vec::new(),
             candidates: Vec::new(),
@@ -251,12 +253,19 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         if is_root_of_disk || !names_folder && !self.lies_in_own_package(&root) {
             return Err(ComputedUnknown::NoConstantPrefix);
         }
-        self.try_empty_middle()?;
+        self.start_names_nothing = self.names_nothing(&root, name_prefix);
+        let outcome = self.try_empty_middle();
+        self.start_names_nothing = false;
+        outcome?;
         self.stays_out_of_other_packages = true;
         let outcome =
             self.walk_directory(&root, written_directory, name_prefix, SpecifierForm::Path);
         self.stays_out_of_other_packages = false;
         outcome
+    }
+
+    fn names_nothing(&self, root: &[u8], name_prefix: &[u8]) -> bool {
+        name_prefix.is_empty() && is_inside(self.directory, strings::without_trailing_slash(root))
     }
 
     fn lies_in_own_package(&self, root: &[u8]) -> bool {
@@ -479,19 +488,20 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         name_prefix: &[u8],
         form: SpecifierForm,
     ) -> Result<(), ComputedUnknown> {
-        for entry in self.list_entries(root, name_prefix)? {
-            match entry {
-                WalkedEntry::File(relative) => {
-                    self.try_file(&[written_root, relative.as_slice()].concat(), form)?;
-                }
-                WalkedEntry::Directory(relative) => {
-                    let written = [written_root, relative.as_slice()].concat();
-                    self.try_spelling(&written, form)?;
-                    self.try_spelling(strings::without_trailing_slash(&written), form)?;
-                }
+        let entries = self.list_entries(root, name_prefix)?;
+        self.start_names_nothing = self.names_nothing(root, name_prefix);
+        let outcome = entries.into_iter().try_for_each(|entry| match entry {
+            WalkedEntry::File(relative) => {
+                self.try_file(&[written_root, relative.as_slice()].concat(), form)
             }
-        }
-        Ok(())
+            WalkedEntry::Directory(relative) => {
+                let written = [written_root, relative.as_slice()].concat();
+                self.try_spelling(&written, form)?;
+                self.try_spelling(strings::without_trailing_slash(&written), form)
+            }
+        });
+        self.start_names_nothing = false;
+        outcome
     }
 
     fn list_entries(
@@ -543,7 +553,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 if is_root && !name.starts_with(name_prefix) && !has_matching_spelling(&name) {
                     continue;
                 }
-                if !has_extension(&name) {
+                if !has_extension(&name) || name.starts_with(b".") {
                     continue;
                 }
                 entries.push(WalkedEntry::File(
@@ -620,6 +630,15 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             {
                 return Err(ComputedUnknown::ConfigPaths);
             }
+            CodeResolution::File(file)
+                if self.start_names_nothing
+                    && !ends_in_extension(self.request.suffix)
+                    && file.host_module.is_none()
+                    && (self.resolver.code_host()).is_data_file(file.path, request.kind) =>
+            {
+                self.tried.remove(text);
+                return Ok(());
+            }
             CodeResolution::File(file) => ComputedCandidate::File(file),
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
             CodeResolution::External {
@@ -654,6 +673,11 @@ fn is_path(specifier: &[u8]) -> bool {
     bun_paths::is_absolute(specifier)
         || specifier.starts_with(b"./")
         || specifier.starts_with(b"../")
+}
+
+fn ends_in_extension(written_end: &[u8]) -> bool {
+    let name = split_after_last_slash(written_end).1;
+    strings::last_index_of_char(name, b'.').is_some_and(|dot| dot + 1 < name.len())
 }
 
 fn has_extension(name: &[u8]) -> bool {

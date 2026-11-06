@@ -93,21 +93,82 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
     });
   }, 600_000);
 
-  test("a build over the executable of the build before, which is named as the entry point, is equal", async () => {
+  const importsUnderMadeName = `export const which = "right.ts";\nif (process.argv[2]) setTimeout(() => import([".", process.argv[2]].join("/")), 0);\n`;
+  test.each([
+    ["a program that loads nothing", `console.log("right");\n`, isWindows ? "right.exe" : "right", []],
+    ["a program that imports under a made name", importsUnderMadeName, isWindows ? "right.exe" : "right", []],
+    ["the same, and the executable has an extension", importsUnderMadeName, "right.exe", ["--outfile", "right.exe"]],
+    [
+      "a program that loads nothing, and the names differ in case",
+      `console.log("right");\n`,
+      "Right.exe",
+      ["--outfile", "Right.exe"],
+    ],
+    [
+      "the same without an extension",
+      `console.log("right");\n`,
+      isWindows ? "Right.exe" : "Right",
+      ["--outfile", "Right"],
+    ],
+    [
+      "a program whose computed path ends as the metafile does",
+      `if (process.argv[2]) console.log(require("./" + process.argv[2] + ".json"));\n`,
+      isWindows ? "right.exe" : "right",
+      ["--metafile=meta.json"],
+    ],
+    [
+      "a program whose computed path may name what lies beside an external source map",
+      `if (process.argv[2]) import("./" + process.argv[2]);\n`,
+      isWindows ? "right.exe" : "right",
+      ["--sourcemap=external"],
+    ],
+  ])(
+    "a build over the executable of the build before, which is named as the entry point, is equal: %s",
+    async (_, text, executable, flags) => {
+      await slot(async () => {
+        using dir = tempDir("aot-same-bytes-over-the-first", { "right.ts": text });
+        const hashes: string[] = [];
+        for (let build = 0; build < 2; build++) {
+          built(
+            await spawned(
+              [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "./right.ts", ...flags],
+              String(dir),
+              bunEnv,
+            ),
+          );
+          hashes.push(Bun.hash(readFileSync(join(String(dir), executable))).toString(16));
+        }
+        expect(hashes[1]).toBe(hashes[0]);
+      });
+    },
+    600_000,
+  );
+
+  test("a file of the user's that lies where the executable is written is what the program names", async () => {
     await slot(async () => {
-      using dir = tempDir("aot-same-bytes-over-the-first", { "right.ts": `console.log("right");\n` });
-      const hashes: string[] = [];
-      for (let build = 0; build < 2; build++) {
+      const reads = `import data from "./app" with { type: "file" };\nconsole.log((await Bun.file(data).text()).trim());\n`;
+      using dir = tempDir("aot-the-file-at-the-outfile-is-meant", {
+        "beside/app.mjs": reads,
+        "beside/app": "the data\n",
+        "script/cli": `console.log("cli");\n`,
+      });
+      const printed: string[] = [];
+      for (const [folder, entry, executable] of [
+        ["beside", "./app.mjs", "app"],
+        ["script", "./cli", "cli"],
+      ]) {
+        const directory = join(String(dir), folder);
         built(
           await spawned(
-            [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "./right.ts"],
-            String(dir),
+            [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", entry],
+            directory,
             bunEnv,
           ),
         );
-        hashes.push(Bun.hash(readFileSync(join(String(dir), isWindows ? "right.exe" : "right"))).toString(16));
+        const ran = await spawned([join(directory, isWindows ? executable + ".exe" : executable)], directory, bunEnv);
+        printed.push(ran.stdout.trim());
       }
-      expect(hashes[1]).toBe(hashes[0]);
+      expect(printed).toEqual(["the data", "cli"]);
     });
   }, 600_000);
 

@@ -5996,6 +5996,21 @@ impl VirtualMachine {
                 }
                 notes.push(logged.data.clone());
             }
+            // The message is that of `bun run`, which finds the file beside the importer. What helps here is another thing.
+            let importer = normalize_source(source_utf8.slice());
+            let folder = match IS_A_FILE_PATH {
+                true => bun_resolver::fs::PathName::init(importer).dir_with_trailing_slash(),
+                false => importer,
+            };
+            let resolver = &jsc_vm.transpiler.resolver;
+            if resolver.looks_in_executable_alone(folder, specifier_utf8.slice()) {
+                notes.push(bun_ast::Data {
+                    text: std::borrow::Cow::Borrowed(
+                        b"it isn't in this executable, and a relative path is only looked up there. To embed a file, import it by a constant path or pass it to bun compile as another entry point. For a data file you can also write its folder or its extension in the path, as in \"./data/\" + name or name + \".json\". An absolute path loads a data file from disk.",
+                    ),
+                    location: None,
+                });
+            }
             msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,

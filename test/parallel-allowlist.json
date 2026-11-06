@@ -1503,8 +1503,12 @@
     "aot/objects-of-an-earlier-test-file-find-what-that-file-has-replaced.test.ts",
     "aot/a-file-of-the-graph-of-a-test-file-requires-a-module-that-imports-the-test-file.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
+    "aot/a-computed-import-embeds-the-data-files-that-its-written-name-asks-for.test.ts",
+    "aot/a-file-that-many-ways-lead-to-is-asked-once-whether-it-may-leave.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
+    "aot/a-require-at-every-step-of-an-import-call-of-a-graph-left-to-the-loader.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
+    "aot/files-above-the-entry-point-start-workers-from-code.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts"
   ]
 }

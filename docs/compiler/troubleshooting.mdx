@@ -41,6 +41,7 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `TS100078: ... runs from source, not compiled`  | [None needed](/compiler/compatibility#under-bun-test---aot)                       |
 | `TS100079: ... any file ... may load again`     | Move that line out of the test run, or run its test file on its own               |
 | `TS100080: ... and doesn't ask it`              | [Loader hooks](/compiler/compatibility#loader-hooks-and-the-module-cache)         |
+| `TS100088: ... These aren't code`               | [None needed](/compiler/compatibility#dynamic-imports)                            |
 | `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
 | `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
 | `can't run code compiled by this Bun`           | Pass a `bun` of the same revision                                                 |
@@ -55,6 +56,7 @@ A build looks for type errors in your own files. It doesn't report the ones in `
 | `... because built-in objects are read-only`                | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
 | `Cannot load ...: it isn't in this executable`              | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `Cannot find module`, only on another machine               | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `Cannot find module` for a relative path to a data file     | [Name its folder or extension](/compiler/compatibility#dynamic-imports)           |
 | `... was not compiled into this executable`                 | Use that API once in your own code                                                |
 | `EvalError: ... the compiler couldn't tell ...`             | Call `eval` or `new Function` directly                                            |
 | `--preload can't be used with this executable`              | Import the file from your entry point                                             |

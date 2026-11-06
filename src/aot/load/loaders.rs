@@ -101,6 +101,33 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
     }
 }
 
+pub(crate) fn gives_data(loader: Loader) -> bool {
+    match loader {
+        Loader::Jsx
+        | Loader::Js
+        | Loader::Ts
+        | Loader::Tsx
+        | Loader::Wasm
+        | Loader::Napi
+        | Loader::Bunsh
+        | Loader::Md
+        | Loader::Html => false,
+        Loader::Css
+        | Loader::File
+        | Loader::Json
+        | Loader::Jsonc
+        | Loader::Toml
+        | Loader::Base64
+        | Loader::Dataurl
+        | Loader::Text
+        | Loader::Sqlite
+        | Loader::SqliteEmbedded
+        | Loader::Yaml
+        | Loader::Json5
+        | Loader::Xml => true,
+    }
+}
+
 pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
     matches!(
         loader,

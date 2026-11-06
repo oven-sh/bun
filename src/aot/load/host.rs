@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ops::Range;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bstr::BStr;
 use bun_ast::{Loader, Loc};
@@ -23,7 +24,7 @@ use bun_sema::resolve::{
     ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join, to_path, to_path_in,
 };
 use bun_sema::session::{Arena, Session};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
 use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
@@ -37,7 +38,10 @@ use crate::diagnostics::{
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::bundled_commonjs::{blank_commonjs_wrapper, is_bundled_commonjs};
 use crate::load::compiler_declarations;
-use crate::load::contents::worker_entries::find_file_named_as_in_executable;
+use crate::load::contents::worker_entries::{
+    count_highest_level_on_way, find_file_named_as_in_executable, find_file_on_way,
+    find_way_named_as_in_executable,
+};
 use crate::load::contents::{ScanInput, scan_file};
 use crate::load::data_modules::{create_module_without_text, parse_data_module};
 use crate::load::disk_delegation::{
@@ -47,13 +51,15 @@ use crate::load::externals::{contains, is_external};
 use crate::load::import_meta_glob;
 use crate::load::is_host_path;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
+    BY_NAME, HostLoaderKind, gives_data, host_loader_kind, loader_by_name, loader_by_path,
     loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
     to_host_loader_of_attribute,
 };
 use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
-use crate::load::module_paths::{compute_program_path, compute_relative_path, count_levels_above};
+use crate::load::module_paths::{
+    compute_program_path, compute_relative_path, count_folders, count_levels_above,
+};
 use crate::load::modules_with_queries::{
     ModulesWithQueries, find_worker_constructor, has_vite_suffix,
 };
@@ -144,10 +150,17 @@ pub(crate) struct LoadHost<'a> {
     modules_with_queries: ModulesWithQueries,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    outfile: Option<Vec<u8>>,
+    other_products: Vec<Vec<u8>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
     may_store_path_of_main_module: AtomicBool,
     has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
+    levels_above_root: AtomicUsize,
+    levels_of_texts: Guarded<FxHashMap<Vec<u8>, usize>>,
+    holds_texts_of_levels: AtomicBool,
+    highest_level_named: AtomicUsize,
+    file_lost_with_texts_of_other_levels: Guarded<Option<Vec<u8>>>,
     binary_entry_point_paths: Vec<Vec<u8>>,
     entry_points_that_run_despite_their_names: Vec<Vec<u8>>,
     entry_points_by_file: Vec<(Vec<u8>, Vec<u8>)>,
@@ -249,17 +262,13 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
 }
 
 impl<'a> LoadHost<'a> {
-    pub(crate) fn begin_at_text(&self, url: &[u8]) -> Option<Vec<u8>> {
-        let loader = Loader::Tsx;
-        let contents = self.input.provider.decode_data_url(url)?;
-        if !is_program(url, &contents, loader) {
-            return None;
-        }
-        Some(self.plugins.add_entry_text(&EntryText {
+    pub(crate) fn begin_at_text(&self, url: &[u8], levels: Option<usize>) -> Option<Vec<u8>> {
+        let text = EntryText {
             name: url.to_vec(),
-            contents,
-            loader,
-        }))
+            contents: self.input.provider.decode_data_url(url)?,
+            loader: Loader::Tsx,
+        };
+        self.begin_at_text_of_blob(&text, levels)
     }
 
     pub(crate) fn write_url(&self, url: &[u8]) -> Option<Vec<u8>> {
@@ -280,9 +289,20 @@ impl<'a> LoadHost<'a> {
         })
     }
 
-    pub(crate) fn begin_at_text_of_blob(&self, text: &EntryText) -> Option<Vec<u8>> {
-        is_program(&text.name, &text.contents, text.loader)
-            .then(|| self.plugins.add_entry_text(text))
+    pub(crate) fn begin_at_text_of_blob(
+        &self,
+        text: &EntryText,
+        levels: Option<usize>,
+    ) -> Option<Vec<u8>> {
+        if !is_program(&text.name, &text.contents, text.loader) {
+            return None;
+        }
+        let path = self.plugins.add_entry_text(text, levels);
+        if let Some(levels) = levels {
+            self.levels_of_texts.lock().insert(path.clone(), levels);
+            self.holds_texts_of_levels.store(true, Ordering::Relaxed);
+        }
+        Some(path)
     }
 
     pub(crate) fn begin_at(&self, entry_points: &[Vec<u8>]) {
@@ -331,9 +351,18 @@ impl<'a> LoadHost<'a> {
             entry_points_that_run_despite_their_names,
             entry_points_by_file: collect_entry_points_by_file(options),
             entry_point_paths,
+            outfile: provider.outfile().map(from_native),
+            other_products: (options.aot.other_products.iter())
+                .map(|path| from_native(path))
+                .collect(),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             may_store_path_of_main_module: AtomicBool::new(false),
+            levels_above_root: AtomicUsize::new(0),
+            levels_of_texts: Guarded::new(FxHashMap::default()),
+            holds_texts_of_levels: AtomicBool::new(false),
+            highest_level_named: AtomicUsize::new(0),
+            file_lost_with_texts_of_other_levels: Guarded::new(None),
             has_file_that_asks_for_what_unseen_code_finds: AtomicBool::new(false),
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
@@ -359,6 +388,13 @@ impl<'a> LoadHost<'a> {
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
             Some(directory) => Cow::Owned(directory),
             None => Cow::Borrowed(dirname::<Posix>(path)),
+        }
+    }
+
+    fn is_same_path(&self, a: &[u8], b: &[u8]) -> bool {
+        match self.disk.is_case_sensitive() {
+            true => a == b,
+            false => a.eq_ignore_ascii_case(b),
         }
     }
 
@@ -405,9 +441,85 @@ impl<'a> LoadHost<'a> {
                 && self.is_among(&self.found_entry_point_paths.lock(), path))
     }
 
-    fn find_path_at_run_time(&self, path: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn settle_levels_above_root(&self, levels: usize) {
+        self.levels_above_root.store(levels, Ordering::Relaxed);
+    }
+
+    pub(crate) fn note_file_lost_with_texts_of_other_levels(&self, file: Vec<u8>) {
+        *self.file_lost_with_texts_of_other_levels.lock() = Some(file);
+    }
+
+    pub(crate) fn file_lost_with_texts_of_other_levels(&self) -> Option<Vec<u8>> {
+        self.file_lost_with_texts_of_other_levels.lock().clone()
+    }
+
+    pub(crate) fn levels_above_root(&self) -> Option<usize> {
+        Some(self.levels_above_root.load(Ordering::Relaxed)).filter(|&levels| levels > 0)
+    }
+
+    pub(crate) fn levels_of_text(&self, file: &[u8]) -> Option<usize> {
+        match self.holds_texts_of_levels.load(Ordering::Relaxed) {
+            true => self.levels_of_texts.lock().get(file).copied(),
+            false => None,
+        }
+    }
+
+    pub(crate) fn levels_above_root_seen_from(&self, file: &[u8]) -> usize {
+        let of_text = self.levels_of_text(file);
+        of_text.or_else(|| self.levels_above_root()).unwrap_or(0)
+    }
+
+    pub(crate) fn highest_level_named(&self) -> usize {
+        self.highest_level_named.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn note_way_named(&self, way: &[u8]) {
+        let folders = count_folders(&self.input.options.paths.root_directory);
+        let highest = count_highest_level_on_way(way).min(folders);
+        (self.highest_level_named).fetch_max(highest, Ordering::Relaxed);
+    }
+
+    pub(crate) fn find_file_named_as_in_executable(
+        &self,
+        file: &[u8],
+        name: &[u8],
+    ) -> Option<Vec<u8>> {
+        let paths = &self.input.options.paths;
+        let levels = self.levels_above_root_seen_from(file);
+        let way = find_way_named_as_in_executable(paths, levels, name)?;
+        if self.levels_of_text(file).is_some() {
+            self.note_way_named(&way);
+        }
+        find_file_on_way(paths, way)
+    }
+
+    fn find_code_file_named_as_in_executable(&self, request: &CodeRequest<'_>) -> Option<Vec<u8>> {
+        let path = self.find_file_named_as_in_executable(request.importer, request.specifier)?;
+        let path = from_native(&path);
+        let search = FileSearch {
+            directory: request.directory,
+            specifier: &path,
+            kind: request.kind,
+            prefers_module_field: self.input.options.code.prefers_module_field,
+        };
+        match self.find_code_file(&search) {
+            FoundCode::File {
+                path,
+                links_followed: true,
+                ..
+            } => Some(path),
+            FoundCode::File { path, .. } => Some(self.disk.realpath(&path)),
+            FoundCode::External(_) | FoundCode::NotFound(_) => self.find_entry_point_by_file(&path),
+        }
+    }
+
+    fn find_path_at_run_time(
+        &self,
+        path: &[u8],
+        levels_above_root: Option<usize>,
+    ) -> Result<Vec<u8>, Range<usize>> {
         if is_host_path(path) {
-            return None;
+            return Err(0..0);
         }
         let options = self.input.options;
         let is_written_as = |entry_point: &Vec<u8>| {
@@ -424,15 +536,18 @@ impl<'a> LoadHost<'a> {
             Some(index) => Some(paths.entry_point_names[index].clone()),
             None => compute_relative_path(&paths.root_directory, to_native(path)),
         };
-        let lies_above_root = below_root.is_some_and(|it| count_levels_above(&it) > 0);
-        if lies_above_root && !options.aot.runs_in_place {
-            return None;
-        }
+
         let runs_in_place = options.aot.runs_in_place;
-        Some(compute_program_path(
+        let levels = match below_root.map_or(0, |it| count_levels_above(&it)) {
+            level @ 1.. if !runs_in_place => {
+                levels_above_root.ok_or_else(|| level..count_folders(&paths.root_directory) + 3)?
+            }
+            _ => 0,
+        };
+        Ok(compute_program_path(
             runs_in_place,
             paths,
-            0,
+            levels,
             to_native(path),
             index,
         ))
@@ -712,7 +827,10 @@ impl Host for LoadHost<'_> {
 
     fn is_file(&self, path: &[u8]) -> bool {
         if !is_host_path(path) {
-            return (self.disk).is_file(self.modules_with_queries.file_behind(path));
+            let path = self.modules_with_queries.file_behind(path);
+            let is_outfile =
+                (self.outfile.as_deref()).is_some_and(|it| self.is_same_path(it, path));
+            return !is_outfile && self.disk.is_file(path);
         }
         match self.served_by(path) {
             ServedBy::PluginModule | ServedBy::Declarations(_) | ServedBy::RuntimeTypes => true,
@@ -728,10 +846,18 @@ impl Host for LoadHost<'_> {
     }
 
     fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-        match is_host_path(path) {
-            true => runtime_types::entries(path),
-            false => self.disk.entries(path),
+        if is_host_path(path) {
+            return runtime_types::entries(path);
         }
+        let (mut files, directories) = self.disk.entries(path);
+        let folder = path.strip_suffix(b"/").unwrap_or(path);
+        for product in self.outfile.iter().chain(&self.other_products) {
+            if self.is_same_path(dirname::<Posix>(product), folder) {
+                let name_of_product = &product[folder.len() + 1..];
+                files.retain(|name| !self.is_same_path(name, name_of_product));
+            }
+        }
+        (files, directories)
     }
 
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
@@ -852,7 +978,7 @@ impl CodeHost for LoadHost<'_> {
         }
         let mut entry_texts = self.input.options.load.entry_texts.iter();
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
-            return HostResolution::Path(self.plugins.add_entry_text(text));
+            return HostResolution::Path(self.plugins.add_entry_text(text, None));
         }
         if is_import && let Some(resolution) = self.runtime_resolution(request.specifier) {
             if builtin_uses::is_module_with_source(&resolution) {
@@ -888,13 +1014,7 @@ impl CodeHost for LoadHost<'_> {
         let options = self.input.options;
         if is_import
             && !options.aot.runs_in_place
-            && let written = request.specifier
-            && let Some(path) = find_file_named_as_in_executable(&options.paths, 0, written)
-            && let path = from_native(&path)
-            && let Some(path) = match self.is_file(&path) {
-                true => Some(path),
-                false => self.find_entry_point_by_file(&path),
-            }
+            && let Some(path) = self.find_code_file_named_as_in_executable(request)
         {
             return HostResolution::Path(path);
         }
@@ -974,6 +1094,12 @@ impl CodeHost for LoadHost<'_> {
 
     fn leaves_packages_outside(&self) -> bool {
         !self.input.options.load.externals.is_empty() || self.input.provider.has_resolve_plugins()
+    }
+
+    fn is_data_file(&self, path: &[u8], kind: CodeImportKind) -> bool {
+        let loader = self.plugin_loader(path);
+        let loader = loader.unwrap_or_else(|| self.default_loader_for(path, kind, true));
+        !is_host_path(path) && !self.is_read_by_plugin(path) && gives_data(loader)
     }
 
     fn create_file_of_database(&self, specifier: &[u8]) -> Option<Vec<u8>> {
@@ -1479,7 +1605,8 @@ impl CodeHost for LoadHost<'_> {
         }
         let is_file = |path: &[u8]| self.is_file(path) || self.is_file(&from_native(path));
         let is_data = |path: &[u8]| parses_text_as_data(self.default_loader(path));
-        let find_path_at_run_time = || self.find_path_at_run_time(request.path);
+        let find_path_at_run_time =
+            |levels_above_root| self.find_path_at_run_time(request.path, levels_above_root);
         let options = self.input.options;
         let sees_backslashes = match options.aot.runs_in_place {
             true => cfg!(windows),

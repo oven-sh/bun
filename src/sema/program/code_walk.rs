@@ -530,6 +530,13 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return false;
         };
         let found = find(&WalkedCode::new(context, state));
+        let dropped = found.dropped.iter();
+        let dropped = dropped.filter_map(|path| context.drop_found_entry_point(path));
+        let dropped: Vec<CodeTarget<'r>> = dropped.collect();
+        for entry_point in &dropped {
+            let index = state.index_of[&context.canonical_key(entry_point.key)];
+            drop_parsed_file(state, index);
+        }
         let added: Vec<CodeTarget<'r>> = (found.paths.iter())
             .filter_map(|path| context.add_entry_point(path))
             .collect();
@@ -541,7 +548,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             self.enqueue(state, entry_point, 0);
         }
         if added.is_empty() {
-            return has_learned;
+            return has_learned || !dropped.is_empty();
         }
         let was_alone = context.entry_point_count() - added.len() <= 1;
         let may_answer_otherwise = match was_alone {
@@ -1274,11 +1281,15 @@ fn take_noted_files<'s, 'r>(
     noted
 }
 
-fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
+fn drop_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
     let file = &mut state.files[index as usize];
     file.parsed = None;
     file.targets.clear();
     state.barrels.forget_parsed_file(index);
+}
+
+fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
+    drop_parsed_file(state, index);
     state.found.push(index);
 }
 

@@ -9078,7 +9078,8 @@ impl<'p, 's> Checker<'p, 's> {
             };
             walk.steps_between_far_skips = match skipped {
                 Some((_, passed)) if passed >= WORTHWHILE_FAR_SKIP => 0,
-                _ => (walk.steps_between_far_skips * 2).max(WORTHWHILE_FAR_SKIP),
+                Some(_) if has_far_skipped => walk.steps_between_far_skips,
+                _ => (walk.steps_between_far_skips.saturating_mul(2)).max(WORTHWHILE_FAR_SKIP),
             };
             walk.next_far_skip = steps.saturating_add(walk.steps_between_far_skips);
             if let Some((arrived_at, _)) = skipped {
@@ -9089,7 +9090,7 @@ impl<'p, 's> Checker<'p, 's> {
         walk.steps_between_skips = if walk.steps - steps >= WORTHWHILE_SKIP {
             0
         } else {
-            (walk.steps_between_skips * 2).max(1)
+            walk.steps_between_skips.saturating_mul(2).max(1)
         };
         walk.next_skip = walk.steps.saturating_add(walk.steps_between_skips);
         skipped

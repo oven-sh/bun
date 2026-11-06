@@ -216,6 +216,16 @@ impl JSBundleCompletionTask {
             .map(|b| &**b)
             .collect();
 
+        // Without an output directory a metafile is handed to the caller and not written.
+        let outdir = &self.config.outdir.list[..];
+        let in_output_directory = |path: &[u8]| match path.is_empty() || outdir.is_empty() {
+            true => Vec::new(),
+            false => [outdir, b"/", path].concat(),
+        };
+        let metafiles = [
+            in_output_directory(&self.config.metafile_json_path.list),
+            in_output_directory(&self.config.metafile_markdown_path.list),
+        ];
         let mut request = CompileRequest {
             origin: RequestOrigin::BuildApi,
             product: CompileProduct::Executable {
@@ -247,6 +257,7 @@ impl JSBundleCompletionTask {
                     jit_policy: compile.jit_policy,
                 },
                 assets: &compile.assets,
+                metafiles: [&metafiles[0], &metafiles[1]],
                 embeds_source_maps: self.config.source_map != options::SourceMapOption::None,
             },
             log: &raw mut self.log,

@@ -76,6 +76,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-computed-import-embeds-the-data-files-that-its-written-name-asks-for.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-constant-literal-holds-a-name-that-its-type-does-not-list.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -127,6 +131,10 @@
   "aot/a-file-that-hands-its-module-object-on-is-compiled-as-in-the-executable.test.ts": {
     "default": 27200,
     "asan": 108800
+  },
+  "aot/a-file-that-many-ways-lead-to-is-asked-once-whether-it-may-leave.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-file-that-may-be-evicted-keeps-what-its-one-run-laid.test.ts": {
     "default": 60000,
@@ -331,6 +339,10 @@
   "aot/a-question-to-require-cache-costs-the-same-in-a-larger-program.test.ts": {
     "default": 19500,
     "asan": 78000
+  },
+  "aot/a-require-at-every-step-of-an-import-call-of-a-graph-left-to-the-loader.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-require-at-the-top-of-a-commonjs-file-beside-a-stored-resolver.test.ts": {
     "default": 9900,
@@ -875,6 +887,10 @@
   "aot/faulty-tsconfig.test.ts": {
     "default": 1700,
     "asan": 6800
+  },
+  "aot/files-above-the-entry-point-start-workers-from-code.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/files-that-load-again-by-module.test.ts": {
     "default": 3200,

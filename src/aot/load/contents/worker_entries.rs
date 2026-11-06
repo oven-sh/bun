@@ -1341,24 +1341,52 @@ fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
     }
 }
 
-fn find_path_on_disk(
-    root_directory: &[u8],
+fn find_way_from_root_directory(
     root: &[u8],
     levels_above_root: usize,
     named: &[u8],
 ) -> Option<Vec<u8>> {
-    let name = match named.strip_prefix(root) {
+    match named.strip_prefix(root) {
         Some(below_root) => {
             let segments = strings::split(below_root, b"/");
             let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
-            segments.collect::<Vec<_>>().join(&b"/"[..])
+            Some(segments.collect::<Vec<_>>().join(&b"/"[..]))
         }
         None => {
             let (level, below) = read_path_above_root(root, levels_above_root, named)?;
-            [&b"../".repeat(level)[..], below].concat()
+            Some([&b"../".repeat(level)[..], below].concat())
         }
-    };
-    resolve_paths(&[with_separators_of_program(root_directory), name])
+    }
+}
+
+pub(crate) fn find_way_named_as_in_executable(
+    paths: &PathOptions,
+    levels_above_root: usize,
+    name: &[u8],
+) -> Option<Vec<u8>> {
+    let root = with_forward_slashes(paths.module_prefix.clone());
+    let find = |name: &[u8]| find_way_from_root_directory(&root, levels_above_root, name);
+    match name.starts_with(b"file:") {
+        true => find(&read_file_url(name)?),
+        false => find(name),
+    }
+}
+
+pub(crate) fn count_highest_level_on_way(way: &[u8]) -> usize {
+    let (mut level, mut highest) = (0isize, 0isize);
+    for segment in strings::split(way, b"/") {
+        match segment {
+            b"" | b"." => {}
+            b".." => level += 1,
+            _ => level -= 1,
+        }
+        highest = highest.max(level);
+    }
+    highest as usize
+}
+
+pub(crate) fn find_file_on_way(paths: &PathOptions, way: Vec<u8>) -> Option<Vec<u8>> {
+    resolve_paths(&[with_separators_of_program(&paths.root_directory), way])
 }
 
 pub(crate) fn find_file_named_as_in_executable(
@@ -1366,13 +1394,10 @@ pub(crate) fn find_file_named_as_in_executable(
     levels_above_root: usize,
     name: &[u8],
 ) -> Option<Vec<u8>> {
-    let root = with_forward_slashes(paths.module_prefix.clone());
-    let find =
-        |name: &[u8]| find_path_on_disk(&paths.root_directory, &root, levels_above_root, name);
-    match name.starts_with(b"file:") {
-        true => find(&read_file_url(name)?),
-        false => find(name),
-    }
+    find_file_on_way(
+        paths,
+        find_way_named_as_in_executable(paths, levels_above_root, name)?,
+    )
 }
 
 pub(crate) fn source_path_of(path: &[u8]) -> Vec<u8> {

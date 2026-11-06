@@ -16,6 +16,7 @@ use super::{
     with_forward_slashes, with_separators_of_program, worker_builtins, write_file_url,
 };
 use crate::builtins::{BuiltinId, RuntimeModule, table};
+use crate::load::contents::FileContents;
 use crate::load::is_host_path;
 use crate::load::module_paths::with_separators_of_host;
 use crate::module_keys::is_url_with_text;
@@ -79,6 +80,38 @@ fn find_folder(path: &[u8]) -> Option<&[u8]> {
 
 impl ContentsScan<'_, '_> {
     pub(super) fn add_code_given_to_worker(
+        &mut self,
+        argument: ExprId,
+        options: Option<ExprId>,
+        name: &ImportSpecifier,
+    ) {
+        let count = |found: &FileContents| {
+            let (urls, texts) = (&found.urls_with_code, &found.texts_behind_object_urls);
+            (urls.len(), texts.len())
+        };
+        let start = count(&self.found);
+        self.add_code_made_of_known_paths(argument, options, name);
+        let end = count(&self.found);
+        let Err(levels_that_mount_may_have) = (self.input.find_path_at_run_time)(None) else {
+            return;
+        };
+        for levels in levels_that_mount_may_have {
+            self.levels_above_root = Some(levels);
+            self.add_code_made_of_known_paths(argument, options, name);
+            let found = &mut self.found;
+            let urls = found.urls_with_code.split_off(end.0).into_iter();
+            let urls = urls.filter(|url| !found.urls_with_code[start.0..].contains(url));
+            let urls = urls.map(|url| (levels, url, None));
+            found.code_by_levels_above_root.extend(urls);
+            let texts = found.texts_behind_object_urls.split_off(end.1).into_iter();
+            let texts = texts.filter(|it| !found.texts_behind_object_urls[start.1..].contains(it));
+            let texts = texts.map(|(text, r#type)| (levels, text, Some(r#type)));
+            found.code_by_levels_above_root.extend(texts);
+        }
+        self.levels_above_root = None;
+    }
+
+    fn add_code_made_of_known_paths(
         &mut self,
         argument: ExprId,
         options: Option<ExprId>,
@@ -432,7 +465,8 @@ impl ContentsScan<'_, '_> {
         if is_escaped {
             return None;
         }
-        let path = with_separators_of_program(&(self.input.find_path_at_run_time)()?);
+        let path = (self.input.find_path_at_run_time)(self.levels_above_root).ok()?;
+        let path = with_separators_of_program(&path);
         let folder = dirname::<Posix>(&path).to_vec();
         write_file_url(&resolve_paths(&[folder, name.to_vec()])?)
     }
@@ -477,7 +511,7 @@ impl ContentsScan<'_, '_> {
         if bound.import_meta_may_be_modified() {
             return None;
         }
-        let path = (self.input.find_path_at_run_time)()?;
+        let path = (self.input.find_path_at_run_time)(self.levels_above_root).ok()?;
         let with_slashes = with_separators_of_program(&path);
         let sees_backslashes = with_slashes != path;
         match name {

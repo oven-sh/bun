@@ -462,20 +462,34 @@ fn build_program(
     target: Target,
     module_prefix: &[u8],
 ) -> Result<AotBuild, Box<AotBuildFailure>> {
+    let working_directory = bun_sys::getcwd_alloc().ok();
+    let to_absolute = |path: &[u8]| {
+        let folder = working_directory.as_ref()?.as_bytes();
+        Some(resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec())
+    };
+    let outfile = match request.product {
+        CompileProduct::Executable { outfile } => to_absolute(outfile),
+        CompileProduct::GraphBytes | CompileProduct::ReportsOnly => None,
+    };
+    let maps = outfile
+        .iter()
+        .flat_map(|outfile| [&b".map"[..], b".map.js"].map(|end| [&outfile[..], end].concat()));
+    let metafiles = request.executable.metafiles.into_iter();
+    let metafiles = metafiles.filter(|path| !path.is_empty());
     let options = AotOptions {
         omits_foreign_calls: !target.left_out.has_foreign_calls(),
         code_generation_from_strings: match target.left_out.has_code_from_strings() {
             true => request.options.code_generation_from_strings,
             false => CodeGenerationFromStrings::Strict,
         },
+        other_products: maps.chain(metafiles.filter_map(to_absolute)).collect(),
         ..request.options.clone()
     };
-    let outfile = match request.product {
-        CompileProduct::Executable { outfile } => bun_sys::getcwd_alloc().ok().map(|folder| {
-            resolve_path::join_abs_string::<platform::Auto>(folder.as_bytes(), &[outfile]).to_vec()
-        }),
-        CompileProduct::GraphBytes | CompileProduct::ReportsOnly => None,
-    };
+    // Anything but an executable at that path is a file of the user's, which the program may name.
+    let outfile = outfile.filter(|path| {
+        let path = ZBox::from_bytes(path);
+        with_executable_image(&path, |file| find_file_identity(file).is_ok()).unwrap_or(false)
+    });
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,

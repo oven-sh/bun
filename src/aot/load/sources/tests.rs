@@ -208,6 +208,7 @@ fn with_freeze_input<R>(
         host_loaded_modules: &[],
         modules_named_at_run_time: &[],
         found_entry_points: &[],
+        levels_above_root: None,
     })
 }
 
@@ -270,6 +271,7 @@ fn freeze_runtime_project(files: &Files<'_>, host_loaded_modules: &[RuntimeModul
         host_loaded_modules,
         modules_named_at_run_time: &[],
         found_entry_points: &[],
+        levels_above_root: None,
     };
     freeze_sources(&input, &run_serially).unwrap().sources
 }

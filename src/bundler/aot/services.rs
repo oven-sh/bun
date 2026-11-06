@@ -277,6 +277,11 @@ impl SourceProvider for BundlerServices {
         Some(&*self.context.options().define)
     }
 
+    fn outfile(&self) -> Option<&[u8]> {
+        let resolver = &self.context.bundle().transpiler().resolver;
+        resolver.outfile_of_build()
+    }
+
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
         match &self.plugins {
             Some(plugins) => plugins.resolve(request, log),

@@ -39,6 +39,7 @@ pub(crate) struct FileContents {
     pub worker_starts: Vec<WorkerStart>,
     pub urls_with_code: Vec<Atom>,
     pub texts_behind_object_urls: Vec<(Atom, Option<Atom>)>,
+    pub code_by_levels_above_root: Vec<(usize, Atom, Option<Option<Atom>>)>,
     pub names_worker_constructor: bool,
     pub hands_worker_constructor_on: bool,
     pub starts_worker_out_of_sight: bool,

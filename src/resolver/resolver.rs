@@ -507,6 +507,8 @@ pub struct Resolver<'a> {
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
+    /// `Resolver::pass_over_outfile`
+    pub(crate) outfile_of_build: Option<&'static [u8]>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -631,6 +633,7 @@ impl<'a> Resolver<'a> {
             env_loader: from.env_loader,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
+            outfile_of_build: from.outfile_of_build,
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
@@ -990,6 +993,7 @@ impl<'a> Resolver<'a> {
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
+            outfile_of_build: None,
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
@@ -1186,6 +1190,20 @@ impl<'a> Resolver<'a> {
             Some(file_name) => PackageLookup::Found(file_name),
             None => self.resolve_embedded_package(source_dir, import_path, kind),
         }
+    }
+
+    /// `bun run` looks for a relative name beside the importer, and no folder on disk is known to stand for that of a file of the executable.
+    /// With `--aot-allow-code-from-disk` the build has written down where its root lay.
+    pub fn looks_in_executable_alone(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        let graph = self.standalone_module_graph;
+        let program = graph.and_then(|graph| graph.compiled_program());
+        program.is_some_and(|program| {
+            !program.allows_code_from_disk
+                && self.custom_dir_paths.is_none()
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                && crate::compiled_program::is_relative_specifier(import_path)
+                && !program.leaves_outside(source_dir, import_path)
+        })
     }
 
     /// The same from one of the folders that `require.resolve(name, { paths })` was given, in a compiled program.
@@ -1603,7 +1621,9 @@ impl<'a> Resolver<'a> {
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if specifier_is_embedded_path {
+                    if specifier_is_embedded_path
+                        || self.looks_in_executable_alone(source_dir, import_path)
+                    {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
@@ -6175,11 +6195,18 @@ impl<'a> Resolver<'a> {
                     dec_ret!(None);
                 };
 
-                dec_ret!(Some(LoadResult {
-                    path: abs_path.as_bytes(),
-                    dirname_fd: plain_dirname_fd,
-                    file_fd: query.entry().cache().fd,
-                }));
+                // The listing ignores case, so the test is made on what it answers.
+                let is_outfile_of_build = self.outfile_of_build.is_some_and(|outfile| {
+                    crate::compiled_program::compare_source_paths(outfile, abs_path.as_bytes())
+                        .is_eq()
+                });
+                if !is_outfile_of_build {
+                    dec_ret!(Some(LoadResult {
+                        path: abs_path.as_bytes(),
+                        dirname_fd: plain_dirname_fd,
+                        file_fd: query.entry().cache().fd,
+                    }));
+                }
             }
         }
 

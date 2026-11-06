@@ -363,6 +363,15 @@ impl Resolver<'_> {
         Some(bun_paths::strings::without_trailing_slash(real_path).to_vec())
     }
 
+    /// What an earlier build left at `path`, where this build writes its executable, is no file of the program: `app` beside `app.ts`. No name finds it.
+    pub fn pass_over_outfile(&mut self, path: &[u8]) {
+        self.outfile_of_build = self.fs_ref().dirname_store.append_slice(path).ok();
+    }
+
+    pub fn outfile_of_build(&self) -> Option<&'static [u8]> {
+        self.outfile_of_build
+    }
+
     /// A mark for each place, a folder with compiled files or one above, whose copy of a package with compiled files is another than that of the next place further up. It is hidden from a kind of load that finds the name of the package outside the copy further up.
     pub fn find_nearer_packages(&mut self, folders: &[BuildPaths<'_>]) -> Vec<PackageName> {
         let separator = &[bun_paths::SEP][..];
@@ -470,12 +479,7 @@ impl Resolver<'_> {
     }
 
     /// A mark for each name under which the executable finds one of `files`, the compiled files, and `bun run` another file on the disk of the build, which was not compiled.
-    /// What an earlier build left at `outfile`, where this build writes, is no file of the program: `app` beside `app.ts`.
-    pub fn find_names_that_lead_outside(
-        &mut self,
-        files: &[BuildPaths<'_>],
-        outfile: Option<&[u8]>,
-    ) -> Vec<PackageName> {
+    pub fn find_names_that_lead_outside(&mut self, files: &[BuildPaths<'_>]) -> Vec<PackageName> {
         let mut compiled: Vec<&[u8]> = files.iter().map(|file| file.source_path).collect();
         compiled.sort_unstable_by(|a, b| compare_source_paths(a, b));
         let mut asked: Vec<(BuildPaths<'_>, Vec<u8>, bool)> = Vec::new();
@@ -511,10 +515,9 @@ impl Resolver<'_> {
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut names = Vec::new();
         let is_compiled = |path: &[u8]| {
-            outfile.is_some_and(|outfile| compare_source_paths(outfile, path).is_eq())
-                || compiled
-                    .binary_search_by(|file| compare_source_paths(file, path))
-                    .is_ok()
+            compiled
+                .binary_search_by(|file| compare_source_paths(file, path))
+                .is_ok()
         };
         let mut listed: (&[u8], Vec<Vec<u8>>) = (b"", Vec::new());
         for (folder, name, is_folder) in &asked {

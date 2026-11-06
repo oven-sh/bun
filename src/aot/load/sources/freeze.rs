@@ -3,12 +3,13 @@ use std::sync::OnceLock;
 
 use bun_builtin_sources::Manifest;
 use bun_sema::import_sites::ImportSiteKind;
-use bun_sema::program::{CodeAnswer, ComputedTargets, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
 use super::{
     EntryPoint, EntryPointKind, ParsedSource, SourceEntry, SourceKind, Sources, parsed_source,
+    parsed_source_in,
 };
 use crate::builtins::RuntimeModule;
 use crate::diagnostics::{DiagnosticBuffer, InternalError};
@@ -33,6 +34,7 @@ pub(crate) struct FreezeInput<'a, 's> {
     pub host_loaded_modules: &'a [RuntimeModule],
     pub modules_named_at_run_time: &'a [RuntimeModule],
     pub found_entry_points: &'a [FoundEntryPoint],
+    pub levels_above_root: Option<usize>,
 }
 
 pub(crate) struct FrozenSources {
@@ -55,28 +57,28 @@ fn with_names_of_found_entry_points<'a>(
     Cow::Owned(paths)
 }
 
-fn count_levels_above_root(input: &FreezeInput<'_, '_>, paths: &PathOptions) -> usize {
-    if input.project != ProjectId::Application || input.options.aot.runs_in_place {
-        return 0;
+fn find_level_above_root(
+    code: &dyn CodeView<'_>,
+    root_directory: &[u8],
+    file: FileId,
+) -> Option<usize> {
+    let source = parsed_source_in(code, file)?;
+    let is_of_program = matches!(source.kind, SourceKind::Program | SourceKind::Data)
+        && source.plugin_module.is_none();
+    let with_query = source.file_with_query.as_ref();
+    let file_name = with_query.map_or_else(|| code.file_name(file), |it| &it.file);
+    let native_path = to_native(file_name);
+    let below_root = native_path.strip_prefix(root_directory);
+    if !is_of_program || below_root.is_some_and(|rest| rest.starts_with(b"/")) {
+        return None;
     }
-    let files = input.files;
-    let root_directory = &paths.root_directory[..];
-    let level_of = |&file: &FileId| {
-        let source = parsed_source(files, file)?;
-        let is_of_program = matches!(source.kind, SourceKind::Program | SourceKind::Data)
-            && source.plugin_module.is_none()
-            && !files.module(file).is_lib;
-        let with_query = source.file_with_query.as_ref();
-        let file_name = with_query.map_or_else(|| files.module(file).file_name(), |it| &it.file);
-        let native_path = to_native(file_name);
-        let below_root = native_path.strip_prefix(root_directory);
-        if !is_of_program || below_root.is_some_and(|rest| rest.starts_with(b"/")) {
-            return None;
-        }
-        let relative_path = compute_relative_path(root_directory, native_path)?;
-        Some(count_levels_above(&relative_path))
-    };
-    let of_files = files.compiled_files().iter().filter_map(level_of);
+    let relative_path = compute_relative_path(root_directory, native_path)?;
+    Some(count_levels_above(&relative_path))
+}
+
+pub(crate) fn count_levels_above_root(code: &dyn CodeView<'_>, paths: &PathOptions) -> usize {
+    let level_of = |&file: &FileId| find_level_above_root(code, &paths.root_directory, file);
+    let of_files = code.compiled_files().iter().filter_map(level_of);
     let of_names = paths.entry_point_names.iter();
     let of_names = of_names.map(|name| count_levels_above(name));
     match of_files.chain(of_names).max() {
@@ -94,7 +96,10 @@ pub(crate) fn freeze_sources(
     let runs_in_place = input.options.aot.runs_in_place;
     let paths = with_names_of_found_entry_points(&input.options.paths, input.found_entry_points);
     let paths: &PathOptions = &paths;
-    let levels_above_root = count_levels_above_root(input, paths);
+    let levels_above_root = match input.project == ProjectId::Application && !runs_in_place {
+        true => (input.levels_above_root).unwrap_or_else(|| count_levels_above_root(files, paths)),
+        false => 0,
+    };
     let entry_point_paths = collect_entry_point_paths(runs_in_place, paths, levels_above_root);
     let maps = FileMaps::collect(files, entry_point_paths);
     let context = PathContext {
@@ -143,6 +148,14 @@ pub(crate) fn freeze_sources(
         match find_folder_named_as_parent_is_spelled(paths()) {
             Some(diagnostic) => all.diagnostics.push(diagnostic),
             None => check_unique_public_paths(paths())?,
+        }
+    }
+    if let Some(fixed) = input.levels_above_root {
+        let level_of = |file: FileId| find_level_above_root(files, &paths.root_directory, file);
+        let lies_too_high = |file: &&FileId| level_of(**file).is_some_and(|it| it >= fixed.max(1));
+        if let Some(&file) = files.compiled_files().iter().find(lies_too_high) {
+            let message = b"the folders of the executable end below this file: ";
+            return Err(create_load_error(message, files.module(file).file_name()));
         }
     }
     Ok(FrozenSources {

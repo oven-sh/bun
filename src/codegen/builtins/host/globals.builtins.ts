@@ -785,6 +785,18 @@ const subprocessHandlerNames = ["ipc", "onExit", "onDisconnect", "data", "exit",
 
 const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
 const datagramSocketHandlerNames = ["data", "drain", "error"];
+const datagramSocket = b.instance("UDPSocket");
+const receivedDatagram = b.union(
+  b.instance("Buffer"),
+  b.instance("Uint8Array").exactly,
+  b.instance("ArrayBuffer"),
+).fresh;
+// udp_socket.rs on_data(), on_drain(), call_error_handler().
+const datagramSocketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> = {
+  data: [datagramSocket, receivedDatagram, b.f64, b.string, b.anyMadeOf("Object")],
+  drain: [datagramSocket],
+  error: [b.thrown],
+};
 
 const bundlerOptionNames = [
   "admit",
@@ -1644,7 +1656,14 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         args: { options: b.any.optional },
         returns: settledWithAnyReason(b.instance("UDPSocket")),
-        uses: { options: keptByNativeCode(datagramSocketOptionNames, datagramSocketHandlerNames) },
+        uses: {
+          options: [
+            ...keptByNativeCode(datagramSocketOptionNames, datagramSocketHandlerNames),
+            ...Object.entries(datagramSocketHandlerArguments).map(([handler, args]) =>
+              b.memberCalled(["socket", handler], { times: "PerEvent", this: datagramSocket, args, result: "Ignored" }),
+            ),
+          ],
+        },
       },
     },
     { table: b.staticTable("src/jsc/bindings/BunObject.cpp", "bunObjectTable") },

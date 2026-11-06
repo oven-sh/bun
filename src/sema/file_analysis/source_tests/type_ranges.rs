@@ -151,6 +151,11 @@ const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
     ),
     (
         "a.ts",
+        "class C { a = b\n  static readonly [k] = 1\n  c = d\n  public static readonly *[e]() {}\n  static override in = 2 }",
+        "class C { a = b\n  static [k] = 1\n  c = d\n  static *[e]() {}\n  static in = 2 }",
+    ),
+    (
+        "a.ts",
         "const f = () => <Foo>{}; function g(a: unknown) { return<number>a; } const h = <T>i;",
         "const f = () => ({}); function g(a) { return a; } const h = i;",
     ),

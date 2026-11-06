@@ -691,14 +691,15 @@ impl<'a, 's> Finder<'a, 's> {
         }
         let file = self.file;
         for modifier in &file.modifiers[member.modifiers.range()] {
-            if let ModifierKind::Keyword(flag) = modifier.kind
-                && TYPE_MODIFIERS.contains(flag)
-            {
-                let end = modifier.pos as usize + modifier_text(flag).len();
-                if self.is_followed_by_one_of(end, b"[*") || self.is_followed_by_operator_word(end)
-                {
-                    self.ends_of_statements.push(modifier.pos);
-                }
+            let ModifierKind::Keyword(flag) = modifier.kind else {
+                break;
+            };
+            if !TYPE_MODIFIERS.contains(flag) {
+                break;
+            }
+            let end = modifier.pos as usize + modifier_text(flag).len();
+            if self.is_followed_by_one_of(end, b"[*") || self.is_followed_by_operator_word(end) {
+                self.ends_of_statements.push(modifier.pos);
             }
         }
         let annotation = self.find_annotation(member.ty);

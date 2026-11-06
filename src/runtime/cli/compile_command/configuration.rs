@@ -545,6 +545,10 @@ pub(super) fn request_from_context<'r>(
                 jit_policy: ctx.bundler_options.compile_jit_policy,
             },
             assets: &ctx.bundler_options.compile_assets,
+            metafiles: [
+                &ctx.bundler_options.metafile,
+                &ctx.bundler_options.metafile_md,
+            ],
             embeds_source_maps,
         },
         log: ctx.log,

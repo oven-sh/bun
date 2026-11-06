@@ -351,14 +351,15 @@ pub(crate) fn spell_with_other_levels(
     path: &[u8],
     levels: usize,
     other_levels: usize,
-) -> Option<Vec<u8>> {
-    let folder = match read_path_above_root(root, levels, path) {
-        None => return Some(path.to_vec()),
-        Some((0, below)) => return Some([root, below].concat()),
-        Some((level, _)) if level > other_levels => return None,
-        Some((level, below)) => (spell_folder_above_root(root, other_levels, level), below),
-    };
-    Some([&folder.0[..], folder.1].concat())
+) -> Vec<u8> {
+    match read_path_above_root(root, levels, path) {
+        None => path.to_vec(),
+        Some((level, below)) => [
+            &spell_folder_above_root(root, other_levels, level)[..],
+            below,
+        ]
+        .concat(),
+    }
 }
 
 pub(super) fn compute_module_path(

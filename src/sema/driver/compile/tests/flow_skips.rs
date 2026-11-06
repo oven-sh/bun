@@ -318,6 +318,25 @@ fn a_call_beside_a_comma_that_is_asked_about_in_the_middle_of_a_far_skip_leaves_
 }
 
 #[test]
+fn many_ways_back_to_the_head_of_a_loop_do_not_double_the_wait_between_far_skips_past_its_type() {
+    let mut text = String::from(
+        "declare function next(): boolean;\ndeclare const flags: boolean[];\nlet count = 0;\nlet state: \"a\" | \"b\" | \"c\" = \"a\";\nwhile (next()) {\n",
+    );
+    for index in 0..40 {
+        writeln!(text, "  if (flags[{index}]) continue;").unwrap();
+    }
+    for _ in 0..40 {
+        text.push_str("  if (next()) count = count + 1;\n");
+    }
+    text.push_str(
+        "  state;\n  if (next()) state = \"b\";\n}\nexport const seen = [state, count];\n",
+    );
+    let (through, _) = ask_for_names(&text, u32::MAX);
+    let (skipping, _) = ask_for_names(&text, 32);
+    assert_eq!(skipping, through);
+}
+
+#[test]
 fn names_behind_many_loops_do_not_each_leave_a_type_at_every_loop() {
     const COUNT: usize = 300;
     let mut text = String::from(

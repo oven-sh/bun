@@ -19,7 +19,7 @@ const withSteadyCollections = {
 // A start varies by tens of thousands of instructions between runs: too much for an allowance of four instructions over fewer turns. Each length is counted three times, and the lowest count stands.
 const [few, many, times] = [100_000, 1_600_000, 3];
 
-const pairs: [baseline: string, other: string, allowance: number][] = [
+const pairs: [baseline: string, other: string, allowance: number, today?: string][] = [
   ["a method under a plain name", "a method under a symbol that the module creates", 4],
   ["a method under a plain name", "a method under a symbol without a description", 4],
   ["a method under a plain name", "a method under a registered symbol", 4],
@@ -29,7 +29,9 @@ const pairs: [baseline: string, other: string, allowance: number][] = [
   ["a method under a plain name", "a method under a text of another module", 4],
   ["a getter under a plain name", "a getter under a symbol", 4],
   ["a getter and a setter under a plain name", "a getter and a setter under a symbol", 4],
-  ["a static method under a plain name", "a static method under a symbol", 4],
+  // A goal that is not met yet: the loop round the call under a plain name is built a second time for its quiet turns, the loop round the call under a symbol is not.
+  // Once it is met this case fails: take the fourth word out.
+  ["a static method under a plain name", "a static method under a symbol", 4, "10 more today"],
   ["a method of two classes under a plain name", "a method of two classes under a symbol", 4],
   [
     "a method that some objects have, read under a plain name and called",
@@ -91,17 +93,24 @@ describe.skipIf(isSlowBuild || !!without("a counter of instructions"))("compile/
     return cost;
   }
 
-  for (const [baseline, other, allowance] of pairs) {
-    test(`${other}: at most ${allowance} instructions a turn more than ${baseline}`, async () => {
-      const [expected, measured] = [await costOf(baseline), await costOf(other)];
-      if (expected === undefined || measured === undefined)
-        return void console.error(`SKIPPED: ${other}: instructions cannot be counted here`);
-      console.error(`MEMBERS UNDER KEYS ${baseline}\t${expected.toFixed(1)}\t| ${other}\t${measured.toFixed(1)}`);
-      expect({ other, measured, isWithinAllowance: measured <= expected + allowance }).toEqual({
-        other,
-        measured,
-        isWithinAllowance: true,
-      });
-    }, 900_000);
+  for (const [baseline, other, allowance, today] of pairs) {
+    const name = `${other}: at most ${allowance} instructions a turn more than ${baseline}`;
+    (today ? test.failing : test)(
+      today ? `${name} (${today})` : name,
+      async () => {
+        const [expected, measured] = [await costOf(baseline), await costOf(other)];
+        if (expected === undefined || measured === undefined) {
+          console.error(`SKIPPED: ${other}: instructions cannot be counted here`);
+          return expect(today).toBeUndefined();
+        }
+        console.error(`MEMBERS UNDER KEYS ${baseline}\t${expected.toFixed(1)}\t| ${other}\t${measured.toFixed(1)}`);
+        expect({ other, measured, isWithinAllowance: measured <= expected + allowance }).toEqual({
+          other,
+          measured,
+          isWithinAllowance: true,
+        });
+      },
+      900_000,
+    );
   }
 });

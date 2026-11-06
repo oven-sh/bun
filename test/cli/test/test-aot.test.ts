@@ -30,27 +30,13 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   };
 }
 
-const theWarningThatAFileIsCompiledUntyped =
-  /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors? \([^\n]*\), so it is compiled without its types\.[^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
-
-async function expectSameAsBunTest(
-  files: Record<string, string>,
-  args?: string[],
-  builds = true,
-  compiledUntyped: string[] = [],
-) {
+async function expectSameAsBunTest(files: Record<string, string>, args?: string[]) {
   using expectedDir = tempDir("test-aot", files);
   using actualDir = tempDir("test-aot", files);
   const [expected, actual] = await Promise.all([
     runTests(String(expectedDir), false, args),
-    runTests(String(actualDir), true, args, builds),
+    runTests(String(actualDir), true, args),
   ]);
-  const warnedOf: string[] = [];
-  actual.stderr = actual.stderr.replace(
-    theWarningThatAFileIsCompiledUntyped,
-    (_warning, file) => (warnedOf.push(file), ""),
-  );
-  expect(warnedOf).toEqual(compiledUntyped);
   expect(actual).toEqual(expected);
   return actual;
 }

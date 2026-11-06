@@ -2132,7 +2132,7 @@ describe.concurrent("asymmetric matchers that only Bun has", () => {
     expect(results.map(result => result.exitCode)).toEqual([0, 0]);
   });
 
-  test("a test of bun:test: toMatchFileSnapshot(), and what a serializer's printer prints", async () => {
+  test("a test of bun:test: toMatchFileSnapshot(), a serializer's printer, and toSatisfy() in Bun's format", async () => {
     using dir = tempDir("snapshot-bun-only-matchers", {
       "a.test.js": `
         import { test, expect } from "bun:test";
@@ -2141,16 +2141,21 @@ describe.concurrent("asymmetric matchers that only Bun has", () => {
           serialize: (value, config, indentation, depth, refs, printer) =>
             "Wrapped(" + printer(value.wrapped, config, indentation, depth, refs) + ")",
         });
+        function isOdd() {}
         test("t", async () => {
           expect({ wrapped: expect.not.any(Number) }).toMatchSnapshot();
           await expect({ m: expect.rejectsTo.not.anything() }).toMatchFileSnapshot("./file.txt");
+          expect(expect.resolvesTo.toSatisfy(isOdd)).toMatchSnapshot();
         });
       `,
     });
     const { stderr, exitCode } = await runTests(String(dir), { CI: "false" });
-    expect(stderr).toContain("+2 added");
+    expect(stderr).toContain("+3 added");
     expect({ snap: snap(dir), file: readFileSync(join(String(dir), "file.txt"), "utf8") }).toEqual({
-      snap: headers.bun + "\nexports[`t 1`] = `Wrapped(NotAny<Number>)`;\n",
+      snap:
+        headers.bun +
+        "\nexports[`t 1`] = `Wrapped(NotAny<Number>)`;\n" +
+        "\nexports[`t 3`] = `promise resolved to toSatisfy<[Function isOdd]>`;\n",
       file: '{\n  "m": promise rejected to NotAnything,\n}',
     });
     expect(exitCode).toBe(0);

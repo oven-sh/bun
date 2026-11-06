@@ -3629,10 +3629,13 @@ impl JestPrettyFormat {
             safe fn SnapshotFormat__isShortenedByWidth(global: &JSGlobalObject, value: JSValue) -> bool;
         }
         const MAX_LENGTH: usize = 10_000;
-        let fits = |printed: &[u8]| strings::element_length_utf8_into_utf16(printed) <= Self::TRUNCATE;
+        let matcher = NativeMatcher::of(value);
+        // Vitest has no `expect.resolvesTo` or `expect.rejectsTo`, so their words are not part of its 40 characters.
+        let truncate = Self::TRUNCATE + matcher.map_or(0, |matcher| matcher.flags.asymmetric_matcher_promise_prefix().len());
+        let fits = |printed: &[u8]| strings::element_length_utf8_into_utf16(printed) <= truncate;
 
         let mut printed = Vec::new();
-        Self::stringify(global, value, &mut printed, None, u32::MAX, Self::TRUNCATE)?;
+        Self::stringify(global, value, &mut printed, None, u32::MAX, truncate)?;
         if fits(&printed) {
             out.extend_from_slice(&printed);
             return Ok(());
@@ -3649,7 +3652,7 @@ impl JestPrettyFormat {
             return Ok(());
         }
         // Vitest's asymmetric matchers are plain objects, so they truncate like one.
-        if NativeMatcher::of(value).is_some()
+        if matcher.is_some()
             || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isShortenedByWidth(global, value))?
         {
             let (mut fitting, mut too_wide) = (0, Self::TRUNCATE as u32);

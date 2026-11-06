@@ -948,8 +948,14 @@ describe.concurrent("each and for", () => {
         title("%s", [expect.any(Number)], [expect.not.any(Number)], [expect.resolvesTo.any(Number)], [expect.rejectsTo.not.any(Number)]);
         title("%s", [expect.not.anything()], [expect.resolvesTo.not.toBeFoo(1)], [expect.rejectsTo.not.objectContaining({})]);
         title("$matcher", { matcher: expect.rejectsTo.anything() });
-        // The words are 20 of the 40 characters that a value gets.
-        title("%o", [expect.resolvesTo.objectContaining({ a: 1 })], [{ row: expect.resolvesTo.any(Number), other: 1 }]);
+        // %j prints the object that a matcher is in Vitest, which has no member for the promise.
+        title("%j", [expect.not.any(Number)], [expect.resolvesTo.stringContaining("a")]);
+        // The words are not part of the 40 characters of a matcher, so it is cut as it is without them.
+        const numbers = Array.from({ length: 40 }, (_, i) => i);
+        title("%o", [expect.resolvesTo.objectContaining({ a: 1 })], [expect.resolvesTo.objectContaining({ b: 2 })]);
+        title("%o", [expect.arrayContaining(numbers)], [expect.rejectsTo.arrayContaining(numbers)]);
+        // In another value they are part of its 40 characters.
+        title("%o", [{ row: expect.resolvesTo.any(Number), other: 1 }]);
         // At the depth where a value that is longer than 40 is cut, a matcher is its name in brackets.
         const long = Buffer.alloc(60, "x").toString();
         const element = { $$typeof: Symbol.for("react.transitional.element"), type: "a", props: { p: expect.resolvesTo.objectContaining({ long }) } };
@@ -972,7 +978,12 @@ describe.concurrent("each and for", () => {
       "promise resolved to not.toBeFoo",
       "promise rejected to ObjectNotContaining",
       "promise rejected to Anything",
-      "promise resolved to ObjectContaining { …(1) }",
+      '{"inverse":true}',
+      '{"sample":"a","inverse":false}',
+      "promise resolved to ObjectContaining { a: 1 }",
+      "promise resolved to ObjectContaining { b: 2 }",
+      "ArrayContaining [ 0, 1, 2, 3, 4, …(35) ]",
+      "promise rejected to ArrayContaining [ 0, 1, 2, 3, 4, …(35) ]",
       "{ …(2) }",
       "<a p={[promise resolved to ObjectContaining]}  />",
       "[promise rejected to ArrayNotContaining]",

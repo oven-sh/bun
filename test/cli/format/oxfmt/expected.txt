@@ -128,6 +128,10 @@ FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 100 }
+FAIL prettier markdown/markdown/leading-dashes-paragraph.md { printWidth: 80 }
+FAIL prettier markdown/markdown/leading-dashes-paragraph.md { printWidth: 100 }
+FAIL prettier markdown/markdown/leading-thematic-break.md { printWidth: 80 }
+FAIL prettier markdown/markdown/leading-thematic-break.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "never" }
@@ -197,5 +201,5 @@ FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseW
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "always" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseWrap: "never" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "never" }
-as Prettier prints them: 1526/1570
+as Prettier prints them: 1522/1570
 as oxfmt prints them, in its flavor: 1343/1498

@@ -382,6 +382,7 @@ fn format_embedded(
             b"markdown" | b"mdx" => {
                 let mode = Mode {
                     is_in_template,
+                    is_after_line_break: false,
                     is_mdx: parser == b"mdx",
                 };
                 let scratch = &mut Default::default();
@@ -405,9 +406,14 @@ fn format_embedded(
     is_done.then_some(out)
 }
 
-/// True if a comment with `@` and one of `pragmas` is at the start of `text`, after the front matter.
-fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
-    let content = &text[front_matter::parse(text).map_or(0, |it| it.end)..];
+/// What follows the front matter of `text`. Prettier's `hasPragma` looks for it at the start of the text only.
+fn after_front_matter<'a>(text: &'a [u8], mode: Mode, options: &FormatOptions) -> &'a [u8] {
+    let front_matter = parse::front_matter_of(text, syntax_of(mode, options), mode);
+    &text[front_matter.map_or(0, |it| it.1)..]
+}
+
+/// True if a comment with `@` and one of `pragmas` is at the start of `content`, the text after the front matter.
+fn has_pragma(content: &[u8], pragmas: [&[u8]; 2]) -> bool {
     let content = bun_core::strings::trim_js_whitespace_start(content);
     let strip_pragma = |text: &'_ [u8]| -> Option<usize> {
         let name = text.strip_prefix(b"@")?;
@@ -499,6 +505,8 @@ pub fn format_mdx_with(
 struct Mode {
     /// The document is for a JavaScript template.
     is_in_template: bool,
+    /// The document is written after a line break, as the text of a template is: no front matter starts there.
+    is_after_line_break: bool,
     is_mdx: bool,
 }
 
@@ -531,8 +539,16 @@ fn format_in(
         text = &normalized;
     }
     if (start >= end && !text.is_empty())
-        || (options.require_pragma && !has_pragma(text, [b"format", b"prettier"]))
-        || (options.check_ignore_pragma && has_pragma(text, [b"noformat", b"noprettier"]))
+        || (options.require_pragma
+            && !has_pragma(
+                after_front_matter(text, mode, &options),
+                [b"format", b"prettier"],
+            ))
+        || (options.check_ignore_pragma
+            && has_pragma(
+                after_front_matter(text, mode, &options),
+                [b"noformat", b"noprettier"],
+            ))
     {
         out.extend_from_slice(original);
         return Ok(());
@@ -544,18 +560,19 @@ fn format_in(
         return Ok(());
     }
     let mut with_pragma = Vec::new();
-    if options.insert_pragma
-        && !options.require_pragma
-        && !has_pragma(text, [b"format", b"prettier"])
-    {
-        let front_matter_end = front_matter::parse(text).map_or(0, |it| it.end);
-        if front_matter_end > 0 {
-            with_pragma.extend_from_slice(&text[..front_matter_end]);
-            with_pragma.extend_from_slice(b"\n\n");
+    if options.insert_pragma && !options.require_pragma {
+        // Prettier writes the pragma before front matter behind empty lines: `<!-- @format -->\n\n---\n\n## a: 1`.
+        let front_matter = parse::front_matter_of(text, syntax_of(mode, &options), mode);
+        let front_matter_end = front_matter.map_or(0, |it| it.1);
+        if !has_pragma(&text[front_matter_end..], [b"format", b"prettier"]) {
+            if front_matter_end > 0 {
+                with_pragma.extend_from_slice(&text[..front_matter_end]);
+                with_pragma.extend_from_slice(b"\n\n");
+            }
+            with_pragma.extend_from_slice(b"<!-- @format -->\n\n");
+            with_pragma.extend_from_slice(&text[front_matter_end..]);
+            text = &with_pragma;
         }
-        with_pragma.extend_from_slice(b"<!-- @format -->\n\n");
-        with_pragma.extend_from_slice(&text[front_matter_end..]);
-        text = &with_pragma;
     }
     // Prettier's `coreFormat` trims what JavaScript counts as whitespace, so it turns a lone no-break space into an
     // empty file. Here only ASCII whitespace counts, and the no-break space stays.
@@ -569,6 +586,16 @@ fn format_in(
     })?
 }
 
+fn syntax_of(mode: Mode, options: &FormatOptions) -> parse::Syntax {
+    if mode.is_mdx {
+        parse::Syntax::Mdx
+    } else if options.flavor.is_oxfmt() {
+        parse::Syntax::WithDirectives
+    } else {
+        parse::Syntax::Markdown
+    }
+}
+
 /// Calls `then` with the document for `text`, in which every line break is `\n`.
 fn with_document<R>(
     text: &[u8],
@@ -578,17 +605,13 @@ fn with_document<R>(
     mut format_block: Option<&mut FormatBlock<'_>>,
     then: impl FnOnce(doc::Doc<'_>) -> R,
 ) -> Result<R, FormatError> {
-    let syntax = if mode.is_mdx {
-        parse::Syntax::Mdx
-    } else if options.flavor.is_oxfmt() {
-        parse::Syntax::WithDirectives
-    } else {
-        parse::Syntax::Markdown
-    };
-    let blanked = parse::blank_front_matter(text, syntax);
+    let syntax = syntax_of(mode, options);
+    let front_matter = parse::front_matter_of(text, syntax, mode);
+    let blanked = parse::blank_front_matter(text, syntax, front_matter);
     let original = text;
     let text = blanked.as_deref().unwrap_or(text);
-    let root = parse::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
+    let root =
+        parse::parse(text, syntax, front_matter, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
         original,
@@ -627,6 +650,7 @@ fn with_document<R>(
         options,
         embed: &mut embed,
         is_in_template: mode.is_in_template,
+        is_after_line_break: mode.is_after_line_break,
         is_mdx: mode.is_mdx,
         indentation: 0,
         is_in_label: false,

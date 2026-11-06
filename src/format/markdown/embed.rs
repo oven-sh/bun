@@ -260,6 +260,7 @@ pub(crate) fn write_template<'a>(
     let mut tree = super::ast::Tree::default();
     let mode = super::Mode {
         is_in_template: true,
+        is_after_line_break: true,
         is_mdx: false,
     };
     let is_written = super::with_document(&text, &options, &mut tree, mode, None, |document| {

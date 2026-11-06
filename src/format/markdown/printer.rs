@@ -10,7 +10,7 @@ use super::strings::character_reference;
 use crate::css::doc::{
     self, Alignment, Doc, Line, align_with_spaces, docs, fill, group, hardline, indent,
 };
-use crate::options::ProseWrap;
+use crate::options::{LineEnding, ProseWrap};
 use crate::stack::Stack;
 use crate::text::{first_char, last_char};
 use crate::{FormatError, FormatOptions};
@@ -35,6 +35,8 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) embed: &'e mut dyn FnMut(&Embedded<'_>) -> Option<Vec<u8>>,
     /// The document is for a JavaScript template, so no backticks.
     pub(crate) is_in_template: bool,
+    /// The document is written after a line break, so what reads it again doesn't look for front matter at its start.
+    pub(crate) is_after_line_break: bool,
     pub(crate) is_mdx: bool,
     /// How many columns the current node is indented by.
     pub(crate) indentation: usize,
@@ -43,7 +45,7 @@ pub(crate) struct Printer<'a, 'e> {
     /// For oxfmt: `first_list_of_run`'s cache, indexed by list.
     pub(crate) first_of_run: Vec<NodeId>,
     pub(crate) stack: Stack,
-    /// Why a table cell couldn't be printed.
+    /// Why a table cell couldn't be printed, or the document when `printed_closing_fence` asked for its text.
     pub(crate) failure: Option<FormatError>,
 }
 
@@ -92,6 +94,41 @@ fn has_line_break(doc: &Doc<'_>) -> bool {
         }
     }
     false
+}
+
+/// False if the first text of `doc` rules out that it prints `---` or `+++` before anything else.
+fn may_start_with_fence(mut doc: &Doc<'_>) -> bool {
+    loop {
+        doc = match doc {
+            Doc::Text(text) => {
+                let start: &[u8] = text.get(..3).unwrap_or(text);
+                return matches!(start, b"" | b"-" | b"--" | b"---" | b"+" | b"++" | b"+++");
+            }
+            Doc::Array(parts) | Doc::Fill(parts) => match parts.first() {
+                Some(first) => first,
+                None => return true,
+            },
+            _ => return true,
+        };
+    }
+}
+
+/// Writes `---` for the last three bytes of `front_matter`, the document of front matter that `...` closes.
+fn close_with_dashes(front_matter: &mut Doc<'_>) {
+    let fence = match front_matter {
+        Doc::MarkAsRoot(contents) => match &mut **contents {
+            Doc::Array(parts) => parts.last_mut(),
+            _ => None,
+        },
+        verbatim => Some(verbatim),
+    };
+    if let Some(Doc::Text(text)) = fence
+        && let Some(fence_start) = text.len().checked_sub(3)
+    {
+        let text = text.to_mut();
+        text.truncate(fence_start);
+        text.extend_from_slice(b"---");
+    }
 }
 
 /// Returns the line break to print after `line`, which is printed verbatim. A `hardline` would trim trailing spaces and
@@ -2143,7 +2180,7 @@ impl<'a> Printer<'a, '_> {
         }
         let mut ranges = ranges.into_iter().peekable();
         let mut is_in_range = false;
-        self.print_children_with(root, |printer, child| {
+        let mut children = self.print_children_with(root, |printer, child| {
             if let Some(&(start, end)) = ranges.peek() {
                 if child == start {
                     is_in_range = true;
@@ -2169,7 +2206,65 @@ impl<'a> Printer<'a, '_> {
                 }
             }
             Some(printer.print(child))
-        })
+        });
+        self.keep_front_matter(root, &mut children);
+        children
+    }
+
+    /// Changes `children`, the document of the root's children, where the next run would read other front matter in it.
+    fn keep_front_matter(&mut self, root: NodeId, children: &mut Doc<'a>) {
+        if self.is_after_line_break {
+            return;
+        }
+        let Some(first) = self.node(root).and_then(|root| self.node(root.first_child)) else {
+            return;
+        };
+        let closes_with_dots = match first.kind {
+            Kind::ThematicBreak => false,
+            // A backslash before an address that is a link as written, `---@b.co`, would make another link of it.
+            Kind::Paragraph | Kind::Heading if self.kind(first.first_child) != Some(Kind::Link) => {
+                false
+            }
+            Kind::FrontMatter if first.next != NONE && self.source(first).ends_with(b"...") => true,
+            _ => return,
+        };
+        if !closes_with_dots && !may_start_with_fence(children) {
+            return;
+        }
+        let printed = self.printed_closing_fence(children);
+        if let Doc::Array(blocks) = children
+            && let Some(opener) = blocks.first_mut()
+        {
+            match (first.kind, printed) {
+                // Prettier prints the rule in `---\na: 1\n...\n\n***` as `---`, which then ends the front matter.
+                (Kind::FrontMatter, Some(b'-')) => close_with_dashes(opener),
+                (Kind::FrontMatter, _) | (_, None) => {}
+                // Prettier prints `***\na\n***` as `---\n\na\n\n---`, in which the next run reads `a` as YAML.
+                (Kind::ThematicBreak, Some(_)) => *opener = Doc::from("***"),
+                // oxfmt: a backslash keeps text such as `---yaml` from opening front matter.
+                (_, Some(_)) => *opener = docs!["\\", std::mem::replace(opener, Doc::EMPTY)],
+            }
+        }
+    }
+
+    /// The first byte of the fence that closes the front matter of the text that `children` prints, if it has any.
+    fn printed_closing_fence(&mut self, children: &Doc<'a>) -> Option<u8> {
+        let mut elements = doc::Elements::default();
+        elements.document(children);
+        elements.document(&hardline());
+        // Whatever reads the text again makes `\n` of its line breaks first.
+        let options = FormatOptions {
+            line_ending: LineEnding::Lf,
+            ..self.options.clone()
+        };
+        let mut text = Vec::with_capacity(self.original.len());
+        let mut printer = doc::Printer::new(&options, b"", &mut text);
+        printer.print(&elements, 0, 0);
+        if let Err(failure) = printer.result() {
+            self.failure = Some(failure);
+        }
+        let end = super::front_matter::parse(&text)?.end;
+        text.get(end.checked_sub(1)?).copied()
     }
 
     // ───────────────────────────── lists ─────────────────────────────

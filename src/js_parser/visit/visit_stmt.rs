@@ -2031,8 +2031,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(relocated) = relocate.stmt {
                         data.init = Some(relocated);
                     } else if relocate.ok && p.options.bundle {
-                        // The linker can lift the relocated `var` out of an `__esm` wrapper. A `var`
-                        // left in the head is then a second variable.
+                        // A `var` left in the head is a second variable if the linker lifts the relocated one out of `__esm`.
                         data.init = None;
                     }
                 }

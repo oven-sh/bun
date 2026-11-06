@@ -1452,4 +1452,3 @@
 18121	E	The 'typescript.contentMapper.outputExtensions' of the content mapper package '{0}' contains an invalid mapping from '{1}' to '{2}'. Extensions must be non-empty and begin with a '.'.
 18122	E	The 'typescript.contentMapper.outputExtensions' of the content mapper package '{0}' must be an object with string values.
 18123	E	Content mapper extension '{0}' must not contain path separators.
-100000	M	Do not print diagnostics.

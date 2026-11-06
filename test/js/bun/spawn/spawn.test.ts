@@ -1422,6 +1422,49 @@ it("error does not UAF", async () => {
   expect(emsg).toInclude(" ");
 });
 
+// node:child_process gets a spawn that the operating system refuses as a value. Bun.spawn and Bun.spawnSync throw it.
+describe.each(["spawn", "spawnSync"] as const)("Bun.%s throws what the operating system refuses", method => {
+  const missing = join(import.meta.dir, "does-not-exist");
+  const failures: [string, object, object][] = [
+    [
+      "a command that is not in PATH",
+      { cmd: ["command-is-not-found-uh-oh"] },
+      {
+        name: "Error",
+        message: 'Executable not found in $PATH: "command-is-not-found-uh-oh"',
+        code: "ENOENT",
+        path: "command-is-not-found-uh-oh",
+      },
+    ],
+    ["a file that does not exist", { cmd: [missing] }, { name: "Error", code: "ENOENT", path: missing }],
+    ["a cwd that does not exist", { cmd: [bunExe(), "-e", "0"], cwd: missing }, { name: "Error", code: "ENOENT" }],
+  ];
+  // Windows has another error for this one: no mode says that a file is not executable.
+  if (isPosix) {
+    failures.push([
+      "a file that is not executable",
+      { cmd: [import.meta.path] },
+      { name: "Error", code: "EACCES", path: import.meta.path, syscall: "posix_spawn" },
+    ]);
+  }
+
+  it.each(failures)("%s", (_, options, expected) => {
+    let thrown: any;
+    try {
+      Bun[method]({ ...options, stdio: ["ignore", "ignore", "ignore"], env: bunEnv } as any);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect({ ...thrown, name: thrown.name, message: thrown.message }).toMatchObject(expected);
+    expect({ errno: typeof thrown.errno, pid: "pid" in thrown, spawnargs: "spawnargs" in thrown }).toEqual({
+      errno: "number",
+      pid: false,
+      spawnargs: false,
+    });
+  });
+});
+
 it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
   const fixture = `
     const results = [];

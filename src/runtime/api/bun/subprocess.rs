@@ -1319,9 +1319,14 @@ impl Subprocess<'_> {
 
     /// The name of the signal that ended the process, its number if it has no name, else `null`.
     pub(crate) fn signal_code_to_js(&self, global: &JSGlobalObject) -> JSValue {
-        let Some(signal) = self.process().status.signal() else {
-            return JSValue::NULL;
-        };
+        self.process()
+            .status
+            .signal()
+            .map_or(JSValue::NULL, |signal| Self::signal_to_js(signal, global))
+    }
+
+    /// The name of `signal`, or its number if it has no name.
+    pub(crate) fn signal_to_js(signal: SignalCode, global: &JSGlobalObject) -> JSValue {
         match signal.name() {
             Some(name) => {
                 use bun_jsc::EncodedSliceJsc as _;

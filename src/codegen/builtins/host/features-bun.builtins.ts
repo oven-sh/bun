@@ -363,9 +363,18 @@ export default b.declarations(
   ),
 
   // Other features need Spawn, so it stays in programs that name neither function. What guards the function is a feature that only its name keeps.
-  extendAll(["BunSpawnSync", ...spawnFeatures], "Bun.spawnSync"),
+  // node:child_process names `nodeSpawn` and `nodeSpawnSync`, which run the code of the two functions.
+  extendAll(
+    ["BunSpawnSync", ...spawnFeatures],
+    "Bun.spawnSync",
+    ...nativeBindings("Bindgen", "js_bun_spawn_bindings.bind.ts", "nodeSpawnSync"),
+  ),
   extendAll(["Spawn"], "%Subprocess%", "%ResourceUsage%"),
-  extendAll(["BunSpawn", ...spawnFeatures, ...externalValueFeatures], "Bun.spawn"),
+  extendAll(
+    ["BunSpawn", ...spawnFeatures, ...externalValueFeatures],
+    "Bun.spawn",
+    ...nativeBindings("Bindgen", "js_bun_spawn_bindings.bind.ts", "nodeSpawn"),
+  ),
 
   extendAll(
     ["Sockets", "X509", ...tlsSocketFeatures],

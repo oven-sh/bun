@@ -80,6 +80,7 @@ export default b.declarations(
       "setRef",
     ),
     "Bun.spawn",
+    ...nativeBindings("Bindgen", "js_bun_spawn_bindings.bind.ts", "nodeSpawn"),
     "%Subprocess%",
   ),
   extendAll(["Ipc"], "process.connected"),

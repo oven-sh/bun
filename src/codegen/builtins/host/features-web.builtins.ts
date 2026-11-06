@@ -181,7 +181,7 @@ export default b.declarations(
   extendAll(["HttpClient", "Bodies", "WebStreams"], "Bun.S3Client", "Bun.s3"),
   extendAll(["HttpClient", "WebStreams"], "Bun.Image", "Blob.prototype.image"),
   extendAll(["StructuredClone", "WebStreams"], "%Subprocess%"),
-  extendAll(["WebStreams"], "Bun.spawn"),
+  extendAll(["WebStreams"], "Bun.spawn", ...nativeBindings("Bindgen", "js_bun_spawn_bindings.bind.ts", "nodeSpawn")),
   extendAll(["WebSocket", "HttpClient", "Events", "Bodies"], "Bun.WebView"),
   extendAll(["Bodies", "Headers", "WebStreams"], "WebAssembly.compileStreaming", "WebAssembly.instantiateStreaming"),
 

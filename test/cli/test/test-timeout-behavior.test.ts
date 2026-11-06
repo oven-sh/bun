@@ -5,13 +5,16 @@ import path from "path";
 if (isFlaky && isLinux) {
   test.todo("processes get killed");
 } else {
-  test.concurrent.each([true, false])(`processes get killed (sync: %p)`, async sync => {
+  // "node": the spawnSync of node:child_process, which has an entry point of its own into the spawn.
+  test.concurrent.each([true, false, "node"] as const)(`processes get killed (sync: %p)`, async sync => {
+    const fixture =
+      sync === "node"
+        ? "process-kill-fixture-node-sync.ts"
+        : sync
+          ? "process-kill-fixture-sync.ts"
+          : "process-kill-fixture.ts";
     const { exited, stdout, stderr } = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "test",
-        path.join(import.meta.dir, sync ? "process-kill-fixture-sync.ts" : "process-kill-fixture.ts"),
-      ],
+      cmd: [bunExe(), "test", path.join(import.meta.dir, fixture)],
       stdout: "pipe",
       stderr: "pipe",
       stdin: "inherit",

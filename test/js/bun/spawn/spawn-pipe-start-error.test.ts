@@ -188,6 +188,7 @@ int kill(pid_t pid, int signal) {
 // pidfd once its exit is reaped, a wrapper that becomes collectable only then)
 // get a bounded window; whatever is still there when it lapses is reported.
 const FIXTURE = /* js */ `
+import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { heapStats } from "bun:jsc";
 const kind = process.argv[2];
@@ -246,11 +247,28 @@ let write;
 let sync;
 let onExit;
 let shell;
+let node;
 try {
   switch (kind) {
     case "stdin-pipe":
       Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
       break;
+    // node:child_process has each of these for a failure of the spawn: spawn() throws it with the syscall "spawn",
+    // and spawnSync() returns it as the error of a process that never ran.
+    case "node-stdin-pipe":
+      try {
+        nodeSpawn("true", [], { stdio: ["pipe", "ignore", "ignore"] });
+        node = { returned: true };
+      } catch (e) {
+        node = { threw: { code: e.code, syscall: e.syscall } };
+      }
+      break;
+    case "sync-node-input": {
+      // The child outlives the call unless the call ends it.
+      const { error: failure, status, pid, output } = nodeSpawnSync("sleep", ["1000"], { input: "data" });
+      node = { code: failure?.code, syscall: failure?.syscall, status, pid, output };
+      break;
+    }
     case "stdin-pipe-running":
       Bun.spawn({ cmd: ["sleep", "1000"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
       break;
@@ -320,7 +338,7 @@ try {
 } catch (e) {
   error = { code: e.code, message: e.message };
 }
-if (kind === "sync-stdin-buffer") {
+if (kind === "sync-stdin-buffer" || kind === "sync-node-input") {
   // Read before anything else runs: spawnSync has no later moment to clean up in.
   sync = {
     children: children().length,
@@ -342,7 +360,7 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, sync, onExit, shell, node, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -446,6 +464,33 @@ describe.skipIf(!isLinux || !cc)(
       expect(await runFixture("sync-stdin-buffer", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
         report: {
           error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: "next\n" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("child_process.spawn with a stdin pipe throws the error with the syscall of a spawn", async () => {
+      expect(await runFixture("node-stdin-pipe")).toEqual({
+        report: {
+          error: null,
+          node: { threw: { code: "ENOSPC", syscall: "spawn" } },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("child_process.spawnSync with an input returns the error of a process that never ran", async () => {
+      expect(await runFixture("sync-node-input", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+        report: {
+          error: null,
+          node: { code: "ENOSPC", syscall: "spawnSync sleep", status: null, pid: 0, output: null },
           sync: { children: 0, next: "next\n" },
           leakedFds: 0,
           leakedWrappers: 0,

@@ -17,6 +17,7 @@ import { bunEnv, bunExe, isPosix } from "harness";
 // lookup fails under EMFILE before the event loop is created and turns the
 // failure into ENOENT instead of exercising us_create_loop.
 const fixture = /* js */ `
+  import { spawnSync as nodeSpawnSync } from "node:child_process";
   import * as fs from "node:fs";
   // Warm anything lazily opened on first use so the fd fill below leaves zero
   // descriptors for us_create_loop itself (not for a module loader read).
@@ -32,11 +33,15 @@ const fixture = /* js */ `
   } catch (e) {
     first = { ok: true, code: e?.code, msg: String(e?.message ?? e) };
   }
+  // node:child_process has a failure of the spawn in result.error.
+  const { error, status, pid, output } = nodeSpawnSync("/bin/sh", ["-c", ":"], { stdio: "ignore" });
+  const node = JSON.stringify({ code: error?.code, syscall: error?.syscall, status, pid, output });
 
   for (const fd of held) fs.closeSync(fd);
 
   if (!first.ok) { console.error(first.msg); process.exit(1); }
   console.error("spawnSync threw:", first.code, first.msg);
+  console.error("child_process.spawnSync returned:", node);
 
   // Descriptors are free again: the isolated loop was not cached on failure,
   // so this call creates it successfully and runs the child.
@@ -56,6 +61,9 @@ describe.skipIf(!isPosix)("Bun.spawnSync event-loop creation under EMFILE", () =
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("spawnSync threw: EMFILE");
+    expect(stderr).toContain(
+      'child_process.spawnSync returned: {"code":"EMFILE","syscall":"spawnSync /bin/sh","status":null,"pid":0,"output":null}',
+    );
     expect(stderr).toContain("retry exit: 0");
     expect(stderr).toContain("SURVIVED");
     expect(exitCode).toBe(0);

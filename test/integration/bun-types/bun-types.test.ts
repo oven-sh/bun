@@ -674,6 +674,9 @@ describe("@types/bun integration test", () => {
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
+      // Only node:child_process calls these.
+      "js_bun_spawn_bindings.bind.ts: nodeSpawn is not published",
+      "js_bun_spawn_bindings.bind.ts: nodeSpawnSync is not published",
       // globals.d.ts does not declare these.
       "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
       "resolve_message.bind.ts: new BuildMessage().column is not published",

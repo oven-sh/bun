@@ -30,7 +30,7 @@ import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
 import tls from "node:tls";
-import { promisify } from "node:util";
+import { getSystemErrorName, promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -1086,6 +1086,303 @@ it("spawnSync(does-not-exist)", () => {
     pid: 0,
     stdout: undefined,
     stderr: undefined,
+  });
+});
+
+// node keeps two channels apart. What the operating system refuses is a value: `result.error` of spawnSync, the 'error'
+// event or an errno error with `syscall: "spawn"` from spawn(). Everything else is thrown as it is: what the
+// conversion of an argument or of an env value throws, and an option that is refused.
+// https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L464-L541
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L400-L440
+describe("a spawn failure is an errno error, and nothing else is one", () => {
+  // An errno error of another call: it has an own `errno`, a `code` and a `syscall`.
+  function fsError() {
+    try {
+      fs.readFileSync(path.join(import.meta.dir, "does-not-exist"));
+    } catch (error) {
+      return error as NodeJS.ErrnoException;
+    }
+    throw new Error("readFileSync did not throw");
+  }
+
+  // Each call makes a new value: the assertions are on its identity and on its own keys.
+  const values: [string, () => unknown][] = [
+    ["an Error", () => new Error("boom")],
+    ["undefined", () => undefined],
+    ["null", () => null],
+    ["0", () => 0],
+    ["a string", () => "str"],
+    ["a frozen Error", () => Object.freeze(new Error("frozen"))],
+    ["an fs ENOENT error", fsError],
+    // What Bun.spawnSync puts on the error of a process that ran and whose output was lost.
+    ["an object with errno, pid and exitCode", () => ({ errno: -2, code: "ENOENT", pid: 4242, exitCode: 7 })],
+  ];
+
+  function outcome<T>(call: () => T): { threw: false; value: T } | { threw: true; value: any } {
+    try {
+      return { threw: false, value: call() };
+    } catch (value) {
+      return { threw: true, value };
+    }
+  }
+
+  const ownKeys = (value: unknown) => (typeof value === "object" && value !== null ? Reflect.ownKeys(value) : null);
+
+  describe.each([
+    ["spawnSync: an argument", (throws: any) => spawnSync(bunExe(), ["-e", throws])],
+    [
+      "spawnSync: an env value",
+      (throws: any) => spawnSync(bunExe(), ["-e", "0"], { env: { ...bunEnv, THROWS: throws } }),
+    ],
+    ["execFileSync: an argument", (throws: any) => execFileSync(bunExe(), ["-e", throws])],
+    [
+      "execFileSync: an env value",
+      (throws: any) => execFileSync(bunExe(), ["-e", "0"], { env: { ...bunEnv, THROWS: throws } }),
+    ],
+    ["execSync: an env value", (throws: any) => execSync("exit 0", { env: { ...bunEnv, THROWS: throws } })],
+  ])("%s whose toString throws", (_, call) => {
+    it.each(values)("%s is thrown as it is", (_, make) => {
+      const value = make();
+      const keys = ownKeys(value);
+      let conversions = 0;
+      const result = outcome(() =>
+        call({
+          toString() {
+            conversions++;
+            throw value;
+          },
+        }),
+      );
+      expect({ ...result, same: Object.is(result.value, value), keys: ownKeys(value), conversions }).toEqual({
+        threw: true,
+        value,
+        same: true,
+        keys,
+        conversions: 1,
+      });
+    });
+  });
+
+  it.each([
+    ["spawnSync: an argument", () => spawnSync(bunExe(), ["-e", Symbol("x") as any])],
+    ["spawnSync: an env value", () => spawnSync(bunExe(), ["-e", "0"], { env: { ...bunEnv, S: Symbol("x") as any } })],
+    ["execFileSync: an argument", () => execFileSync(bunExe(), ["-e", Symbol("x") as any])],
+    ["execSync: an env value", () => execSync("exit 0", { env: { ...bunEnv, S: Symbol("x") as any } })],
+  ])("%s that is a Symbol throws a TypeError", (_, call) => {
+    const { threw, value } = outcome(call);
+    expect({ threw, name: value?.name, message: value?.message, syscall: value?.syscall }).toEqual({
+      threw: true,
+      name: "TypeError",
+      message: "Cannot convert a symbol to a string",
+      syscall: undefined,
+    });
+  });
+
+  // Bun.spawnSync refuses a negative fd. node makes it a pipe, and what node refuses too is refused before the spawn.
+  it.each([
+    ["spawnSync", () => spawnSync(bunExe(), ["-e", "0"], { stdio: [-5] as any })],
+    ["execFileSync", () => execFileSync(bunExe(), ["-e", "0"], { stdio: [-5] as any })],
+  ])("%s throws an option that the spawn refuses, with no syscall and no spawnargs", (_, call) => {
+    const { threw, value } = outcome(call);
+    expect({
+      threw,
+      name: value?.name,
+      code: value?.code,
+      syscall: threw && "syscall" in value,
+      spawnargs: threw && "spawnargs" in value,
+    }).toEqual({ threw: true, name: "TypeError", code: "ERR_INVALID_ARG_TYPE", syscall: false, spawnargs: false });
+  });
+
+  it("an env value that throws wins over an option that is refused after it", () => {
+    const value = new Error("env");
+    const env = {
+      THROWS: {
+        toString() {
+          throw value;
+        },
+      } as any,
+    };
+    expect(outcome(() => spawnSync(bunExe(), [], { env, timeout: NaN }))).toEqual({ threw: true, value });
+    expect(outcome(() => spawn(bunExe(), [], { env, timeout: NaN }))).toEqual({ threw: true, value });
+  });
+
+  // node converts every argument before it looks for the file: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L1172-L1187
+  it("spawnSync converts every argument once before it reports a command that is not in PATH", () => {
+    const conversions: string[] = [];
+    const arg = (name: string, thrown?: Error): any => ({
+      toString() {
+        conversions.push(name);
+        if (thrown) throw thrown;
+        return name;
+      },
+    });
+
+    const { error } = spawnSync("does-not-exist", [arg("a"), arg("b")]);
+    expect({ code: (error as NodeJS.ErrnoException | undefined)?.code, conversions }).toEqual({
+      code: "ENOENT",
+      conversions: ["a", "b"],
+    });
+
+    conversions.length = 0;
+    const value = new Error("boom");
+    expect(outcome(() => spawnSync("does-not-exist", [arg("a"), arg("b", value), arg("c")]))).toEqual({
+      threw: true,
+      value,
+    });
+    expect(conversions).toEqual(["a", "b"]);
+  });
+
+  describe("what the operating system refuses", () => {
+    const missing = path.join(import.meta.dir, "does-not-exist");
+    const failures: [string, string, object, string][] = [
+      ["a command that is not in PATH", "does-not-exist", {}, "ENOENT"],
+      ["a file that does not exist", missing, {}, "ENOENT"],
+      ["a cwd that does not exist", bunExe(), { cwd: missing }, "ENOENT"],
+    ];
+    // Windows has other errors for these two: no mode says that a file is not executable, and a bad fd is a libuv error.
+    if (isPosix) {
+      failures.push(["a file that is not executable", import.meta.path, {}, "EACCES"]);
+      failures.push(["an fd that is not open", bunExe(), { stdio: ["ignore", "ignore", "ignore", 10240] }, "EBADF"]);
+    }
+    // node emits these from spawn() and throws the others: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L403-L407
+    const emitted = ["EACCES", "EAGAIN", "EMFILE", "ENFILE", "ENOENT"];
+
+    it.each(failures)("spawnSync returns %s in result.error", (_, file, options, code) => {
+      const { error, ...result } = spawnSync(file, ["-e", "0"], options);
+      const failure = error as (NodeJS.ErrnoException & { spawnargs?: string[] }) | undefined;
+      expect({
+        ...result,
+        code: failure?.code,
+        errno: failure && getSystemErrorName(failure.errno!),
+        syscall: failure?.syscall,
+        spawnargs: failure?.spawnargs,
+      }).toEqual<unknown>({
+        status: null,
+        signal: null,
+        output: null,
+        pid: 0,
+        stdout: undefined,
+        stderr: undefined,
+        code,
+        errno: code,
+        syscall: "spawnSync " + file,
+        spawnargs: ["-e", "0"],
+      });
+    });
+
+    it.each(failures)("execFileSync throws %s", (_, file, options, code) => {
+      const { threw, value } = outcome(() => execFileSync(file, ["-e", "0"], options));
+      expect({ threw, code: value?.code, syscall: value?.syscall, status: value?.status, pid: value?.pid }).toEqual({
+        threw: true,
+        code,
+        syscall: "spawnSync " + file,
+        status: null,
+        pid: 0,
+      });
+    });
+
+    it.each(failures)("spawn() emits or throws %s", async (_, file, options, code) => {
+      const spawned = outcome(() => spawn(file, ["-e", "0"], options));
+      if (!emitted.includes(code)) {
+        expect({ threw: spawned.threw, code: spawned.value?.code, syscall: spawned.value?.syscall }).toEqual({
+          threw: true,
+          code,
+          syscall: "spawn",
+        });
+        return;
+      }
+      expect(spawned.threw).toBe(false);
+      const [failure] = await once(spawned.value as ChildProcess, "error");
+      expect({
+        code: failure.code,
+        errno: getSystemErrorName(failure.errno),
+        syscall: failure.syscall,
+        spawnargs: failure.spawnargs,
+      }).toEqual({ code, errno: code, syscall: "spawn " + file, spawnargs: ["-e", "0"] });
+    });
+  });
+
+  // Bun runs `tool.cmd` for `tool`, and refuses an argument that cmd.exe would reinterpret. spawnSync has the refusal
+  // for a failure of the spawn, which is the channel node has for a batch file:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L808-L815
+  it.if(isWindows)("spawnSync returns an argument that cmd.exe would reinterpret, and spawn() throws it", () => {
+    using dir = tempDir("batch-file-argument", { "tool.cmd": "@echo ran\r\n" });
+    const options = { cwd: String(dir), env: bunEnv };
+
+    const { error, ...result } = spawnSync("tool", ["a&b"], options);
+    const refusal = error as (NodeJS.ErrnoException & { spawnargs?: string[] }) | undefined;
+    expect({
+      ...result,
+      name: refusal?.name,
+      code: refusal?.code,
+      message: refusal?.message,
+      syscall: refusal?.syscall,
+      spawnargs: refusal?.spawnargs,
+    }).toEqual<unknown>({
+      status: null,
+      signal: null,
+      output: null,
+      pid: 0,
+      stdout: undefined,
+      stderr: undefined,
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringContaining("'args[1]' contains a cmd.exe special character"),
+      syscall: "spawnSync tool",
+      spawnargs: ["a&b"],
+    });
+
+    const { threw, value } = outcome(() => spawn("tool", ["a&b"], options));
+    expect({ threw, code: value?.code, syscall: threw && "syscall" in value }).toEqual({
+      threw: true,
+      code: "ERR_INVALID_ARG_VALUE",
+      syscall: false,
+    });
+  });
+
+  describe("spawn()", () => {
+    // Each of these was taken for a failure of the spawn: the 'error' event of a child, with `syscall` and
+    // `spawnargs` put on it.
+    it.each([
+      ["an argument", (throws: any) => spawn(bunExe(), ["-e", throws])],
+      ["an env value", (throws: any) => spawn(bunExe(), ["-e", "0"], { env: { ...bunEnv, THROWS: throws } })],
+    ])("%s whose toString throws an error with the code of a spawn failure is thrown as it is", (_, call) => {
+      for (const value of [Object.assign(new Error("not a spawn failure"), { code: "EACCES" }), fsError()]) {
+        const keys = ownKeys(value);
+        const result = outcome(() =>
+          call({
+            toString() {
+              throw value;
+            },
+          }),
+        );
+        // It is not this child's failure: emitted with no listener, it would be thrown between the tests.
+        if (!result.threw) result.value.on("error", () => {});
+        expect({ ...result, same: Object.is(result.value, value), keys: ownKeys(value) }).toEqual({
+          threw: true,
+          value,
+          same: true,
+          keys,
+        });
+      }
+    });
+
+    // node's spawn() does not throw what the conversion of an argument throws, so it goes on to look for the file:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/process_wrap.cc#L259-L266
+    it("a command that is not in PATH is emitted, whatever an argument throws", async () => {
+      const child = spawn("does-not-exist", [
+        {
+          toString() {
+            throw new Error("boom");
+          },
+        } as any,
+      ]);
+      const [failure] = await once(child, "error");
+      expect({ code: failure.code, syscall: failure.syscall }).toEqual({
+        code: "ENOENT",
+        syscall: "spawn does-not-exist",
+      });
+    });
   });
 });
 

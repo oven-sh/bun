@@ -363,6 +363,8 @@ try {
 {
   const r = spawnSync(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 });
   out.spawnSync = { stdout: r.stdout, error: r.error?.code, pid: r.pid > 0, output: r.output, exited: r.status !== null || typeof r.signal === "string" };
+  // node says which process and how it exited on the result. Its error has the errno and names the spawn.
+  out.spawnSyncError = { syscall: r.error?.syscall, spawnargs: r.error?.spawnargs?.length, ofTheProcess: ["pid", "exitCode", "signalCode"].filter(key => key in r.error) };
 }
 try {
   const r = execFileSync(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 });
@@ -493,6 +495,7 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
           // `output: null` of one that could not be spawned.
           // It exited or was killed by a signal: `status` and `signal` are never both null.
           spawnSync: { stdout: null, error: "EIO", pid: true, output: [null, null, null], exited: true },
+          spawnSyncError: { syscall: "spawnSync " + WRITER_CMD[0], spawnargs: WRITER_CMD.length - 1, ofTheProcess: [] },
           execFileSync: "threw:EIO",
         },
         stderr: "",

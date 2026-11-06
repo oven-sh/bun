@@ -67,6 +67,19 @@ interface SpawnSyncResult {
   error?: SystemError;
 }
 
+// What `nodeSpawnSync` returns: the result of `Bun.spawnSync`, or `error` when the operating system refused the
+// spawn. `pid`, `exitCode` and `signalCode` come with an `error` only when the process ran and its output was lost.
+interface NodeSpawnSyncResult {
+  stdout?: Buffer | number | null;
+  stderr?: Buffer | number | null;
+  exitCode?: number | null;
+  signalCode?: string | number;
+  exitedDueToTimeout?: boolean;
+  exitedDueToMaxBuffer?: boolean;
+  pid?: number;
+  error?: SystemError;
+}
+
 const kFromNode = Symbol("kFromNode");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
@@ -575,53 +588,44 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     }
   }
 
-  var error;
-  try {
-    var {
-      stdout = null,
-      stderr = null,
-      exitCode,
-      signalCode,
-      exitedDueToTimeout,
-      exitedDueToMaxBuffer,
-      pid,
-    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
-      exitCode: number | null;
-      stdout?: Buffer | number | null;
-      stderr?: Buffer | number | null;
-    } = Bun.spawnSync({
-      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
-      // The normalized env (kBunEnv) is built from the live process.env when
-      // options.env is not given, so runtime mutations of process.env reach
-      // the child like in Node.js.
-      env: options[kBunEnv] || options.env || undefined,
-      cwd: options.cwd || undefined,
-      stdio: bunStdio,
-      detached: options.detached,
-      uid: options.uid,
-      gid: options.gid,
-      cgroup: options.cgroup,
-      windowsVerbatimArguments: options.windowsVerbatimArguments,
-      windowsHide: options.windowsHide,
-      argv0: options.args[0],
-      timeout: options.timeout,
-      killSignal: options.killSignal,
-      maxBuffer: options.maxBuffer,
-    });
-  } catch (err: any) {
-    error = err;
-    stdout = null;
-    stderr = null;
-    // Bun.spawnSync puts `pid`, `exitCode` and `signalCode` on the error it throws when the process ran and its
-    // output was lost. Any other error means the process never ran, which node reports as `status: null` and
-    // `pid: 0`.
-    exitCode = err?.exitCode ?? null;
-    signalCode = err?.signalCode;
-    pid = err?.pid ?? 0;
+  // normalizeSpawnArguments put argv0, or the file when there is no argv0, at the head of its copy of the args.
+  // The native spawn runs cmd[0] and gives the child `argv0` in its place.
+  let cmd = options.args;
+  if (typeof options.argv0 === "string") {
+    cmd = ArrayPrototypeSlice.$call(cmd);
+    $putByValDirect(cmd, 0, options.file);
   }
+
+  const {
+    stdout = null,
+    stderr = null,
+    // A process that never ran has neither: node reports it as `status: null` and `pid: 0`.
+    exitCode = null,
+    signalCode,
+    exitedDueToTimeout,
+    exitedDueToMaxBuffer,
+    pid = 0,
+    // The operating system refused the spawn, or the process ran and its output was lost: that one has a pid.
+    error,
+  } = nodeSpawnSync({
+    cmd,
+    // The normalized env (kBunEnv) is built from the live process.env when
+    // options.env is not given, so runtime mutations of process.env reach
+    // the child like in Node.js.
+    env: options[kBunEnv] || options.env || undefined,
+    cwd: options.cwd || undefined,
+    stdio: bunStdio,
+    detached: options.detached,
+    uid: options.uid,
+    gid: options.gid,
+    cgroup: options.cgroup,
+    windowsVerbatimArguments: options.windowsVerbatimArguments,
+    windowsHide: options.windowsHide,
+    argv0: options.args[0],
+    timeout: options.timeout,
+    killSignal: options.killSignal,
+    maxBuffer: options.maxBuffer,
+  });
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
   // instead of the actual output. We should treat this as no output available.
@@ -634,11 +638,11 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     // node: `output` is null when the process never ran.
-    output: error !== undefined && error?.pid === undefined ? null : [null, outputStdout, outputStderr],
+    output: error !== undefined && pid === 0 ? null : [null, outputStdout, outputStderr],
     pid,
   };
 
-  if (error) {
+  if (error !== undefined) {
     result.error = error;
   }
 
@@ -685,6 +689,18 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
+// `Bun.spawn` and `Bun.spawnSync` for this module. A spawn that the operating system refused comes back as a value,
+// as it does from node's native runner (https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L464-L541):
+// `[error]` in place of the Subprocess, `{ error }` in place of the result. What they throw is an option that was
+// refused or a conversion that threw, which node throws too.
+const nodeSpawn: (options: Bun.Spawn.NodeSpawnOptions) => $Bindgen.Subprocess | [SystemError] = $bindgen(
+  "js_bun_spawn_bindings.bind.ts",
+  "nodeSpawn",
+);
+const nodeSpawnSync: (options: Bun.Spawn.NodeSpawnSyncOptions) => NodeSpawnSyncResult = $bindgen(
+  "js_bun_spawn_bindings.bind.ts",
+  "nodeSpawnSync",
+);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1088,14 +1104,17 @@ function normalizeSpawnArguments(file, args, options?) {
     const key = envKeys[i];
     const value = env[key];
     if (value !== undefined) {
+      const isString = typeof value === "string";
       if (
         StringPrototypeIndexOf.$call(key, "\u0000") !== -1 ||
-        (typeof value === "string" && StringPrototypeIndexOf.$call(value, "\u0000") !== -1)
+        (isString && StringPrototypeIndexOf.$call(value, "\u0000") !== -1)
       ) {
         validateArgumentNullCheck(key, `options.env['${key}']`);
         validateArgumentNullCheck(value, `options.env['${key}']`);
       }
-      bunEnv[key] = value;
+      // node converts each value here, before it validates the options that follow, so a conversion that throws
+      // is thrown from here: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L737
+      bunEnv[key] = isString ? value : `${value}`;
     }
   }
 
@@ -1469,106 +1488,102 @@ class ChildProcess extends EventEmitter {
       return;
     }
 
-    // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-    // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-    // so we have to set argv0 to spawnargs[0] and cmd[0] to file
+    // normalizeSpawnArguments put argv0, or the file when there is no argv0, at the head of the args. The native
+    // spawn runs cmd[0] and gives the child `argv0` in its place. `spawnargs` stays `child.spawnargs` and can be the
+    // caller's own array, so `cmd` is a copy.
+    const cmd = ArrayPrototypeSlice.$call(spawnargs);
+    $putByValDirect(cmd, 0, file);
 
-    try {
-      this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
-        stdio: bunStdio,
-        cwd: options.cwd || undefined,
-        env: env,
-        detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
-        uid: options.uid,
-        gid: options.gid,
-        cgroup: options.cgroup,
-        onExit: (handle, exitCode, signalCode, err) => {
-          this.#handle = handle as unknown as $Bindgen.Subprocess;
-          this.pid = this.#handle!.pid;
-          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+    const spawned = nodeSpawn({
+      cmd,
+      stdio: bunStdio,
+      cwd: options.cwd || undefined,
+      env: env,
+      detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+      uid: options.uid,
+      gid: options.gid,
+      cgroup: options.cgroup,
+      onExit: (handle, exitCode, signalCode, err) => {
+        this.#handle = handle as unknown as $Bindgen.Subprocess;
+        this.pid = this.#handle!.pid;
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
-          if (hasSocketsToEagerlyLoad) {
-            process.nextTick(() => {
-              void this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-            });
-          }
-
-          process.nextTick(
-            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
-            exitCode,
-            signalCode,
-            err,
-          );
-        },
-        lazy: true,
-        ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-        onDisconnect: has_ipc ? ok => this.#onDisconnect(ok) : undefined,
-        serialization,
-        argv0: spawnargs[0],
-        windowsHide: !!options.windowsHide,
-        windowsVerbatimArguments: !!options.windowsVerbatimArguments,
-      }) as unknown as $Bindgen.Subprocess;
-      this.pid = this.#handle!.pid;
-
-      $debug("ChildProcess: spawn", this.pid, spawnargs);
-
-      process.nextTick(() => {
-        this.emit("spawn");
-      });
-
-      if (has_ipc) {
-        this.send = this.#send;
-        this.disconnect = this.#disconnect;
-        this.channel = new Control();
-        Object.defineProperty(this, "_channel", {
-          get() {
-            return this.channel;
-          },
-          set(value) {
-            this.channel = value;
-          },
-        });
-        if (options[kFromNode]) this.#closesNeeded += 1;
-      }
-
-      if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio!) {
-          item?.ref?.();
+        if (hasSocketsToEagerlyLoad) {
+          process.nextTick(() => {
+            void this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
         }
-      }
-    } catch (ex) {
-      const exCode =
-        ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
-      if (
-        // node sends these errors on the next tick rather than throwing
-        exCode === "EACCES" ||
-        exCode === "EAGAIN" ||
-        exCode === "EMFILE" ||
-        exCode === "ENFILE" ||
-        exCode === "ENOENT"
-      ) {
+
+        process.nextTick(
+          (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
+          exitCode,
+          signalCode,
+          err,
+        );
+      },
+      lazy: true,
+      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      onDisconnect: has_ipc ? ok => this.#onDisconnect(ok) : undefined,
+      serialization,
+      argv0: spawnargs[0],
+      windowsHide: !!options.windowsHide,
+      windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+    });
+
+    // The operating system refused the spawn: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L400-L440
+    if ($isJSArray(spawned)) {
+      const error = spawned[0];
+      const code = error.code;
+      // node sends these errors on the next tick rather than throwing
+      if (code === "EACCES" || code === "EAGAIN" || code === "EMFILE" || code === "ENFILE" || code === "ENOENT") {
         this.#handle = null;
-        (ex as SystemError).syscall = "spawn " + this.spawnfile;
-        (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        error.syscall = "spawn " + this.spawnfile;
+        error.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
         process.nextTick(() => {
-          this.emit("error", ex);
-          this.emit("close", (ex as SystemError).errno ?? -1);
+          this.emit("error", error);
+          this.emit("close", error.errno ?? -1);
         });
-        if (exCode === "EMFILE" || exCode === "ENFILE") {
+        if (code === "EMFILE" || code === "ENFILE") {
           // emfile/enfile error; in this case node does not initialize stdio streams.
           this.#stdioOptions[0] = "undefined";
           this.#stdioOptions[1] = "undefined";
           this.#stdioOptions[2] = "undefined";
         }
-      } else {
-        if (exCode !== undefined) {
-          // Node throws errors that are not in the deferred list above
-          // synchronously, with `syscall: "spawn"` (no file appended).
-          (ex as SystemError).syscall = "spawn";
-        }
-        throw ex;
+        return;
+      }
+      // Node throws the others synchronously, with `syscall: "spawn"` (no file appended).
+      error.syscall = "spawn";
+      throw error;
+    }
+
+    this.#handle = spawned;
+    this.pid = spawned.pid;
+
+    $debug("ChildProcess: spawn", this.pid, spawnargs);
+
+    process.nextTick(() => {
+      this.emit("spawn");
+    });
+
+    if (has_ipc) {
+      this.send = this.#send;
+      this.disconnect = this.#disconnect;
+      this.channel = new Control();
+      Object.defineProperty(this, "_channel", {
+        get() {
+          return this.channel;
+        },
+        set(value) {
+          this.channel = value;
+        },
+      });
+      if (options[kFromNode]) this.#closesNeeded += 1;
+    }
+
+    if (hasSocketsToEagerlyLoad) {
+      for (let item of this.stdio!) {
+        item?.ref?.();
       }
     }
   }

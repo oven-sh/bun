@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 #[cfg(not(windows))]
 use bun_sys::FdExt;
@@ -14,6 +14,20 @@ use crate::webcore::streams::SourceHandle;
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
+
+/// Why `Writable::init` made no `Writable`.
+pub(crate) enum InitError {
+    /// An exception is pending.
+    Js(JsError),
+    /// The writer of the stdin pipe could not start. Nothing is pending.
+    Start(bun_sys::Error),
+}
+
+impl From<JsError> for InitError {
+    fn from(error: JsError) -> Self {
+        Self::Js(error)
+    }
+}
 
 pub(crate) enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
@@ -130,7 +144,7 @@ impl<'a> Writable<'a> {
         subprocess: &mut Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
-    ) -> JsResult<Writable<'a>> {
+    ) -> Result<Writable<'a>, InitError> {
         super::assert_stdio_result!(result);
 
         let global = event_loop.global_ref();
@@ -163,7 +177,7 @@ impl<'a> Writable<'a> {
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global)?;
                                 }
-                                return Err(global.throw_value(err.to_js(global)));
+                                return Err(InitError::Start(err));
                             }
                         }
                         pipe_ref
@@ -247,7 +261,7 @@ impl<'a> Writable<'a> {
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
-                        return Err(global.throw_value(err.to_js(global)));
+                        return Err(InitError::Start(err));
                     }
                 }
 

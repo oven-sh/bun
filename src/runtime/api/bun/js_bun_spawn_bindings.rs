@@ -75,12 +75,137 @@ unsafe extern "C" {
     safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
+/// A spawn that the operating system refused, or a child that ran and whose output was lost. It is a value, with no
+/// exception pending, so that the entry point chooses the delivery: `Bun.spawn` and `Bun.spawnSync` throw it, and
+/// node:child_process is handed it. A `JsError` is never one: that is a refused option or a conversion that threw.
+pub(crate) struct OsFailure {
+    error: OsError,
+    /// The child ran to the end and only reading its output failed.
+    exited: Option<Exited>,
+}
+
+enum OsError {
+    Sys(sys::Error),
+    System(SystemError),
+    /// The spawn could not be set up, and no syscall reported an errno: the name of the `bun_spawn::Error`.
+    Setup(&'static str),
+    /// cmd.exe would reinterpret an argument of the .bat/.cmd file that the command resolved to.
+    BatchFileArgument(String),
+}
+
+struct Exited {
+    pid: i32,
+    exit_code: Option<u8>,
+    signal: Option<SignalCode>,
+}
+
+/// `Err`: the operating system refused. The enclosing `JsResult` is `Err` when an exception is pending.
+pub(crate) type Spawned<T> = Result<T, Box<OsFailure>>;
+
+// A spawn that succeeds still returns in two words.
+const _: () = assert!(size_of::<JsResult<Spawned<JSValue>>>() == size_of::<JsResult<JSValue>>());
+
+impl From<OsError> for Box<OsFailure> {
+    fn from(error: OsError) -> Self {
+        Box::new(OsFailure {
+            error,
+            exited: None,
+        })
+    }
+}
+
+impl From<sys::Error> for Box<OsFailure> {
+    fn from(error: sys::Error) -> Self {
+        OsError::Sys(error).into()
+    }
+}
+
+impl From<SystemError> for Box<OsFailure> {
+    fn from(error: SystemError) -> Self {
+        OsError::System(error).into()
+    }
+}
+
+impl OsError {
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        match self {
+            Self::Sys(error) => error.to_js(global),
+            Self::System(error) => error.to_error_instance(global),
+            Self::Setup(name) => {
+                global.create_error_instance(format_args!("{name} : failed to spawn process"))
+            }
+            Self::BatchFileArgument(message) => global
+                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!("{message}"))
+                .to_js(),
+        }
+    }
+}
+
+impl Exited {
+    /// `pid`, `exitCode` and `signalCode`, under the names `Bun.spawnSync` gives them on its result.
+    fn put_on(&self, global: &JSGlobalObject, object: JSValue) {
+        object.put(global, b"pid", JSValue::js_number_from_int32(self.pid));
+        object.put(
+            global,
+            b"exitCode",
+            self.exit_code.map_or(JSValue::NULL, |code| {
+                JSValue::js_number_from_int32(i32::from(code))
+            }),
+        );
+        if let Some(signal) = self.signal {
+            object.put(
+                global,
+                b"signalCode",
+                SubprocessT::signal_to_js(signal, global),
+            );
+        }
+    }
+}
+
+impl OsFailure {
+    /// What `Bun.spawn` and `Bun.spawnSync` do with it. The error of a child that ran says which one and how it
+    /// exited, as the result of `Bun.spawnSync` does: every other error is from a process that never ran.
+    fn throw(self, global: &JSGlobalObject) -> JsError {
+        let error = self.error.to_js(global);
+        if let Some(exited) = &self.exited {
+            exited.put_on(global, error);
+        }
+        global.throw_value(error)
+    }
+
+    /// What `nodeSpawnSync` returns for it: `{ error }`, with `pid`, `exitCode` and `signalCode` beside it when
+    /// the child ran. node gives those on the result and not on the error:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L692-L763
+    fn to_node_sync_result(self, global: &JSGlobalObject) -> JSValue {
+        let result = JSValue::create_empty_object(global, 4);
+        result.put(global, b"error", self.error.to_js(global));
+        if let Some(exited) = &self.exited {
+            exited.put_on(global, result);
+        }
+        result
+    }
+
+    /// What `nodeSpawn` returns for it: `[error]`, which no `Subprocess` is.
+    fn to_node_result(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        JSValue::create_array_from_slice(global, &[self.error.to_js(global)])
+    }
+}
+
 struct Argv0Result {
     /// Was arena-owned `[:0]const u8`; caller stashes in its `Vec<ZBox>` backing
     /// store so the pointer outlives `spawn_process`.
     argv0: ZBox,
     /// Was arena-owned `[:0]u8`; caller stashes in its `Vec<ZBox>` backing store.
     arg0: ZBox,
+}
+
+/// The four functions that run the spawn core.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    Spawn,
+    SpawnSync,
+    NodeSpawn,
+    NodeSpawnSync,
 }
 
 // This is split into a separate function to conserve stack space.
@@ -91,7 +216,7 @@ fn get_argv0(
     cwd: &[u8],
     pretend_argv0: Option<&CStr>,
     first_cmd: JSValue,
-) -> JsResult<Argv0Result> {
+) -> JsResult<Spawned<Argv0Result>> {
     let arg0 = first_cmd.to_utf8(global_this)?;
 
     // Check for null bytes in command (security: prevent null byte injection)
@@ -135,19 +260,19 @@ fn get_argv0(
         let Some(resolved) =
             bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
         else {
-            return Err(throw_command_not_found(global_this, argv0_to_use));
+            return Ok(Err(command_not_found(argv0_to_use).into()));
         };
         ZBox::from_bytes(resolved.as_bytes())
     };
 
-    Ok(Argv0Result {
+    Ok(Ok(Argv0Result {
         argv0: actual_argv0,
         arg0: if let Some(p) = pretend_argv0 {
             ZBox::from_bytes(p.to_bytes())
         } else {
             ZBox::from_bytes(arg0.slice())
         },
-    })
+    }))
 }
 
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
@@ -157,13 +282,14 @@ fn get_argv0(
 /// is dropped after `spawn_process` returns.
 fn get_argv(
     global_this: &JSGlobalObject,
+    entry: Entry,
     args: JSValue,
     path: &[u8],
     cwd: &[u8],
     argv0: &mut Option<*const c_char>,
     argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
-) -> JsResult<()> {
+) -> JsResult<Spawned<()>> {
     if args.is_empty_or_undefined_or_null() {
         return Err(
             global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
@@ -185,14 +311,26 @@ fn get_argv(
     *argv = Vec::with_capacity(cmds_array.len as usize + 2);
     storage.reserve(cmds_array.len as usize + 2);
 
-    let argv0_result = get_argv0(
+    let argv0_result = match get_argv0(
         global_this,
         path,
         cwd,
         // SAFETY: argv0 was produced by to_owned_slice_z above; NUL-terminated and outlives this call.
         argv0.map(|p| unsafe { bun_core::ffi::cstr(p) }),
         cmds_array.next()?.unwrap(),
-    )?;
+    )? {
+        Ok(argv0_result) => argv0_result,
+        Err(not_found) => {
+            // node's spawnSync converts every argument before it looks for the file, so an argument whose
+            // conversion throws wins over ENOENT: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L1172-L1187
+            if entry == Entry::NodeSpawnSync {
+                while let Some(value) = cmds_array.next()? {
+                    value.to_bun_string(global_this)?;
+                }
+            }
+            return Ok(Err(not_found));
+        }
+    };
 
     // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
     // re-tokenizes the command line with shell metacharacter rules
@@ -201,15 +339,14 @@ fn get_argv(
     // reinterpret.
     let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
     if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
-        return Err(global_this
-            .err(
-                jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!(
-                    "The command name contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
-                    bun_fmt::quote(argv0_result.arg0.as_bytes())
-                ),
-            )
-            .throw());
+        return refuse_batch_file_argument(
+            global_this,
+            entry,
+            format!(
+                "The command name contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
+                bun_fmt::quote(argv0_result.arg0.as_bytes())
+            ),
+        );
     }
 
     *argv0 = Some(argv0_result.argv0.as_ptr());
@@ -239,16 +376,15 @@ fn get_argv(
 
         let owned = arg.to_owned_slice_z();
         if is_batch_file && bun_which::batch_arg_has_cmd_metachars(owned.as_bytes()) {
-            return Err(global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The argument 'args[{}]' contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
-                        arg_index,
-                        bun_fmt::quote(owned.as_bytes())
-                    ),
-                )
-                .throw());
+            return refuse_batch_file_argument(
+                global_this,
+                entry,
+                format!(
+                    "The argument 'args[{}]' contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
+                    arg_index,
+                    bun_fmt::quote(owned.as_bytes())
+                ),
+            );
         }
         argv.push(owned.as_ptr());
         storage.push(owned);
@@ -260,7 +396,23 @@ fn get_argv(
             global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
         );
     }
-    Ok(())
+    Ok(Ok(()))
+}
+
+/// cmd.exe would reinterpret an argument of a .bat/.cmd file. `nodeSpawnSync` reports it as a failure of the
+/// spawn, the channel node has for a batch file (https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L808-L815).
+/// Every other entry point throws it.
+fn refuse_batch_file_argument<T>(
+    global_this: &JSGlobalObject,
+    entry: Entry,
+    message: String,
+) -> JsResult<Spawned<T>> {
+    if entry == Entry::NodeSpawnSync {
+        return Ok(Err(OsError::BatchFileArgument(message).into()));
+    }
+    Err(global_this
+        .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!("{message}"))
+        .throw())
 }
 
 /// Bun.spawn() calls this.
@@ -269,13 +421,15 @@ pub(crate) fn spawn(
     cmd_or_options: JsLocal<'_>,
     options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    let cx = &cx.js_thread();
     spawn_maybe_sync(
-        false,
-        &cx.js_thread(),
+        Entry::Spawn,
+        cx,
         cmd_or_options.to_js(),
         options.to_js(),
         &mut None,
-    )
+    )?
+    .map_err(|failure| failure.throw(cx.global()))
 }
 
 /// Bun.spawnSync() calls this.
@@ -285,15 +439,62 @@ pub(crate) fn spawn_sync(
     options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
     let cx = &cx.js_thread();
-    let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync(
-        true,
+    spawn_sync_with(
+        Entry::SpawnSync,
         cx,
         cmd_or_options.to_js(),
         options.to_js(),
+        |failure| Err(failure.throw(cx.global())),
+    )
+}
+
+/// `nodeSpawn`, what node:child_process calls for `Bun.spawn`: a `Subprocess`, or `[error]` when the operating
+/// system refused. It throws only what is not a failure of the spawn.
+pub(crate) fn node_spawn(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    let cx = &cx.js_thread();
+    match spawn_maybe_sync(
+        Entry::NodeSpawn,
+        cx,
+        options.to_js(),
+        JSValue::UNDEFINED,
+        &mut None,
+    )? {
+        Ok(subprocess) => Ok(subprocess),
+        Err(failure) => failure.to_node_result(cx.global()),
+    }
+}
+
+/// `nodeSpawnSync`, what node:child_process calls for `Bun.spawnSync`: its result, or `{ error }` when the
+/// operating system refused. It throws only what is not a failure of the spawn.
+pub(crate) fn node_spawn_sync(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    let cx = &cx.js_thread();
+    spawn_sync_with(
+        Entry::NodeSpawnSync,
+        cx,
+        options.to_js(),
+        JSValue::UNDEFINED,
+        |failure| Ok(failure.to_node_sync_result(cx.global())),
+    )
+}
+
+/// The two sync entry points: `deliver` is what the entry point does with an OS failure.
+fn spawn_sync_with(
+    entry: Entry,
+    cx: &bun_jsc::JsThread<'_>,
+    args: JSValue,
+    secondary_args_value: JSValue,
+    deliver: impl FnOnce(Box<OsFailure>) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let mut bun_test_deadline: Option<Timespec> = None;
+    let result = spawn_maybe_sync(
+        entry,
+        cx,
+        args,
+        secondary_args_value,
         &mut bun_test_deadline,
-    );
-    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
+    )
+    .and_then(|spawned| spawned.or_else(deliver));
+    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (a spawn failure that is thrown, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
         && !cx.global().has_exception()
@@ -348,12 +549,13 @@ impl Drop for ReportUnwatchedExit {
 }
 
 fn spawn_maybe_sync(
-    is_sync: bool,
+    entry: Entry,
     cx: &bun_jsc::JsThread<'_>,
     args_: JSValue,
     secondary_args_value: JSValue,
     bun_test_deadline: &mut Option<Timespec>,
-) -> JsResult<JSValue> {
+) -> JsResult<Spawned<JSValue>> {
+    let is_sync = matches!(entry, Entry::SpawnSync | Entry::NodeSpawnSync);
     if is_sync {
         // We skip this on Windows due to test failures.
         #[cfg(not(windows))]
@@ -605,15 +807,18 @@ fn spawn_maybe_sync(
                 path = new_path;
             }
 
-            get_argv(
+            if let Err(failure) = get_argv(
                 cx.global(),
+                entry,
                 cmd_value,
                 path,
                 cwd,
                 &mut argv0,
                 &mut argv,
                 &mut cstr_storage,
-            )?;
+            )? {
+                return Ok(Err(failure));
+            }
 
             if let Some(stdio_val) = args.get(cx.global(), "stdio")? {
                 if !stdio_val.is_empty_or_undefined_or_null() {
@@ -905,16 +1110,17 @@ fn spawn_maybe_sync(
                     }
                 }
             }
-        } else {
-            get_argv(
-                cx.global(),
-                cmd_value,
-                path,
-                cwd,
-                &mut argv0,
-                &mut argv,
-                &mut cstr_storage,
-            )?;
+        } else if let Err(failure) = get_argv(
+            cx.global(),
+            entry,
+            cmd_value,
+            path,
+            cwd,
+            &mut argv0,
+            &mut argv,
+            &mut cstr_storage,
+        )? {
+            return Ok(Err(failure));
         }
     }
 
@@ -1065,7 +1271,7 @@ fn spawn_maybe_sync(
             for e in &mut extra_fds {
                 e.deinit();
             }
-            return Err(throw_spawn_sync_loop_init_failed(cx.global()));
+            return Ok(Err(spawn_sync_loop_init_failed().into()));
         };
         Some(sync_loop.prepare(jsc_vm_ptr.cast()))
     } else {
@@ -1087,7 +1293,10 @@ fn spawn_maybe_sync(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
-        Some(target) => Some(target.open(cx.global())?),
+        Some(target) => match target.open() {
+            Ok(dir) => Some(dir),
+            Err(err) => return Ok(Err(err.into())),
+        },
         None => None,
     };
 
@@ -1193,16 +1402,16 @@ fn spawn_maybe_sync(
             } else {
                 -UV_E::NFILE
             };
-            return Err(cx
-                .global()
-                .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
+            return Ok(Err(SystemError::from(systemerror).into()));
         }
         Err(err) => {
             // See EMFILE arm above.
             spawn_options.deinit();
-            return Err(cx
-                .global()
-                .throw_error(crate::Error::from(err), ": failed to spawn process"));
+            let name = err.name();
+            if name == "OutOfMemory" {
+                return Err(cx.global().throw_out_of_memory());
+            }
+            return Ok(Err(OsError::Setup(name).into()));
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
@@ -1212,9 +1421,7 @@ fn spawn_maybe_sync(
                 if let Some(c) = &cgroup_dir
                     && err.syscall == sys::Tag::clone3
                 {
-                    return Err(cx
-                        .global()
-                        .throw_value(c.target.blame(&err).to_js(cx.global())));
+                    return Ok(Err(c.target.blame(&err).into()));
                 }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
@@ -1234,15 +1441,13 @@ fn spawn_maybe_sync(
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }
-                            return Err(cx.global().throw_value(
-                                SystemError::from(systemerror).to_error_instance(cx.global()),
-                            ));
+                            return Ok(Err(SystemError::from(systemerror).into()));
                         }
                     }
                     _ => {}
                 }
 
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
+                return Ok(Err(err.into()));
             }
             sys::Result::Ok(result) => result,
         },
@@ -1425,7 +1630,10 @@ fn spawn_maybe_sync(
             subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
-            return Err(err);
+            return match err {
+                Subprocess::writable::InitError::Js(err) => Err(err),
+                Subprocess::writable::InitError::Start(err) => Ok(Err(err.into())),
+            };
         }
     }
 
@@ -1560,9 +1768,8 @@ fn spawn_maybe_sync(
             if let Err(err) =
                 unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
             {
-                let err_js = err.to_js(cx.global());
                 subprocess.deref();
-                return Err(cx.global().throw_value(err_js));
+                return Ok(Err(err.into()));
             }
         }
         ipc_data.write_version_packet(cx.global());
@@ -1698,20 +1905,20 @@ fn spawn_maybe_sync(
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
         // No wrapper finalizes a sync Subprocess, and only this call can reap its child: it is killed once
-        // it is watched, and the error is thrown after the wait below has released everything.
+        // it is watched, and the error is reported after the wait below has released everything.
         if !is_sync {
             // Not `kill_signal`, which the child may ignore: nobody is handed it to end it another way.
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
             drop(report_exit);
-            return Err(cx.global().throw_value(err.to_js(cx.global())));
+            return Ok(Err(err.clone().into()));
         }
     }
 
-    // Every `return Err` above is past; the Subprocess will be returned to
+    // Every failure above is past; the Subprocess will be returned to
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
     // finalize_streams (on later GC) skips them and the caller is the sole
     // owner via .stdio[i]. Placed here (not earlier) because the
-    // Writable::init error arm and the IPC open-socket failure both throw
+    // Writable::init error arm and the IPC open-socket failure both return
     // after populating stdio_pipes; on those paths the caller never receives
     // the Subprocess, so the OwnedFd slot must remain for finalize_streams to
     // close.
@@ -1751,7 +1958,7 @@ fn spawn_maybe_sync(
                 }
             };
         }
-        return Ok(out);
+        return Ok(Ok(out));
     };
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
@@ -1936,17 +2143,29 @@ fn spawn_maybe_sync(
         unsafe {
             bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
         };
-        return Ok(JSValue::ZERO);
+        return Ok(Ok(JSValue::ZERO));
     }
 
     subprocess.update_has_pending_activity();
 
     let signal_code = subprocess.signal_code_to_js(cx.global());
     let exit_code = subprocess.exit_code_to_js();
+    // The process ran to completion and its output was lost. The failure says which process and how it
+    // exited, as the result does: every other failure is from a process that never ran (it could not be
+    // spawned, or its stdin could not be set up and it was killed), and `node:child_process` reports the two
+    // differently, as node does.
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())
-        .or_else(|| subprocess.stderr.with_mut(|s| s.take_read_error()));
+        .or_else(|| subprocess.stderr.with_mut(|s| s.take_read_error()))
+        .map(|error| OsFailure {
+            error: OsError::Sys(error),
+            exited: Some(Exited {
+                pid: subprocess.pid(),
+                exit_code: subprocess.get_exit_code(),
+                signal: subprocess.process().status.signal(),
+            }),
+        });
     // Propagated after `finalize`, which must run even when building the output throws.
     let output = subprocess
         .stdout
@@ -1969,20 +2188,10 @@ fn spawn_maybe_sync(
     };
     let (stdout, stderr, resource_usage) = output?;
     if let Some(err) = setup_err {
-        return Err(cx.global().throw_value(err.to_js(cx.global())));
+        return Ok(Err(err.into()));
     }
     if let Some(read_error) = read_error {
-        // The process ran to completion and its output was lost. `pid`, `exitCode` and `signalCode`
-        // on the error say so, as they do on the result: every other error thrown here is from a
-        // process that never ran (it could not be spawned, or its stdin could not be set up and it was
-        // killed), and `node:child_process` reports the two differently, as node does.
-        let error = read_error.to_js(cx.global());
-        error.put(cx.global(), b"pid", result_pid);
-        error.put(cx.global(), b"exitCode", exit_code);
-        if !signal_code.is_empty_or_undefined_or_null() {
-            error.put(cx.global(), b"signalCode", signal_code);
-        }
-        return Err(cx.global().throw_value(error));
+        return Ok(Err(Box::new(read_error)));
     }
 
     let sync_value = JSValue::create_empty_object(cx.global(), 0);
@@ -2022,12 +2231,12 @@ fn spawn_maybe_sync(
     }
     sync_value.put(cx.global(), b"pid", result_pid);
 
-    Ok(sync_value)
+    Ok(Ok(sync_value))
 }
 
-fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
+fn spawn_sync_loop_init_failed() -> SystemError {
     // us_create_loop returns NULL without the errno; EMFILE is the common cause.
-    let err = SystemError {
+    SystemError {
         message: BunString::static_(
             b"spawnSync failed to initialize its event loop (system resource exhaustion)",
         ),
@@ -2043,12 +2252,11 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         hostname: BunString::EMPTY,
         fd: -1,
         dest: BunString::EMPTY,
-    };
-    global_this.throw_value(err.to_error_instance(global_this))
+    }
 }
 
-fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {
-    let err = SystemError {
+fn command_not_found(command: &[u8]) -> SystemError {
+    SystemError {
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
@@ -2057,8 +2265,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         errno: -UV_E::NOENT,
         path: BunString::clone_utf8(command),
         ..Default::default()
-    };
-    global_this.throw_value(err.to_error_instance(global_this))
+    }
 }
 
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
@@ -2223,7 +2430,7 @@ impl CgroupTarget {
 
     /// Resolve to a directory fd in the parent so a bad path fails the spawn
     /// with errno + path rather than an opaque exit 127 from the child.
-    fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup<'_>> {
+    fn open(&self) -> sys::Result<OpenCgroup<'_>> {
         let dir = match self {
             Self::DirFd(fd) => sys::dup(*fd),
             Self::Path(path) => sys::open_dir_absolute(path.as_bytes()),
@@ -2233,14 +2440,13 @@ impl CgroupTarget {
                 dir: sys::File::from_fd(dir),
                 target: self,
             },
-            Err(err) => return Err(global.throw_value(self.blame(&err).to_js(global))),
+            Err(err) => return Err(self.blame(&err)),
         };
 
         // Best-effort: a frozen destination would park the child before exec
         // and, through vfork, this thread with it. The kernel reports no error.
         if Self::is_frozen(opened.dir.handle()) {
-            let err = self.blame(&sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3));
-            return Err(global.throw_value(err.to_js(global)));
+            return Err(self.blame(&sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3)));
         }
 
         Ok(opened)

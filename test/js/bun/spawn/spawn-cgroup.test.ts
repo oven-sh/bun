@@ -317,6 +317,80 @@ describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () =>
     }
   });
 
+  // node:child_process reports what the operating system refuses as a failure of the spawn: `result.error` of
+  // spawnSync, the 'error' event of spawn() for ENOENT and a throw with `syscall: "spawn"` for the others. A value
+  // that is not a cgroup is a refused option, which it throws as Bun.spawn does.
+  test("node:child_process returns a cgroup that cannot be entered and throws a value that is not one", async () => {
+    using bare = tempDir("spawn-cgroup", {});
+    using frozen = tempDir("spawn-cgroup", { "cgroup.procs": "", "cgroup.freeze": "1\n" });
+    const missing = join(String(bare), "does-not-exist");
+
+    for (const [cgroup, code] of [
+      // clone3() finds no cgroup.procs to write to.
+      [String(bare), "ENOENT"],
+      // The directory cannot be opened.
+      [missing, "ENOENT"],
+      [String(frozen), "EBUSY"],
+    ] as const) {
+      const { error, ...result } = cpSpawnSync("true", [], { cgroup } as any);
+      expect({
+        ...result,
+        code: (error as any)?.code,
+        path: (error as any)?.path,
+        syscall: (error as any)?.syscall,
+      }).toEqual<unknown>({
+        status: null,
+        signal: null,
+        output: null,
+        pid: 0,
+        stdout: undefined,
+        stderr: undefined,
+        code,
+        path: cgroup,
+        syscall: "spawnSync true",
+      });
+    }
+
+    {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      const child = cpSpawn("true", [], { cgroup: missing } as any);
+      child.on("error", resolve);
+      child.on("exit", code => reject(new Error(`the child ran and exited with ${code}`)));
+      const error = await promise;
+      expect({ code: error.code, path: error.path, syscall: error.syscall }).toEqual({
+        code: "ENOENT",
+        path: missing,
+        syscall: "spawn true",
+      });
+    }
+    expect(() => cpSpawn("true", [], { cgroup: String(frozen) } as any)).toThrow(
+      expect.objectContaining({ code: "EBUSY", path: String(frozen), syscall: "spawn" }),
+    );
+
+    for (const [cgroup, code] of [
+      [{}, "ERR_INVALID_ARG_TYPE"],
+      [-1, "ERR_OUT_OF_RANGE"],
+      [1.5, "ERR_INVALID_ARG_TYPE"],
+    ] as const) {
+      for (const call of [
+        () => cpSpawnSync("true", [], { cgroup } as any),
+        () => cpSpawn("true", [], { cgroup } as any),
+      ]) {
+        let thrown: any;
+        try {
+          call();
+        } catch (error) {
+          thrown = error;
+        }
+        expect({ code: thrown?.code, syscall: thrown?.syscall, spawnargs: thrown?.spawnargs }).toEqual({
+          code,
+          syscall: undefined,
+          spawnargs: undefined,
+        });
+      }
+    }
+  });
+
   test("null and undefined mean no cgroup", () => {
     expect(Bun.spawnSync({ cmd: ["true"], cgroup: undefined }).exitCode).toBe(0);
     expect(Bun.spawnSync({ cmd: ["true"], cgroup: null as any }).exitCode).toBe(0);

@@ -582,13 +582,8 @@ impl Execution {
                     Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
                     step_sequence(buntest_strong, global_this, group_ptr, entry_data.sequence_index)?;
                 }
-                let buntest = buntest_strong.get();
-                let queue = &buntest.result_queue;
-                if (0..queue.readable_length()).any(|i| matches!(queue.peek_item(i), RefDataValue::TimedOut { .. })) {
-                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
-                }
-                // No test starts while a sibling is past its deadline: the timer fails that one first, as the verdicts of one fire all come before the refill.
-                if let Some(timeout) = buntest.execution.overdue_deadline(&Timespec::now_force_real_time()) {
+                // No test starts while a sibling is past its deadline: its verdict comes first, from this fire or from the next one.
+                if let Some(timeout) = buntest_strong.get().execution.overdue_deadline(&Timespec::now_force_real_time()) {
                     return Ok(StepResult::Waiting { timeout });
                 }
                 return step_group(buntest_strong, global_this);

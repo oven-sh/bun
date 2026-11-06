@@ -1060,10 +1060,10 @@ impl BunTest {
         Ok(())
     }
 
-    fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject, in_timer_pass: bool) {
         let _g = group_begin!();
         let now = Timespec::now_force_real_time();
-        if global_this.vm().is_entered() {
+        if in_timer_pass && global_this.vm().is_entered() {
             self.fired = Fired::UnderJs(now);
         } else {
             self.judge(global_this, &now);
@@ -1090,10 +1090,12 @@ impl BunTest {
         }
     }
 
+    /// `in_timer_pass` is false when `Bun.spawnSync()` reports a deadline that passed inside it.
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
         _ts: &Timespec,
         vm: &VirtualMachine,
+        in_timer_pass: bool,
     ) {
         let _g = group_begin!();
         let this: *mut BunTest = this_strong.as_ptr();
@@ -1106,7 +1108,7 @@ impl BunTest {
 
             match (*this).phase {
                 Phase::Collection => {}
-                Phase::Execution => (*this).handle_timeout(global),
+                Phase::Execution => (*this).handle_timeout(global, in_timer_pass),
                 Phase::Done => {}
             }
         }
@@ -1974,7 +1976,7 @@ pub(crate) enum StepResult {
 enum Fired {
     /// The timer is armed again, or nothing waits for it.
     Settled,
-    /// With JS on the stack, at this clock. A timer pass under JS runs the promise jobs of its timers last, and one of them can still end an entry in time, so the verdict waits for them.
+    /// In a timer pass with JS on the stack, at this clock. Such a pass runs the promise jobs of its timers last, and one of them can still end an entry in time, so the verdict waits for them.
     UnderJs(Timespec),
     /// The verdict is in. `next` is the deadline to arm the timer for: in the timer's own callback, a fire that came a moment early would repeat at once.
     Judged { next: Timespec },

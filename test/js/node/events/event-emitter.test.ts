@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { createRequire } from "module";
 import { join } from "path";
 
@@ -1468,7 +1468,8 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
 
   // In a subprocess because a collected emitter is a use after free. `this._events` is the only
   // reference to the emitter, and the event name conversion runs user code that can delete it.
-  test.concurrent("the emitter survives when the call deletes this._events and collects", async () => {
+  // Only a sanitizer build with optimizations sees the read.
+  test.skipIf(!isASAN)("the emitter survives when the call deletes this._events and collects", async () => {
     const src = `
       let wrong = 0;
       for (let i = 0; i < 5; i++) {

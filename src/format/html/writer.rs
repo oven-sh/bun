@@ -655,6 +655,15 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.f.write_element(FormatElement::LineSuffixBoundary);
     }
 
+    /// See [`own_line_suffix_boundary`].
+    pub(crate) fn own_line_suffix_boundary(&mut self) {
+        if self.quick.is_some() {
+            return self.line_suffix_boundary();
+        }
+        self.flush();
+        own_line_suffix_boundary().fmt(self.f);
+    }
+
     /// `dedentToRoot(softline)`
     pub(crate) fn softline_dedented_to_root(&mut self) {
         self.indent_tag(Tag::StartDedent(DedentMode::Root));

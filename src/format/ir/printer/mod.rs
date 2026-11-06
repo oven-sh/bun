@@ -15,12 +15,14 @@ use self::measure::Measure;
 use self::output::Out;
 use super::element::{
     BestFitting, Condition, CursorMark, DedentMode, Fallback, Flat, FlatFlags, FormatElement,
-    Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, TextWidth,
+    Group, GroupId, GroupMode, Interned, JsLabels, LabelId, LineMode, PrintMode, Tag, TextWidth,
 };
 use super::formatter::{END_LINE_SUFFIX, REST_OF_INDENTED_LINE_GROUP, Storage, line_break};
 use crate::FormatError;
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
 use smallvec::SmallVec;
+
+const OWN_BOUNDARY: LabelId = LabelId::of(JsLabels::OwnBoundary);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PrintError {
@@ -653,6 +655,10 @@ impl<'d> Printer<'d> {
                         if let Some(indention) = self.buffers.history.pop() {
                             self.buffers.indentions.push(indention);
                         }
+                    }
+                    // The boundary in it then finds nothing that waits, and notes nothing.
+                    Tag::StartLabelled(label) if *label == OWN_BOUNDARY => {
+                        self.flush_line_suffixes(Some(line_break(LineMode::Hard)));
                     }
                     Tag::StartLabelled(_) | Tag::EndLabelled | Tag::EndConditionalContent => {}
                 },

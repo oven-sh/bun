@@ -27,8 +27,8 @@
 //! | `label(l, x)` | [`labelled`] |
 
 use super::element::{
-    self, Condition, DedentMode, Fallback, FormatElement, GroupId, GroupMode, LabelId, LineMode,
-    PrintMode, Tag, TextWidth,
+    self, Condition, DedentMode, Fallback, FormatElement, GroupId, GroupMode, JsLabels, LabelId,
+    LineMode, PrintMode, Tag, TextWidth,
 };
 use super::formatter::{Format, Formatter};
 use bun_lint::span::Span;
@@ -283,6 +283,14 @@ impl<'a> Format<'a> for LineSuffixBoundary {
     fn fmt(&self, f: &mut Formatter<'a>) {
         f.write_line_suffix_boundary();
     }
+}
+
+/// A [`line_suffix_boundary`] where Prettier's document has none, and lets a comment move behind what follows. The line
+/// break that it forces is like any other: one that follows it on the empty line is skipped.
+pub(crate) fn own_line_suffix_boundary<'a>() -> impl Format<'a> {
+    format_with(|f| {
+        labelled(LabelId::of(JsLabels::OwnBoundary), &line_suffix_boundary()).fmt(f);
+    })
 }
 
 /// Labels the content so the code that writes the parent can check `elements.has_label(..)`.

@@ -668,4 +668,7 @@ impl LabelId {
 pub(crate) enum JsLabels {
     /// A chain of calls and member accesses.
     MemberChain,
+    /// A [`FormatElement::LineSuffixBoundary`] that the document of Prettier does not have. See
+    /// `own_line_suffix_boundary`.
+    OwnBoundary,
 }

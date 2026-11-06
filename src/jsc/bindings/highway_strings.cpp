@@ -1095,8 +1095,8 @@ static HWY_INLINE void HtmlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8
     const hn::CappedTag<uint8_t, 64> d;
     const size_t N = hn::Lanes(d);
 
-    const auto is = [&](auto vec, char byte) { return hn::Eq(vec, hn::Set(d, static_cast<uint8_t>(byte))); };
-    const auto is_between = [&](auto vec, char first, char last) {
+    const auto is = [&](auto vec, char byte) HWY_ATTR { return hn::Eq(vec, hn::Set(d, static_cast<uint8_t>(byte))); };
+    const auto is_between = [&](auto vec, char first, char last) HWY_ATTR {
         return hn::Le(hn::Sub(vec, hn::Set(d, static_cast<uint8_t>(first))), hn::Set(d, static_cast<uint8_t>(last - first)));
     };
 

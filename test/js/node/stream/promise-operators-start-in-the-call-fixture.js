@@ -15,7 +15,11 @@ const operators = {
 };
 
 const uncaught = new Set();
-process.on("uncaughtException", error => uncaught.add(error.message));
+process.on("uncaughtException", error => {
+  uncaught.add(error.message);
+  console.error(`uncaught: ${error.message}`);
+  process.exitCode = 1;
+});
 const whetherUncaught = message => (uncaught.has(message) ? " | uncaught 'error'" : "");
 const outcome = promise =>
   promise.then(

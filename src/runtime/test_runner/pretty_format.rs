@@ -158,6 +158,15 @@ fn has_index(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<bo
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasIndex(global, value, index))
 }
 
+/// The string `url.href` returns, read from the native `URL` so no `toJSON` or getter of the program runs.
+fn href_of(global: &JSGlobalObject, value: JSValue) -> Option<JSValue> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__hrefOf(global: &JSGlobalObject, value: JSValue) -> JSValue;
+    }
+    let href = SnapshotFormat__hrefOf(global, value);
+    (!href.is_empty()).then_some(href)
+}
+
 /// Iteration count of `for (let i = 0; i < value.length; i++)`.
 fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
     unsafe extern "C" {
@@ -645,12 +654,23 @@ impl JestPrettyFormat {
                     return printed;
                 }
             }
+        } else if matches!(tag, Tag::Private)
+            && formatter.snapshot.output_length.is_none()
+            && let Some(href) = href_of(global, value)
+        {
+            // A snapshot stores the href of a `URL`. A failure message and older versions print `URL {}`.
+            formatter.snapshot.same_as_older_bun = false;
+            // JSX array children print with `quote_strings` off.
+            let prev_quote_strings = core::mem::replace(&mut formatter.quote_strings, true);
+            let printed = formatter.format_value::<false>(href, writer);
+            formatter.quote_strings = prev_quote_strings;
+            return printed.map(|()| true);
         }
         Ok(false)
     }
 
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
-    /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// They printed DOM nodes as plain objects, accessors as `[native code]`, non-enumerable properties, and a `URL` as `URL {}`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);

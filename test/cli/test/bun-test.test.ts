@@ -3438,6 +3438,19 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
       done();
     }, ${due1});
   }, ${10 * limit});`;
+  // The hook of `y` holds the thread until the limit of `b` has passed, and then waits inside Bun.build().
+  const slowHook = (call: number) => `
+    let hooks = 0;
+    afterEach(async () => {
+      if (++hooks !== ${call}) return;
+      holdUntil(start + ${over});
+      await build(${short});
+    });`;
+  // Ends in time from a timer. `start` is for the hook above.
+  const endsByPromise = `() => {
+    start = performance.now();
+    return sleep(${3 * short});
+  }`;
 
   type Row = {
     source: string;
@@ -3633,6 +3646,13 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
           source: `test.concurrent("a", never, ${short}); ${slowSibling} test.concurrent("b", ${endsAt(due2)}, ${limit});`,
           results: ["(fail) a", "(pass) c", "(pass) b"],
         },
+        // A timer pass inside Bun.build() runs the promise jobs of its timers last, so the timer fires before the job that ends `b`.
+        "the hook of another concurrent test, which then waits inside Bun.build()": {
+          source: `${slowHook(1)}
+            test.concurrent("b", ${endsByPromise}, ${limit});
+            test.concurrent("y", () => sleep(${short}), 0);`,
+          results: ["(pass) b", "(pass) y"],
+        },
         // Controls: the slow callback comes after the one that ends the test, or nothing is slow.
         "control: nothing is slow": {
           source: `${first} test("t", ${endsAt(due1)}, ${limit});`,
@@ -3668,17 +3688,20 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
           source: `test("t", ${endsAt(due1)}, ${due1 + 100});`,
           results: ["(pass) t"],
         },
-        // The stale fire comes inside Bun.build(), so the timer is not armed for the limit of `b` in there.
-        "control: the hook of another concurrent test, which then waits inside Bun.build()": {
-          source: `
-            let hooks = 0;
-            afterEach(async () => {
-              if (++hooks !== 3) return;
-              hold(${limit - 2 * short + 100});
-              await build(${short});
-            });
+        "control: the hook of another concurrent test, which then waits inside Bun.build(), and done() ends the test": {
+          source: `${slowHook(1)}
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(done, ${3 * short});
+            }, ${limit});
+            test.concurrent("y", () => sleep(${short}), 0);`,
+          results: ["(pass) b", "(pass) y"],
+        },
+        // Before that, the timer fires inside the Bun.build() of `c`, for the limit that `z` left behind.
+        "control: the hook of another concurrent test, which then waits inside Bun.build(), after a fire in there": {
+          source: `${slowHook(3)}
             test.concurrent("z", () => {}, ${short});
-            test.concurrent("b", () => sleep(${3 * short}), ${limit});
+            test.concurrent("b", ${endsByPromise}, ${limit});
             test.concurrent("y", () => sleep(${short + 125}), 0);
             test.concurrent("c", () => void build(${2 * short}), 0);`,
           results: ["(pass) z", "(pass) c", "(pass) b", "(pass) y"],
@@ -3735,6 +3758,38 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
             test.concurrent("b", never, ${short});
             test.concurrent("c", () => sleep(${4 * short}), 0);`,
           results: ["(fail) b", "(pass) a", "(pass) c"],
+        },
+        // Bun.spawnSync() reports the limit when it returns, under the timer's callback. Nothing else steps the runner after that.
+        "inside Bun.spawnSync(), called from a timer of the test": {
+          source: `
+            test("t", done => {
+              setTimeout(() => void Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] }), 50);
+            }, ${limit});
+            test("next", () => {});`,
+          results: ["(fail) t", "(pass) next"],
+        },
+        // No step of the runner runs under Bun.build(). The timer fires in there for the limit that `a` left behind, and then for the limit of `b`.
+        "inside Bun.build(), after a fire in there for another limit": {
+          source: `
+            test.concurrent("a", () => {}, ${short});
+            test.concurrent("b", done => void setTimeout(done, ${4 * short}), ${2 * short});
+            test.concurrent("c", async () => {
+              await sleep(50);
+              await build(${5 * short});
+            }, 0);`,
+          results: ["(pass) a", "(fail) b", "(pass) c"],
+        },
+        "inside Bun.build() of a hook, after a fire inside Bun.build() of a test, for another limit": {
+          source: `
+            let hooks = 0;
+            afterEach(async () => {
+              if (++hooks === 3) await build(${6 * short});
+            });
+            test.concurrent("z", () => {}, ${short});
+            test.concurrent("b", () => sleep(${5 * short}), ${3 * short});
+            test.concurrent("y", () => sleep(${short + 125}), 0);
+            test.concurrent("c", () => void build(${2 * short}), 0);`,
+          results: ["(pass) z", "(pass) c", "(fail) b", "(pass) y"],
         },
       }),
     )("%s", (_, row) => run(row));

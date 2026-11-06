@@ -1174,12 +1174,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
-fn run_pending_test_step(global: &JSGlobalObject) {
+fn run_pending_test_step(global: &JSGlobalObject, under_js: bool) {
     bun_removable_features::call_removable!(
         Test,
         Abort,
         crate::test_runner::bun_test::BunTest::run_pending_step,
-        global
+        global,
+        under_js
     );
 }
 

@@ -99,6 +99,14 @@ pub(crate) struct Execution {
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
 }
 
+/// What `Execution::judge` found at one fire of the file timer.
+pub(crate) struct Judged {
+    /// It queued a `TimedOut`.
+    pub(crate) timed_out: bool,
+    /// The earliest deadline of a running entry that the fire did not find passed. `EPOCH` when there is none.
+    pub(crate) next: Timespec,
+}
+
 pub(crate) struct ConcurrentGroup {
     pub(crate) sequence_start: usize,
     pub(crate) sequence_end: usize,
@@ -476,23 +484,26 @@ impl Execution {
         }
     }
 
-    /// Queues a `TimedOut` for each entry that is past its deadline at `now`, the clock of the file timer's fire, and returns whether it queued one. A step acts on them later, behind other callbacks, so no step times out an entry by its own clock.
-    pub(crate) fn judge(buntest: &mut BunTest, global_this: &JSGlobalObject, now: &Timespec) -> bool {
+    /// Queues a `TimedOut` for each entry that is past its deadline at `now`, the clock of the file timer's fire. A step acts on them later, behind other callbacks, so no step times out an entry by its own clock.
+    pub(crate) fn judge(buntest: &mut BunTest, global_this: &JSGlobalObject, now: &Timespec) -> Judged {
         let this = &mut buntest.execution;
         let group_index = this.group_index;
         let Some(group) = this.groups.get_mut(group_index) else {
             // No group is active while the file waits in `ExpectDeferred::step_file_end`.
             buntest.unclaimed.judge_file_end(now);
-            return false;
+            return Judged { timed_out: false, next: Timespec::EPOCH };
         };
         let sequences = &this.sequences[group.sequence_start..group.sequence_end];
+        let mut next = Timespec::EPOCH;
         let mut timed_out = false;
         for (sequence_index, sequence) in sequences.iter().enumerate() {
             let (true, Some(entry)) = (sequence.executing, sequence.active_entry) else {
                 continue;
             };
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
-            if !unsafe { entry.as_ref() }.is_overdue(now) {
+            let running = unsafe { entry.as_ref() };
+            if !running.is_overdue(now) {
+                next = next.min_ignore_epoch(running.timespec);
                 continue;
             }
             let entry_data = EntryData {
@@ -527,7 +538,7 @@ impl Execution {
         if timed_out && sequences.len() == 1 {
             Execution::kill_dangling_processes(global_this);
         }
-        timed_out
+        Judged { timed_out, next }
     }
 
     /// The deadline of a running entry of the active group that `now` is past.

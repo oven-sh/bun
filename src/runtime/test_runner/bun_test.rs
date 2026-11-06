@@ -765,6 +765,8 @@ pub(crate) struct BunTest {
     /// frame, which never returns; `exit_file()` nulls this before drop.
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
     pub(crate) timer: EventLoopTimer,
+    /// What the last fire of `timer` left for `after_fire` to do.
+    fired: Fired,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -820,6 +822,7 @@ impl BunTest {
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
+            fired: Fired::Settled,
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
@@ -1059,9 +1062,31 @@ impl BunTest {
 
     fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
-        // The last verdict steps the group. Without one, `Start` does, which arms the timer again.
-        if !Execution::Execution::judge(self, global_this, &Timespec::now_force_real_time()) {
+        let now = Timespec::now_force_real_time();
+        if global_this.vm().is_entered() {
+            self.fired = Fired::UnderJs(now);
+        } else {
+            self.judge(global_this, &now);
+        }
+    }
+
+    fn judge(&mut self, global_this: &JSGlobalObject, now: &Timespec) {
+        let judged = Execution::Execution::judge(self, global_this, now);
+        // The last verdict steps the group. Without one, `Start` does.
+        if !judged.timed_out {
             self.add_result(RefDataValue::Start);
+        }
+        self.fired = Fired::Judged { next: judged.next };
+    }
+
+    /// Runs before a step, and at a microtask drain under JS, where no step runs.
+    fn after_fire(&mut self, global_this: &JSGlobalObject) {
+        if let Fired::UnderJs(now) = self.fired {
+            self.judge(global_this, &now);
+        }
+        if let Fired::Judged { next } = self.fired {
+            self.fired = Fired::Settled;
+            self.update_min_timeout(global_this, &next);
         }
     }
 
@@ -1110,12 +1135,16 @@ impl BunTest {
         vm.enqueue_task(task);
     }
 
-    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task. Under JS no step runs, only `after_fire`.
     #[inline(never)] // --trim cuts the test runner at the call.
-    pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
+    pub(crate) fn run_pending_step(global_this: &JSGlobalObject, under_js: bool) {
         let Some(strong) = clone_active_strong() else {
             return;
         };
+        if under_js {
+            strong.get().after_fire(global_this);
+            return;
+        }
         let phase = strong.get().pending_phase;
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {
@@ -1141,6 +1170,7 @@ impl BunTest {
         // each `(*this)` deref below is a short-lived reborrow that does not
         // span a re-entrant `.get()` call.
         unsafe {
+            (*this).after_fire(global_this);
             if (*this).in_run_loop {
                 return Ok(());
             }
@@ -1938,6 +1968,16 @@ pub(crate) type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_f
 pub(crate) enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
+}
+
+#[derive(Copy, Clone)]
+enum Fired {
+    /// The timer is armed again, or nothing waits for it.
+    Settled,
+    /// With JS on the stack, at this clock. A timer pass under JS runs the promise jobs of its timers last, and one of them can still end an entry in time, so the verdict waits for them.
+    UnderJs(Timespec),
+    /// The verdict is in. `next` is the deadline to arm the timer for: in the timer's own callback, a fire that came a moment early would repeat at once.
+    Judged { next: Timespec },
 }
 impl Default for StepResult {
     fn default() -> Self {

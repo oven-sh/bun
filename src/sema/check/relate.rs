@@ -4298,6 +4298,8 @@ impl<'p, 's> Checker<'p, 's> {
             && self.comparisons_after_failed_variances != after_failed_variances
         {
             self.close_cycle(self.stack.len().saturating_sub(1));
+            // A task that finds this result has run no query for it, and what it infers from it is stored further down.
+            self.task.log_at_cycles_until_idle();
         }
         // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
         // first place, as long as it isn't held back. If it were, the commit would publish it.

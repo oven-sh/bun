@@ -1316,6 +1316,28 @@ fn log_range_of_a_cycle_ends_when_the_query_below_its_lowest_member_has_left() {
 }
 
 #[test]
+fn log_range_of_a_cycle_can_be_kept_open_until_the_task_is_idle() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_committing(&session, &tables, &commits, 0);
+    task.set_first_in_order(true, true);
+    let stack: Vec<Query> = (0..5).map(|_| Query::Shape(NUMBER)).collect();
+    let frames: Vec<QueryFrame> = (1..=5).map(QueryFrame::for_test).collect();
+    task.close_cycle_in_progress(|| false, &stack, &frames, 4);
+    task.log_at_cycles_until_idle();
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    task.leaves_the_cycles_below(3);
+    tables.by_node.insert(&task, (A, 2), STRING, stored());
+    // A cycle that closes in the meantime doesn't shorten the range.
+    task.close_cycle_in_progress(|| false, &stack[..3], &frames[..3], 2);
+    task.leaves_the_cycles_below(0);
+    tables.by_node.insert(&task, (A, 3), STRING, stored());
+    task.note_idle();
+    tables.by_node.insert(&task, (A, 4), STRING, stored());
+    assert_eq!(task.take_logged_at_cycles(), [[[0, 0], [0, 3]]]);
+}
+
+#[test]
 fn query_is_added_to_cycle_members_once_while_it_is_in_progress() {
     let mut seed = 7;
     let mut next = |below: usize| {

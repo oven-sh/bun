@@ -483,6 +483,12 @@ impl<'s> Task<'s> {
         self.stop_writing_immediately();
     }
 
+    /// The log range of the cycles that the task has resolved only ends at the next idle moment. Call it if another task
+    /// can depend on a cycle without running any of its queries.
+    pub(super) fn log_at_cycles_until_idle(&self) {
+        self.cycle_ends_below.set(0);
+    }
+
     pub(super) fn closed_cycle_count(&self) -> u32 {
         self.closed_cycles.get()
     }

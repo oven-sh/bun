@@ -182,6 +182,24 @@ fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isArray(global, value))
 }
 
+/// A `DOMException` or an instance of a subclass, but not `DOMException.prototype`. Runs no script.
+fn is_dom_exception(value: JSValue) -> bool {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__isDOMException(value: JSValue) -> bool;
+    }
+    SnapshotFormat__isDOMException(value)
+}
+
+/// The name and the message of a `DOMException` are accessors of its prototype, which the object printer does not read.
+#[cold]
+#[inline(never)]
+fn print_dom_exception(global: &JSGlobalObject, writer: &mut dyn bun_io::Write, value: JSValue) -> JsResult<bool> {
+    let mut text = Vec::new();
+    write_error(global, &mut text, value)?;
+    let _ = writer.write_all(&text);
+    Ok(true)
+}
+
 /// `value[name]` as JS does it: primitives work, null and undefined throw, `Object.prototype` is searched.
 pub(crate) fn member(global: &JSGlobalObject, value: JSValue, name: &'static str) -> JsResult<JSValue> {
     unsafe extern "C" {
@@ -460,6 +478,32 @@ fn write_string(global: &JSGlobalObject, out: &mut Vec<u8>, value: JSValue) -> J
     Ok(())
 }
 
+/// `"[" + Error.prototype.toString.call(value) + "]"`, which is how pretty-format prints an error.
+#[inline(never)]
+fn write_error(global: &JSGlobalObject, out: &mut Vec<u8>, value: JSValue) -> JsResult<()> {
+    let name = member(global, value, "name")?;
+    let message = member(global, value, "message")?;
+    out.push(b'[');
+    let start = out.len();
+    if name.is_undefined() {
+        out.extend_from_slice(b"Error");
+    } else {
+        write_string(global, out, name)?;
+    }
+    if !message.is_undefined() {
+        let name_end = out.len();
+        out.extend_from_slice(b": ");
+        write_string(global, out, message)?;
+        if out.len() == name_end + 2 {
+            out.truncate(name_end);
+        } else if name_end == start {
+            out.drain(start..start + 2);
+        }
+    }
+    out.push(b']');
+    Ok(())
+}
+
 pub(crate) fn write_number(out: &mut Vec<u8>, number: f64) {
     if number.is_finite() {
         let mut buf = [0u8; 124];
@@ -638,7 +682,15 @@ impl JestPrettyFormat {
         if let Some(differs) = formatter.snapshot.like_older_bun {
             formatter.failed |= differs.get();
         } else if matches!(tag, Tag::Object | Tag::Array | Tag::JSON) {
-            match super::dom_format::print_in_bun_snapshot(formatter, writer, value) {
+            // A failure message keeps `DOMException {}`: the comparer reads neither the name nor the message.
+            let is_error =
+                formatter.snapshot.output_length.is_none() && value.js_type() == JSType::Object && is_dom_exception(value);
+            let printed = if is_error {
+                print_dom_exception(global, writer, value)
+            } else {
+                super::dom_format::print_in_bun_snapshot(formatter, writer, value)
+            };
+            match printed {
                 Ok(false) => {}
                 printed => {
                     formatter.snapshot.same_as_older_bun = false;
@@ -1028,29 +1080,7 @@ impl Formatter<'_> {
                 let mut buf = [0u8; 64];
                 out.extend_from_slice(value.to_iso_string(global, &mut buf).unwrap_or(b"Date { NaN }"));
             }
-            Kind::Error => {
-                // `Error.prototype.toString.call(value)`
-                let name = member(global, value, "name")?;
-                let message = member(global, value, "message")?;
-                out.push(b'[');
-                let start = out.len();
-                if name.is_undefined() {
-                    out.extend_from_slice(b"Error");
-                } else {
-                    write_string(global, out, name)?;
-                }
-                if !message.is_undefined() {
-                    let name_end = out.len();
-                    out.extend_from_slice(b": ");
-                    write_string(global, out, message)?;
-                    if out.len() == name_end + 2 {
-                        out.truncate(name_end);
-                    } else if name_end == start {
-                        out.drain(start..start + 2);
-                    }
-                }
-                out.push(b']');
-            }
+            Kind::Error => write_error(global, out, value)?,
             Kind::RegExp => {
                 let mut text = vec![b'/'];
                 write_string(global, &mut text, member(global, value, "source")?)?;

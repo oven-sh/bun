@@ -1,0 +1,1 @@
+import { a, K, hoisted, v } from "./a.mjs"; const t = f => { try { return String(f()); } catch (e) { return e.constructor.name; } }; export const readA = () => [t(() => a), t(() => K.name), t(() => hoisted()), t(() => v)].join("|"); export function fnB() { return "b"; }

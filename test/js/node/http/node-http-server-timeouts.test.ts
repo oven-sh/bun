@@ -249,6 +249,42 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("server.setTimeout callback does not fire after the socket is destroyed (#39681)", async () => {
+    const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      res.end();
+      // Hold the event loop until the socket's 5ms inactivity timer is overdue,
+      // so the destroy below races a 'timeout' that is already due.
+      const deadline = Date.now() + 25;
+      while (Date.now() < deadline) {}
+      req.socket.destroy();
+      // Timers run in the order they are due: this one runs behind the overdue
+      // inactivity timer, so a stale 'timeout' (the bug) has fired by then.
+      setTimeout(onDone, 0);
+    });
+    // Keep the 5ms timer in the slot across the response finish; a keep-alive
+    // timeout would replace it with a longer one.
+    server.keepAliveTimeout = 0;
+    const timeoutCalls: boolean[] = [];
+    server.setTimeout(5, (socket: net.Socket) => {
+      timeoutCalls.push(socket.destroyed);
+    });
+    const port = await listen(server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      await done;
+      // Node clears the inactivity timer in Socket._destroy, so the callback
+      // never runs for a socket destroyed before the expired timer fired.
+      expect(timeoutCalls).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("requestTimeout does not fire while a slow handler streams a response", async () => {
     // The request (a body-less GET) is complete as soon as its head is
     // parsed, so requestTimeout must stop ticking even though the handler
@@ -422,4 +458,128 @@ describe("node:http server timeout enforcement", () => {
       server.close();
     }
   });
+});
+
+// server.setTimeout (applied per connection), req.setTimeout, res.setTimeout
+// and req.socket.setTimeout all end up in the server socket's setTimeout,
+// which has to check msecs the way net.Socket#setTimeout does.
+describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
+  const TIMEOUT_MAX = 2 ** 31 - 1;
+
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+      return "did not throw";
+    } catch (err: any) {
+      return { name: err.constructor.name, code: err.code, message: err.message };
+    }
+  }
+
+  function outOfRange(received: string) {
+    return {
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${received}`,
+    };
+  }
+
+  function invalidDurations(setTimeout: (msecs: any) => unknown) {
+    return {
+      negative: thrownBy(() => setTimeout(-1)),
+      nan: thrownBy(() => setTimeout(NaN)),
+      infinity: thrownBy(() => setTimeout(Infinity)),
+      string: thrownBy(() => setTimeout("foo")),
+    };
+  }
+
+  const expectedInvalidDurations = {
+    negative: outOfRange("-1"),
+    nan: outOfRange("NaN"),
+    infinity: outOfRange("Infinity"),
+    string: {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "msecs" argument must be of type number. Received type string ('foo')`,
+    },
+  };
+
+  test("socket, req and res setTimeout reject invalid msecs like net.Socket#setTimeout", async () => {
+    let observed: unknown;
+    const server = http.createServer((req, res) => {
+      const socket = req.socket;
+      observed = {
+        socket: invalidDurations(msecs => socket.setTimeout(msecs)),
+        req: invalidDurations(msecs => req.setTimeout(msecs)),
+        res: invalidDurations(msecs => res.setTimeout(msecs)),
+        msecsIsCheckedBeforeCallback: thrownBy(() => socket.setTimeout(-1, "not a function" as any)),
+        timeoutAfterRejectedCalls: socket.timeout,
+        validCallReturnsSocket: socket.setTimeout(1000) === socket,
+        timeoutAfterValidCall: socket.timeout,
+      };
+      res.end("ok");
+    });
+    const port = await listen(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+    expect(observed).toEqual({
+      socket: expectedInvalidDurations,
+      req: expectedInvalidDurations,
+      res: expectedInvalidDurations,
+      msecsIsCheckedBeforeCallback: outOfRange("-1"),
+      timeoutAfterRejectedCalls: 0,
+      validCallReturnsSocket: true,
+      timeoutAfterValidCall: 1000,
+    });
+  });
+
+  // Node truncates a duration above 2**31 - 1 ms to that maximum and warns.
+  // Passing the raw value on to setTimeout() would instead arm a 1 ms timer
+  // (with a different warning), which destroys the connection at once. Both
+  // warnings start with the duration, so each case gets its own duration to
+  // pick its warning out of the process-wide 'warning' event.
+  type Configure = (msecs: number, server: http.Server) => unknown;
+  type Arm = (msecs: number, req: http.IncomingMessage, res: http.ServerResponse) => unknown;
+  const oversizedDurations: [string, number, Configure | undefined, Arm | undefined][] = [
+    ["server.setTimeout()", TIMEOUT_MAX + 1, (msecs, server) => server.setTimeout(msecs), undefined],
+    ["req.setTimeout()", TIMEOUT_MAX + 2, undefined, (msecs, req) => req.setTimeout(msecs)],
+    ["res.setTimeout()", TIMEOUT_MAX + 3, undefined, (msecs, _req, res) => res.setTimeout(msecs)],
+    ["req.socket.setTimeout()", TIMEOUT_MAX + 4, undefined, (msecs, req) => req.socket.setTimeout(msecs)],
+  ];
+  test.each(oversizedDurations)(
+    "%s truncates a duration above 2**31 - 1 ms like net.Socket#setTimeout",
+    async (_name, msecs, configure, arm) => {
+      const warnings: { name: string; message: string }[] = [];
+      const onWarning = (warning: Error) => {
+        if (warning.message.startsWith(`${msecs} `)) warnings.push({ name: warning.name, message: warning.message });
+      };
+      process.on("warning", onWarning);
+      const server = http.createServer((req, res) => {
+        arm?.(msecs, req, res);
+        res.end("ok");
+      });
+      configure?.(msecs, server);
+      const port = await listen(server);
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`);
+        expect(await response.text()).toBe("ok");
+      } finally {
+        server.closeAllConnections();
+        server.close();
+        process.removeListener("warning", onWarning);
+      }
+      // The warning is emitted while the request is handled, so it has been
+      // delivered by the time the response has arrived.
+      expect(warnings).toEqual([
+        {
+          name: "TimeoutOverflowWarning",
+          message: `${msecs} does not fit into a 32-bit signed integer.\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+        },
+      ]);
+    },
+  );
 });

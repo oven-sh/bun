@@ -9,37 +9,129 @@
 //! Uses the Cooper/Harvey/Kennedy algorithm from
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
 
-use crate::collections::{FxHashSet as HashSet, IdMap};
-
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
 use crate::hir::visitors::each_terminal_successor;
-use crate::hir::{BlockId, HirFunction, Terminal};
+use crate::hir::{BasicBlock, BlockId, HirFunction, Terminal};
+
+const NONE: u32 = u32::MAX;
 
 // =============================================================================
 // Public types
 // =============================================================================
 
+/// From the least to the greatest id of the blocks of one function. A nested function has few of the environment's.
+#[derive(Clone, Copy)]
+struct BlockRange {
+    first: u32,
+    len: usize,
+}
+
+impl BlockRange {
+    fn of(ids: &[BlockId]) -> Self {
+        let Some(&BlockId(id)) = ids.first() else {
+            return BlockRange { first: 0, len: 0 };
+        };
+        let (first, last) = ids.iter().fold((id, id), |(first, last), id| {
+            (first.min(id.0), last.max(id.0))
+        });
+        BlockRange {
+            first,
+            len: (last - first) as usize + 1,
+        }
+    }
+
+    #[inline]
+    fn index(self, id: BlockId) -> Option<usize> {
+        let index = id.0.wrapping_sub(self.first) as usize;
+        (index < self.len).then_some(index)
+    }
+}
+
 /// Stores the immediate post-dominator for each block.
 pub struct PostDominator {
     /// The exit node (synthetic node representing function exit).
     pub exit: BlockId,
-    nodes: IdMap<BlockId, BlockId>,
+    range: BlockRange,
+    /// By `BlockRange::index`. `NONE`: not a node.
+    nodes: Vec<u32>,
 }
 
 impl PostDominator {
     /// Returns the immediate post-dominator of the given block, or None if
     /// the block post-dominates itself (i.e., it is the exit node).
-    pub fn get(&self, id: BlockId) -> Option<BlockId> {
-        let dominator = self
-            .nodes
-            .get(id)
-            .expect("Unknown node in post-dominator tree");
-        if *dominator == id {
-            None
-        } else {
-            Some(*dominator)
+    pub fn get(&self, id: BlockId) -> Result<Option<BlockId>, CompilerDiagnostic> {
+        if id == self.exit {
+            return Ok(None);
         }
+        match self.range.index(id).map(|index| self.nodes[index]) {
+            None | Some(NONE) => Err(crate::diagnostics::cold_invariant(
+                "Unknown node in post-dominator tree",
+                None,
+                None,
+            )
+            .into()),
+            Some(dominator) => Ok((dominator != id.0).then_some(BlockId(dominator))),
+        }
+    }
+}
+
+/// Some of the blocks of one function.
+pub struct BlockSet {
+    range: BlockRange,
+    /// By `BlockRange::index`.
+    has: Vec<bool>,
+}
+
+impl BlockSet {
+    pub fn contains(&self, id: &BlockId) -> bool {
+        self.range.index(*id).is_some_and(|index| self.has[index])
+    }
+}
+
+/// The post-dominator frontier of each block.
+pub struct PostDominatorFrontiers {
+    range: BlockRange,
+    frontiers: Groups,
+}
+
+impl PostDominatorFrontiers {
+    pub fn get(&self, id: BlockId) -> Option<&[BlockId]> {
+        self.range.index(id).map(|index| self.frontiers.get(index))
+    }
+}
+
+/// A list for each of some consecutive numbers.
+struct Groups {
+    /// Where each list starts in `members`, and the end of the last.
+    starts: Vec<u32>,
+    members: Vec<BlockId>,
+}
+
+impl Groups {
+    /// Each list has its members in the order of `pairs`.
+    fn new(len: usize, pairs: &[(usize, BlockId)]) -> Self {
+        let mut starts = vec![0; len + 1];
+        for &(group, _) in pairs {
+            starts[group + 1] += 1;
+        }
+        let mut end = 0;
+        for start in &mut starts {
+            end += *start;
+            *start = end;
+        }
+        let mut ends = starts.clone();
+        let mut members = vec![BlockId(NONE); pairs.len()];
+        for &(group, member) in pairs {
+            members[ends[group] as usize] = member;
+            ends[group] += 1;
+        }
+        Groups { starts, members }
+    }
+
+    #[inline]
+    fn get(&self, group: usize) -> &[BlockId] {
+        &self.members[self.starts[group] as usize..self.starts[group + 1] as usize]
     }
 }
 
@@ -47,26 +139,13 @@ impl PostDominator {
 // Graph representation
 // =============================================================================
 
-struct Node {
-    id: BlockId,
-    index: usize,
-    preds: HashSet<BlockId>,
-    succs: HashSet<BlockId>,
-}
-
+/// The reverse graph, of what reaches the exit. A node is its index in RPO: the exit is 0.
 struct Graph {
-    entry: BlockId,
-    /// Nodes stored in iteration order (RPO for reverse graph).
-    nodes: Vec<Node>,
-    /// Map from BlockId to index in the nodes vec.
-    node_index: IdMap<BlockId, usize>,
-}
-
-impl Graph {
-    fn get_node(&self, id: BlockId) -> &Node {
-        let idx = *self.node_index.get(id).unwrap();
-        &self.nodes[idx]
-    }
+    /// The block of each node after the exit.
+    ids: Vec<BlockId>,
+    /// Where the predecessors of each node start in `preds`, and the end of the last.
+    pred_starts: Vec<u32>,
+    preds: Vec<u32>,
 }
 
 // =============================================================================
@@ -82,22 +161,29 @@ pub fn compute_post_dominator_tree(
     next_block_id_counter: u32,
     include_throws_as_exit_node: bool,
 ) -> Result<PostDominator, CompilerDiagnostic> {
-    let graph = build_reverse_graph(func, next_block_id_counter, include_throws_as_exit_node);
-    let mut nodes = compute_immediate_dominators(&graph)?;
+    let exit = BlockId(next_block_id_counter);
+    let ids = func.body.blocks.keys().as_slice();
+    let range = BlockRange::of(ids);
+    let graph = build_reverse_graph(func, range, include_throws_as_exit_node);
+    let doms = compute_immediate_dominators(&graph)?;
 
     // When include_throws_as_exit_node is false, nodes that flow into a throw
     // terminal and don't reach the exit won't be in the node map. Add them
     // with themselves as dominator.
+    let mut nodes = vec![NONE; range.len];
     if !include_throws_as_exit_node {
-        for (id, _) in &func.body.blocks {
-            nodes.entry(*id).or_insert(*id);
+        for id in ids {
+            nodes[(id.0 - range.first) as usize] = id.0;
         }
     }
+    for (id, &dom) in graph.ids.iter().zip(&doms[1..]) {
+        nodes[(id.0 - range.first) as usize] = match dom {
+            0 => exit.0,
+            dom => graph.ids[dom as usize - 1].0,
+        };
+    }
 
-    Ok(PostDominator {
-        exit: graph.entry,
-        nodes,
-    })
+    Ok(PostDominator { exit, range, nodes })
 }
 
 /// Build the reverse graph from the HIR function.
@@ -106,135 +192,114 @@ pub fn compute_post_dominator_tree(
 /// return (and optionally throw) terminals. The result is put into RPO order.
 fn build_reverse_graph(
     func: &HirFunction,
-    next_block_id_counter: u32,
+    range: BlockRange,
     include_throws_as_exit_node: bool,
 ) -> Graph {
-    let exit_id = BlockId(next_block_id_counter);
+    let ids = func.body.blocks.keys().as_slice();
+    let blocks = func.body.blocks.values().as_slice();
+    let flows_into_exit = |block: &BasicBlock| match &block.terminal {
+        Terminal::Return { .. } => true,
+        Terminal::Throw { .. } => include_throws_as_exit_node,
+        _ => false,
+    };
 
-    // Build initial nodes with reversed edges
-    let mut raw_nodes: IdMap<BlockId, Node> = IdMap::default();
-
-    // Create exit node
-    raw_nodes.insert(
-        exit_id,
-        Node {
-            id: exit_id,
-            index: 0,
-            preds: HashSet::default(),
-            succs: HashSet::default(),
-        },
-    );
-
-    for (id, block) in &func.body.blocks {
-        let successors = each_terminal_successor(&block.terminal);
-        let mut preds_set: HashSet<BlockId> = successors.into_iter().collect();
-        let succs_set: HashSet<BlockId> = block.preds.iter().copied().collect();
-
-        let is_return = matches!(&block.terminal, Terminal::Return { .. });
-        let is_throw = matches!(&block.terminal, Terminal::Throw { .. });
-
-        if is_return || (is_throw && include_throws_as_exit_node) {
-            preds_set.insert(exit_id);
-            raw_nodes.get_mut(exit_id).unwrap().succs.insert(*id);
-        }
-
-        raw_nodes.insert(
-            *id,
-            Node {
-                id: *id,
-                index: 0,
-                preds: preds_set,
-                succs: succs_set,
-            },
-        );
+    // By `BlockRange::index`.
+    let mut places = vec![NONE; range.len];
+    for (place, id) in ids.iter().enumerate() {
+        places[(id.0 - range.first) as usize] = place as u32;
     }
 
     // DFS from exit to compute RPO
-    let mut visited = HashSet::default();
-    let mut postorder = Vec::new();
-    dfs_postorder(exit_id, &raw_nodes, &mut visited, &mut postorder);
+    let mut visited = vec![false; blocks.len()];
+    let mut postorder = Vec::with_capacity(blocks.len());
+    let mut stack = Vec::with_capacity(16);
+    for (place, block) in blocks.iter().enumerate() {
+        if !flows_into_exit(block) || std::mem::replace(&mut visited[place], true) {
+            continue;
+        }
+        stack.push((place, block.preds.iter()));
+        while let Some((place, successors)) = stack.last_mut() {
+            match successors.next() {
+                Some(successor) => {
+                    let successor = places[(successor.0 - range.first) as usize] as usize;
+                    if !std::mem::replace(&mut visited[successor], true) {
+                        stack.push((successor, blocks[successor].preds.iter()));
+                    }
+                }
+                None => {
+                    postorder.push(*place);
+                    stack.pop();
+                }
+            }
+        }
+    }
 
     // Reverse postorder
     postorder.reverse();
 
-    let mut nodes = Vec::with_capacity(postorder.len());
-    let mut node_index = IdMap::default();
-    for (idx, id) in postorder.into_iter().enumerate() {
-        // `remove` keeps the order of the other entries: it shifts them and
-        // rebuilds the map's index, in the arena, on every call.
-        let mut node = raw_nodes.swap_remove(id).unwrap();
-        node.index = idx;
-        node_index.insert(id, idx);
-        nodes.push(node);
+    // By `BlockRange::index`. `NONE`: it does not reach the exit, so that it is never processed.
+    let mut nodes = places;
+    nodes.fill(NONE);
+    for (index, &place) in postorder.iter().enumerate() {
+        nodes[(ids[place].0 - range.first) as usize] = index as u32 + 1;
+    }
+
+    let mut pred_starts = Vec::with_capacity(postorder.len() + 2);
+    pred_starts.extend([0, 0]);
+    let mut preds = Vec::with_capacity(postorder.len() * 2);
+    for &place in &postorder {
+        let block = &blocks[place];
+        if flows_into_exit(block) {
+            preds.push(0);
+        }
+        for successor in each_terminal_successor(&block.terminal) {
+            match range.index(successor).map(|index| nodes[index]) {
+                None | Some(NONE) => {}
+                Some(node) => preds.push(node),
+            }
+        }
+        pred_starts.push(preds.len() as u32);
     }
 
     Graph {
-        entry: exit_id,
-        nodes,
-        node_index,
+        ids: postorder.into_iter().map(|place| ids[place]).collect(),
+        pred_starts,
+        preds,
     }
-}
-
-fn dfs_postorder(
-    id: BlockId,
-    nodes: &IdMap<BlockId, Node>,
-    visited: &mut HashSet<BlockId>,
-    postorder: &mut Vec<BlockId>,
-) {
-    if !visited.insert(id) {
-        return;
-    }
-    if let Some(node) = nodes.get(id) {
-        for &succ in &node.succs {
-            dfs_postorder(succ, nodes, visited, postorder);
-        }
-    }
-    postorder.push(id);
 }
 
 // =============================================================================
 // Dominator fixpoint (Cooper/Harvey/Kennedy)
 // =============================================================================
 
-fn compute_immediate_dominators(
-    graph: &Graph,
-) -> Result<IdMap<BlockId, BlockId>, CompilerDiagnostic> {
-    let mut doms: IdMap<BlockId, BlockId> = IdMap::default();
-    doms.insert(graph.entry, graph.entry);
+fn compute_immediate_dominators(graph: &Graph) -> Result<Vec<u32>, CompilerDiagnostic> {
+    let mut doms = vec![NONE; graph.ids.len() + 1];
+    doms[0] = 0;
 
     let mut changed = true;
     while changed {
         changed = false;
-        for node in &graph.nodes {
-            if node.id == graph.entry {
-                continue;
-            }
+        for (index, &id) in graph.ids.iter().enumerate() {
+            let node = index + 1;
+            let preds = graph.pred_starts[node] as usize..graph.pred_starts[node + 1] as usize;
 
-            // Find first processed predecessor
-            let mut new_idom: Option<BlockId> = None;
-            for &pred in &node.preds {
-                if doms.contains_key(pred) {
-                    new_idom = Some(pred);
-                    break;
-                }
-            }
-            let mut new_idom = match new_idom {
-                Some(idom) => idom,
-                None => return Err(no_processed_pred(node.id)),
-            };
-
-            // Intersect with other processed predecessors
-            for &pred in &node.preds {
-                if pred == new_idom {
+            // Intersect the processed predecessors
+            let mut new_idom = NONE;
+            for &pred in &graph.preds[preds] {
+                if doms[pred as usize] == NONE {
                     continue;
                 }
-                if doms.contains_key(pred) {
-                    new_idom = intersect(pred, new_idom, graph, &doms);
-                }
+                new_idom = match new_idom {
+                    NONE => pred,
+                    idom => intersect(pred, idom, &doms),
+                };
+            }
+            if new_idom == NONE {
+                return Err(no_processed_pred(id));
             }
 
-            if doms.get(node.id) != Some(&new_idom) {
-                doms.insert(node.id, new_idom);
+            if doms[node] != new_idom {
+                doms[node] = new_idom;
                 changed = true;
             }
         }
@@ -242,20 +307,16 @@ fn compute_immediate_dominators(
     Ok(doms)
 }
 
-fn intersect(a: BlockId, b: BlockId, graph: &Graph, doms: &IdMap<BlockId, BlockId>) -> BlockId {
-    let mut block1 = graph.get_node(a);
-    let mut block2 = graph.get_node(b);
-    while block1.id != block2.id {
-        while block1.index > block2.index {
-            let dom = *doms.get(block1.id).unwrap();
-            block1 = graph.get_node(dom);
+fn intersect(mut a: u32, mut b: u32, doms: &[u32]) -> u32 {
+    while a != b {
+        while a > b {
+            a = doms[a as usize];
         }
-        while block2.index > block1.index {
-            let dom = *doms.get(block2.id).unwrap();
-            block2 = graph.get_node(dom);
+        while b > a {
+            b = doms[b as usize];
         }
     }
-    block1.id
+    a
 }
 
 #[cold]
@@ -275,62 +336,49 @@ fn no_processed_pred(id: BlockId) -> CompilerDiagnostic {
 // Post-dominator frontier
 // =============================================================================
 
-/// Computes the post-dominator frontier of `target_id`. These are immediate
+/// Computes the post-dominator frontier of each `target_id`. These are immediate
 /// predecessors of nodes that post-dominate `target_id` from which execution may
 /// not reach `target_id`. Intuitively, these are the earliest blocks from which
 /// execution branches such that it may or may not reach the target block.
-pub fn post_dominator_frontier(
+pub fn post_dominator_frontiers(
     func: &HirFunction,
     post_dominators: &PostDominator,
-    target_id: BlockId,
-) -> HashSet<BlockId> {
-    let target_post_dominators = post_dominators_of(func, post_dominators, target_id);
-    let mut visited = HashSet::default();
-    let mut frontier = HashSet::default();
+) -> Result<PostDominatorFrontiers, CompilerDiagnostic> {
+    let range = post_dominators.range;
+    let index_of = |id: BlockId| (id.0 - range.first) as usize;
 
-    let mut to_visit: Vec<BlockId> = target_post_dominators.iter().copied().collect();
-    to_visit.push(target_id);
-
-    for block_id in to_visit {
-        if !visited.insert(block_id) {
-            continue;
+    let mut edges = Vec::with_capacity(func.body.blocks.len() * 2);
+    for (&block_id, block) in &func.body.blocks {
+        for &pred in &block.preds {
+            post_dominators.get(pred)?;
+            edges.push((index_of(pred), block_id));
         }
-        if let Some(block) = func.body.blocks.get(&block_id) {
-            for &pred in &block.preds {
-                if !target_post_dominators.contains(&pred) {
-                    frontier.insert(pred);
+    }
+    let successors = Groups::new(range.len, &edges);
+
+    let mut frontiers = edges;
+    frontiers.clear();
+    // By `BlockRange::index`: the last block that was put into the frontier of this one.
+    let mut newest = vec![BlockId(NONE); range.len];
+    for &pred in func.body.blocks.keys() {
+        // `pred` is in the frontier of each successor and its post-dominators that are not `pred`'s.
+        let end = post_dominators.get(pred)?.unwrap_or(pred);
+        for &block_id in successors.get(index_of(pred)) {
+            let mut target_id = block_id;
+            while target_id != end && newest[index_of(target_id)] != pred {
+                newest[index_of(target_id)] = pred;
+                frontiers.push((index_of(target_id), pred));
+                match post_dominators.get(target_id)? {
+                    Some(next) if next != post_dominators.exit => target_id = next,
+                    _ => break,
                 }
             }
         }
     }
-    frontier
-}
-
-/// Walks up the post-dominator tree to collect all blocks that post-dominate `target_id`.
-pub fn post_dominators_of(
-    func: &HirFunction,
-    post_dominators: &PostDominator,
-    target_id: BlockId,
-) -> HashSet<BlockId> {
-    let mut result = HashSet::default();
-    let mut visited = HashSet::default();
-    let mut queue = vec![target_id];
-
-    while let Some(current_id) = queue.pop() {
-        if !visited.insert(current_id) {
-            continue;
-        }
-        if let Some(block) = func.body.blocks.get(&current_id) {
-            for &pred in &block.preds {
-                let pred_post_dom = post_dominators.get(pred).unwrap_or(pred);
-                if pred_post_dom == target_id || result.contains(&pred_post_dom) {
-                    result.insert(pred);
-                }
-                queue.push(pred);
-            }
-        }
-    }
-    result
+    Ok(PostDominatorFrontiers {
+        range,
+        frontiers: Groups::new(range.len, &frontiers),
+    })
 }
 
 // =============================================================================
@@ -345,9 +393,10 @@ pub fn post_dominators_of(
 pub fn compute_unconditional_blocks(
     func: &HirFunction,
     next_block_id_counter: u32,
-) -> Result<HashSet<BlockId>, CompilerDiagnostic> {
-    let mut unconditional = HashSet::default();
+) -> Result<BlockSet, CompilerDiagnostic> {
     let dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
+    let range = dominators.range;
+    let mut has = vec![false; range.len];
     let exit = dominators.exit;
     let mut current: Option<BlockId> = Some(func.body.entry);
 
@@ -355,13 +404,12 @@ pub fn compute_unconditional_blocks(
         if block_id == exit {
             break;
         }
-        assert!(
-            !unconditional.contains(&block_id),
-            "Internal error: non-terminating loop in ComputeUnconditionalBlocks"
-        );
-        unconditional.insert(block_id);
-        current = dominators.get(block_id);
+        current = dominators.get(block_id)?;
+        crate::diagnostics::invariant(
+            !std::mem::replace(&mut has[(block_id.0 - range.first) as usize], true),
+            "Internal error: non-terminating loop in ComputeUnconditionalBlocks",
+        )?;
     }
 
-    Ok(unconditional)
+    Ok(BlockSet { range, has })
 }

@@ -1,0 +1,3 @@
+{
+  "extends": "../parallel/tsconfig.json"
+}

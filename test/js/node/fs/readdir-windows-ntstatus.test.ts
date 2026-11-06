@@ -67,8 +67,7 @@ test.skipIf(!isWindows)("fs.readdir through a junction returns or throws, never 
   expect(() => JSON.parse(stdout)).not.toThrow();
 
   const result = JSON.parse(stdout) as
-    | { ok: true; entries: string[] }
-    | { ok: false; code: string | undefined; message: string };
+    { ok: true; entries: string[] } | { ok: false; code: string | undefined; message: string };
 
   if (result.ok) {
     expect(result.entries).toEqual(["a.txt", "b.txt"]);

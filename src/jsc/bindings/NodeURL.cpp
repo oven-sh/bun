@@ -1,6 +1,7 @@
 #include "NodeURL.h"
 #include "ASCIIHostPunycodeCheck.h"
 #include "ErrorCode.h"
+#include "VectorSizeLimit.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
 #include <unicode/uidna.h>
@@ -38,21 +39,30 @@ enum class IDNAMode : uint8_t {
 
 // Runs a uidna_nameTo* conversion with the U_BUFFER_OVERFLOW_ERROR retry
 // protocol; on completion `status`/`info` hold the final results.
+// Sets `status` to U_MEMORY_ALLOCATION_ERROR if the input or output is too large for its buffer.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
 
 static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
 {
     String domain = input;
-    if (domain.is8Bit())
+    if (domain.is8Bit()) {
+        if (!StringImpl::isValidLength<char16_t>(domain.length())) [[unlikely]] {
+            status = U_MEMORY_ALLOCATION_ERROR;
+            return {};
+        }
         domain.convertTo16Bit();
+    }
     const auto span = domain.span16();
 
     Vector<char16_t, 256> buffer(256);
     int32_t length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
+        if (static_cast<size_t>(length) > maxVectorSize<char16_t>() || !buffer.tryGrow(length)) [[unlikely]] {
+            status = U_MEMORY_ALLOCATION_ERROR;
+            return {};
+        }
         status = U_ZERO_ERROR;
         info = UIDNA_INFO_INITIALIZER;
-        buffer.grow(length);
         length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
     }
     if (U_FAILURE(status))
@@ -93,9 +103,8 @@ static String icuToASCII(const String& input, IDNAMode mode)
 
 // Port of Node's icu-based ToUnicode (removed in nodejs/node#55156): UTS #46
 // ToUnicode always produces output, so info.errors is deliberately ignored.
-static String icuToUnicode(const String& input)
+static String icuToUnicode(const String& input, UErrorCode& status)
 {
-    UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
     return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
 }
@@ -118,8 +127,10 @@ bool hasValidPunycodeHost(WTF::StringView host)
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
 // through a WHATWG URL host parse (ada's url.set_hostname on a "ws://x"
 // base). Returns a null String when host parsing fails.
-static String parseDomainAsHost(const String& domain)
+static String parseDomainAsHost(JSC::JSGlobalObject* globalObject, const String& domain)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+
     // The hostname setter's basic-URL parse stops at the first path, query,
     // fragment, or backslash (special scheme) terminator.
     StringView view { domain };
@@ -147,7 +158,12 @@ static String parseDomainAsHost(const String& domain)
             return {};
     }
 
-    WTF::URL url(makeString("ws://"_s, host, "/"_s));
+    auto urlString = tryMakeString("ws://"_s, host, "/"_s);
+    if (urlString.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    WTF::URL url(WTF::move(urlString));
     if (!url.isValid())
         return {};
 
@@ -179,7 +195,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     auto domain = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto host = parseDomainAsHost(domain);
+    auto host = parseDomainAsHost(globalObject, domain);
+    RETURN_IF_EXCEPTION(scope, {});
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
     return JSC::JSValue::encode(JSC::jsString(vm, host));
@@ -198,11 +215,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 
     // Node: validate through the host parse first, then run ToUnicode on the
     // resulting ASCII host.
-    auto host = parseDomainAsHost(domain);
+    auto host = parseDomainAsHost(globalObject, domain);
+    RETURN_IF_EXCEPTION(scope, {});
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    auto unicode = icuToUnicode(host);
+    UErrorCode status = U_ZERO_ERROR;
+    auto unicode = icuToUnicode(host, status);
+    if (status == U_MEMORY_ALLOCATION_ERROR) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     if (unicode.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
     return JSC::JSValue::encode(JSC::jsString(vm, unicode));
@@ -252,7 +275,8 @@ JSC_DEFINE_HOST_FUNCTION(jsIcuToUnicode, (JSC::JSGlobalObject * globalObject, JS
     auto input = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto result = icuToUnicode(input);
+    UErrorCode status = U_ZERO_ERROR;
+    auto result = icuToUnicode(input, status);
     if (result.isNull()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Cannot convert name to Unicode"_s));
         return {};

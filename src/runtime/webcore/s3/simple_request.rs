@@ -299,7 +299,6 @@ impl S3HttpSimpleTask {
     //
     // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
         // The next request of a multipart upload, a retry, and the script this calls continue
         // what the requesting script started.
@@ -411,10 +410,7 @@ impl S3HttpSimpleTask {
     ) {
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
-        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
-        // which lives for the task's lifetime — extending to `'static` here is sound for
-        // self-reference.
-        self.result = unsafe { result.detach_lifetime() };
+        self.result = result.without_borrowed_body();
         if self.result.metadata.is_none() {
             self.result.metadata = previous_metadata;
         }
@@ -440,7 +436,6 @@ impl S3HttpSimpleTask {
     //
     // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
     // request pointers it captured at schedule time, both non-null by construction.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
@@ -587,6 +582,7 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
     message: b"The JavaScript VM that owns this request is shutting down",
 };
 
+#[inline(never)]
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -594,6 +590,7 @@ pub(crate) fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping. Nor for a context
     // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the
@@ -680,28 +677,17 @@ pub(crate) fn execute_simple_s3_request(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     });
-    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
-    // the scoped exclusive `http` writes below.
-    let task = unsafe { &*task_ptr };
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
-    // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
-    // concurrently; they remain valid until `task` is dropped in `on_response`.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
-    // by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.body` is a heap-owned
-    // `Box<[u8]>` field of `*task` (an owned copy of the caller's slice) and outlives the
-    // AsyncHTTP request; it is freed only when `task` is dropped in `on_response`.
-    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*task.body) };
+    // SAFETY: `task_ptr` is a freshly heap-allocated pointer, and `task` is not used once
+    // `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
+    // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
+    // `task.http`, an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
+    // `task` is dropped in `on_response`.
+    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
+    let url = URL::parse(&task.sign_result.url);
+    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
+    let body: &'static [u8] = &task.body;
     let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
-        // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
-        Some(URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
+        Some(URL::parse(&task.proxy_url))
     } else {
         None
     };
@@ -726,29 +712,22 @@ pub(crate) fn execute_simple_s3_request(
             http_proxy,
             verbose: Some(verbose),
             reject_unauthorized: Some(reject_unauthorized),
-            // SAFETY: `task_ptr` outlives the request; the store is only read
-            // through these pointers by the HTTP client.
-            signals: Some(unsafe { (*task_ptr).signal_store.to() }),
+            tls_props: crate::socket::http_client_defaults(vm),
+            signals: Some(task.signal_store.to()),
             ..Default::default()
         },
     );
-    // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
-    // `schedule` below); scoped exclusive write of the `http` field.
-    unsafe { (*task_ptr).http.write(async_http) };
+    let http = task.http.write(async_http);
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
-    // SAFETY: `http` was initialised immediately above; scoped exclusive access.
-    unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
+    http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
-    // SAFETY: as above; the task is heap-allocated and drops its handle with itself.
-    unsafe {
-        let vm = VirtualMachine::get();
-        (*task_ptr).http_ticket = Some(vm.ticket());
-        (*task_ptr).context = context.id();
-        bun_jsc::AbortHandle::arm_owner(task_ptr, context);
-    }
+    task.http_ticket = Some(VirtualMachine::get().ticket());
+    task.context = context.id();
+    // SAFETY: the task is heap-allocated and drops its handle with itself.
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

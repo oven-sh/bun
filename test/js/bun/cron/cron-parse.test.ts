@@ -93,6 +93,12 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
     expect(() => Bun.cron.parse("* * * * *", new Date(from))).toThrow("Invalid date value");
   });
 
+  test("takes a String object", () => {
+    const from = new Date("2026-06-15T00:00:30Z");
+    // @ts-expect-error
+    expect(Bun.cron.parse(new String("* * * * *"), from)).toEqual(Bun.cron.parse("* * * * *", from));
+  });
+
   test("accepts the Date range boundary", async () => {
     await using proc = Bun.spawn({
       cmd: [

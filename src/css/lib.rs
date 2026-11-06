@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
@@ -191,7 +190,7 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// Dependent crates name this `ImportRecordHandler`; the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
-pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
+pub use values::color::{CssColor, FloatColor, LABColor, PredefinedColor, RGBA};
 pub type CssColorParseResult = values::color::ParseResult;
 
 // Cross-crate re-exports.

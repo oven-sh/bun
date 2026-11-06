@@ -1,7 +1,8 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, wasmGCStructRefSource } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
+import { join } from "path";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
@@ -503,7 +504,7 @@ describe("EventEmitter.on", () => {
       emitter.emit("close");
     });
 
-    const result = [];
+    const result: any[][] = [];
     for await (const ev of asyncIterator) {
       result.push(ev);
     }
@@ -522,7 +523,7 @@ describe("EventEmitter.on", () => {
       emitter.emit("hey", 3);
     });
 
-    const result = [];
+    const result: any[][] = [];
     for await (const ev of asyncIterator) {
       result.push(ev);
     }
@@ -563,7 +564,7 @@ describe("EventEmitter.on", () => {
     emitter.emit("hey", 1, 2, 3);
     emitter.emit("hey", [4, 5, 6]);
 
-    expect((await asyncIterator.next()).value).toBe(1);
+    expect((await asyncIterator.next()).value).toBe<number>(1);
     expect((await asyncIterator.next()).value).toEqual([4, 5, 6]);
   });
 
@@ -572,7 +573,7 @@ describe("EventEmitter.on", () => {
     const process = require("node:process");
 
     const ee = new EventEmitter();
-    const output = [];
+    const output: unknown[] = [];
 
     // Emit later on
     process.nextTick(() => {
@@ -606,7 +607,7 @@ describe("EventEmitter.on", () => {
 
     const ac = new AbortController();
     const ee = new EventEmitter();
-    const output = [];
+    const output: unknown[] = [];
 
     process.nextTick(() => {
       ee.emit("foo", "bar");
@@ -668,7 +669,7 @@ describe("EventEmitter.on", () => {
     for (let i = 0; i < 4; i++) emitter.emit("hey", i);
     emitter.emit("close");
 
-    const result = [];
+    const result: any[][] = [];
     for await (const ev of asyncIterator) result.push(ev);
 
     expect({ result, calls }).toEqual({ result: [[0], [1], [2], [3]], calls: ["pause"] });
@@ -682,7 +683,7 @@ describe("EventEmitter.on", () => {
     const fpath = path.join(__filename, "..", "..", "child_process", "fixtures", "child-process-echo-options.js");
     const text = await Bun.file(fpath).text();
     const interfaced = createInterface(createReadStream(fpath));
-    const output = [];
+    const output: string[] = [];
 
     try {
       for await (const line of interfaced) {
@@ -1207,6 +1208,60 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
   });
 });
 
+// The loop stands in module code, where the JIT enters it while it runs. An array of 48 or 64 bytes a call is 12 collections or more.
+test.each([
+  ["one listener, no argument", `emitter.on("x", listener);`, `emitter.emit("x")`],
+  ["one listener, one argument", `emitter.on("x", listener);`, `emitter.emit("x", i)`],
+  ["one listener, four arguments", `emitter.on("x", listener);`, `emitter.emit("x", i, i, i, i)`],
+  ["two listeners, one argument", `emitter.on("x", listener); emitter.on("x", () => {});`, `emitter.emit("x", i)`],
+  [
+    "a listener that returns a promise",
+    `const settled = Promise.resolve(); emitter.on("x", () => settled);`,
+    `emitter.emit("x", i)`,
+  ],
+])(
+  "emit() compiled by the JIT makes no array of its arguments: %s",
+  async (_, listen, emit) => {
+    using dir = tempDir("emit-makes-no-array", {
+      "emit.js": `
+      const emitter = new (require("node:events"))();
+      let heard = 0;
+      const listener = () => { heard++; };
+      ${listen}
+      for (let i = 0; i < 2_000_000; i++) ${emit};
+      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "emit.js")],
+      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
+    expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
+  },
+  60_000,
+);
+
+// One more call for every event with several listeners is a sixth more in the interpreter.
+test("emit() itself calls each of several listeners", () => {
+  const emitter = new EventEmitter();
+  let stack = "";
+  emitter.on("x", () => {});
+  emitter.on("x", function second() {
+    stack = new Error().stack!;
+  });
+  emitter.emit("x");
+  const functions = stack
+    .split("\n")
+    .slice(1, 3)
+    .map(line => line.trim().split(" ")[1]);
+  expect(functions).toEqual(["second", "emit"]);
+});
+
 // As in Node, only the addListener family and setMaxListeners assign `this._events`, and the receiver can reject it.
 describe("native EventEmitter with a receiver that is not an emitter", () => {
   const nativeProto = Object.getPrototypeOf(process);
@@ -1310,7 +1365,16 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
   // In a subprocess because the failure is an abort of the process.
   test.concurrent("a WebAssembly GC reference as the receiver throws from the methods that assign", async () => {
     const src = `
-      const ref = ${wasmGCStructRefSource};
+      // (module (type $s (struct (field (mut i32))))
+      //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+      const bytes = new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+        0x03, 0x02, 0x01, 0x01,
+        0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+        0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+      ]);
+      const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
       const result = {};
       const attempt = (name, ...args) => {
         try {

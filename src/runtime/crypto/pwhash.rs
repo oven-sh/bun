@@ -104,6 +104,7 @@ pub(crate) mod argon2 {
             E::DecodingFail | E::IncorrectType | E::IncorrectVersion => {
                 crate::Error::InvalidEncoding
             }
+            E::MemoryAllocationFailed => crate::Error::Alloc(bun_alloc::AllocError),
             E::OutputTooShort
             | E::OutputTooLong
             | E::PwdTooShort
@@ -364,7 +365,6 @@ pub(crate) mod bcrypt {
             "bcrypt: silently_truncate_password=false is unreachable from Bun \
              and not implemented in this shim",
         );
-        let _ = options;
 
         // Dispatch on prefix:
         //   `$2…`      → modular-crypt verify

@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+({}).a; // prettier-ignore
+
+(function () {}).a; // prettier-ignore
+
+x = () =>
+  ({}).a; // prettier-ignore
+
+(class {}).a; // prettier-ignore
+
+-------------------
+{ printWidth: 100 }
+-------------------
+({}).a; // prettier-ignore
+
+(function () {}).a; // prettier-ignore
+
+x = () =>
+  ({}).a; // prettier-ignore
+
+(class {}).a; // prettier-ignore
+
+===================== End =====================

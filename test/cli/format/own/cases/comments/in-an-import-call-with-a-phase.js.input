@@ -1,0 +1,10 @@
+const a = import /* a */ .source("x");
+const b = import. /* a */ source("x");
+const c = import.source /* a */ ("x");
+d = import.defer // a
+("y");
+e = import
+// a
+.defer("y");
+f = import.defer( // a
+  "y");

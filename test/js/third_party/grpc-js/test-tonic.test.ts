@@ -133,7 +133,7 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   });
 
   test("flow control should work in both directions", async () => {
-    const hello_proto = grpc.loadPackageDefinition(packageDefinition).helloworld;
+    const hello_proto = grpc.loadPackageDefinition(packageDefinition).helloworld as any;
 
     // Create client
     const client = new hello_proto.Greeter(server.address, grpc.credentials.createInsecure());

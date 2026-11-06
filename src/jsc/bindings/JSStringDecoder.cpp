@@ -22,10 +22,6 @@ namespace WebCore {
 
 using namespace JSC;
 
-static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write);
-static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end);
-static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text);
-
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastChar);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);
@@ -421,6 +417,11 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
     }
+    if (view->isShared()) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, throwScope, view->span());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, copy.mutableSpan().data(), copy.sizeInBytes())));
+    }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
@@ -436,6 +437,11 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
     if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
+    }
+    if (view->isShared()) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, throwScope, view->span());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, copy.mutableSpan().data(), copy.sizeInBytes())));
     }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
@@ -459,6 +465,11 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     uint32_t byteLength = view->byteLength();
     if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    if (view->isShared()) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, throwScope, view->span().subspan(offset, byteLength - offset));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, copy.mutableSpan().data(), copy.sizeInBytes())));
+    }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
 }
 

@@ -1,0 +1,1 @@
+{ "compilerOptions": { "jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "F" } }

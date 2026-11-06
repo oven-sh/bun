@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "typeRoots": ["../../../../packages"],
+    "types": ["bun-types"],
+    "resolveJsonModule": true,
+    "strict": true,
+    "noEmit": true
+  }
+}

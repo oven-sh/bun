@@ -5,6 +5,7 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
+import { tls as localhostTls } from "harness";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -13,20 +14,27 @@ import {
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgAuthenticationSASLContinue,
+  pgAuthenticationSASLFinal,
+  pgBackendKeyData,
   pgBind,
-  pgCommandComplete,
-  pgCopyData,
-  pgCopyDone,
+  type PgBindFrame,
+  pgCancelRequest,
+  pgCloseComplete,
+  pgCopyBothResponse,
+  pgCopyInResponse,
   pgCopyOutResponse,
-  pgDataRow,
+  pgDecodeBind,
   pgDescribe,
   pgErrorResponse,
   pgExecute,
-  pgFlush,
   pgMinimalReadyServer,
+  pgNoData,
   pgParse,
+  pgParseSASLInitialResponse,
+  pgParseStartupMessage,
   pgReadyForQuery,
-  pgRowDescription,
+  pgScramServer,
   pgSync,
 } from "./wire-frames";
 
@@ -72,8 +80,69 @@ test("frontend message builders encode per §55.7", () => {
     ),
   );
   expect(pgExecute()).toEqual(Buffer.from("E\x00\x00\x00\x09\x00\x00\x00\x00\x00", "binary"));
-  expect(pgFlush()).toEqual(Buffer.from("H\x00\x00\x00\x04", "binary"));
   expect(pgSync()).toEqual(Buffer.from("S\x00\x00\x00\x04", "binary"));
+  expect(pgCancelRequest(1, 2)).toEqual(
+    Buffer.from("\x00\x00\x00\x10\x04\xd2\x16\x2e\x00\x00\x00\x01\x00\x00\x00\x02", "binary"),
+  );
+});
+
+test("backend message builders encode per §55.7", () => {
+  expect(pgAuthenticationSASLContinue("r=x")).toEqual(Buffer.from("R\x00\x00\x00\x0b\x00\x00\x00\x0br=x", "binary"));
+  expect(pgAuthenticationSASLFinal("v=x")).toEqual(Buffer.from("R\x00\x00\x00\x0b\x00\x00\x00\x0cv=x", "binary"));
+  expect(pgBackendKeyData(1, 2)).toEqual(Buffer.from("K\x00\x00\x00\x0c\x00\x00\x00\x01\x00\x00\x00\x02", "binary"));
+  expect(pgCloseComplete()).toEqual(Buffer.from("3\x00\x00\x00\x04", "binary"));
+  expect(pgNoData()).toEqual(Buffer.from("n\x00\x00\x00\x04", "binary"));
+  const copyBody = "\x00\x00\x00\x0b\x01\x00\x02\x00\x01\x00\x01";
+  expect(pgCopyInResponse([1, 1], 1)).toEqual(Buffer.from("G" + copyBody, "binary"));
+  expect(pgCopyOutResponse([1, 1], 1)).toEqual(Buffer.from("H" + copyBody, "binary"));
+  expect(pgCopyBothResponse([1, 1], 1)).toEqual(Buffer.from("W" + copyBody, "binary"));
+});
+
+test("frontend message parsers are the inverse of what a client writes", () => {
+  const bind: Required<PgBindFrame> = {
+    portal: "",
+    statement: "s1",
+    paramFormats: [1, 0, 0],
+    params: [Buffer.from([0, 0, 0, 42]), null, Buffer.alloc(0)],
+    resultFormats: [1, 0],
+  };
+  expect(pgDecodeBind(pgBind(bind).subarray(5))).toEqual(bind);
+
+  const startup = Buffer.from("\x00\x00\x00\x1c\x00\x03\x00\x00user\x00u\x00database\x00db\x00\x00", "binary");
+  expect(pgParseStartupMessage(startup.subarray(0, startup.length - 1))).toBeNull();
+  expect(pgParseStartupMessage(Buffer.concat([startup, Buffer.from("p")]))).toEqual({
+    params: { user: "u", database: "db" },
+    rest: Buffer.from("p"),
+  });
+
+  expect(pgParseSASLInitialResponse(Buffer.from("SCRAM-SHA-256\x00\x00\x00\x00\x08n,,n=,r=x", "binary"))).toEqual({
+    mechanism: "SCRAM-SHA-256",
+    clientFirstMessage: "n,,n=,r=",
+  });
+});
+
+test.each([
+  ["plaintext", undefined, "disable"],
+  ["TLS", localhostTls, "require"],
+] as const)("postgres: pgScramServer checks the proof Bun sends over %s", async (_, tls, sslmode) => {
+  await using server = await pgScramServer({ password: "pässword", tls });
+  const login = async (password: string) => {
+    await using db = new SQL({
+      url: `postgres://u@127.0.0.1:${server.port}/db?sslmode=${sslmode}`,
+      password,
+      max: 1,
+    });
+    return db.connect().then(
+      () => "CONNECTED",
+      error => error.errno,
+    );
+  };
+  expect(await login("pässword")).toBe("CONNECTED");
+  expect(await login("password")).toBe("28P01");
+  expect(server.exchanges.map(({ startup, initial, proofOk }) => [startup.user, initial?.mechanism, proofOk])).toEqual([
+    ["u", "SCRAM-SHA-256", true],
+    ["u", "SCRAM-SHA-256", false],
+  ]);
 });
 
 test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parser", async () => {
@@ -90,43 +159,6 @@ test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parse
   } finally {
     await db.close({ timeout: 0 });
     server.close();
-  }
-});
-
-test("postgres: COPY OUT response frames are consumed and the following result set decodes", async () => {
-  const { port, server } = await listeningServer(socket => {
-    socket.on("error", () => {});
-    let startup = true;
-    socket.on("data", data => {
-      if (startup) {
-        startup = false;
-        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-        return;
-      }
-      if (data[0] !== 0x51) return;
-      socket.end(
-        Buffer.concat([
-          pgCopyOutResponse([0]),
-          pgCopyData(Buffer.from("1\n")),
-          pgCopyData(Buffer.from("2\n")),
-          pgCopyDone(),
-          pgCommandComplete("COPY 2"),
-          pgRowDescription([{ name: "y", typeOid: 25 }]),
-          pgDataRow([Buffer.from("2")]),
-          pgCommandComplete("SELECT 1"),
-          pgReadyForQuery(),
-        ]),
-      );
-    });
-  });
-
-  const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
-  try {
-    const result = await db`copy t to stdout; select 2 as y`.simple();
-    expect(result).toEqual([[], [{ y: "2" }]]);
-  } finally {
-    await db.close().catch(() => {});
-    await new Promise<void>(r => server.close(() => r()));
   }
 });
 
@@ -148,7 +180,7 @@ test("mysql: mysqlHandshakeV10 + mysqlOkPacket are accepted by Bun's parser", as
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;

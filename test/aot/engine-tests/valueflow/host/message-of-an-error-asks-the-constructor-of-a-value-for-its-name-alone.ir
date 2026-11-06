@@ -1,0 +1,44 @@
+# function A() {}   A[Symbol.for("nodejs.util.inspect.custom")] = custom   Object.defineProperty(A, "name", { value: { toString } })   $ERR_INVALID_ARG_TYPE("value", "string", new A())
+# The message says "an instance of" and the name of the constructor of the value: of what stands under `constructor`, `name` alone is read and made a string. So `toString` runs.
+# The constructor itself is not printed: nobody calls its custom inspect function.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# RUN(NAME): valueflow-solve unreached
+# NAME-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Name" fields=[{key="toString" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    ElemSet v0, v4, v1
+    v6 = NewClosure function=f3
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    PropDefine v0, v7 key="name"
+    v9 = Construct v0
+    v10 = Builtin builtin=PrivateGlobalsMakeErrorWithCode
+    v11 = Integer integer=112
+    v12 = String string="value"
+    v13 = String string="string"
+    v14 = Call v10, -, v11, v12, v13, v9
+    Return
+}
+function f1 name="A" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="custom" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="custom"
+    Return v1
+}
+function f3 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="A"
+    Return v1
+}

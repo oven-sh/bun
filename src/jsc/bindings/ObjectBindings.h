@@ -26,22 +26,24 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
     return getIfPropertyExistsPrototypePollutionMitigation(JSC::getVM(globalObject), globalObject, object, name);
 }
 
-/**
- * Gets an own property only (no prototype chain lookup).
- * Returns jsUndefined() if property doesn't exist as own property.
- * This is the strictest form of property access - use for security-critical options.
- */
-JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
-
-// [[DefineOwnProperty]] of a data property that is not an index. A rejection throws (a Proxy refuses a private name in silence). A plain object takes the direct store.
+// Does [[DefineOwnProperty]] for a non-index data property and throws if the object rejects it. Plain objects use a direct store.
 ALWAYS_INLINE bool defineOwnDataProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, JSC::JSValue value, unsigned attributes)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::Structure* structure = object->structure();
     if (object->type() == JSC::FinalObjectType && structure->isStructureExtensible() && !JSC::isValidOffset(structure->get(vm, propertyName))) [[likely]] {
-        object->putDirect(vm, propertyName, value, attributes);
-        return true;
+        if (object->putDirect(vm, propertyName, value, attributes)) [[likely]]
+            return true;
     }
+    JSC::PropertyDescriptor descriptor(value, attributes);
+    return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+}
+
+// putDirect() that throws if the object rejects the store, as a read-only built-in object in a compiled executable does.
+ALWAYS_INLINE bool putDirectOrThrow(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, JSC::JSValue value, unsigned attributes)
+{
+    if (object->putDirect(JSC::getVM(globalObject), propertyName, value, attributes)) [[likely]]
+        return true;
     JSC::PropertyDescriptor descriptor(value, attributes);
     return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
 }

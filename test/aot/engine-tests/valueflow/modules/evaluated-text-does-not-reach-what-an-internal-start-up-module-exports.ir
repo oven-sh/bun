@@ -1,0 +1,66 @@
+# internal/util/inspect   exports = { inspect, format }
+# main                    printed[Symbol.for("nodejs.util.inspect.custom")] = custom; console.log(printed); eval(String(Date.now()))
+# Native code does not keep what it reads from a module to itself, so the function that it reads from the start-up module has escaped, with or without the text.
+# Text that is evaluated at run time loads by name whatever PUBLIC module of the library has run. No name loads internal/util/inspect in a process that runs a compiled program,
+# so the export that nobody else takes is neither held nor entered. A public module: exports-of-a-public-library-module-are-held-where-unseen-code-runs.ir
+# Without the call of eval: host/startup-module-is-read-where-the-host-calls-a-method-of-the-operand.ir
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Eval f0:v14
+# CHECK: unseen-code yes
+# CHECK-NEXT: modules-by-name yes
+# CHECK-NOT: held
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED: unreached f4
+# RUN(ESCAPED): valueflow-why escaped=f2 escaped=f4
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f4
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}, {key="format" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Printed"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject layout=L1
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    ElemSet v1, v4, v0
+    v6 = Builtin builtin=Console
+    v7 = Builtin builtin=ConsoleLog
+    v8 = Call v7, v6, v1
+    v9 = Builtin builtin=GlobalThis
+    v10 = Builtin builtin=DateNow
+    v11 = Call v10
+    v12 = ToString v11
+    v13 = PropGet v9 key="eval" [isFreeName]
+    v14 = Call v13, -, v12
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f4
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="custom" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="printed"
+    Return v2
+}
+function f4 name="format" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

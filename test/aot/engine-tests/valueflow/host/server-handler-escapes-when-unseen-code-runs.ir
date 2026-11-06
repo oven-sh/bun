@@ -1,0 +1,28 @@
+# Bun.serve({ fetch }); eval(String(Date.now()))
+# Evaluated text reaches a native cell through the table entries that name it, so what the cell holds has escaped.
+# RUN: valueflow-why escaped=f1
+# CHECK: escaped=f1
+# CHECK-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Bun
+    v3 = PropGet v2 key="serve"
+    v4 = Call v3, v2, v1 calleeKey="serve"
+    v5 = Builtin builtin=DateNow
+    v6 = Call v5
+    v7 = ToString v6
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="eval" [isFreeName]
+    v10 = Call v9, -, v7
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

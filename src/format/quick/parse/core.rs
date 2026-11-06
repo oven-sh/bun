@@ -3481,10 +3481,6 @@ impl Quick {
                 return self.declare_private_name(start, end, half);
             }
             k::StringLiteral => {
-                // it may spell one of the words
-                if (self.n.at(key) & F_ESCAPE) != 0 {
-                    return false;
-                }
                 start += 1;
                 end -= 1;
             }
@@ -3840,10 +3836,77 @@ impl Quick {
         ));
     }
 
+    /// The current token is a string with a backslash in it, as a key. There are rules about `constructor`, `prototype` and
+    /// `__proto__`, however they are spelled: does it stand for one of them?
+    #[cold]
+    fn spells_a_special_name(&self) -> bool {
+        const NAMES: [&[u8]; 3] = [b"constructor", b"prototype", b"__proto__"];
+        let hex = |c: i32| if c <= 57 { c - 48 } else { (c | 32) - 87 };
+        let end = self.lexer.tok_end - 1;
+        let mut p = self.lexer.tok_start + 1;
+        let mut length: i32 = 0;
+        let mut may_be = [true; 3];
+        while p < end {
+            let mut c = self.t.at(p);
+            p += 1;
+            if c == 92 {
+                c = self.t.at(p);
+                p += 1;
+                match c {
+                    // (the lexer has seen to it that these are whole)
+                    117 | 120 => {
+                        let stop = if c == 120 {
+                            p + 2
+                        } else if self.t.at(p) == 123 {
+                            p += 1;
+                            end
+                        } else {
+                            p + 4
+                        };
+                        c = 0;
+                        while p < stop && self.t.at(p) != 125 {
+                            c = (c << 4 | hex(self.t.at(p))) & 0xffffff;
+                            p += 1;
+                        }
+                        if stop == end {
+                            p += 1;
+                        }
+                    }
+                    48..=55 => {
+                        let most = if c <= 51 { 2 } else { 1 };
+                        let mut digits: i32 = 0;
+                        c -= 48;
+                        while digits < most && matches!(self.t.at(p), 48..=55) {
+                            c = c * 8 + self.t.at(p) - 48;
+                            p += 1;
+                            digits += 1;
+                        }
+                    }
+                    // the line goes on
+                    10 => continue,
+                    // \n \r \t \b \f \v
+                    110 | 114 | 116 | 98 | 102 | 118 => return false,
+                    _ => {}
+                }
+            }
+            for (name, may_be) in NAMES.iter().zip(&mut may_be) {
+                *may_be &= name.at(length) == c;
+            }
+            length += 1;
+        }
+        return NAMES
+            .iter()
+            .zip(may_be)
+            .any(|(name, may_be)| may_be && name.len() as i32 == length);
+    }
+
     /// A key of an object or class member. The caller sets F_COMPUTED when it sees `[`.
     pub(crate) fn parse_property_name(&mut self) -> R<i32> {
         match self.lexer.tok {
             tk::String => {
+                if (self.lexer.tok_flags & F_ESCAPE) != 0 && self.spells_a_special_name() {
+                    return Err(self.text_refuse());
+                }
                 let n = self.node0(
                     k::StringLiteral | self.lexer.tok_flags,
                     self.lexer.tok_start,

@@ -5194,6 +5194,9 @@ describe("TypeScript that the long way rejects", () => {
     // an arrow function as a decorator
     "@async () => 1 class A {}\n",
     "class A { @async () => 1 m() {} }\n",
+    // `constructor` with an escape
+    'class A { "\\u0063onstructor" = 1 }\n',
+    'class A {\n  "constructo\\x72": T;\n}\n',
   ]);
   describe("what looks like it and is printed", () =>
     expectSame(
@@ -6635,6 +6638,17 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "class A { m(@(a) => b c) {} }\n",
     // a decorator in front of `static constructor`
     "class A { @a static constructor() {} }\n",
+    // `constructor`, `prototype` and `__proto__` with an escape
+    'class A { "\\u0063onstructor" = 1 }\n',
+    'class A { "\\u{63}onstructor" }\n',
+    'class A { "constructo\\x72"() {} constructor() {} }\n',
+    'class A { get "\\constructor"() {} }\n',
+    'class A { async "con\\\nstructor"() {} }\n',
+    'class A { *"c\\157nstructor"() {} }\n',
+    'class A { static "\\x70rototype"() {} }\n',
+    'class A {\n  static "prot\\u006ftype" = 1;\n}\n',
+    '({ __proto__: a, "__pr\\u006fto__": b });\n',
+    'x = {\n  "\\x5f_proto__": 1,\n  __proto__: 2,\n};\n',
   ]);
   expectRejected("a.js.flow, what only Flow has", "a.js.flow", [
     // two expressions behind `%checks`
@@ -6698,6 +6712,9 @@ describe("JavaScript and Flow that the long way rejects", () => {
     // an arrow function as a decorator
     "@(a) => b class A {}\n",
     "async () => { class a { b(@(await(x)) c) {} } };\n",
+    // `constructor`, `prototype` and `__proto__` with an escape
+    'class A { "\\u0063onstructor" = 1 }\n',
+    'class A { static "\\x70rototype": T }\n',
   ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared

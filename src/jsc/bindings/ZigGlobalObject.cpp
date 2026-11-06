@@ -3716,18 +3716,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     // A test's console in Jest and Vitest has none. Where there is one, React's development build reads into the props of what it renders.
-    // Compiled code doesn't look it up, so it has to be there.
-    if (isBunTest && !Bun::hasCompiledModules()) {
+    if (isBunTest) {
         consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
         RETURN_IF_EXCEPTION(scope, );
     }
-#if ENABLE(AOT)
-    // A compiled test run does look it up: find_what_tests_replace().
-    if (isBunTest && Bun::hasCompiledModules()) {
-        consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
-        RETURN_IF_EXCEPTION(scope, );
-    }
-#endif
 }
 
 // ===================== start conditional builtin globals =====================

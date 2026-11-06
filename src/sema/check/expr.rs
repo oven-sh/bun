@@ -4024,6 +4024,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // `isInJSFile(node) && !isInJsonFile(node)`: what a loader has made of data is as closed as a JSON file.
         if !hir.is_js || self.is_made_by_loader(file) {
             return false;
         }

@@ -50,6 +50,8 @@ pub struct AotBuildRequest<'r, 'a> {
     pub executable_identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub module_prefix: &'r [u8],
+    /// The absolute path of the executable that the build writes.
+    pub outfile: Option<&'r [u8]>,
     /// `transpiler.log`. The resolver and the bundler write through that pointer while the build
     /// runs, so no reference to the log is held across a call that may reach them.
     pub log: *mut Log,
@@ -109,6 +111,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         executable_identity,
         image_form,
         module_prefix,
+        outfile,
         log,
         arena,
         event_loop,
@@ -231,7 +234,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 .collect();
             let resolver = &mut bundle.transpiler.resolver;
             let names = add_hidden_names(package_names, resolver.find_nearer_packages(&folders));
-            add_hidden_names(names, resolver.find_names_that_lead_outside(&files))
+            add_hidden_names(
+                names,
+                resolver.find_names_that_lead_outside(&files, outfile),
+            )
         }
         Ok(_) | Err(_) => package_names,
     };

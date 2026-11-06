@@ -1495,10 +1495,16 @@
     "aot/a-file-beside-the-test-file-requires-it-inside-a-require-of-their-importer.test.ts",
     "aot/an-accessor-on-a-request-itself-is-asked-as-often-as-plain-bun-asks-it.test.ts",
     "aot/a-requirer-that-is-no-file-of-the-executable-keeps-one-object-for-a-file.test.ts",
+    "aot/an-update-of-the-table-of-methods-opens-the-pages-that-it-stores-into.test.ts",
+    "aot/builds-on-one-thread-and-on-several-give-the-same-bytes.test.ts",
     "aot/a-build-without-a-tsconfig-checks-under-the-defaults-of-tsc.test.ts",
+    "aot/what-rests-on-a-brought-declaration-stops-no-build.test.ts",
+    "aot/what-a-data-file-holds-and-what-a-script-declares-is-checked-as-tsc-checks-it.test.ts",
+    "aot/objects-of-an-earlier-test-file-find-what-that-file-has-replaced.test.ts",
+    "aot/a-file-of-the-graph-of-a-test-file-requires-a-module-that-imports-the-test-file.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
+    "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts",
-    "aot/what-rests-on-a-brought-declaration-stops-no-build.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts"
   ]
 }

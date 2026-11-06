@@ -121,6 +121,7 @@ export default b.declarations(
   b.intrinsic("call", "Call", inlinableCall),
   b.intrinsic("callNoInline", "Call", { intrinsic: "Call", isNeverInlined: true }),
   operation("findsDeclaredMember", "FindsDeclaredMember"),
+  operation("findsNoMember", "FindsNoMember"),
   operation("isPlainInstanceOf", "IsPlainInstanceOf"),
   operation("isPlainHeirOf", "IsPlainHeirOf"),
   b.intrinsic("isObjectPrototypeWithoutAddedNames", "Call", {

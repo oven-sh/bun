@@ -18,7 +18,7 @@ for (let copy = 0; copy < copies; copy++) {
     out.push(`${pad(level)}for (let i${level} = 0; i${level} < n; i${level}++) {`);
   out.push(`${pad(size + 1)}sum = (sum + ((a * 31) ^ (b + 7)) + box.m0) | 0; a = (a + 1) | 0; b = (b ^ sum) | 0;`);
   for (let level = size; level >= 1; level--)
-    out.push(`${pad(level + 1)}box = { ${members(level)} };`, `${pad(level)}}`);
+    out.push(`${pad(level + 1)}box = { ${members(level)} } as { m0: number };`, `${pad(level)}}`);
   out.push("  return sum;", "}");
 }
 out.push("let told = 0;");

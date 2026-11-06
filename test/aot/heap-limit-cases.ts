@@ -2359,6 +2359,11 @@ console.log(caught, made > 0, places > 0, small.length, taken.length);
 const small: (string | null)[] = [];
 for (let i = 0; i < 200_000; i++) small.push("s".repeat(60 + (i % 140)) + i);
 for (let i = 0; i < small.length; i += 2) small[i] = null;
+// Cells come out of blocks, and the range of the blocks cannot grow once the address space is used up. The cell of a buffer that then finds no block asks for a collection, which finds no memory for its mark stack.
+// What is let go of here leaves whole blocks free. The list has its full length from the start and is kept, so malloc gets nothing back that the list of buffers could grow into.
+const ballast: unknown[] = new Array(20_000).fill(null);
+for (let i = 0; i < ballast.length; i++) ballast[i] = { at: i };
+ballast.fill(null);
 Bun.gc(true);
 const held: unknown[] = new Array(60_000).fill(null);
 const taken: unknown[] = new Array(100_000).fill(null);
@@ -2419,6 +2424,11 @@ console.log("alive");
         using folder = tempDir("aot-heap-limit", {
           "program.ts": `const hold: ArrayBuffer[] = [];
 const map = new Map<string, number>();
+// A key takes a cell as well as its text. What is let go of here leaves whole blocks free, so that the text is what finds no room.
+const ballast: unknown[] = new Array(200_000).fill(null);
+for (let i = 0; i < ballast.length; i++) ballast[i] = { at: i };
+ballast.fill(null);
+Bun.gc(true);
 for (const kib of [262144, 16384, 1024, 64]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
 console.log("address space used up");
 try {

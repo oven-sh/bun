@@ -3125,6 +3125,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// = require(..)` of `module`.
     fn required_module_symbol(&self, module: Sym) -> Sym {
         let resolved = self.external_module_symbol(module);
+        // `require()` gives the value that a loader has made of data, as TypeScript's `export =` of a JSON file does.
         let is_made_by_loader =
             self.is_compiled(resolved.file) && self.hir(resolved.file).source_len == 0;
         if is_made_by_loader && let Some(value) = self.export(resolved, known::default) {

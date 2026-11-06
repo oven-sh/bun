@@ -7,8 +7,8 @@ use super::module_set::ModuleSet;
 use super::requests::{FileScan, ScannedSite, Scans};
 use super::spelled_files::{
     TextThatSpellsFile, find_texts_that_spell_files, is_every_file_found_by_name,
-    list_texts_that_spell_files, list_what_made_names_may_find,
-    program_loads_by_name_that_no_pattern_holds,
+    list_what_made_names_may_find, program_loads_by_name_that_no_pattern_holds,
+    take_or_list_texts_that_spell_files,
 };
 use super::wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 use super::{BindInput, ModuleRef};
@@ -1066,7 +1066,7 @@ pub(super) fn compute_order(
     }
     let prefix_roots = find_prefix_roots(input, scans, modules, &is_code_of_program, &planned);
     let texts_beside_every_file = match is_every_file_found {
-        true => list_texts_that_spell_files(input),
+        true => take_or_list_texts_that_spell_files(input, modules),
         false => None,
     };
     let texts = texts_that_spell_files.as_deref();

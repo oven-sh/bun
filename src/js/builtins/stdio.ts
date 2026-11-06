@@ -103,7 +103,11 @@ export function getLightStdioWriteStreams(
       get(_, key) {
         // As in the whole stream.
         if (key === "%write of this stream%") return undefined;
-        if (!served.values.includes(key as string) && !served.methods.includes(key as string)) needsWholeStream();
+        // By index: Array.prototype.includes is the program's to replace.
+        let isServed = false;
+        for (let i = 0; i < served.values.length; i++) if (served.values[i] === key) isServed = true;
+        for (let i = 0; i < served.methods.length; i++) if (served.methods[i] === key) isServed = true;
+        if (!isServed) needsWholeStream();
         if (key === "write") return handler["%write of both streams%"];
         if (key === "isTTY") return isTTY ? true : undefined;
         if (key === "fd") return fd;
@@ -170,7 +174,11 @@ export function getLightStdinStream(isTTY: boolean, needsWholeStream: NeedsWhole
     },
     {
       get(_, key) {
-        if (!served.values.includes(key as string) && !served.methods.includes(key as string)) needsWholeStream();
+        // By index: Array.prototype.includes is the program's to replace.
+        let isServed = false;
+        for (let i = 0; i < served.values.length; i++) if (served.values[i] === key) isServed = true;
+        for (let i = 0; i < served.methods.length; i++) if (served.methods[i] === key) isServed = true;
+        if (!isServed) needsWholeStream();
         if (key === "isTTY") return isTTY ? true : undefined;
         if (key === "fd") return 0;
         needsWholeStream();

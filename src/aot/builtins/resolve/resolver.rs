@@ -360,6 +360,7 @@ pub(super) fn run(
     if input.is_text_asked {
         resolver.collect_what_is_reached_without_a_name();
     }
+    resolver.note_keys_that_program_can_lay();
     resolver.finish()
 }
 

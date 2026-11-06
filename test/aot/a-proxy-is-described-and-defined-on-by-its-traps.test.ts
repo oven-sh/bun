@@ -7,6 +7,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned, told } from "./harness/commands";
+import { sayGoal } from "./harness/goals";
 import { test } from "./supported";
 
 const scenes: [name: string, does: string][] = [
@@ -482,6 +483,7 @@ for (const [what, text] of Object.entries({
     async () => {
       // What every object inherits, at the most.
       const escaped = (await lines()).filter(line => line.endsWith("(escapes, so any member may be used)"));
+      sayGoal(`${what}, found by a get that answers in upper case, gives no trap away`, escaped.length, 20);
       expect(escaped.length).toBeLessThanOrEqual(20);
     },
   );
@@ -496,11 +498,11 @@ for (const [what, text] of Object.entries(closed)) {
   test.concurrent.failing(
     `${what} uses no built-in that the program does not name (3,698 escape today, the bound is none)`,
     async () => {
-      expect(
-        (await lines()).flatMap(
-          line => /trim: uses (.*) \(escapes, so any member may be used\)$/.exec(line)?.[1] ?? [],
-        ),
-      ).toEqual([]);
+      const escaped = (await lines()).flatMap(
+        line => /trim: uses (.*) \(escapes, so any member may be used\)$/.exec(line)?.[1] ?? [],
+      );
+      sayGoal(`${what} uses no built-in that the program does not name`, escaped.length, 0);
+      expect(escaped).toEqual([]);
     },
   );
 }

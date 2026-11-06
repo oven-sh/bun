@@ -94,21 +94,12 @@ impl Resolver<'_, '_> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_) => true,
-            ExprKind::Dot { obj, .. } => leaves(obj),
             ExprKind::Unary {
                 op: UnOp::Not | UnOp::Typeof | UnOp::Void,
                 operand,
             } => leaves(operand),
             ExprKind::Binary {
-                op:
-                    BinOp::And
-                    | BinOp::Or
-                    | BinOp::Nullish
-                    | BinOp::EqEq
-                    | BinOp::NotEq
-                    | BinOp::EqEqEq
-                    | BinOp::NotEqEq
-                    | BinOp::In,
+                op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::EqEqEq | BinOp::NotEqEq,
                 left,
                 right,
             } => leaves(left) && leaves(right),

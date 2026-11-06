@@ -146,8 +146,18 @@ const TYPED_TEXTS: &[&str] = &[
 const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
     (
         "a.ts",
+        "class C { a = b\n  public [k]?: T\n  c = d\n  private readonly *[e]() {}\n  f = g\n  protected in = 1 }",
+        "class C { a = b\n  ;[k]\n  c = d\n  ;*[e]() {}\n  f = g\n  ;in = 1 }",
+    ),
+    (
+        "a.ts",
         "const f = () => <Foo>{}; function g(a: unknown) { return<number>a; } const h = <T>i;",
         "const f = () => ({}); function g(a) { return a; } const h = i;",
+    ),
+    (
+        "a.ts",
+        "if (a) type T = 1;\nb(); if (c) d(); else interface I {}\ne(); for (;;) declare const f: T;\ng(); h: type U = 2;\ni();",
+        "if (a) ;\nb(); if (c) d(); else ;\ne(); for (;;) ;\ng(); h: ;\ni();",
     ),
     (
         "a.ts",

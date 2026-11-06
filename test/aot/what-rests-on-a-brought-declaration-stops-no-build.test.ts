@@ -14,6 +14,12 @@ const ring = `function ring(): void {\n  console.log("rang");\n}\n`;
 const later = `function later(run: () => void) {\n  return setTimeout(run, 1);\n}\n`;
 
 const builds: Record<string, { files: Record<string, string>; stdout: string }> = {
+  "what Bun adds to fetch is asked of no function, and the program declares import.meta.dirname and process": {
+    files: {
+      "main.ts": `declare global {\n  interface ImportMeta {\n    readonly dirname: string;\n  }\n  const process: { readonly argv: readonly string[] };\n}\nconst canned = { ok: true } as unknown as Response;\nasync function answer(input: string | URL | Request): Promise<Response> {\n  return canned;\n}\nasync function load(get: typeof fetch): Promise<boolean> {\n  return (await get("http://localhost/")).ok;\n}\nconsole.log(await load(answer), typeof import.meta.dirname, process.argv.length > 0);\nexport {};\n`,
+    },
+    stdout: "true string true\n",
+  },
   "a timer out of a function of the program": {
     files: { "main.ts": `export {};\n${ring}${later}const id: number = later(ring);\nconsole.log(typeof id);\n` },
     stdout: "object\nrang\n",
@@ -78,6 +84,10 @@ const builds: Record<string, { files: Record<string, string>; stdout: string }> 
 
 // `code x count`, as the build prints them.
 const stops: Record<string, { text: string; errors: string[] }> = {
+  "two declarations of the program differ beside one of Bun's, and fetch is asked of what takes a number": {
+    text: `declare global {\n  interface ImportMeta {\n    dirname: string;\n  }\n  interface ImportMeta {\n    dirname: number;\n  }\n}\nconst canned = { ok: true } as unknown as Response;\nasync function answer(input: number): Promise<Response> {\n  return canned;\n}\nasync function load(get: typeof fetch): Promise<boolean> {\n  return (await get("http://localhost/")).ok;\n}\nconsole.log(await load(answer));\nexport {};\n`,
+    errors: ["TS2717", "TS2345"],
+  },
   "a text for a number": {
     text: `export {};\nconst wrong: number = "text";\nconsole.log(wrong);\n`,
     errors: ["TS2322"],

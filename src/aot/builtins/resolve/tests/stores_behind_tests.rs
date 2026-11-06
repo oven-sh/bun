@@ -44,6 +44,9 @@ const NOT_BEHIND_ONE: &[&str] = &[
     "(_a = Array.prototype.at) !== void 0 && ((_a = void 0, true) && _a === void 0) ? (Array.prototype.at = f) : 0;",
     "function clear() { _a = undefined; return true; } (_a = Array.prototype.at) !== void 0 && (clear() && _a === void 0) ? (Array.prototype.at = f) : 0;",
     "((_a = Array.prototype.at) !== (_a = undefined)) && _a === void 0 ? (Array.prototype.at = f) : 0;",
+    "var o = { get g() { _a = undefined; return 1; } }; ((_a = Array.prototype.at) !== o.g) && _a === void 0 ? (Array.prototype.at = f) : 0;",
+    r#"var p = new Proxy({}, { has() { _a = undefined; return true; } }); ((_a = Array.prototype.at) !== ("k" in p)) && _a === void 0 ? (Array.prototype.at = f) : 0;"#,
+    "var v = { valueOf() { _a = undefined; return 1; } }; ((_a = Array.prototype.at) !== (v == 1)) && _a === void 0 ? (Array.prototype.at = f) : 0;",
 ];
 
 fn member_of(holder: BuiltinId, name: &str) -> BuiltinId {

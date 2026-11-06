@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { isLinux, tempDir } from "harness";
+import { sayGoal } from "../aot/harness/goals";
 import { test } from "../aot/supported";
 import {
   builtInModulesOfEachAlone,
@@ -45,6 +46,8 @@ const timesThePlainProgram: Record<string, number> = {
   "defines-its-exports.cjs": 6.76,
   "reads-the-constructor.cjs": 6.76,
 };
+const sayTimes = (name: string, bytes: number, plain: number) =>
+  sayGoal(name, Number((bytes / plain).toFixed(2)), 1.125);
 const measuredAgainstBound = (times: number) => `: ${times} times the plain program, the bound is 1.125 times`;
 
 const all = { ...programs, ...inExecutablesOnly };
@@ -75,9 +78,11 @@ for (const entry of Object.keys(all)) {
   (times ? test.failing : test.skipIf(!startsAtAnyEntryPoint))(
     `${entry} brings no built-in module into the executable${times ? measuredAgainstBound(times) : ""}`,
     async () => {
+      const ran = await compiledOnce();
+      if (times)
+        sayTimes(`${entry} brings no built-in module into the executable`, ran[entry].bytes, ran["plain.cjs"].bytes);
       const held = await modulesOnce();
       expect({ entry, builtInModules: held[entry] }).toEqual({ entry, builtInModules: held["plain.cjs"] });
-      const ran = await compiledOnce();
       const sizes = { entry, bytes: ran[entry].bytes, plain: ran["plain.cjs"].bytes };
       if (isLinux) expect({ ...sizes, grows: grows(sizes.bytes, sizes.plain) }).toEqual({ ...sizes, grows: false });
       else console.log(JSON.stringify(sizes));
@@ -104,6 +109,11 @@ test.failing(
   `nor do they make bun run --debug-aot compile built-in modules${measuredAgainstBound(6.76)}`,
   async () => {
     const ran = await compiledInPlaceOnce();
+    sayTimes(
+      "nor do they make bun run --debug-aot compile built-in modules",
+      ran["all.mjs"].bytes,
+      ran["plain.cjs"].bytes,
+    );
     expect(grows(ran["all.mjs"].bytes, ran["plain.cjs"].bytes)).toBe(false);
   },
   120_000,

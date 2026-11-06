@@ -450,6 +450,62 @@ fn what_is_laid_above_process_answers_a_name_that_process_has_only_under_its_fla
 }
 
 #[test]
+fn what_a_program_lays_under_a_name_that_some_runs_give_process_answers_native_code() {
+    for source in [
+        "Object.defineProperty(x, 'noDeprecation', y);",
+        "x.__defineGetter__('throwDeprecation', y);",
+        "const key = 'no' + 'Deprecation'; Reflect.defineProperty(x, key, y);",
+        "Object.defineProperty(x, `traceDeprecation`, y);",
+        "Object.defineProperties(x, { noDeprecation: y });",
+        "x.__proto__ = { get noProcessWarnings() {} };",
+        "class Above { get pendingDeprecation() {} }",
+        "x = class { set traceProcessWarnings(value) {} };",
+        "x.noDeprecation = y;",
+        "function noDeprecation() {}",
+        "export const throwDeprecation = y;",
+        "enum Names { traceDeprecation }",
+        "class Descriptors { constructor(public noDeprecation: PropertyDescriptor) {} }",
+        "Object.defineProperty(x, 'no\\x44eprecation', y);",
+        "Object.defineProperties(x, { no\\u0044eprecation: y });",
+        "new Proxy(x, y);",
+        "Proxy.revocable(x, y);",
+        "Reflect.construct(Proxy, [x, y]);",
+        "const Made = Proxy;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                case.resolved.process_reaches_code_on_its_prototypes(),
+                "{source}"
+            );
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
+        });
+        with_case(RUNTIME, source, |case| {
+            assert!(
+                !case.resolved.process_reaches_code_on_its_prototypes(),
+                "{source}"
+            );
+        });
+    }
+    for source in [
+        "process.emitWarning('old', 'DeprecationWarning');",
+        "Object.defineProperty(x, 'madeUp', y);",
+        "Object.defineProperty(x, 'pid', y);",
+        "Object.defineProperty(x, 'on', y);",
+        "Object.defineProperties(x, { default: y, AbortController: y });",
+        "class Above { get madeUp() {} }",
+        "typeof Proxy === 'function';",
+        "Proxy !== undefined;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                !case.resolved.process_reaches_code_on_its_prototypes(),
+                "{source}"
+            );
+        });
+    }
+}
+
+#[test]
 fn what_is_laid_above_process_answers_a_name_that_process_lacks_on_the_platform() {
     let windows = Setup {
         platform: Platforms::WINDOWS,

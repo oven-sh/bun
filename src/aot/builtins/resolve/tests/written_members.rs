@@ -132,6 +132,9 @@ const OPENS_NOTHING: &[&str] = &[
 const UNKNOWN_KEY: &[(&str, BuiltinId)] = &[
     ("Date[key] = f;", BuiltinId::Date),
     ("delete Date[key];", BuiltinId::Date),
+    ("Date[0] = f;", BuiltinId::Date),
+    ("Date[1.5] = f;", BuiltinId::Date),
+    ("Date[null] = f;", BuiltinId::Date),
     ("const d = Date; d[key] = f;", BuiltinId::Date),
     ("globalThis[key] = f;", BuiltinId::GlobalThis),
     (
@@ -427,11 +430,18 @@ fn store_of_a_function_that_the_loader_calls_is_told() {
         "const p = Module.prototype; p.require = f;",
         "Object.assign(Module, { _resolveFilename: f });",
         "Object.assign(Module, patches);",
+        "function install(m) { m._resolveFilename = f; } install(Module);",
+        "function install(m) { m.prototype.require = f; } install(Module);",
+        "install(Module.prototype);",
+        "export const kept = { Module };",
+        "const original = Module._resolveFilename; original.call(Module, name);",
     ];
     let others = [
-        "const original = Module._resolveFilename; original.call(Module, name);",
+        "const original = Module._resolveFilename; original(name);",
         "Module.prototype.load = f;",
         "Date.now = f;",
+        "install(Date);",
+        "install(Module.builtinModules);",
     ];
     let tells = |setup: Setup, source: &str| {
         let source = format!("import Module from 'node:module'; {source}");

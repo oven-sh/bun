@@ -1077,8 +1077,12 @@ impl Checker<'_, '_> {
             };
             let (key, value) = (Arg::Type(info.key), Arg::Type(info.value));
             let args = [Arg::Bytes(&name), Arg::Type(prop_type), key, value];
+            let is_brought = (info.declaration).is_some_and(|(of, _)| self.files().is_brought(of));
             let diagnostic = self.error_at((cx.file, start, end), 2411, &args);
             diagnostic.related_information.extend(related);
+            if is_brought {
+                diagnostic.subject = super::aot::DiagnosticSubject::BroughtDeclaration;
+            }
         }
     }
 

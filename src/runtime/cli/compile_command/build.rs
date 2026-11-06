@@ -470,6 +470,12 @@ fn build_program(
         },
         ..request.options.clone()
     };
+    let outfile = match request.product {
+        CompileProduct::Executable { outfile } => bun_sys::getcwd_alloc().ok().map(|folder| {
+            resolve_path::join_abs_string::<platform::Auto>(folder.as_bytes(), &[outfile]).to_vec()
+        }),
+        CompileProduct::GraphBytes | CompileProduct::ReportsOnly => None,
+    };
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,
@@ -478,6 +484,7 @@ fn build_program(
         executable_identity: target.identity,
         image_form: target.image_form,
         module_prefix,
+        outfile: outfile.as_deref(),
         log: request.log,
         arena: bundler.arena,
         event_loop: bundler.event_loop,

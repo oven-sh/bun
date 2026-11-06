@@ -1,1 +1,1 @@
-module.exports = { [Symbol.hasInstance](value) { return typeof value.mainModule.require(["node:", "zlib"].join("")).gzipSync === "function"; } };
+module.exports = { [Symbol.hasInstance](value) { return typeof value.mainModule.require(this.wanted).gzipSync === "function"; } };

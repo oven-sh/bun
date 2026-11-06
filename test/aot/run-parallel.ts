@@ -50,6 +50,7 @@
 //                                      and its line says in which lines the two differed in this run
 //                                      Nothing anywhere else. There is no such line for every platform
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
+//                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
@@ -699,7 +700,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     });
   }
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
-    if (failed || moreFlags.length || !runsAreAsUsersRunThem) {
+    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && program.growth)) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}`, ...goalsNotMetOf(program.file) });
     }
@@ -1004,6 +1005,17 @@ async function measureGrowth(
 const roomOfPeakMB = 32;
 const bytesOfPeakForAByteOfProgram = 200;
 const mostThatGrowsAsProgram = 1.5;
+const parserOfJavaScript = new Bun.Transpiler({ loader: "js" });
+/** A written program is named as its text reads: a type error stops the build of TypeScript alone. */
+function isJavaScript(text: string) {
+  try {
+    parserOfJavaScript.scan(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** How what a build takes grows with the program: the program at hand writes the programs that are built. */
 async function measureGrowthOfBuild(
   { growth, path }: Program,
@@ -1023,7 +1035,7 @@ async function measureGrowthOfBuild(
     );
     if (written.output.overLimit || written.output.exitCode !== 0)
       return { message: `it writes no program of the size ${size}`, output: written.output };
-    const entry = `${executable}-of-the-size-${size}.ts`;
+    const entry = `${executable}-of-the-size-${size}.${isJavaScript(written.output.stdout) ? "js" : "ts"}`;
     const outfile = nextExecutable("written");
     writeFileSync(entry, written.output.stdout);
     let remove = () => {};

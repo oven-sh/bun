@@ -116,13 +116,18 @@ enum LoadJob {
     LoadRequests,
 }
 
+#[derive(Copy, Clone)]
+struct StepsOfFile {
+    root_of_state: u32,
+    state: LoadState,
+    last_walk: u32,
+}
+
 #[derive(Default)]
 struct LoadSteps {
     root_number: u32,
     walk: u32,
-    roots_of_states: Vec<u32>,
-    states: Vec<LoadState>,
-    last_walks: Vec<u32>,
+    of_files: Vec<StepsOfFile>,
     jobs: Vec<(LoadJob, FileId)>,
     to_walk: Vec<FileId>,
     walked: Vec<FileId>,
@@ -131,23 +136,28 @@ struct LoadSteps {
 impl LoadSteps {
     fn begin(&mut self, file_count: usize) {
         self.root_number += 1;
-        self.roots_of_states.resize(file_count, 0);
-        self.states.resize(file_count, LoadState::Unrequested);
-        self.last_walks.resize(file_count, 0);
+        let untouched = StepsOfFile {
+            root_of_state: 0,
+            state: LoadState::Unrequested,
+            last_walk: 0,
+        };
+        self.of_files.resize(file_count, untouched);
         self.jobs.clear();
     }
 
     fn state(&self, file: FileId) -> LoadState {
-        if self.roots_of_states[file.idx()] == self.root_number {
-            self.states[file.idx()]
+        let of_file = &self.of_files[file.idx()];
+        if of_file.root_of_state == self.root_number {
+            of_file.state
         } else {
             LoadState::Unrequested
         }
     }
 
     fn set_state(&mut self, file: FileId, state: LoadState) {
-        self.roots_of_states[file.idx()] = self.root_number;
-        self.states[file.idx()] = state;
+        let of_file = &mut self.of_files[file.idx()];
+        of_file.root_of_state = self.root_number;
+        of_file.state = state;
     }
 
     fn take_if_unseen(&mut self, file: FileId) -> bool {
@@ -210,15 +220,15 @@ impl LinkedFiles {
         let mut is_all_recorded = true;
         steps.to_walk.push(start);
         while let Some(importer) = steps.to_walk.pop() {
-            if core::mem::replace(&mut steps.last_walks[importer.idx()], walk) == walk {
+            let of_importer = &mut steps.of_files[importer.idx()];
+            if core::mem::replace(&mut of_importer.last_walk, walk) == walk {
                 continue;
             }
             steps.walked.push(importer);
-            if steps.states[importer.idx()] == LoadState::Quiet {
+            if of_importer.state == LoadState::Quiet {
                 for &target in &self.es_modules_by_importer[importer.idx()] {
-                    if steps.last_walks[target.idx()] != walk
-                        && steps.states[target.idx()] != LoadState::Settled
-                    {
+                    let of_target = &steps.of_files[target.idx()];
+                    if of_target.last_walk != walk && of_target.state != LoadState::Settled {
                         steps.to_walk.push(target);
                     }
                 }

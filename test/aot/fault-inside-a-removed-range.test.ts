@@ -178,7 +178,6 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
 
   for (const [how, { here, today }] of Object.entries(knownFailures)) {
     const name = `is called a removed feature only where removed code was called: ${how}: ${today}`;
-    if (here) test.todo(name, () => expect(found[how]).toEqual(wanted[how]));
-    else test.todo(name);
+    test.todo(name, here ? () => expect(found[how]).toEqual(wanted[how]) : undefined);
   }
 });

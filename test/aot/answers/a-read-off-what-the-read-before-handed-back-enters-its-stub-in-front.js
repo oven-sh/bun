@@ -4,10 +4,16 @@
 // # f1 = chain, f2 = twice
 // # RUN(CHAIN): bytes f1:Body mechanisms=all-Inlining
 // # CHAIN: Call Stub ReadAtSite
-// # CHAIN-NOT: entered in front
 // # CHAIN: Call Stub ReadAtSite{{*}}, entered in front
 // # CHAIN: Call Stub ReadAtSite{{*}}, entered in front
+// # The parameter arrives in the first register of arguments. On x86_64 that is another register than the one of results, so the first read is entered at its head. On arm64 the two are one register.
+// # RUN(FIRST): bytes f1:Body mechanisms=all-Inlining
+// # REQUIRES(FIRST): x86_64
+// # FIRST: Call Stub ReadAtSite
+// # FIRST-NOT: entered in front
+// # FIRST: Call Stub ReadAtSite{{*}}, entered in front
 // # RUN(TWICE): bytes f2:Body mechanisms=all-Inlining
+// # REQUIRES(TWICE): x86_64
 // # TWICE-NOT: entered in front
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

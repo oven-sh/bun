@@ -200,6 +200,25 @@ fn opens_where_handed_on(object: BuiltinId) -> bool {
     })
 }
 
+fn leads_to_function_that_loader_calls(object: BuiltinId) -> bool {
+    let mut is_seen = vec![false; BuiltinId::COUNT as usize];
+    let mut pending = vec![table::canonical_id(object)];
+    while let Some(reached) = pending.pop() {
+        if std::mem::replace(&mut is_seen[reached.to_wire() as usize], true) {
+            continue;
+        }
+        if is_function_that_loader_calls(reached) {
+            return true;
+        }
+        pending.extend(
+            table::members(reached)
+                .iter()
+                .map(|&it| table::canonical_id(it)),
+        );
+    }
+    false
+}
+
 fn takes_no_names(holder: BuiltinId) -> bool {
     table::has_flag(holder, BuiltinFlags::IS_LOCKED_OBJECT)
         || table::has_flag(holder, BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES)
@@ -341,6 +360,7 @@ impl WritesFound {
         } else if let Some(writer) = find_writer(object) {
             self.note_writer_out_of_sight(writer);
         }
+        self.stores_loader_functions |= leads_to_function_that_loader_calls(object);
         if opens_where_handed_on(object) {
             self.opened.push(object);
         }
@@ -521,8 +541,8 @@ impl Resolver<'_, '_> {
         for &value in values {
             match value {
                 Constant::String(text) => keys.push(WrittenKey::Text(text)),
-                Constant::Number(_) => {}
-                Constant::Undefined
+                Constant::Number(_)
+                | Constant::Undefined
                 | Constant::Null
                 | Constant::Boolean(_)
                 | Constant::BigInt(_) => return None,

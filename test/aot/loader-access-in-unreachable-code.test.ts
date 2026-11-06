@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { sayGoal } from "./harness/goals";
 import { run } from "./harness/run";
 import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-programs";
 import { test } from "./supported";
@@ -42,11 +43,12 @@ function builtOnceWith(lib: string) {
   return once;
 }
 
-async function expectNoGrowth(forms: Record<string, string>) {
+async function expectNoGrowth(forms: Record<string, string>, goalNotMet?: string) {
   const plain = await builtOnceWith(double);
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
   for (const [name, lib] of Object.entries(forms)) {
     const found = await builtOnceWith(lib);
+    if (goalNotMet) sayGoal(goalNotMet, found.size - plain.size, 32 * 1024);
     expect({
       name,
       stdout: found.stdout,
@@ -66,7 +68,11 @@ test(
 // Once it is met this test fails: put the form back into the list above.
 test.failing(
   "a load by name in a function that only a function nobody calls calls brings no built-in module along: 80 KB for at most 32 KB",
-  () => expectNoGrowth(notReachedAndStillDear),
+  () =>
+    expectNoGrowth(
+      notReachedAndStillDear,
+      "a load by name in a function that only a function nobody calls calls brings no built-in module along",
+    ),
   240_000,
 );
 // A case that is marked fails for whatever reason. That the program is built and answers is asked here, of the same build.

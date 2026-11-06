@@ -2,6 +2,7 @@
 // 17 to 21 MB under --trim), because one row of the table of built-ins said more than the host does.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
+import { sayGoal } from "./harness/goals";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
@@ -74,7 +75,9 @@ describe.concurrent("keeps nothing of the language that it does not use", () => 
   test.failing(
     "a route that is a Response: 3,669 built-ins escape for none, the interpreter stays and every locale",
     async () => {
-      expect(await report(`Bun.serve({ port: 3000, routes: { "/": new Response("hello") } });`)).toEqual(tight);
+      const found = await report(`Bun.serve({ port: 3000, routes: { "/": new Response("hello") } });`);
+      sayGoal("a route that is a Response: the built-ins that escape", found.escapes.length, 0);
+      expect(found).toEqual(tight);
     },
   );
 });

@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { tempDir } from "harness";
+import { sayGoal } from "../aot/harness/goals";
 import { test } from "../aot/supported";
 import { compileEachAlone, importingByName, oneAfterTheOther, startsAtAnyEntryPoint } from "./aot-builtin-modules";
 
@@ -129,6 +130,11 @@ test.skipIf(!startsAtAnyEntryPoint)(
   "a global that goes nowhere but into reads by written names brings no built-in module into the executable: 4,112,384 bytes more than a plain program on Linux x64, the bound is 1,048,576",
   async () => {
     const ran = await theThree();
+    sayGoal(
+      "a global that goes nowhere but into reads by written names brings no built-in module into the executable",
+      ran[harmless].bytes - ran[plain].bytes,
+      1024 * 1024,
+    );
     expect(ran[harmless].bytes - ran[plain].bytes).toBeLessThan(1024 * 1024);
   },
   280_000,

@@ -70,6 +70,15 @@ declare function $callNoInline<This, Arguments extends unknown[], Result>(
 declare function $findsDeclaredMember(object: object, name: string, Class?: Function): boolean;
 
 /**
+ * True only where a lookup of `name` on `object` finds nothing: the object holds no property beside the fields that its class declares, and nothing above it holds the name.
+ * Ask it behind a yes of `$isPlainInstanceOf`: it goes by what is proven of `object`, not by the written type.
+ * Behind the yes a plain read of `object[name]` is `undefined` and costs nothing: leave the reads in the text as they stand in plain Bun.
+ * It holds until code of the program runs again. False says nothing: any other property of its own on the object makes it false too.
+ * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $findsNoMember(object: object, name: string): boolean;
+
+/**
  * True only where `object` was made by `Class` itself, not by an heir, no field that `Class` declares was made an accessor or defined anew under other attributes,
  * and above the object stands the prototype of `Class`, with at most plain objects in between that hide no member of it.
  * Then a read of a declared field runs no code of the program: read the fields in any order, as often as you like, or not at all.

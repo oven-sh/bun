@@ -428,9 +428,11 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
         const asyncId = asyncHooksTick.newAsyncId();
         // Snapshot: enable()/disable() from inside a hook must not affect the
         // in-flight dispatch (node stages such mutations in tmp_array until
-        // the emit completes).
-        const hooks = tickInitHooks.slice();
-        for (let i = 0; i < hooks.length; i++) {
+        // the emit completes). By hand: Array.prototype.slice is the program's to replace.
+        const count = tickInitHooks.length;
+        const hooks = $newArrayWithSize<(typeof tickInitHooks)[number]>(count);
+        for (let i = 0; i < count; i++) $putByValDirect(hooks, i, tickInitHooks[i]);
+        for (let i = 0; i < count; i++) {
           try {
             hooks[i](asyncId, "TickObject", 0, tock);
           } catch (err) {

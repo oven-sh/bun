@@ -5,9 +5,10 @@ use crate::output_file::{IndexOptional, Options, OptionsData};
 use bun_aot::Compilation;
 use bun_aot::compile::{EntryPointPaths, ProgramSummary};
 use bun_ast::Loader;
-use bun_core::strings;
 use bun_paths::is_sep_any;
+use bun_resolver::compiled_program::name_in_plain_executable;
 use bun_sema::util::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 
 /// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the name that `bun build --compile` gives it.
 pub(crate) struct EntryPointNames<'a> {
@@ -19,56 +20,55 @@ pub(crate) struct EntryPointNames<'a> {
 }
 
 impl EntryPointNames<'_> {
-    /// `embedded[i]` by `shown[i]` as a public path spells it behind `/$bunfs/root/`, or behind `/$bunfs/` for a file above the root directory of the build.
-    fn embedded_by_public_name(&self) -> FxHashMap<Vec<u8>, &[u8]> {
+    /// `embedded[i]` by the name that `bun build --compile` gives the source `shown[i]`: a `_.._` for each folder above the root directory of the build.
+    fn embedded_by_source_name(&self) -> FxHashMap<Vec<u8>, &[u8]> {
         let mut names = FxHashMap::default();
         for (shown, embedded) in self.shown.iter().zip(self.embedded) {
             let folders = bun_core::strings::split(shown, b"/");
             let level = folders.take_while(|&folder| folder == b"..").count();
-            let folders = match (1..=self.levels_above_root).contains(&level) {
-                true => self.levels_above_root + 1 - level,
-                false => level,
-            };
+
             let below = &shown[shown.len().min(3 * level)..];
-            let public_name = [&b"_.._/".repeat(folders)[..], below].concat();
-            names.entry(public_name).or_insert(&embedded[..]);
+            let source_name = [&b"_.._/".repeat(level)[..], below].concat();
+            names.entry(source_name).or_insert(&embedded[..]);
         }
         names
     }
 
-    fn source_name<'p>(&self, public_path: &'p [u8]) -> Option<&'p [u8]> {
+    /// The files of an executable lie below `/$bunfs/root/`, and a program may write the path of one out. So the file of a module above the root directory has the name of the source in a plain executable, whatever the path of the module.
+    fn source_name<'p>(&self, public_path: &'p [u8]) -> Option<Cow<'p, [u8]>> {
         let root = self.module_prefix;
-        let folder = root.strip_suffix(b"/").unwrap_or(root);
-        let mount = &root[..strings::last_index_of_char(folder, b'/').map_or(0, |at| at + 1)];
-        let below_root = public_path.strip_prefix(root);
-        below_root.or_else(|| {
-            public_path
-                .strip_prefix(mount)
-                .filter(|_| !mount.is_empty())
-        })
+        match public_path.strip_prefix(root) {
+            Some(below_root) => Some(Cow::Borrowed(below_root)),
+            None => {
+                name_in_plain_executable(root, self.levels_above_root, public_path).map(Cow::Owned)
+            }
+        }
     }
 
     /// A program that runs in place has the paths of its files on disk, and no other names.
     fn file_name<'p>(
         &self,
-        embedded_by_public_name: &FxHashMap<Vec<u8>, &'p [u8]>,
+        embedded_by_source_name: &FxHashMap<Vec<u8>, &'p [u8]>,
         public_path: &'p [u8],
-    ) -> &'p [u8] {
+    ) -> Cow<'p, [u8]> {
         let Some(shown) = self.source_name(public_path) else {
-            return public_path;
+            return Cow::Borrowed(public_path);
         };
-        embedded_by_public_name.get(shown).copied().unwrap_or(shown)
+        match embedded_by_source_name.get(&shown[..]) {
+            Some(&embedded) => Cow::Borrowed(embedded),
+            None => shown,
+        }
     }
 
     /// The name of each entry point's file. Below the root a path names the source there first, so an entry point whose embedded name is the path of another's source is a file under the path of its own.
-    fn file_names<'p>(&'p self, public_paths: &'p [Vec<u8>]) -> Vec<&'p [u8]> {
-        let source_name = |path: &'p [u8]| self.source_name(path).unwrap_or(path);
+    fn file_names<'p>(&'p self, public_paths: &'p [Vec<u8>]) -> Vec<Cow<'p, [u8]>> {
+        let source_name = |path: &'p [u8]| self.source_name(path).unwrap_or(Cow::Borrowed(path));
         let source_names = public_paths.iter().map(|path| source_name(path));
-        let source_names: FxHashSet<&[u8]> = source_names.collect();
-        let embedded = self.embedded_by_public_name();
+        let source_names: FxHashSet<Cow<'p, [u8]>> = source_names.collect();
+        let embedded = self.embedded_by_source_name();
         let file_names = public_paths.iter().map(|path| {
             let (own, name) = (source_name(path), self.file_name(&embedded, path));
-            match name != own && source_names.contains(name) {
+            match name != own && source_names.contains(&name) {
                 true => own,
                 false => name,
             }
@@ -159,12 +159,12 @@ fn collect_output_files(
             !names.module_prefix.is_empty()
                 && file.output_kind == OutputKind::Asset
                 && file.entry_point_index.is_none()
-                && bun_core::strings::remove_leading_dot_slash(&file.dest_path) == dest_path
+                && bun_core::strings::remove_leading_dot_slash(&file.dest_path) == &dest_path[..]
         };
         match embedded.iter_mut().find(is_copy) {
             Some(copy) => copy.entry_point_index = Some(index as u32),
             None => output_files.push(create_entry_file(
-                dest_path,
+                &dest_path,
                 &entry.source_path,
                 index as u32,
             )),
@@ -260,16 +260,32 @@ mod tests {
             shown: &shown,
             embedded: &embedded,
         };
-        let embedded = names.embedded_by_public_name();
-        let file_name = |path: &'static [u8]| names.file_name(&embedded, path);
+        let embedded = names.embedded_by_source_name();
+        let file_name = |path: &'static [u8]| names.file_name(&embedded, path).into_owned();
         assert_eq!(file_name(b"/$bunfs/root/a.ts"), b"app");
         assert_eq!(file_name(b"/$bunfs/_.._/_.._/lib/b.mjs"), b"_.._/lib/b.js");
-        assert_eq!(
-            file_name(b"/$bunfs/_.._/_.._/lib/c.mjs"),
-            b"_.._/_.._/lib/c.mjs"
-        );
+        assert_eq!(file_name(b"/$bunfs/_.._/_.._/lib/c.mjs"), b"_.._/lib/c.mjs");
         assert_eq!(file_name(b"/$bunfs/root/a.ts?text"), b"a.ts?text");
         assert_eq!(file_name(b"/project/a.ts"), b"/project/a.ts");
+    }
+
+    #[test]
+    fn file_of_a_module_above_the_root_has_the_name_of_its_source_in_a_plain_executable() {
+        let names = EntryPointNames {
+            module_prefix: PREFIX,
+            levels_above_root: 4,
+            shown: &[],
+            embedded: &[],
+        };
+        let paths = [
+            &b"/$bunfs/_.._/_.._/x.mjs"[..],
+            b"/$bunfs/_.._/_.._/_.._/x.mjs",
+        ];
+        let paths: Vec<Vec<u8>> = paths.iter().map(|path| path.to_vec()).collect();
+        assert_eq!(
+            names.file_names(&paths),
+            [&b"_.._/_.._/_.._/x.mjs"[..], b"_.._/_.._/x.mjs"]
+        );
     }
 
     #[test]

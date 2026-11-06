@@ -92,6 +92,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-file-of-the-graph-of-a-test-file-requires-a-module-that-imports-the-test-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-of-the-product-finds-no-spy-that-the-build-has-not-seen.test.ts": {
     "default": 28900,
     "asan": 115600
@@ -139,6 +143,10 @@
   "aot/a-first-require-costs-the-same-in-a-larger-program.test.ts": {
     "default": 17200,
     "asan": 68800
+  },
+  "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-function-in-a-field-of-an-object-of-an-earlier-test-file-runs-in-its-own-realm.test.ts": {
     "default": 5400,
@@ -556,6 +564,10 @@
     "default": 12700,
     "asan": 50800
   },
+  "aot/an-update-of-the-table-of-methods-opens-the-pages-that-it-stores-into.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/aot-harden.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -579,6 +591,10 @@
   "aot/browser-target.test.ts": {
     "default": 16600,
     "asan": 66400
+  },
+  "aot/builds-on-one-thread-and-on-several-give-the-same-bytes.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/built-ins-from-packages.test.ts": {
     "default": 11100,
@@ -1204,6 +1220,10 @@
     "default": 109000,
     "asan": 436000
   },
+  "aot/objects-of-an-earlier-test-file-find-what-that-file-has-replaced.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/one-object-one-entry.test.ts": {
     "default": 700,
     "asan": 2800
@@ -1807,6 +1827,10 @@
   "aot/what-a-constant-of-the-build-rules-out-is-not-in-the-executable.test.ts": {
     "default": 35900,
     "asan": 143600
+  },
+  "aot/what-a-data-file-holds-and-what-a-script-declares-is-checked-as-tsc-checks-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/what-a-file-served-by-a-run-time-plugin-imports-has-run.test.ts": {
     "default": 3700,

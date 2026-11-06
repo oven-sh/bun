@@ -49,6 +49,18 @@ const DECORATED_MEMBER_KEY_IMPORTS: &[(&str, bool)] = &[
         true,
     ),
     (
+        r#"import { k } from "m"; class A { @d accessor [k]: number; }"#,
+        false,
+    ),
+    (
+        r#"import { k } from "m"; class A { @d declare accessor [k]: number; }"#,
+        true,
+    ),
+    (
+        r#"import { k } from "m"; abstract class A { @d abstract accessor [k]: number; }"#,
+        true,
+    ),
+    (
         r#"import { k } from "m"; class A { @d [k](): void; [k]() {} }"#,
         false,
     ),

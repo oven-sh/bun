@@ -24,6 +24,7 @@ test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import p
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > a suffix on an absolute native path, a relative native path and a path with forward slashes
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > an error in the wrapper is shown with the wrapper's source
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > an import attribute takes precedence over the suffix
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > combined suffixes follow a fixed precedence, and look-alike queries are ignored
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > in the query of import.meta.glob
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > other kinds of files
 test/js/bun/resolve/import-query.test.ts: dynamic import of a .node addon ignores a query string suffix
@@ -389,6 +390,8 @@ test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/SplitRequireLoadsChunkSynchronously-bytecode
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/SplitRequireLoadsChunkSynchronously-source
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/StartupModulesPrecedeLazyChunks
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk+minify
 ~ test/bundler/bundler_edgecase.test.ts: bundler > edgecase/AwsCdkLib
 ~ test/bundler/bundler_html_server.test.ts: bundler > compile/api/HTMLServerMultipleRoutes
 ~ test/bundler/bundler_html_server.test.ts: bundler > compile/cli/HTMLServerMultipleRoutes

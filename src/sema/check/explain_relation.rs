@@ -1252,6 +1252,7 @@ impl<'p, 's> Checker<'p, 's> {
         unmatched: &[&Prop],
     ) {
         let first = unmatched[0];
+        let reported_before = chain_depth(&r.error_chain);
         // Two `#x` with the same spelling are distinct members.
         if self.atoms().is_private_name(first.name)
             && let TypeData::Ref { target: class, .. } = *self.data(source)
@@ -1307,6 +1308,12 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 self.report_error_about(r, 2739, &args, &[source, target]);
             }
+        }
+        if chain_depth(&r.error_chain) > reported_before
+            && unmatched.iter().all(|prop| self.is_prop_brought(prop))
+            && let Some(line) = r.error_chain.as_mut().and_then(Rc::get_mut)
+        {
+            line.subject = DiagnosticSubject::BroughtDeclaration;
         }
     }
 }

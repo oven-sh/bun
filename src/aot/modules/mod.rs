@@ -181,7 +181,7 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
             }
     };
     leave_imports_of_test_files_to_loader(input, &mut scans, &may_load_again);
-    let (mut run_again, modules) = run_steps_beside(
+    let ((mut run_again, texts_listed_ahead), mut modules) = run_steps_beside(
         input.beside,
         &mut steps,
         ["bind: collect modules: files that run again", "the modules"],
@@ -191,6 +191,7 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
         },
         || collect_modules(input, &scans),
     );
+    modules.texts_listed_ahead = texts_listed_ahead;
     if input.entry_points_run_again {
         let entry_points = input.sources.entry_points().iter();
         run_again.extend(entry_points.map(|entry_point| ModuleRef::File(entry_point.file)));

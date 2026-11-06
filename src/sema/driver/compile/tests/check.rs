@@ -934,7 +934,7 @@ fn a_thread_gives_memory_back_under_a_hundred_times_in_a_long_check() {
     assert!(!crate::has_fallen_by_an_eighth(0, 0));
 }
 
-fn codes_beside_declarations(
+pub(super) fn codes_beside_declarations(
     is_installed: bool,
     declared: &str,
     main: &str,

@@ -7,8 +7,8 @@
 // By hand:
 //   testaot run <file or folder>.. --show-output      IR tests: a .ir file says what is run on it and what must be printed
 //   testaot native <part of a name>                   tests written in C++
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isWindows } from "harness";
+import { afterAll, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { declare } from "../harness/capabilities";
@@ -86,8 +86,8 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 const failsToday: string[] = [];
 
 /** How many passed. */
-export async function expectEveryTestPasses(args: string[], cwd?: string) {
-  const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd);
+export async function expectEveryTestPasses(args: string[], cwd?: string, env?: Record<string, string>) {
+  const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd, env);
   await printOutputOfFailedTests(lines, cwd);
   const failed = lines.filter(
     line =>
@@ -153,11 +153,17 @@ const sharesOfAFile = 16;
 export function nativeTests(part: number, parts: number) {
   if (whyNoNativeTests) return void skipOrFail(whyNoNativeTests);
   const sharesUnderWay = join(dirname(testaot!), "native-tests-under-way");
+  const images = tempDir("native-test-images", {});
+  afterAll(() => images[Symbol.dispose]());
+  const env = isWindows ? {} : { AOT_TEST_IMAGES: String(images) };
   for (let slice = 0; slice < sharesOfAFile; slice++) {
     const share = `${(part - 1) * sharesOfAFile + slice + 1}/${parts * sharesOfAFile}`;
     test.concurrent(
       `native tests: --part=${share}`,
-      () => slot(() => sharedSlot(sharesUnderWay, slots, () => expectEveryTestPasses(["native", `--part=${share}`]))),
+      () =>
+        slot(() =>
+          sharedSlot(sharesUnderWay, slots, () => expectEveryTestPasses(["native", `--part=${share}`], undefined, env)),
+        ),
       600_000,
     );
   }

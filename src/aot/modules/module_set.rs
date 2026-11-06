@@ -1,5 +1,6 @@
 use super::interop::{Interop, ModuleKind, RequireResult, file_interop};
 use super::requests::{ScannedSite, Scans};
+use super::spelled_files::TextThatSpellsFile;
 use super::wrapped::WrappedModules;
 use super::{BindInput, ModuleRef, compare_modules};
 use crate::ir::parallel::map_each;
@@ -29,6 +30,7 @@ pub(super) struct ModuleSet {
     pub other_modules: Vec<ModuleRef>,
     pub external_kinds: Vec<((FileId, Atom), ExternalKind)>,
     pub runs_code_out_of_sight: bool,
+    pub(super) texts_listed_ahead: Option<Option<Vec<TextThatSpellsFile>>>,
     pub(super) left_to_loader: Vec<((FileId, Atom, Option<Loader>), FileId)>,
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
@@ -72,6 +74,7 @@ impl ModuleSet {
             inner_modules: Vec::new(),
             runs_again: Vec::new(),
             runs_code_out_of_sight: false,
+            texts_listed_ahead: None,
             interops,
             forms: Vec::new(),
             forms_require_checks_first: Vec::new(),
@@ -364,6 +367,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         external_kinds,
         runs_code_out_of_sight,
         left_to_loader,
+        texts_listed_ahead: None,
         wrapped: WrappedModules::default(),
         inner_modules: Vec::new(),
         runs_again: vec![false; interops.len()],

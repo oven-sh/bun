@@ -7,7 +7,7 @@ use crate::check::explain::NOWHERE;
 use crate::check::sink::{Arg, Reported};
 use crate::hir::{ExprId, ExprKind, FnBody, FnId, MemberKind, Node, NodeData, StmtKind};
 use crate::program::{FileId, Files, Sym};
-use crate::types::{Origin, PropSource, SigId, TypeData, TypeId};
+use crate::types::{Origin, Prop, PropSource, SigId, TypeData, TypeId};
 use smallvec::SmallVec;
 
 type SeenExpressions = SmallVec<[(FileId, ExprId); 8]>;
@@ -68,12 +68,8 @@ impl Checker<'_, '_> {
             Arg::Type(ty) => self.is_type_brought(ty, 0),
             Arg::Sym(symbol) => self.files().is_brought(symbol.file),
             Arg::Sig(signature) => self.is_signature_brought(signature),
-            Arg::Prop(_)
-            | Arg::Atom(_)
-            | Arg::Number(_)
-            | Arg::Bytes(_)
-            | Arg::Text(_)
-            | Arg::Path(_) => false,
+            Arg::Prop(prop) => self.is_prop_brought(prop),
+            Arg::Atom(_) | Arg::Number(_) | Arg::Bytes(_) | Arg::Text(_) | Arg::Path(_) => false,
         });
         match is_brought {
             true => DiagnosticSubject::BroughtDeclaration,
@@ -115,6 +111,15 @@ impl Checker<'_, '_> {
     pub(in crate::check) fn is_signature_brought(&self, signature: SigId) -> bool {
         let origin = self.types().sig_origin(signature);
         (self.sig_decl(origin)).is_some_and(|(file, ..)| self.files().is_brought(file))
+    }
+
+    pub(in crate::check) fn is_prop_brought(&self, prop: &Prop<'_>) -> bool {
+        let PropSource::Symbol(symbol) = prop.source else {
+            return false;
+        };
+        let files = self.files();
+        let declarations = files.decls_of(files.canonical(symbol));
+        !declarations.is_empty() && declarations.iter().all(|&(of, _)| files.is_brought(of))
     }
 
     pub(in crate::check) fn is_expression_brought(&mut self, file: FileId, e: ExprId) -> bool {

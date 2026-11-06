@@ -731,6 +731,7 @@ struct Walk {
     /// The same two for `skip_to_dominator`.
     next_far_skip: u32,
     steps_between_far_skips: u32,
+    far_skipped: (u32, u32),
     /// How many of `steps` are in `FlowMemo::steps_of_long_walks`.
     steps_counted: u32,
     /// The number of nested `getTypeAtFlowNode` invocations that would be in progress.
@@ -1179,6 +1180,7 @@ impl Walk {
             next_skip: LONG_WALK,
             next_far_skip: 0,
             steps_between_far_skips: 0,
+            far_skipped: (0, 0),
             steps_counted: 0,
             steps_between_skips: 0,
             depth: 0,
@@ -1191,6 +1193,11 @@ impl Walk {
             is_exact: false,
             may_be_too_deep: false,
         }
+    }
+
+    #[inline]
+    fn has_far_skipped(&self, flow: FlowId) -> bool {
+        self.far_skipped.0 < flow.0 && flow.0 <= self.far_skipped.1
     }
 
     /// Starts over as an exact walk.
@@ -7447,7 +7454,7 @@ impl<'p, 's> Checker<'p, 's> {
                 walk.too_deep = true;
                 break TypeId::ERROR;
             }
-            if walk.steps > walk.next_skip
+            if (walk.steps > walk.next_skip || walk.has_far_skipped(flow))
                 && let Some((arrived_at, last_shared)) = self.try_to_skip(walk, flow)
             {
                 if last_shared.is_some() {
@@ -9056,10 +9063,19 @@ impl<'p, 's> Checker<'p, 's> {
     /// between are at most as many as it had to take before.
     fn try_to_skip(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
         let steps = walk.steps;
+        let has_far_skipped = walk.has_far_skipped(flow);
         if self.reads_types_alone
-            && steps > walk.next_far_skip.max(self.steps_before_far_skip(walk))
+            && (has_far_skipped || steps > walk.next_far_skip.max(self.steps_before_far_skip(walk)))
         {
             let skipped = self.skip_to_dominator(walk, flow);
+            walk.far_skipped = match skipped {
+                Some((arrived_at, _)) if arrived_at.0 == walk.far_skipped.0 => {
+                    (arrived_at.0, flow.0.max(walk.far_skipped.1))
+                }
+                Some((arrived_at, _)) => (arrived_at.0, flow.0),
+                None if has_far_skipped => (0, 0),
+                None => walk.far_skipped,
+            };
             walk.steps_between_far_skips = match skipped {
                 Some((_, passed)) if passed >= WORTHWHILE_FAR_SKIP => 0,
                 _ => (walk.steps_between_far_skips * 2).max(WORTHWHILE_FAR_SKIP),

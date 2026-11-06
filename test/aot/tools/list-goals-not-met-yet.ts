@@ -19,8 +19,10 @@
 // loaded by a `bun test` of its own in which a stand-in takes the place of bun:test: `describe` runs what it is handed, every case is
 // written down under its name, and no case and no hook is run. What a test writes into a file for a Bun that it starts is text, and is
 // left out. A test file outside test/aot that never speaks of the compiler is Bun's own, and is left out too.
+// A file may choose its mark by the platform: `(isWindows ? test.failing : test)(..)`. The stand-in writes down on which lines a mark was evaluated, and
+// a line that spells a mark and was not is listed at the end of the page: what it marks is declared elsewhere, and is missing from the tables.
 // Run it with the Bun under test on Linux: some files ask that Bun what it can do before they declare their cases.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -74,7 +76,13 @@ async function declareInTheRunner(out: string) {
   const declared: Declared[] = [];
   const groups: string[] = [];
   const stillDeclaring: unknown[] = [];
+  const evaluated = new Set<string>();
   let groupsToDo = 0;
+
+  // Every frame, and not the nearest: a file may read `test` through a proxy of a helper, which reads the mark for it.
+  const noteWhereTheMarkIsEvaluated = () => {
+    for (const [, file, line] of (new Error().stack ?? "").matchAll(/\(?(\/[^\s():]+):(\d+):\d+\)?/g)) evaluated.add(`${file}:${line}`);
+  };
 
   const anything: any = new Proxy(function () {}, {
     get: (_, key) => (key === "then" ? undefined : key === Symbol.toPrimitive ? () => "" : anything),
@@ -100,9 +108,13 @@ async function declareInTheRunner(out: string) {
         groups.pop();
       }
     };
-    const where = (changed: Partial<Marks>) => (holds: unknown) => declarer(isGroup, holds ? { ...marks, ...changed } : marks);
+    const where = (changed: Partial<Marks>) => (holds: unknown) => {
+      if (holds && (changed.failing || changed.todo)) noteWhereTheMarkIsEvaluated();
+      return declarer(isGroup, holds ? { ...marks, ...changed } : marks);
+    };
     return new Proxy(one, {
       get(target, key) {
+        if (key === "failing" || key === "todo") noteWhereTheMarkIsEvaluated();
         if (key === "failing") return declarer(isGroup, { ...marks, failing: true });
         if (key === "todo") return declarer(isGroup, { ...marks, todo: true });
         if (key === "skip" || key === "only" || key === "concurrent" || key === "serial") return declarer(isGroup, marks);
@@ -149,7 +161,7 @@ async function declareInTheRunner(out: string) {
 
   (globalThis as any)[Symbol.for(wholeFileIsDeclared)] = async () => {
     await Promise.all(stillDeclaring);
-    writeFileSync(out, JSON.stringify(declared));
+    writeFileSync(out, JSON.stringify({ declared, evaluated: [...evaluated] }));
     process.exit(0);
   };
 }
@@ -276,6 +288,7 @@ const movesByPlatformAndByChange = (measured: string, name: string) =>
   new RegExp(`${measured} (?:\\w+ )?(?:functions|modules|names|built-ins|instructions)\\b`).test(name);
 
 const yesOrNo = "no number: the goal is a yes or a no";
+const cannotGrowWorse = "nothing need";
 const comparedBetweenRuns =
   "two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound";
 
@@ -290,7 +303,9 @@ function whatKeeps(goal: { name: string; measured: string }, others: Declared[])
   if (!goal.measured) {
     return /\bthe (?:bound|goal|limit|floor|budget) (?:is|of)\b/.test(goal.name) ? "nothing: the name says no measured number beside its bound" : yesOrNo;
   }
-  const title = goal.name.slice(0, goal.name.indexOf(": ", goal.name.lastIndexOf(" > ") + 1));
+  let endOfTitle = goal.name.indexOf(": ", goal.name.lastIndexOf(" > ") + 1);
+  if (/(?:^|> )known bug$/.test(goal.name.slice(0, endOfTitle))) endOfTitle = goal.name.indexOf(": ", endOfTitle + 2);
+  const title = goal.name.slice(0, endOfTitle);
   const byTitle = title && others.find(other => !other.failing && !other.todo && (other.name.startsWith(`${title} but `) || (other.name.startsWith(title) && saysWhatIsReached(other.name.slice(title.length)))));
   if (byTitle) return `the case beside it: ${byTitle.name}`;
   const spelled = [goal.measured.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), inWords[Number(goal.measured)]].filter(Boolean).join("|");
@@ -301,6 +316,8 @@ function whatKeeps(goal: { name: string; measured: string }, others: Declared[])
     .filter(other => !other.failing && !other.todo && holdsToTheNumber.test(other.name) && sharesItsHead(other.name, goal.name))
     .sort((one, other) => commonHead(other.name, goal.name) - commonHead(one.name, goal.name));
   if (pin) return `the case beside it: ${pin.name}`;
+  if (Number(goal.measured.replaceAll(",", "")) === 0) return `${cannotGrowWorse}: it stands at zero, and nothing lies under that`;
+  if (new RegExp(`\\b(?:${spelled}) of (?:the |its |all )?(?:${spelled})\\b`).test(goal.name)) return `${cannotGrowWorse}: it counts all that there are`;
   return movesByPlatformAndByChange(goal.measured, goal.name)
     ? "nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it"
     : "nothing yet: one more case beside it could hold it to this number";
@@ -324,8 +341,9 @@ async function marksOfTestFiles(found: Found) {
     .filter(file => speaksOfTheCompiler.test(file) || speaksOfTheCompiler.test(readFileSync(join(root, file), "utf8")));
   const room = mkdtempSync(join(tmpdir(), "goals-not-met-yet-"));
   const refused: string[] = [];
-  const declaresNone = new Set(files.flatMap(file => [...filesWithMarksReachedFrom(file)]));
-  const declaresNoneToDo = new Set([...declaresNone].filter(file => file.startsWith("test/aot/") && file !== marksNothingItself));
+  const withMarks = new Set(files.flatMap(file => [...filesWithMarksReachedFrom(file)]));
+  const evaluated = new Set<string>();
+  const roots = [...new Set([root, realpathSync(root)])].map(path => path + "/");
   let next = 0;
   const worker = async () => {
     while (next < files.length) {
@@ -352,9 +370,8 @@ async function marksOfTestFiles(found: Found) {
         refused.push(`${file}: ${errors.slice(0, 4).join("\n  ") || said.trim().slice(-400)}`);
         continue;
       }
-      const declared: Declared[] = JSON.parse(readFileSync(out, "utf8"));
-      if (declared.some(one => one.failing)) for (const marked of filesWithMarksReachedFrom(file)) declaresNone.delete(marked);
-      if (declared.some(one => one.todo)) for (const marked of filesWithMarksReachedFrom(file)) declaresNoneToDo.delete(marked);
+      const { declared, evaluated: lines }: { declared: Declared[]; evaluated: string[] } = JSON.parse(readFileSync(out, "utf8"));
+      for (const line of lines) for (const start of roots) if (line.startsWith(start)) evaluated.add(line.slice(start.length));
       for (const one of declared) {
         if (one.failing) take(found, goalOf(file, one.name, declared));
         else if (one.todo && file.startsWith("test/aot/")) {
@@ -371,13 +388,11 @@ async function marksOfTestFiles(found: Found) {
     console.error(`${refused.length} test files could not be declared:\n` + refused.join("\n"));
     process.exit(2);
   }
-  for (const [files, mark] of [
-    [declaresNone, "failing"],
-    [declaresNoneToDo, "todo"],
-  ] as const) {
-    for (const file of [...files].sort()) {
+  for (const file of [...withMarks].sort()) {
+    const neverRuns = file.startsWith("test/aot/") && file !== marksNothingItself;
+    for (const mark of neverRuns ? (["failing", "todo"] as const) : (["failing"] as const)) {
       for (const [line, text] of marksInTheCodeOf(readFileSync(join(root, file), "utf8"), mark)) {
-        found.declareNothing.push(`${file}:${line}: ${text}`);
+        if (!evaluated.has(`${file}:${line}`)) found.declareNothing.push(`${file}:${line}: ${text}`);
       }
     }
   }
@@ -484,7 +499,7 @@ function countsOf({ wrongAnswers, goals, neverRun, skipped, declareNothing, with
   return [
     `${wrongAnswers.length} wrong answers in ${filesOf(wrongAnswers)} files stand under a mark. They are no goals, and are not counted among them.`,
     `${goals.length} goals in ${filesOf(goals)} files: ${byKind.join(", ")}.`,
-    `${count(yesOrNo)} of them are a yes or a no. Of the others ${count("the case beside it")} are held to what is reached today by a case beside them, ${count("nothing yet")} could be, ${count(comparedBetweenRuns)} are counted at every run and compared between runs, ${count("nothing in the tree")} move with the platform and with every change, and ${count("nothing: ")} say no measured number.`,
+    `${count(yesOrNo)} of them are a yes or a no. Of the others ${count("the case beside it")} are held to what is reached today by a case beside them, ${count("nothing yet")} could be, ${count(cannotGrowWorse)} cannot grow worse, ${count(comparedBetweenRuns)} are counted at every run and compared between runs, ${count("nothing in the tree")} move with the platform and with every change, and ${count("nothing: ")} say no measured number.`,
     `${neverRun.length} cases in ${filesOf(neverRun)} files are declared \`todo\` and never run.`,
     `${skipped.length} programs are skipped on one platform, because \`bun <file>\` itself answers now one way, now the other there.`,
     ...(declareNothing.length
@@ -542,8 +557,8 @@ function write(found: Found): string {
       ? [
           "## Marks from which no case was declared",
           "",
-          "These lines spell a mark in a file from which the Bun that wrote this page declared no case with that mark: the file chooses by what",
-          "that Bun or its platform can do. What they mark is missing above.",
+          "These lines spell a mark that was not evaluated where this page was written: the file chooses by what that Bun or its platform can do.",
+          "What they mark is missing above.",
           "",
           ...found.declareNothing.map(line => `- \`${line.replaceAll("`", "'")}\``),
           "",

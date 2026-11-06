@@ -1,8 +1,8 @@
 use crate::atom::known;
 use crate::hir::{
     BinOp, Class, ClassId, Comment, Expr, ExprId, ExprKind, File, Fixed, Flags, Func, IdList,
-    Member, MemberKind, ModifierKind, Param, PatId, PatKind, Span, StmtId, TypeNodeId, TypeParamId,
-    end_of_expr, find_runtime_constructor, find_super_call_statement, has_body,
+    Member, MemberKind, ModifierKind, Param, PatId, PatKind, Span, StmtId, StmtKind, TypeNodeId,
+    TypeParamId, end_of_expr, find_runtime_constructor, find_super_call_statement, has_body,
     is_nested_namespace, is_parenthesized, modifier_text, parameter_properties, start_of,
 };
 use crate::session::Arena;
@@ -316,6 +316,22 @@ impl<'a, 's> Finder<'a, 's> {
             if file.is_erased_statement(statement) && !is_nested_namespace(file, statement) {
                 let end = self.end_of_erased_statement(file[statement].loc.end as usize);
                 self.add_whole(file[statement].start, end as u32);
+            }
+            let bodies = match file[statement].kind {
+                StmtKind::If { yes, no, .. } => [yes, no],
+                StmtKind::For { body, .. }
+                | StmtKind::ForIn { body, .. }
+                | StmtKind::ForOf { body, .. }
+                | StmtKind::While { body, .. }
+                | StmtKind::DoWhile { body, .. }
+                | StmtKind::Labeled { body, .. }
+                | StmtKind::With { body, .. } => [body, StmtId::NONE],
+                _ => continue,
+            };
+            for body in bodies.into_iter().filter_map(StmtId::some) {
+                if file.is_erased_statement(body) {
+                    self.ends_of_statements.push(file[body].start);
+                }
             }
         }
         for declaration in file.var_decls.iter() {
@@ -672,6 +688,18 @@ impl<'a, 's> Finder<'a, 's> {
         if has_no_code || member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT) {
             self.add_whole(member.start, member.loc.end);
             return;
+        }
+        let file = self.file;
+        for modifier in &file.modifiers[member.modifiers.range()] {
+            if let ModifierKind::Keyword(flag) = modifier.kind
+                && TYPE_MODIFIERS.contains(flag)
+            {
+                let end = modifier.pos as usize + modifier_text(flag).len();
+                if self.is_followed_by_one_of(end, b"[*") || self.is_followed_by_operator_word(end)
+                {
+                    self.ends_of_statements.push(modifier.pos);
+                }
+            }
         }
         let annotation = self.find_annotation(member.ty);
         if let Some((start, end)) = annotation {

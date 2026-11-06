@@ -7,7 +7,7 @@ use super::written_members::{follows_unlisted_names_of, holder_of, writes_on_fir
 use crate::builtins::table::{
     self, BuiltinId, BuiltinKind, BuiltinName, Intrinsic, Platforms, Prototype, Scope,
 };
-use bun_sema::atom::{Atom, known};
+use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingStability, Parent, SymbolId};
 use bun_sema::hir::{
     self, BinOp, CallId, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, StmtId, StmtKind,
@@ -25,7 +25,7 @@ pub(super) enum MentionUse {
     Exposed,
 }
 
-fn lookup_passes_holder_linked_anew(
+pub(super) fn lookup_passes_holder_linked_anew(
     holder: BuiltinId,
     name: Option<BuiltinName>,
     dialect: SourceDialect,
@@ -448,8 +448,15 @@ impl Resolver<'_, '_> {
         )
     }
 
+    pub(super) fn stands_below_prototype_linked_anew(&self, object: BuiltinId) -> bool {
+        let input = self.input;
+        lookup_passes_holder_linked_anew(holder_of(object), None, input.dialect, input.platform)
+    }
+
     pub(super) fn is_inherited_from_node_events(&self, object: BuiltinId, name: Atom) -> bool {
-        name == known::events_count && self.may_be_answered_by_accessor_above(object, name)
+        let listed = self.input.names.get(name);
+        listed.is_some_and(|it| table::NAMES_FOUND_ABOVE_PROTOTYPES_LINKED_ANEW.contains(&it))
+            && self.may_be_answered_by_accessor_above(object, name)
     }
 
     pub(super) fn is_asked_for_member_of_node_events(&self, e: ExprId, object: BuiltinId) -> bool {

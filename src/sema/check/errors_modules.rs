@@ -446,7 +446,7 @@ impl Checker<'_, '_> {
             }
         } else if is_global {
             self.error_at((cx.file, name_pos, 0), 2669, &[]);
-        } else if !is_at_top || !cx.is_global_source_file && hir.is_module_for(module.name) {
+        } else if !is_at_top || !cx.is_global_source_file && !hir.declares_as_script(module.name) {
             self.error_at((cx.file, name_pos, 0), 2435, &[]);
         } else if let ModuleName::String(name) = module.name
             && is_relative(self.atoms().bytes(name))

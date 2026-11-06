@@ -7,6 +7,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildEnvironment } from "./harness/flags";
+import { sayGoal } from "./harness/goals";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -93,7 +94,9 @@ test.concurrent(
 test.failing(
   "a run of one empty test holds the test file and nothing else: 485 functions of the library stand in it, the bound is none",
   async () => {
-    expect((await runOfOneEmptyTest()).ofLibrary).toEqual([]);
+    const standsInIt = (await runOfOneEmptyTest()).ofLibrary;
+    sayGoal("a run of one empty test holds the test file and nothing else", standsInIt.length, 0);
+    expect(standsInIt).toEqual([]);
   },
   120_000,
 );
@@ -109,7 +112,9 @@ test.concurrent(
 test.failing(
   "nor does a run of one test that expects something: 485 functions of the library stand in it, the bound is none",
   async () => {
-    expect((await runOfOneTestThatExpects()).ofLibrary).toEqual([]);
+    const standsInIt = (await runOfOneTestThatExpects()).ofLibrary;
+    sayGoal("nor does a run of one test that expects something", standsInIt.length, 0);
+    expect(standsInIt).toEqual([]);
   },
   120_000,
 );
@@ -129,7 +134,10 @@ test.concurrent(
 test.failing(
   "nor does a run with a describe block, hooks, an async test and a test that its callback ends: 485 functions of the library stand in it, the bound is none",
   async () => {
-    expect((await runWithBlockAndHooks()).ofLibrary).toEqual([]);
+    const standsInIt = (await runWithBlockAndHooks()).ofLibrary;
+    const goal = "nor does a run with a describe block, hooks, an async test and a test that its callback ends";
+    sayGoal(goal, standsInIt.length, 0);
+    expect(standsInIt).toEqual([]);
   },
   120_000,
 );

@@ -203,7 +203,7 @@ pub(super) fn is_decoratable_member(hir: &File<'_>, member: MemberId) -> bool {
         return false;
     }
     match node.kind {
-        MemberKind::Property => true,
+        MemberKind::Property => has_runtime_member(hir, member),
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
             node.func.is_some() && has_body(&hir[node.func])
         }

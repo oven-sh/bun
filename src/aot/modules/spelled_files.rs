@@ -163,7 +163,17 @@ pub(super) fn find_texts_that_spell_files(
 ) -> Option<Vec<TextThatSpellsFile>> {
     match is_every_file_found_by_name(input, modules) {
         true => None,
-        false => list_texts_that_spell_files(input),
+        false => take_or_list_texts_that_spell_files(input, modules),
+    }
+}
+
+pub(super) fn take_or_list_texts_that_spell_files(
+    input: &BindInput<'_, '_>,
+    modules: &ModuleSet,
+) -> Option<Vec<TextThatSpellsFile>> {
+    match &modules.texts_listed_ahead {
+        Some(listed) => listed.clone(),
+        None => list_texts_that_spell_files(input),
     }
 }
 

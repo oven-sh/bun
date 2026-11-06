@@ -377,7 +377,8 @@ fn runtime_members() {
     let with_body = add_function(&mut file, FnBody::Block(IdList::EMPTY), true);
     let without_body = add_function(&mut file, FnBody::None, true);
     let (none, declare, is_abstract) = (Flags::empty(), Flags::AMBIENT, Flags::ABSTRACT);
-    let cases: [MemberCase; 20] = [
+    let accessor = Flags::ACCESSOR;
+    let cases: [MemberCase; 23] = [
         (MemberKind::Property, none, FnId::NONE, plain, true),
         (MemberKind::Property, none, FnId::NONE, decorated, true),
         (
@@ -395,6 +396,21 @@ fn runtime_members() {
             FnId::NONE,
             decorated,
             true,
+        ),
+        (MemberKind::Property, accessor, FnId::NONE, decorated, true),
+        (
+            MemberKind::Property,
+            accessor | declare,
+            FnId::NONE,
+            decorated,
+            false,
+        ),
+        (
+            MemberKind::Property,
+            accessor | is_abstract,
+            FnId::NONE,
+            decorated,
+            false,
         ),
         (MemberKind::Method, none, with_body, plain, true),
         (MemberKind::Getter, none, with_body, plain, true),

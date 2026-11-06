@@ -98,7 +98,7 @@ const ENDINGS_OF_A_RELATIVE_IMPORT: [&[u8]; 10] = [
     b".json",
 ];
 
-const DUPLICATE_IDENTIFIER_CODE: u32 = 2300;
+const REFUSED_MERGE_CODES: [u32; 3] = [2300, 2451, 2567];
 const AUGMENTATION_OF_UNKNOWN_MODULE_CODE: u32 = 2664;
 const UMD_GLOBAL_IN_MODULE_CODE: u32 = 2686;
 const THIS_IS_UNDEFINED_CODES: [u32; 2] = [2407, 2532];
@@ -209,7 +209,7 @@ impl ProgramOrigins<'_, '_> {
             let file = self.files.zip(other.file);
             file.is_some_and(|(files, file)| files.is_brought(file))
         };
-        if diagnostic.code == DUPLICATE_IDENTIFIER_CODE
+        if REFUSED_MERGE_CODES.contains(&diagnostic.code)
             && !diagnostic.related.is_empty()
             && diagnostic.related.iter().all(is_brought)
         {

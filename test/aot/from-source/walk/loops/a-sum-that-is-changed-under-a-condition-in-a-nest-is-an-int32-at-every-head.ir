@@ -28,8 +28,8 @@
 # sink([inside, inFront, threeDeep, behindHandler].map(sum => sum(limits[0]! | 0, limits[1]! | 0, limits[2]! | 0)).join(" ") + " " + ticks);
 # -- end of source
 # `a` enters the outermost head as the written 0, so its row begins with a guess, int[0, 2^53], and the guess enters the heads inside. What comes round there is a meeting block's parameter: the head's own parameter, guess and all, beside an int32.
-# What is noted, handed up the heads and climbed from is what comes round BESIDE the parameter: meeting blocks and the entries of finished loops are looked through, also for what ENTERS a head inside; a handler's parameter, which is not
-# looked through, counts whole only where it holds more than the parameter and what stood beside. A row inside that fitted under the guess starts its next walk from what enters then. The sums ended as int[-2^53, 2^53] @Int64 at every head.
+# What is noted, handed up the heads and climbed from is what comes round BESIDE the parameter: meeting blocks, handlers' blocks and the entries of finished loops are looked through, also for what ENTERS a head inside; a value
+# that holds more than the parameter and what stood beside counts whole. A row inside that fitted under the guess starts its next walk from what enters then. The sums ended as int[-2^53, 2^53] @Int64 at every head.
 # f3 = inside, f4 = inFront, f5 = threeDeep, f6 = behindHandler
 # OPTIONS: check=Validate
 # RUN: walk f3 f4 f5 f6 mechanisms=all

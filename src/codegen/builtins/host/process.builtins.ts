@@ -731,7 +731,8 @@ export default b.declarations(
   ),
   b.inherits("process", "%EventEmitter%.prototype"),
   // Object.prototype, until node:events is evaluated: jsFunctionMakeProcessInheritFrom lays its EventEmitter.prototype there.
-  b.inheritsFromUnknown("%EventEmitter%.prototype"),
+  // Every other name of that one lies on the native prototype too: test/aot/what-node-events-lays-above-process.test.ts.
+  b.inheritsFromUnknown("%EventEmitter%.prototype", "_eventsCount"),
   b.inherits("process.report", "Object.prototype"),
   changedByNativeCode.flatMap(name => b.extend(`process.${name}`, { mutability: "ChangesOnItsOwn" })),
   computedOnce.flatMap(name => b.extend(`process.${name}`, { mutability: "ConstantUnlessWritten" })),

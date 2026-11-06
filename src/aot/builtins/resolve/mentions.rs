@@ -465,6 +465,10 @@ impl Resolver<'_, '_> {
         }
         let is_handed = self.is_handed_to_code_laid_above(expr, id);
         self.hand_to_code_laid_above(id, is_handed);
+        if self.input.dialect == SourceDialect::Program && table::root_of(id) == BuiltinId::Proxy {
+            self.output.process_reaches_code_on_its_prototypes |=
+                !matches!(self.classify_use(expr), MentionUse::Inspected);
+        }
         self.output.inspects_prototype_chain_of_process |=
             self.is_asked_for_member_of_node_events(expr, id);
         if let Some(receiver) = self.find_receiver_handed_to_operands(expr, id) {
@@ -627,7 +631,7 @@ impl Resolver<'_, '_> {
         );
         if climbs && let Some(further) = self.count_steps_up_where_only_looked_at(answer) {
             self.output.inspects_prototype_chain_of_process |=
-                further > 0 && self.is_inherited_from_node_events(id, known::events_count);
+                further > 0 && self.stands_below_prototype_linked_anew(id);
             return;
         }
         let mut further = hir.ids(hir[call].args).skip(1);

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, spawned, unsupported, withoutDebugInformation } from "./harness/commands";
 import { test } from "./harness/default-timeout";
+import { sayGoal } from "./harness/goals";
 
 function countModulesWithSource(executable: Buffer): number {
   const [magic, headerSize, recordSize] = ["BUNBLTNS", 48, 24] as const;
@@ -242,6 +243,7 @@ if (!canTrim)
       "and it holds no source of the modules of the runtime: the source of all 210 modules for 0",
       async () => {
         using main = await buildRows();
+        sayGoal("and it holds no source of the modules of the runtime", main.modulesWithSource, 0);
         expect(main.modulesWithSource).toBe(0);
       },
       600_000,

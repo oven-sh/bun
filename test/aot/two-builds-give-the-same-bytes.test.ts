@@ -93,6 +93,24 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
     });
   }, 600_000);
 
+  test("a build over the executable of the build before, which is named as the entry point, is equal", async () => {
+    await slot(async () => {
+      using dir = tempDir("aot-same-bytes-over-the-first", { "right.ts": `console.log("right");\n` });
+      const hashes: string[] = [];
+      for (let build = 0; build < 2; build++) {
+        built(
+          await spawned(
+            [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "./right.ts"],
+            String(dir),
+            bunEnv,
+          ),
+        );
+        hashes.push(Bun.hash(readFileSync(join(String(dir), isWindows ? "right.exe" : "right"))).toString(16));
+      }
+      expect(hashes[1]).toBe(hashes[0]);
+    });
+  }, 600_000);
+
   test("builds of one program in two folders are equal", async () => {
     await slot(async () => {
       const hashes: string[] = [];

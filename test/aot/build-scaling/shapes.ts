@@ -30,6 +30,8 @@ export type Shape = {
   growsSoFar?: string;
   /** The same for a growth in instructions: the case is expected to fail where instructions are counted, and is an ordinary case elsewhere. */
   growsSoFarInInstructions?: string;
+  /** The same for a growth that shows in the code for arm64 on Linux alone. */
+  growsSoFarOnLinuxArm64?: string;
   write(size: number): Record<string, string>;
 };
 
@@ -1117,6 +1119,8 @@ export const shapes: Shape[] = [
     // from line k took k steps. The code generator finds dominators only where a value that is made behind the entry is read far below.
     name: "lines that each read an element of their own, return early if it says so and add its field to a sum, with a value from the start read at the end",
     counted: "lines",
+    // A line takes 490 bytes of code up to 1,250 lines and about 800 from 8,000 on: the further the code of the rare ways, which lies behind all the rest, the more of the branches to it take their long form.
+    growsSoFarOnLinuxArm64: "2.21 times in FunctionBytesEmitted",
     size: 2000,
     entry: "main.ts",
     write: size => ({
@@ -3838,6 +3842,24 @@ console.log(typeof outmost.inner);
       "main.js":
         lines(size, index => `export const make${index} = rate => function (given) { "use memo"; return given.items.map(n => n * rate).join("+"); };`) +
         `console.log(${size});\n`,
+    }),
+  },
+  {
+    name: "stores to a variable that is declared int32, each of the value in front and one more",
+    counted: "stores",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts": `function chain(seed: number): Bun.int32 {\n  let at: Bun.int32 = seed & 1;\n${lines(size, () => `  at = at + 1;`)}  return at;\n}\nconsole.log(chain(1));\n`,
+    }),
+  },
+  {
+    name: "stores to a variable that is declared int32, each behind a call in an arm",
+    counted: "stores",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts": `function chain(seed: number, loud: boolean): Bun.int32 {\n  let at: Bun.int32 = seed & 1;\n${lines(size, () => `  if (loud) console.log(at);\n  at = at + 1;`)}  return at;\n}\nconsole.log(chain(1, false));\n`,
     }),
   },
 ];

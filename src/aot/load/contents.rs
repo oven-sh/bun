@@ -125,6 +125,23 @@ fn mocks_module_that_it_does_not_spell(files: &Files<'_>, file: FileId) -> bool 
     })
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default)]
+    struct LoadsByUnknown: u8 {
+        const NAME = 1 << 0;
+        const PATH = 1 << 1;
+    }
+}
+
+impl LoadsByUnknown {
+    fn new(by_name: bool, by_path: bool) -> LoadsByUnknown {
+        let mut loads = LoadsByUnknown::empty();
+        loads.set(LoadsByUnknown::NAME, by_name);
+        loads.set(LoadsByUnknown::PATH, by_path);
+        loads
+    }
+}
+
 #[derive(Default)]
 struct FoundInFiles {
     replaced_members: Vec<BuiltinId>,
@@ -137,8 +154,7 @@ struct FoundInFiles {
     can_come_by_hook_of_instanceof: bool,
     hand_builtins_to_hooks_of_instanceof: Vec<FileId>,
     any_module_loads_again: bool,
-    loads_by_unknown_name: bool,
-    loads_by_unknown_path: bool,
+    loads_by_unknown: LoadsByUnknown,
     names_worker_constructor: bool,
     hands_worker_constructor_on: bool,
     starts_worker_out_of_sight: bool,
@@ -159,8 +175,7 @@ impl FoundInFiles {
                 &mut self.hand_builtins_to_hooks_of_instanceof,
             ),
             any_module_loads_again: true,
-            loads_by_unknown_name: true,
-            loads_by_unknown_path: true,
+            loads_by_unknown: LoadsByUnknown::all(),
             names_worker_constructor: true,
             hands_worker_constructor_on: true,
             starts_worker_out_of_sight: true,
@@ -191,12 +206,11 @@ impl FoundInFiles {
             && (!builtins.keys_taken_out_of_module_cache().is_empty()
                 || builtins.loses_sight_of_module_cache()
                 || builtins.resets_modules());
-        let gives_unknown_name_to_imported_loader =
-            resolve_loads_through_imported_loaders(files, file);
-        let loads_by_unknown_name =
-            contents.names.loads_by_unknown_name || gives_unknown_name_to_imported_loader;
-        let loads_by_unknown_path =
-            contents.names.loads_by_unknown_path || gives_unknown_name_to_imported_loader;
+        let names = &contents.names;
+        let loads_by_unknown = match resolve_loads_through_imported_loaders(files, file) {
+            true => LoadsByUnknown::all(),
+            false => LoadsByUnknown::new(names.loads_by_unknown_name, names.loads_by_unknown_path),
+        };
         self.append(FoundInFiles {
             replaced_members: Vec::new(),
             opened_holders: Vec::new(),
@@ -214,8 +228,7 @@ impl FoundInFiles {
                 false => Vec::new(),
             },
             any_module_loads_again,
-            loads_by_unknown_name,
-            loads_by_unknown_path,
+            loads_by_unknown,
             names_worker_constructor: contents.names_worker_constructor,
             hands_worker_constructor_on: contents.hands_worker_constructor_on,
             starts_worker_out_of_sight: contents.starts_worker_out_of_sight,
@@ -236,8 +249,7 @@ impl FoundInFiles {
         self.hand_builtins_to_hooks_of_instanceof
             .append(&mut following.hand_builtins_to_hooks_of_instanceof);
         self.any_module_loads_again |= following.any_module_loads_again;
-        self.loads_by_unknown_name |= following.loads_by_unknown_name;
-        self.loads_by_unknown_path |= following.loads_by_unknown_path;
+        self.loads_by_unknown |= following.loads_by_unknown;
         self.names_worker_constructor |= following.names_worker_constructor;
         self.hands_worker_constructor_on |= following.hands_worker_constructor_on;
         self.starts_worker_out_of_sight |= following.starts_worker_out_of_sight;
@@ -416,8 +428,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     }
     let unseen_code_may_run = options.can_load_code_at_run_time()
         || options.aot.loads_code_from_disk
-        || all.loads_by_unknown_name
-        || all.loads_by_unknown_path
+        || !all.loads_by_unknown.is_empty()
         || files.compiled_files().iter().any(|&file| {
             let asked_for = files.compiled(file).map(|compiled| compiled.loader);
             loader_by_name(files.module(file).file_name()) == Loader::Napi
@@ -430,8 +441,10 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
                 continue;
             };
             source.builtins.note_that_hooks_of_instanceof_may_exist();
-            all.loads_by_unknown_name |= source.builtins.loads_unknown_modules();
-            all.loads_by_unknown_path |= source.builtins.hands_on_loader_of_paths();
+            all.loads_by_unknown |= LoadsByUnknown::new(
+                source.builtins.loads_unknown_modules(),
+                source.builtins.hands_on_loader_of_paths(),
+            );
         }
     }
     let replaced_builtins = list_replaced_builtins(
@@ -477,8 +490,8 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
             true => run.loads.is_every_file,
             false => all.any_module_loads_again,
         },
-        loads_by_unknown_name: all.loads_by_unknown_name,
-        loads_by_unknown_path: all.loads_by_unknown_path,
+        loads_by_unknown_name: all.loads_by_unknown.contains(LoadsByUnknown::NAME),
+        loads_by_unknown_path: all.loads_by_unknown.contains(LoadsByUnknown::PATH),
         embeds_addon_as_file: embeds_addon_as_file(files),
         names_worker_constructor: all.names_worker_constructor,
         hands_worker_constructor_on: all.hands_worker_constructor_on,

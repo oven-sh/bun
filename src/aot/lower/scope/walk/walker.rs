@@ -198,6 +198,9 @@ fn spread_looks_to_what_is_handed_on(input: &ScopeInput<'_, '_>, walk: &mut Scop
             None => is_looked_at[name.idx()] = true,
         }
     }
+    for copy in bound.runtime.parameter_var_copies() {
+        taken_by.push((copy.variable, copy.parameter));
+    }
     let taken_by = order_by(&taken_by, is_looked_at.len(), |entry| entry.0.idx());
     let mut looked_at: Vec<SymbolId> = taken_by.iter().map(|entry| entry.0).collect();
     looked_at.dedup();

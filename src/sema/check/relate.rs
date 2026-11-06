@@ -286,6 +286,11 @@ pub(super) struct Relater {
     pub(super) error_chain: Chain,
     /// `relatedInfo`
     pub(super) related_info: Vec<Reported>,
+    /// Set for one call of `properties_related_to_ex`: members that the source lacks and that the brought declarations
+    /// alone have added to the target are reported last, so that what the program has done wrong by itself is found.
+    reports_brought_members_last: bool,
+    /// What that call answers: it has passed over such members.
+    lacks_brought_members: bool,
 }
 
 impl Relater {
@@ -317,6 +322,8 @@ impl Relater {
             head_message: None,
             error_chain: None,
             related_info: Vec::new(),
+            reports_brought_members_last: false,
+            lacks_brought_members: false,
         }
     }
 
@@ -6379,6 +6386,9 @@ impl<'p, 's> Checker<'p, 's> {
         source_is_primitive: bool,
     ) -> Ternary {
         let mut both = None;
+        if REPORT {
+            r.reports_brought_members_last = true;
+        }
         let mut result = self.properties_related_to_ex::<REPORT>(
             r,
             source,
@@ -6389,6 +6399,7 @@ impl<'p, 's> Checker<'p, 's> {
             state,
             &mut both,
         );
+        let lacks_brought_members = REPORT && std::mem::take(&mut r.lacks_brought_members);
         let target_members = match td {
             TypeData::Synth(_) => None,
             _ => both.map(|(_, tm)| tm),
@@ -6418,6 +6429,9 @@ impl<'p, 's> Checker<'p, 's> {
                     );
                 }
             }
+        }
+        if lacks_brought_members && result.holds() {
+            return self.properties_related_to::<REPORT>(r, source, target, &[], false, state);
         }
         result
     }
@@ -6719,6 +6733,8 @@ impl<'p, 's> Checker<'p, 's> {
         state: u8,
         both: &mut Option<(Members<'p>, Members<'p>)>,
     ) -> Ternary {
+        let reports_brought_members_last =
+            REPORT && std::mem::take(&mut r.reports_brought_members_last);
         if r.relation == Relation::Identity {
             return self.properties_identical_to(r, source, target);
         }
@@ -6925,6 +6941,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
         let source_lookup = (by_name, has_properties, sm);
+        let mut lacks_brought_members = false;
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
@@ -6954,6 +6971,12 @@ impl<'p, 's> Checker<'p, 's> {
                     {
                         unmatched.push(tp);
                     }
+                }
+                if reports_brought_members_last
+                    && unmatched.iter().all(|prop| self.is_prop_brought(prop))
+                {
+                    lacks_brought_members = true;
+                    break;
                 }
                 let printed = self.printed_source(source);
                 self.report_unmatched_property(r, printed, target, &sm, &unmatched);
@@ -7013,6 +7036,9 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::FALSE;
             }
             result &= related;
+        }
+        if REPORT {
+            r.lacks_brought_members = lacks_brought_members;
         }
         result
     }

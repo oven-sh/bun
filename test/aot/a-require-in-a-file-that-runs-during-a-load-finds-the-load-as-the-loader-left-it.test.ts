@@ -23,6 +23,18 @@ const graphs: Record<string, { imports: Record<string, string[]>; said: string }
     imports: { m0: ["c0"], m1: [], m2: ["c1", "c0"], c0: ["m2", "m1"], c1: ["m2"] },
     said: "c0< c1< c1:m2:object c1> m0:a m2:ab:a c0:m2:object m1 c0:m1:object c0>",
   },
+  "the inner root runs inside the require() of a file that the loader runs within the inner load": {
+    imports: {
+      m0: ["c0"],
+      m1: ["c0", "m3"],
+      m2: ["m3"],
+      m3: ["m2", "m4", "c1"],
+      m4: ["c1", "m2"],
+      c0: ["m1"],
+      c1: ["m2"],
+    },
+    said: "c0< m0:a c1< m4:a m3:a m2 m1:a c1:m2:object c1> c0:m1:object c0>",
+  },
   "the root waits where the required module comes back to the file and the root has more to load": {
     imports: { m0: ["c0", "m1", "m2"], m1: ["c0"], m2: ["m0", "c0"], m3: ["m1"], c0: ["m3"] },
     said: "c0< m1:a m3 c0:m3:object c0> m2:ab m0:ab",
@@ -62,11 +74,11 @@ globalThis.said.push("${name}>");
   return files;
 }
 
-async function answersOf(files: Record<string, string>) {
+async function answersOf(files: Record<string, string>, entry = "main.cjs") {
   using dir = tempDir("aot-a-require-in-a-file-that-runs-during-a-load", files);
   const executable = join(String(dir), isWindows ? "program.exe" : "program");
-  const plain = await run([bunExe(), "main.cjs"], String(dir), bunEnv);
-  const built = await run([bunExe(), ...compileCommand, "main.cjs", "--outfile", executable], String(dir), bunEnv);
+  const plain = await run([bunExe(), entry], String(dir), bunEnv);
+  const built = await run([bunExe(), ...compileCommand, entry, "--outfile", executable], String(dir), bunEnv);
   expect(built.exitCode).toBe(0);
   const compiled = await run([executable], String(dir), bunEnv);
   return {
@@ -91,6 +103,16 @@ const loadsInsideLoads: Record<string, { files: Record<string, string>; said: st
     },
     said: "asker<\ncy\ncx\ny\nn\nasker>\nz\nroot\nmain ends\n",
   },
+  "a second file stands between the one that runs and the require()": {
+    files: {
+      "root.mjs": `import "./z.mjs";\nimport "./y.mjs";\nconsole.log("root");\n`,
+      "z.mjs": `import "./asker.cjs";\nconsole.log("z");\n`,
+      "asker.cjs": `console.log("asker<");\nrequire("./mid.cjs");\nconsole.log("asker>");\n`,
+      "mid.cjs": `require("./n.mjs");\n`,
+      "n.mjs": `import "./cx.cjs";\nimport "./y.mjs";\nconsole.log("n");\n`,
+    },
+    said: "asker<\ncy\ncx\ny\nn\nasker>\nz\nroot\nmain ends\n",
+  },
   "the outer load's step for a module lands on the inner queue and asks for its file a second time": {
     files: {
       "root.mjs": `import "./asker.cjs";\nimport "./y.mjs";\nconsole.log("root");\n`,
@@ -111,6 +133,18 @@ test.each(Object.keys(loadsInsideLoads))("%s", async name => {
     ...loadsInsideLoads[name].files,
   });
   expect(plain).toEqual({ stdout: loadsInsideLoads[name].said, exitCode: 0 });
+  expect(compiled).toEqual(plain);
+});
+
+// No require(): the graph of an ES entry is handed to the loader because the file has queued a tick. The root waits for the loader's own step: it is not begun under its running file.
+test("a tick that an imported file queues runs in front of the body of its importer", async () => {
+  const files = {
+    "upper.mjs": `import asks from "./asks.cjs";\nconsole.log("upper over " + asks.name);\n`,
+    "asks.cjs": `process.nextTick(() => {\n  console.log("tick of asks");\n  import("./late.mjs");\n});\nconsole.log("asks");\nexports.name = "asks";\n`,
+    "late.mjs": `console.log("late");\n`,
+  };
+  const { plain, compiled } = await answersOf(files, "upper.mjs");
+  expect(plain).toEqual({ stdout: "asks\ntick of asks\nupper over asks\nlate\n", exitCode: 0 });
   expect(compiled).toEqual(plain);
 });
 

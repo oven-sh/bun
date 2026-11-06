@@ -1,5 +1,5 @@
-// lib.cjs requires a.mjs, which imports lib.cjs again, and replaces module.exports behind that. A module runs behind the files that it imports: "main runs" comes behind "lib ends".
-// `bun <file>` prints "main runs" in the middle of lib.cjs, while require() waits for the text of a.mjs; with its transpiler on one thread it prints what stands here. The plain executable has { v: 7 } where both have {}.
+// lib.cjs requires a.mjs, which imports lib.cjs again, and replaces module.exports behind that. The lines are those of `bun <file>`, in 16 of 16 runs: the load for that require settles lib.cjs as far as it has run,
+// the load of the entry waited for that alone and ends inside the require: "main runs" stands in the middle of lib.cjs. With its transpiler on one thread bun prints it behind "lib ends". The plain executable has { v: 7 } where both have {}.
 import "node:path";
 import d from "./lib.cjs";
 import * as n from "./lib.cjs";
@@ -9,8 +9,8 @@ setTimeout(() => console.log("later", d === n.default, JSON.stringify(d), JSON.s
 /* Output:
 lib starts
 a runs
+main runs true {} {}
 lib behind the require
 lib ends
-main runs true {} {}
 later true {} {}
 */

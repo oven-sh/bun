@@ -32,12 +32,15 @@ const kinds: Record<string, string> = {
   calls: `alone --scene sceneOfUnlikeCallSites --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   changes: `alone --scene sceneOfAChange --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   loops: `alone --scene sceneOfALoop --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  // How one file loads another: rows of two or three deeds as test runs, by run-loads.ts. The test files are the worlds, and each is held against `bun test` by itself.
+  loads: `loads --rows 2,3 --in-company 50`,
   crowds: `alone --scene sceneOfASingleDeed,sceneOfASingleDeed,sceneOfALoop,sceneOfALoop,sceneOfALoop,sceneOfTypedPlaces,sceneOfHiddenEffects --together 10 --changes-draws 30 --checks-proofs 25 --writes-straight 10 --shuffles-costs 50`,
   few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30 --writes-straight 50`,
   many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --collects 100 --writes-straight 50`,
   packages: `${drawn} ${rewritten} --count 4,12,40 --splits 100 --collects 100`,
   external: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 60 --beside-an-external 100 --collects 100`,
 };
+const driverOf: Record<string, string> = { alone: "run-alone.ts", loads: "run-loads.ts" };
 /** Kept for a list of their own, not as finds: what an executable built without --aot does too, the end of a time or memory limit, and an answer that changes from run to run. */
 const quiet = /^(?:as-an-executable-without---aot|limit|unsteady)-/;
 
@@ -68,7 +71,7 @@ const alone =
     : [];
 const drivers = Array.from({ length: jobs }, (_, index) =>
   Bun.spawn({
-    cmd: [...alone, process.execPath, join(import.meta.dir, kinds[kind].startsWith("alone ") ? "run-alone.ts" : "run-batch.ts"), "--bun", bun, "--work", join(out, "work", String(index)), "--finds", join(out, "finds"), "--batches", "0", "--seconds", String(minutes * 60), "--flags=--aot-threads=1", "--draws", index % 2 ? "js" : "ts", ...kinds[kind].replace(/^alone /, "").split(" "), ...words], // prettier-ignore
+    cmd: [...alone, process.execPath, join(import.meta.dir, driverOf[kinds[kind].split(" ")[0]] ?? "run-batch.ts"), "--bun", bun, "--work", join(out, "work", String(index)), "--finds", join(out, "finds"), "--batches", "0", "--seconds", String(minutes * 60), "--flags=--aot-threads=1", "--draws", index % 2 ? "js" : "ts", ...kinds[kind].replace(/^(?:alone|loads) /, "").split(" "), ...words], // prettier-ignore
     cwd: join(out, "work"),
     env: {
       ...process.env,

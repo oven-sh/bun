@@ -516,7 +516,6 @@ known_atoms! {
     use_asm = "use asm",
     hot = "hot",
     charCodeAt = "charCodeAt",
-    events_count = "_eventsCount",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

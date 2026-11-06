@@ -7,7 +7,7 @@ use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
 use super::order::FileText;
 use super::requests::{ScannedSite, Scans};
-use super::spelled_files::list_texts_that_spell_files;
+use super::spelled_files::{TextThatSpellsFile, list_texts_that_spell_files};
 use super::test_run_evictions::{find_files_that_leave, is_among};
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
@@ -99,7 +99,7 @@ pub(super) fn find_files_that_run_again(
     scans: &Scans,
     modules: &ModuleSet,
     evicted: &EvictedModules,
-) -> Vec<ModuleRef> {
+) -> (Vec<ModuleRef>, Option<Option<Vec<TextThatSpellsFile>>>) {
     let kind_of = |file: FileId| modules.interop(ModuleRef::File(file)).kind;
     let files = modules.compiled_files.iter().copied();
     let may_load_again = |file: &FileId| {
@@ -120,7 +120,8 @@ pub(super) fn find_files_that_run_again(
     let is_commonjs = |file: FileId| kind_of(file) == ModuleKind::CommonJs;
     if evicted.is_any_module_taken_out || !files.clone().any(&is_commonjs) {
         say_files_that_may_run_again(0);
-        return files.filter(may_load_again).map(ModuleRef::File).collect();
+        let run_again = files.filter(may_load_again).map(ModuleRef::File).collect();
+        return (run_again, None);
     }
     let loads = collect_loads(input, scans, modules);
     let mut is_found_by_load = vec![false; input.files.modules.len()];
@@ -178,7 +179,7 @@ pub(super) fn find_files_that_run_again(
         .map(ModuleRef::File)
         .collect();
     say_files_that_may_run_again(after_throw_alone);
-    run_again
+    (run_again, Some(loads.texts_that_spell_files))
 }
 
 const NEVER: u32 = u32::MAX;
@@ -211,6 +212,7 @@ struct Loads {
     all: Vec<Load>,
     by_file: Vec<FileLoads>,
     some_body_awaits: bool,
+    texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
 }
 
 impl Loads {
@@ -226,9 +228,11 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
         all: Vec::new(),
         by_file: vec![FileLoads::default(); files.modules.len()],
         some_body_awaits: false,
+        texts_that_spell_files: None,
     };
     let mut calls: Vec<ExprId> = Vec::new();
-    let texts_that_spell_files = list_texts_that_spell_files(input).unwrap_or_default();
+    let listed = list_texts_that_spell_files(input);
+    let texts_that_spell_files = listed.as_deref().unwrap_or_default();
     for &file in &modules.compiled_files {
         let (analysis, scan) = (files.analysis(file), scans.of(file));
         loads.some_body_awaits |= analysis.has_live_top_level_await;
@@ -355,6 +359,7 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
             first_effect_position,
         };
     }
+    loads.texts_that_spell_files = listed;
     loads
 }
 

@@ -3,6 +3,7 @@
 // Sizes: 1500 3000 6000
 // Passes: 1
 // Grows: the build, linear
+// Todo: the peak 75 | 157 | 432 MB, and at most 165 MB at the last. The text is JavaScript. Under a name that ends in .ts, where the checker gives the parameter a type, it is within the bound
 const size = Number(process.env.SIZE ?? 2),
   copies = Number(process.env.PASSES ?? 1);
 const out = [];

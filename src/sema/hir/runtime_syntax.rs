@@ -187,8 +187,11 @@ impl<S: Storage> FileIn<S> {
     }
 
     pub fn is_module_for(&self, name: ModuleName) -> bool {
-        self.has_module_syntax
-            && !(self.is_script_for_project && matches!(name, ModuleName::String(_)))
+        self.has_module_syntax && !self.declares_as_script(name)
+    }
+
+    pub fn declares_as_script(&self, name: ModuleName) -> bool {
+        self.is_script_for_project && matches!(name, ModuleName::String(_))
     }
 
     pub fn set_strict_by_syntax(&mut self) {
@@ -232,9 +235,8 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     let is_declaration_only = node.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT);
     match node.kind {
         MemberKind::Property => {
-            let is_decorator =
-                |modifier: ModifierId| matches!(hir[modifier].kind, ModifierKind::Decorator(_));
-            !is_declaration_only || node.modifiers.iter().any(is_decorator)
+            let is_field = !node.flags.contains(Flags::ACCESSOR);
+            !is_declaration_only || (is_field && has_decorator(hir, node.modifiers))
         }
         MemberKind::StaticBlock => !is_declaration_only,
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {

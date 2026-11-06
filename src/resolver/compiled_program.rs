@@ -280,6 +280,17 @@ pub(crate) fn public_path_from_root(
     spell_public_path(public_root, levels_above_root, &kept)
 }
 
+/// The name that `bun build --compile` gives the file of a public path, behind its root: a `_.._` for each folder that the file lies above the root directory of the build.
+pub fn name_in_plain_executable(
+    public_root: &[u8],
+    levels_above_root: usize,
+    path: &[u8],
+) -> Option<Vec<u8>> {
+    let kept = segments_below_public_root(public_root, levels_above_root, path, b"")?;
+    let spelled = spell_public_path(public_root, 0, &kept);
+    Some(spelled[spelled.len().min(public_root.len())..].to_vec())
+}
+
 /// The public path a file would have, without a trailing `/`.
 pub fn join_public_path(
     public_root: &[u8],
@@ -1086,15 +1097,13 @@ impl CompiledProgram {
                 if let Some(found) = self.find_file_or_directory(&path, how, search, lookup) {
                     return Found(found);
                 }
-                // `bun build --compile` finds a path below a package from the root directory, whoever asks.
+                // The build asked where the name of the package leads from here. Where a path below it leads it did not ask: the nearer copy may hold it.
                 let ends_search = package.is_some_and(|package| {
                     let mark = [&node_modules[..], package, ENDS_SEARCH].concat();
-                    match self.allows_code_from_disk {
-                        true => self.find_package_name(&mark, is_require).is_some(),
-                        false => {
-                            matches!(&specifier[package.len()..], b"" | b"/")
-                                && self.is_hidden_name(&mark, is_require)
-                        }
+                    let is_name_of_package = matches!(&specifier[package.len()..], b"" | b"/");
+                    match is_name_of_package && !self.allows_code_from_disk {
+                        true => self.is_hidden_name(&mark, is_require),
+                        false => self.find_package_name(&mark, is_require).is_some(),
                     }
                 });
                 if ends_search {
@@ -1864,7 +1873,7 @@ mod tests {
                 assert_eq!(require(held, b"driver/"), Unknown);
                 let imported = find_in(&program(false), held, b"driver", false);
                 assert_eq!(imported, Found(FILES[1]));
-                assert_eq!(require(held, b"driver/lib/extra.js"), Found(FILES[2]));
+                assert_eq!(require(held, b"driver/lib/extra.js"), Unknown);
                 assert_eq!(require(held, b"both"), Found(FILES[4]));
                 assert_eq!(require(ROOT, b"driver"), Found(FILES[1]));
                 let open = program(false).with_code_from_disk(true);

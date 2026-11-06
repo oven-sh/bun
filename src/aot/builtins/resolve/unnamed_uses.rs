@@ -1,11 +1,12 @@
 use super::SourceDialect;
-use super::mention_use::MentionUse;
+use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
 use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
 };
 use crate::builtins::table::{self, BuiltinId, BuiltinName, Intrinsic};
+use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingKind, BindingStability, Decl, Parent, PatParent, StoreKind, SymbolId,
@@ -114,6 +115,45 @@ impl SyntaxOutsideExpressions {
     }
 }
 
+fn names_asked_past_what_some_runs_create(
+    input: &super::ResolveInput<'_, '_>,
+) -> impl Iterator<Item = BuiltinName> {
+    let (dialect, platform) = (input.dialect, input.platform);
+    let created_in_some_runs = table::MEMBERS_CREATED_IN_SOME_RUNS.iter();
+    created_in_some_runs.filter_map(move |&member| {
+        let entry = table::entry(member);
+        lookup_passes_holder_linked_anew(entry.holder?, Some(entry.name), dialect, platform)
+            .then_some(entry.name)
+    })
+}
+
+fn for_each_text_spelled_at(
+    input: &super::ResolveInput<'_, '_>,
+    expr: ExprId,
+    mut note: impl FnMut(Atom),
+) {
+    match input.hir[expr].kind {
+        ExprKind::JsxText(text) => note(text),
+        ExprKind::Template { .. } => {
+            for part in input.hir.template_parts(expr) {
+                if let Some(cooked) = part.cooked {
+                    note(cooked);
+                }
+            }
+        }
+        _ => {}
+    }
+    if let FoldedValue::Constant(Constant::String(text))
+    | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) =
+        input.decisions.constant(input.hir, expr)
+    {
+        note(text);
+    }
+    if let Decision::Constant(Constant::String(text)) = input.decisions.decision(expr) {
+        note(text);
+    }
+}
+
 fn makes_number(op: BinOp) -> bool {
     matches!(
         op,
@@ -181,33 +221,46 @@ impl Resolver<'_, '_> {
     }
 
     fn note_texts_under_which_evaluators_hang(&mut self, expr: ExprId) {
+        if self.input.dialect == SourceDialect::Program {
+            for_each_text_spelled_at(self.input, expr, |text| {
+                self.note_text_under_which_evaluator_hangs(text);
+            });
+        }
+    }
+
+    fn note_key_that_program_can_lay(&mut self, key: Atom) {
+        if let Some(name) = self.input.names.get(key) {
+            self.output.process_reaches_code_on_its_prototypes |=
+                names_asked_past_what_some_runs_create(self.input).any(|asked| asked == name);
+        }
+    }
+
+    pub(super) fn note_keys_that_program_can_lay(&mut self) {
         let input = self.input;
         if input.dialect != SourceDialect::Program {
             return;
         }
-        match input.hir[expr].kind {
-            ExprKind::JsxText(text) => self.note_text_under_which_evaluator_hangs(text),
-            ExprKind::Template { .. } => {
-                for part in input.hir.template_parts(expr) {
-                    if let Some(cooked) = part.cooked {
-                        self.note_text_under_which_evaluator_hangs(cooked);
-                    }
-                }
+        self.output.process_reaches_code_on_its_prototypes |=
+            names_asked_past_what_some_runs_create(input)
+                .any(|name| strings::contains(&input.hir.text, table::text_of_name(name)));
+        if !input.is_text_asked {
+            for expr in self.evaluated_exprs() {
+                for_each_text_spelled_at(input, expr, |text| {
+                    self.note_key_that_program_can_lay(text);
+                });
             }
-            _ => {}
         }
-        if let FoldedValue::Constant(Constant::String(text))
-        | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) =
-            input.decisions.constant(input.hir, expr)
-        {
-            self.note_text_under_which_evaluator_hangs(text);
-        }
-        if let Decision::Constant(Constant::String(text)) = input.decisions.decision(expr) {
-            self.note_text_under_which_evaluator_hangs(text);
+        let of_literals = input.hir.props.iter().map(|property| property.key);
+        let of_classes = input.hir.members.iter().map(|member| member.key);
+        for key in of_literals.chain(of_classes) {
+            if let PropKey::Name(name) = key {
+                self.note_key_that_program_can_lay(name);
+            }
         }
     }
 
     fn note_text_under_which_evaluator_hangs(&mut self, text: Atom) {
+        self.note_key_that_program_can_lay(text);
         self.output.reads_name_leading_to_hook_of_instanceof |=
             self.input.names.leads_to_hook_of_instanceof(text);
         let name = self.input.names.find_name_of_language_member(text);

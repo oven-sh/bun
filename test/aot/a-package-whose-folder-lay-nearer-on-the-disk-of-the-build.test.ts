@@ -49,9 +49,12 @@ const trees = {
       ...below("node_modules/@Made/Driver", packageOf("@Made/Driver", "1.0.0", "./lib/index.js")),
       ...below("node_modules/orm/node_modules/parts", packageOf("parts", "2.0.0", undefined)),
       ...below("node_modules/parts", packageOf("parts", "1.0.0", undefined)),
+      "node_modules/orm/node_modules/halves/package.json": JSON.stringify({ name: "halves", version: "2.0.0" }),
+      "node_modules/orm/node_modules/halves/lib/other.js": `exports.version = "2.0.0";\n`,
+      ...below("node_modules/halves", packageOf("halves", "1.0.0", undefined)),
     },
     links: {},
-    entryPoints: ["driver", "JSONDriver", "@Made/Driver", "parts"],
+    entryPoints: ["driver", "JSONDriver", "@Made/Driver", "parts", "halves"],
   },
   store: {
     files: {
@@ -71,9 +74,10 @@ const trees = {
 type Tree = keyof typeof trees;
 
 const forms = { bundle: [], closed: ["--aot"], withCodeFromDisk: ["--aot", "--aot-allow-code-from-disk"] };
-type Form = keyof typeof forms | "run";
+type Form = keyof typeof forms | "run" | "closed, started elsewhere";
 type Ask = (form: Form, ...words: string[]) => Promise<{ answer?: unknown; threw?: string }>;
-const laid: Disposable[] = [];
+const elsewhere = tempDir("aot-a-package-that-lay-nearer-elsewhere", {});
+const laid: Disposable[] = [elsewhere];
 afterAll(() => laid.forEach(dir => dir[Symbol.dispose]()));
 const built: Partial<Record<Tree, Promise<Ask>>> = {};
 const setUp = (tree: Tree) =>
@@ -95,8 +99,11 @@ const setUp = (tree: Tree) =>
       expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     }
     return async (form, ...words) => {
-      const command = form === "run" ? [bunExe(), "main.cjs"] : [join(directory, "bin", form, nameOfExecutable)];
-      const { stdout, stderr, exitCode } = await run([...command, ...words], directory, bunEnv);
+      const isElsewhere = form === "closed, started elsewhere";
+      const executable = join(directory, "bin", isElsewhere ? "closed" : form, nameOfExecutable);
+      const command = form === "run" ? [bunExe(), "main.cjs"] : [executable];
+      const startedIn = isElsewhere ? String(elsewhere) : directory;
+      const { stdout, stderr, exitCode } = await run([...command, ...words], startedIn, bunEnv);
       expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return JSON.parse(stdout);
     };
@@ -114,6 +121,33 @@ test.each([
   async (tree, ...words) => {
     const ask = await setUp(tree);
     expect(await ask("closed", ...words)).toEqual(await ask("bundle", ...words));
+  },
+  600_000,
+);
+
+// `bun run` finds the nearer copy's file, which is not in the executable.
+test.each(["driver/lib/index.js", "driver/lib/index", "driver/lib", "parts/lib/index.js"])(
+  "a closed executable: load %s finds no file of the copy further up",
+  async name => {
+    const ask = await setUp("folders");
+    expect(await ask("run", "load", name)).toEqual({ answer: "2.0.0" });
+    expect(await ask("closed", "load", name)).toEqual({ threw: "MODULE_NOT_FOUND" });
+    expect(await ask("closed, started elsewhere", "load", name)).toEqual({ threw: "MODULE_NOT_FOUND" });
+  },
+  600_000,
+);
+
+test("a closed executable: a path that the nearer copy lacks is found in the copy further up", async () => {
+  const ask = await setUp("folders");
+  expect(await ask("run", "load", "halves/lib/index.js")).toEqual({ answer: "1.0.0" });
+  expect(await ask("closed", "load", "halves/lib/index.js")).toEqual({ answer: "1.0.0" });
+}, 600_000);
+
+test.failing(
+  "a closed executable: so it is where the disk does not hold the sources: 1 of 1 is refused, none may",
+  async () => {
+    const ask = await setUp("folders");
+    expect(await ask("closed, started elsewhere", "load", "halves/lib/index.js")).toEqual({ answer: "1.0.0" });
   },
   600_000,
 );

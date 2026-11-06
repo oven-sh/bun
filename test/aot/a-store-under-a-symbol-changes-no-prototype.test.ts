@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned, told } from "./harness/commands";
+import { sayGoal } from "./harness/goals";
 import { test } from "./supported";
 
 const symbolOfTheRun = `const symbol = Object.getOwnPropertySymbols({ [Symbol("first")]: 1, [Symbol("second")]: 2 })[process.argv.length > 5 ? 0 : 1];`;
@@ -121,6 +122,7 @@ for (const [what, text] of Object.entries({
     `${what}, with a function under a new symbol on the target, gives no trap away (about 3,700 built-ins escape today, the bound is 20)`,
     async () => {
       const escaped = (await lines()).filter(line => line.endsWith("(escapes, so any member may be used)"));
+      sayGoal(`${what}, with a function under a new symbol on the target, gives no trap away`, escaped.length, 20);
       expect(escaped.length).toBeLessThanOrEqual(20);
     },
   );

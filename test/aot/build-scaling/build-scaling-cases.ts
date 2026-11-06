@@ -24,8 +24,10 @@
 // over its bound is asked there again, in one more build. The counts that a shape names (`counts`) are judged however small, by the two sizes alone.
 // A test run prints no counts, and neither does a build that is refused.
 //
-// Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used the memory and the counts are judged. The growth
+// Instructions are counted with perf_event_open on Linux; where it may not be used the memory and the counts are judged. The growth
 // of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. A size that nothing is judged by is not built.
+// On macOS every shape is built and the counts alone are judged: /usr/bin/time -l counts what the kernel does for the build with the rest, and says a number only where the agent is no virtual
+// machine, so the same commit rang or not by the agent that took the job; and the growth of one shape in memory, by one compiler, read 1.86, 1.94, 2.03 and 2.10 there.
 //
 // CI tests Linux under three distributions, on x64 and on arm64. Alpine on x64 is where it may count instructions. Debian on x64 judges what grows in memory
 // and in counts with glibc, and Alpine on arm64 with the other back end. The other lanes would judge that once more, and build nothing.
@@ -39,7 +41,7 @@
 // Each shape prints one line that begins with SCALING.
 import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { countsInstructions, measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
 import { countsIn } from "../compiler/measure";
@@ -77,6 +79,7 @@ const onOneProcessor = taskset
   ? [taskset, "-c", /^Cpus_allowed_list:\s*(\d+)/m.exec(readFileSync("/proc/self/status", "utf8"))![1]]
   : [];
 const printsCounts = (shape: Shape) => !shape.isTestRun && !shape.isRefused;
+const judgesCountsAlone = isMacOS;
 // A later name is longer (e9999, e10000), so twice as many names are more than twice the characters: 2.13 times from 16,000 names to 32,000.
 // A file that is read again shows in SourceLines and its like, and a text that is written again in TableBytesEmitted, which counts the text of the image too.
 const countsOfCharacters = new Set([
@@ -158,10 +161,13 @@ const leastPeakOfNothing = new Map<string, number>();
 export const buildScaling = (part: number, parts: number) =>
   describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
     const carrier = skipped ? [] : withoutDebugInformation();
-    const countsInstructionsHere = countsInstructions();
+    const countsInstructionsHere = !judgesCountsAlone && countsInstructions();
     for (const [index, shape] of shapes.entries()) {
       if (!shape.name.includes(wanted) || index % parts !== part - 1) continue;
-      const growsSoFar = shape.growsSoFar ?? (countsInstructionsHere ? shape.growsSoFarInInstructions : undefined);
+      const growsSoFar =
+        shape.growsSoFar ??
+        (countsInstructionsHere ? shape.growsSoFarInInstructions : undefined) ??
+        (isLinux && process.arch === "arm64" ? shape.growsSoFarOnLinuxArm64 : undefined);
       (growsSoFar ? test.concurrent.failing : test.concurrent)(
         growsSoFar ? `${shape.name}: ${growsSoFar}; the bound is ${mostGrowth}` : shape.name,
         async () => {
@@ -201,7 +207,8 @@ export const buildScaling = (part: number, parts: number) =>
               const early = printsCounts(shape) || countsInstructionsHere ? build(size) : undefined;
               const [none, twice] = await Promise.all([build(0), largest]);
               const isOnceJudged =
-                none.instructions !== undefined || twice.peakBytes - none.peakBytes >= leastBytesJudged;
+                !judgesCountsAlone &&
+                (none.instructions !== undefined || twice.peakBytes - none.peakBytes >= leastBytesJudged);
               const once = await (early ?? (isOnceJudged ? build(size) : undefined));
               const least = (cost: Built, seen: Built | undefined) => ({
                 ...cost,
@@ -214,13 +221,15 @@ export const buildScaling = (part: number, parts: number) =>
               ];
               return leastSeen;
             },
-            costs => (grownInMemory(costs) ?? 0) <= mostGrowth,
+            costs => judgesCountsAlone || (grownInMemory(costs) ?? 0) <= mostGrowth,
           );
           const [none, once, twice] = costs;
-          const growth = {
-            instructions: grown(costs, "instructions", leastInstructionsJudged, leastInstructionsJudged / 8),
-            peakBytes: grownInMemory(costs),
-          };
+          const growth: { instructions: number | undefined; peakBytes: number | undefined } = judgesCountsAlone
+            ? { instructions: undefined, peakBytes: undefined }
+            : {
+                instructions: grown(costs, "instructions", leastInstructionsJudged, leastInstructionsJudged / 8),
+                peakBytes: grownInMemory(costs),
+              };
           const suspects = !once
             ? []
             : Object.keys(twice.counts).filter(

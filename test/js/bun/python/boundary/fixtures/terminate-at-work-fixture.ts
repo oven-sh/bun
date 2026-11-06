@@ -457,6 +457,42 @@ ${"            two = one + one\n".repeat(5000)}
             one()
         except TypeError: pass
 f(None, 1)`,
+  // The thread is got out of the system call, and is about to make it again.
+  "in time.sleep(), in a finalizer": `
+import gc, time
+class D:
+    def __del__(self):
+        tell()
+        time.sleep(1000)
+D()
+gc.collect()
+while True: pass`,
+  "in time.sleep(), in the callback of a weak reference": `
+import gc, time, weakref
+class C: pass
+c = C()
+r = weakref.ref(c, lambda r: (tell(), time.sleep(1000)))
+del c
+gc.collect()
+while True: pass`,
+  "in time.sleep(), in the finally of a generator that is collected": `
+import gc, time
+def g():
+    try: yield
+    finally:
+        tell()
+        time.sleep(1000)
+next(g())
+gc.collect()
+while True: pass`,
+  "in signal.sigwait()": `
+import signal
+tell()
+signal.sigwait({signal.SIGUSR2})`,
+  "in signal.sigtimedwait()": `
+import signal
+tell()
+signal.sigtimedwait({signal.SIGUSR2}, 1000)`,
 };
 
 if (isMainThread) {

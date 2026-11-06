@@ -1,7 +1,7 @@
 // Each worker has a Python of its own.
 import { float } from "bun:python";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 import { join } from "node:path";
 import {
   BufferError,
@@ -241,6 +241,11 @@ describe.concurrent("workers", () => {
     "in the finally of a generator that `in` has left half way, and then in a loop",
     "in the finally of a generator that islice() lets go of, and then in a loop",
     "about to call what is not an object to JavaScript",
+    "in time.sleep(), in a finalizer",
+    "in time.sleep(), in the callback of a weak reference",
+    "in time.sleep(), in the finally of a generator that is collected",
+    // Elsewhere nothing gets the thread out of these.
+    ...(isLinux ? ["in signal.sigwait()", "in signal.sigtimedwait()"] : []),
   ])("terminate() of a worker whose Python is %s", async what => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-work-fixture.ts"), what],

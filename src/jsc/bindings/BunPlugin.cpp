@@ -1,5 +1,6 @@
 #include "BunPlugin.h"
 #include "BunCompiledModules.h"
+#include "BunModuleRegistry.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -648,9 +649,8 @@ __attribute__((minsize)) static void findLoadedESModule(Zig::GlobalObject* globa
 
     loaded.staleESMEntry = true;
     // Registered under several import types (with and without `type: "json"`, say): a patch would only reach one, so treat it as stale.
-    using Type = JSC::ScriptFetchParameters::Type;
     unsigned types = 0;
-    for (Type type : { Type::JavaScript, Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::None })
+    for (auto type : Bun::moduleTypes)
         types += !!loader->getRegisteredMayBeNull(specifierIdent, type);
     if (types > 1)
         return;

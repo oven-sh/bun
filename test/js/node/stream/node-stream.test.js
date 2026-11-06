@@ -2364,3 +2364,29 @@ it("Readable.fromWeb's native source accepts pull(view) without the flags array"
     delete Object.prototype.setFlowing;
   }
 });
+
+// A built-in module that needs one stream class takes it from the module of that class. node:stream as a whole (the
+// operators, pipeline, compose, the other classes) loads when something asks for node:stream. oven-sh/bun#48005.
+describe.concurrent("a built-in module that needs one stream class does not load all of node:stream", () => {
+  const loadsTheRest = (module, expression) => `
+    const m = process.getBuiltinModule(${JSON.stringify(module)});
+    let Stream = ${expression};
+    while (Stream.name !== "Stream") Stream = Object.getPrototypeOf(Stream);
+    console.log(typeof Stream.pipeline, typeof Stream.compose, "Readable" in Stream);
+  `;
+  it.each([
+    ["node:zlib", "m.Gzip"],
+    ["node:http", "m.OutgoingMessage"],
+    ["node:http2", "m.Http2ServerResponse"],
+  ])("%s", async (module, expression) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", loadsTheRest(module, expression)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "undefined undefined false\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

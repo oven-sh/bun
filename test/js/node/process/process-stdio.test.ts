@@ -186,6 +186,112 @@ describe.concurrent("process-stdio", () => {
   });
 });
 
+// The first read of process.stdout or process.stderr makes an fs.WriteStream. What that loads is the Writable class and what it
+// needs: not node:stream as a whole (which adds pipeline, compose and the other classes to the Stream function that Writable
+// inherits from), not Readable, and not node:fs (whose WriteStream accessor stays an accessor until something reads it).
+// oven-sh/bun#48005: the barrel cost a first read of process.stdout about as much as an empty process.
+describe.concurrent("the first read of a standard stream loads only what it needs", () => {
+  // `bun -e` of a CommonJS text loads the built-in module that a top-level name of the text names: no binding is called
+  // `stream` here.
+  const whatIsLoaded = (name: string) => `
+    const standard = process.${name};
+    const fs = require("node:fs");
+    let Stream = standard.constructor;
+    while (Stream.name !== "Stream") Stream = Object.getPrototypeOf(Stream);
+    console.log(JSON.stringify({
+      write: typeof standard.write,
+      barrel: typeof Stream.pipeline,
+      readable: "Readable" in Stream,
+      fsWriteStream: typeof Object.getOwnPropertyDescriptor(fs, "WriteStream").get,
+      fsReadStream: typeof Object.getOwnPropertyDescriptor(fs, "ReadStream").get,
+    }));
+    ${name === "stdout" ? "" : `process.stdout.write("");`}
+  `;
+  const writeStreamOnly = {
+    write: "function",
+    barrel: "undefined",
+    readable: false,
+    fsWriteStream: "function",
+    fsReadStream: "function",
+  };
+
+  test.each(["stdout", "stderr"] as const)("process.%s on a pipe", async name => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", whatIsLoaded(name)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({ loaded: writeStreamOnly, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["stdout", "stderr"] as const)("process.%s on a file", async name => {
+    using dir = tempDir("stdio-loads", {});
+    const file = Bun.file(path.join(String(dir), name));
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", whatIsLoaded(name)],
+      env: bunEnv,
+      stdout: file,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(await file.text()), stderr }).toEqual({ loaded: writeStreamOnly, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.stdin is a Readable below node:fs, and still loads no node:stream", async () => {
+    const script = `
+      const stdin = process.stdin;
+      const fs = require("node:fs");
+      let Stream = stdin.constructor;
+      while (Stream.name !== "Stream") Stream = Object.getPrototypeOf(Stream);
+      console.log(JSON.stringify({
+        read: typeof stdin.read,
+        map: typeof stdin.map,
+        barrel: typeof Stream.pipeline,
+        fsReadStream: typeof Object.getOwnPropertyDescriptor(fs, "ReadStream").get,
+      }));
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin: new Blob(["x"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({
+      loaded: { read: "function", map: "function", barrel: "undefined", fsReadStream: "function" },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:stream, loaded after process.stdout, is the class of process.stdout", async () => {
+    const script = `
+      const standard = process.stdout;
+      const fs = require("node:fs");
+      const { Writable, Readable, Stream } = require("node:stream");
+      console.log(JSON.stringify({
+        writable: standard instanceof Writable,
+        stream: standard instanceof Stream,
+        fsWriteStream: standard instanceof fs.WriteStream,
+        readStream: new fs.ReadStream(process.execPath) instanceof Readable,
+        readStreamStatics: typeof fs.ReadStream.from,
+      }));
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({
+      loaded: { writable: true, stream: true, fsWriteStream: true, readStream: true, readStreamStatics: "function" },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open
 // file description, so spawn clears it again for a child's fds 0-2 (libuv does the same), and the native console writer must
 // wait on EAGAIN instead of dropping the rest of the line.

@@ -2,26 +2,29 @@ import { expect } from "bun:test";
 import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
 import { test } from "./supported";
 
-// No case asks a stream for more than `fd` and `write`.
+// No case asks a stream for more than `fd` and `write`. The modules behind a standard stream call Object.getPrototypeOf when
+// they load (node:events), and Reflect.ownKeys when they are used (node:events, internal/streams/legacy). A replaced
+// Object.getPrototypeOf that answers nonsense makes the load throw. node:child_process loads node:events too: a case about
+// it alone replaces Reflect.ownKeys, which its load does not call.
 const project = casesOfOneRun("the-first-read-of-a-standard-stream-calls-what-a-test-has-replaced", {
   "package.json": `{ "name": "p", "type": "module" }`,
   "tsconfig.json": "{}",
 });
 
-function runsAsPlain(title: string, expected: string, body: string) {
+function runsAsPlain(title: string, expected: string, body: string, replaced = "Object.getPrototypeOf") {
   const name = project.add(
     name => `
       import { spyOn, test } from "bun:test";
       ${sayOf(name)}
-      const keys = Object.keys;
+      const real = ${replaced};
       const nonsense = () => undefined;
       test("${name}", () => {
-        try {${body.replaceAll("console.log(", "say(")}
+        try {${body.replaceAll("console.log(", "say(").replaceAll("REPLACED", replaced)}
         } catch (error) {
-          Object.keys = keys;
+          ${replaced} = real;
           say("threw", error.name);
         } finally {
-          Object.keys = keys;
+          ${replaced} = real;
         }
       });`,
   );
@@ -35,59 +38,59 @@ function runsAsPlain(title: string, expected: string, body: string) {
 
 for (const stream of ["stdout", "stderr"]) {
   runsAsPlain(
-    `process.${stream}.write() calls an Object.keys that counts`,
+    `process.${stream}.write() calls an Object.getPrototypeOf that counts`,
     "true true",
     `
           let calls = 0;
-          Object.keys = object => (calls++, keys(object));
+          REPLACED = object => (calls++, real(object));
           const written = process.${stream}.write("");
-          Object.keys = keys;
+          REPLACED = real;
           console.log(written, calls > 0);`,
   );
   runsAsPlain(
-    `process.${stream} is undefined behind an Object.keys that its modules throw on`,
+    `process.${stream} is undefined behind an Object.getPrototypeOf that its modules throw on`,
     "undefined",
     `
-          Object.keys = nonsense;
+          REPLACED = nonsense;
           const kind = typeof process.${stream};
-          Object.keys = keys;
+          REPLACED = real;
           console.log(kind);`,
   );
   runsAsPlain(
-    `process.${stream}.write() throws behind an Object.keys that its modules throw on`,
+    `process.${stream}.write() throws behind an Object.getPrototypeOf that its modules throw on`,
     "threw TypeError",
     `
-          Object.keys = nonsense;
+          REPLACED = nonsense;
           console.log(process.${stream}.write(""));`,
   );
 }
 
 runsAsPlain(
-  "process.stdin.fd calls an Object.keys that counts",
+  "process.stdin.fd calls an Object.getPrototypeOf that counts",
   "0 true",
   `
           let calls = 0;
-          Object.keys = object => (calls++, keys(object));
+          REPLACED = object => (calls++, real(object));
           const fd = process.stdin.fd;
-          Object.keys = keys;
+          REPLACED = real;
           console.log(fd, calls > 0);`,
 );
 
 runsAsPlain(
-  "process.stdin is undefined behind an Object.keys that its modules throw on",
+  "process.stdin is undefined behind an Object.getPrototypeOf that its modules throw on",
   "undefined",
   `
-          Object.keys = nonsense;
+          REPLACED = nonsense;
           const kind = typeof process.stdin;
-          Object.keys = keys;
+          REPLACED = real;
           console.log(kind);`,
 );
 
 runsAsPlain(
-  "a spy on Object.keys hears the first write",
+  "a spy on Object.getPrototypeOf hears the first write",
   "true",
   `
-          const spy = spyOn(Object, "keys");
+          const spy = spyOn(Object, "getPrototypeOf");
           process.stdout.write("");
           const heard = spy.mock.calls.length > 0;
           spy.mockRestore();
@@ -112,7 +115,7 @@ runsAsPlain(
   "execSync(), which hands on what the child wrote to its stderr",
   "threw TypeError",
   `
-          Object.keys = nonsense;
+          REPLACED = nonsense;
           console.log(String(require("node:child_process").execSync("echo ex")));`,
 );
 
@@ -120,6 +123,7 @@ runsAsPlain(
   "execSync() with the streams of the child named reads no stream of its own",
   "ex",
   `
-          Object.keys = nonsense;
+          REPLACED = nonsense;
           console.log(String(require("node:child_process").execSync("echo ex", { stdio: "pipe" })).trim());`,
+  "Reflect.ownKeys",
 );

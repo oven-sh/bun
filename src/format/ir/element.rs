@@ -244,19 +244,28 @@ impl TextWidth {
     /// See [`TextWidth::short_cut`].
     const SHORT_CUT: u32 = 1 << 29;
     const AFTER_SHIFT: u32 = 26;
-    const FLAGS: u32 =
-        Self::MULTILINE | Self::ONE_STRING | Self::SHORT_CUT | (7 << Self::AFTER_SHIFT);
+    /// The widest text. What is printed is shorter than that: see `is_too_long`.
+    const WIDEST: u32 = Self::SHORT_CUT - 1;
+    /// The same for a [`TextWidth::short_cut`], which has fewer bits for it.
+    const WIDEST_SHORT_CUT: u32 = (1 << Self::AFTER_SHIFT) - 1;
+
+    /// A width that has no room counts as the widest one, not as what is left of its bits.
+    #[inline]
+    const fn at_most(width: u32, widest: u32) -> u32 {
+        if width > widest { widest } else { width }
+    }
 
     #[inline]
     pub(crate) const fn single(width: u32) -> Self {
-        Self(width & !Self::FLAGS)
+        Self(Self::at_most(width, Self::WIDEST))
     }
 
     /// A text that stands for a document that's printed like this only if it fits on the line, together with the
     /// `after` (at most 7) columns that follow it. The printer checks that. See `js/flat.rs`.
     #[inline]
     pub(crate) const fn short_cut(width: u32, after: u32) -> Self {
-        Self(width & !Self::FLAGS | Self::SHORT_CUT | (after & 7) << Self::AFTER_SHIFT)
+        let width = Self::at_most(width, Self::WIDEST_SHORT_CUT);
+        Self(width | Self::SHORT_CUT | (after & 7) << Self::AFTER_SHIFT)
     }
 
     /// For a [`TextWidth::short_cut`], the columns that have to be free after it.
@@ -271,14 +280,14 @@ impl TextWidth {
     /// `width` is measured up to the first line break. Prettier sees the lines as strings joined by `literalline`.
     #[inline]
     pub(crate) const fn multiline(width: u32) -> Self {
-        Self(width & !Self::FLAGS | Self::MULTILINE)
+        Self(Self::at_most(width, Self::WIDEST) | Self::MULTILINE)
     }
 
     /// `width` is the total of all lines. Prettier sees one string in which a line break is just another zero-width
     /// character, so the fit check covers the whole string and what follows it.
     #[inline]
     pub(crate) const fn multiline_string(width: u32) -> Self {
-        Self(width & !Self::FLAGS | Self::MULTILINE | Self::ONE_STRING)
+        Self(Self::at_most(width, Self::WIDEST) | Self::MULTILINE | Self::ONE_STRING)
     }
 
     /// For a text of nothing but line breaks that stands for as many `hardline`s, of which the printer would print no more
@@ -296,7 +305,11 @@ impl TextWidth {
 
     #[inline]
     pub(crate) const fn value(self) -> u32 {
-        self.0 & !Self::FLAGS
+        self.0
+            & match self.0 & Self::SHORT_CUT != 0 {
+                true => Self::WIDEST_SHORT_CUT,
+                false => Self::WIDEST,
+            }
     }
 
     /// See [`TextWidth::multiline_string`].

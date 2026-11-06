@@ -7299,6 +7299,16 @@ impl Quick {
                     if self.lexer.tok == tk::Eq {
                         self.next_jsx_tag()?;
                         if self.lexer.tok == tk::String {
+                            // (Flow: behind white space the long way reads a string of JavaScript, in which a backslash means something)
+                            if self.lexer.tok_start != self.lexer.prev_end
+                                && self.parse.typed == TYPED_FLOW
+                                && bun_core::strings::contains_char(
+                                    self.t.sub(self.lexer.tok_start, self.lexer.tok_end),
+                                    b'\\',
+                                )
+                            {
+                                return Err(self.text_refuse());
+                            }
                             value = self.node0(
                                 k::StringLiteral | self.lexer.tok_flags,
                                 self.lexer.tok_start,

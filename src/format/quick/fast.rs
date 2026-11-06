@@ -1361,7 +1361,7 @@ impl Quick {
             let mut s = if c == 62 { e + 1 } else { e };
             s = self.blank_lines_end(s);
             if if c == 62 {
-                self.t.at(s) == 40
+                self.t.at(s) == 40 || (self.fast.flow && !self.is_plain_behind_type_parameters(s))
             } else {
                 self.t.at(s) == 61 || self.word_is(s, b"extends") || self.word_is(r + 1, b"const")
             } {
@@ -6359,6 +6359,13 @@ impl Quick {
     }
 
     /// Is `<a>` an element in the text that is about to be read?
+    /// Flow: `<a>` may be the type parameters of a function, so the long way reads what stands behind it, at p, as a token, and does not
+    /// get over one that is broken: `<a>'</a>`, `<a>1st</a>`. A word, a tag and a `{` are whole.
+    fn is_plain_behind_type_parameters(&self, p: i32) -> bool {
+        let c = self.t.at(p);
+        c == 60 || c == 123 || (c < 128 && (CC.at(c) & ID_START) != 0)
+    }
+
     pub(crate) fn set_jsx_is_on(&mut self, on: bool) {
         self.fast.jsx_is_on = on;
     }
@@ -6387,7 +6394,12 @@ impl Quick {
                 return Ok(self.no(refusal::JsxBreaks));
             }
             // `<A>(b) => c` is a function
-            if self.t.at(q) == 40 {
+            if self.t.at(q) == 40
+                || (self.fast.flow && {
+                    let s = self.blank_lines_end(q);
+                    !self.is_plain_behind_type_parameters(s)
+                })
+            {
                 return Ok(self.no(refusal::Less));
             }
             q = self.jsx_leaf(q, p)?;

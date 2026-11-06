@@ -6748,7 +6748,34 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "x = a as const\n< b;\n",
     // a modifier and a name: an index signature
     "class A {\n  [declare as a]: T;\n}\n",
+    // text behind `<a>` that is no token: the long way tries type parameters
+    '<A>"</A>;\n',
+    "<a>'</a>;\n",
+    "<a>`</a>;\n",
+    "<a>#1 text</a>;\n",
+    "<a>1st</a>;\n",
+    "<a>0b2</a>;\n",
+    "<a>/*</a>;\n",
+    "<b>\u00a7</b>;\n",
+    "<b>\ud83d\ude00</b>;\n",
+    "x = (\n  <Text>\n    #1 text\n  </Text>\n);\n",
+    "x = (\n  <a>\n    1st\n  </a>\n);\n",
+    "f(<a>'</a>);\n",
+    "x = <a>{<b>'</b>}</a>;\n",
+    // white space in front of the value of an attribute, and a backslash in it
+    'x = <a b = "\\u" />;\n',
+    'x = <a b=\n"\\@" />;\n',
+    'x = <a b=\n\n"aa\\@bb" c="d" />;\n',
   ]);
+  expectRejected(
+    "a.js with @flow, what only Flow has",
+    "a.js",
+    [
+      // text behind `<a>` that is no token: the long way tries type parameters
+      "<a>'</a>;\n",
+      "x = (\n  <a>\n    1st\n  </a>\n);\n",
+    ].map(text => `// @flow\n${text}`),
+  );
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared
     "await /a/;\n",

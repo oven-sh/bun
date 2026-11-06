@@ -81,6 +81,8 @@ pub(crate) const PARAMETERS_OF_CONSTRUCTOR: i32 = 2;
 
 /// TYPED_FLOW
 pub(crate) const FLOW: i32 = 2;
+/// For `failed_at`: the lexer has not given up since.
+const NOWHERE: i32 = i32::MIN;
 impl Quick {
     pub(crate) fn ts_reset_context(&mut self) {
         self.parse_typescript.no_conditional_types = 0;
@@ -2921,10 +2923,15 @@ impl Quick {
         let depth = self.parse.speculating;
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
+        self.failed_at.set(NOWHERE);
         let v0 = (|| -> R<Option<i32>> {
             self.parse_flow.has_odd_type_parameter = false;
             let type_parameters = self.ts_parse_type_parameters()?;
             let is_odd = self.parse_flow.has_odd_type_parameter;
+            // (a template is read to its end only by who wants one)
+            if self.lexer.tok == tk::BackQuote && self.parse.typed == FLOW {
+                return Err(self.text_refuse());
+            }
             let params = self.parse_params()?;
             let return_type = if self.lexer.tok == tk::Colon {
                 self.ts_parse_arrow_return_type()?
@@ -2947,6 +2954,11 @@ impl Quick {
             Err(Stop) => (|| -> R<Option<i32>> {
                 if !(self.why.get() == why::SYNTAX) || self.parse.speculating == depth {
                     return Err(Stop);
+                }
+                // Flow: `<a>'</a>`, `<a>1st</a>`. The text of an element has been read as tokens, and it was the lexer that gave up: the
+                // long way, which tries the same, does not get over that.
+                if self.parse.typed == FLOW && self.failed_at.get() != NOWHERE {
+                    return Err(self.text_refuse());
                 }
                 result = 0;
                 Ok(None)

@@ -1310,7 +1310,7 @@ function materializeStream<T>(name: string, value: T): T {
 // (process.stdout) loads no Readable. What node:fs hands out is the whole class.
 function readStream() {
   const { ReadStream } = require("internal/fs/streams");
-  ReadStream.prototype;
+  void ReadStream.prototype;
   return ReadStream;
 }
 

@@ -361,6 +361,8 @@ fn end_of_unquoted_url(css: &[u8], paren: usize, is_inside: bool) -> Option<usiz
             b')' => return (p > paren + 1).then_some(p),
             // Between other parentheses, the parser of values takes this for a comment.
             b'/' if byte(css, p + 1) == b'/' && is_inside => return None,
+            // It takes this for one everywhere.
+            b'/' if byte(css, p + 1) == b'*' => return None,
             0..=0x20 | 0x7F.. => return None,
             b'"' | b'\'' | b'(' | b'\\' | b'$' | b'+' | b'{' | b'}' | b'@' | b'#' | b'!' => {
                 return None;

@@ -19,4 +19,4 @@ mod response;
 mod tests;
 
 pub use chunked::{ChunkedDecoder, ChunkedStatus, Decoded};
-pub use response::{Header, ParseError, ResponseHead, parse_response};
+pub use response::{HeadScanner, Header, ParseError, ResponseHead, parse_response};

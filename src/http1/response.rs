@@ -38,41 +38,20 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
     headers: &mut [H],
 ) -> Result<ResponseHead<'a>, ParseError> {
     let (minor_version, rest) = http_version(buf)?;
-    let [b' ', rest @ ..] = rest else {
-        return Err(ParseError::Malformed);
-    };
-    // Three digits, and the byte that shows there is no fourth.
-    let [hundreds, tens, ones, after_status @ ..] = skip_spaces(rest) else {
-        return Err(ParseError::Incomplete);
-    };
-    if after_status.is_empty() {
-        return Err(ParseError::Incomplete);
-    }
-    let status_code = u16::from(digit(*hundreds)?) * 100
-        + u16::from(digit(*tens)?) * 10
-        + u16::from(digit(*ones)?);
-
-    let (reason, mut at) = line(buf, buf.len() - after_status.len())?;
-    if !matches!(reason, [] | [b' ', ..]) {
-        return Err(ParseError::Malformed);
-    }
-    let reason = skip_spaces(reason);
+    let (status_code, after_status) = status_code(skip_spaces(rest))?;
+    let reason_at = buf.len() - after_status.len();
+    let (reason, mut at) = reason(buf, reason_at, reason_at)?;
 
     let mut header_count = 0;
     let mut has_folded_line = false;
     loop {
-        let is_folded = match buf.get(at..) {
-            None | Some([] | [b'\r']) => return Err(ParseError::Incomplete),
-            Some([b'\r', b'\n', ..]) => {
-                at += 2;
+        let is_folded = match line_start(buf, at, header_count)? {
+            LineStart::EndOfHead(end) => {
+                at = end;
                 break;
             }
-            Some([b'\n', ..]) => {
-                at += 1;
-                break;
-            }
-            Some([b'\r', ..]) => return Err(ParseError::Malformed),
-            Some([first, ..]) => header_count > 0 && matches!(first, b' ' | b'\t'),
+            LineStart::Folded => true,
+            LineStart::Field => false,
         };
         // A folded line takes a slot too, so that it counts towards the limit.
         let Some(slot) = headers.get_mut(header_count) else {
@@ -83,13 +62,13 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
         if is_folded {
             has_folded_line = true;
         } else {
-            (name, at) = field_name(buf, at)?;
+            (name, at) = field_name(buf, at, at)?;
             while let Some(b' ' | b'\t') = buf.get(at) {
                 at += 1;
             }
         }
         let value;
-        (value, at) = line(buf, at)?;
+        (value, at) = line(buf, at, at)?;
         *slot = H::from(Header {
             name,
             value: trim_blanks_end(value),
@@ -108,15 +87,161 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
     })
 }
 
-/// `HTTP/1.x`, and what follows it, which is not empty.
+/// Finds the end of a head that comes in pieces without starting over at each, as [`parse_response`] would.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HeadScanner {
+    part: Part,
+    /// Where `part` starts in the buffer.
+    start: usize,
+    /// Where the bytes of `part` start that have not been searched for its end.
+    unsearched: usize,
+    header_count: usize,
+    has_folded_line: bool,
+}
+
+/// What [`parse_response`] reads one after the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Part {
+    #[default]
+    Version,
+    Status,
+    Reason,
+    LineStart,
+    Name,
+    /// With the blanks before it, or a folded line.
+    Value,
+}
+
+impl HeadScanner {
+    /// As [`parse_response`] of `buf` and `max_headers` slots. After `Incomplete`, the next `buf` begins with this one.
+    pub fn scan(&mut self, buf: &[u8], max_headers: usize) -> Result<usize, ParseError> {
+        loop {
+            let Self {
+                start, unsearched, ..
+            } = *self;
+            let (next, at) = match self.part {
+                Part::Version => (Part::Status, buf.len() - http_version(buf)?.1.len()),
+                Part::Status => {
+                    let digits = skip_spaces(buf.get(start..).unwrap_or_default());
+                    self.go_to(Part::Status, buf.len() - digits.len());
+                    (Part::Reason, buf.len() - status_code(digits)?.1.len())
+                }
+                Part::Reason => (
+                    Part::LineStart,
+                    self.end_of_part(buf, reason(buf, start, unsearched))?,
+                ),
+                Part::LineStart => {
+                    let line_start = line_start(buf, start, self.header_count)?;
+                    if let LineStart::EndOfHead(end) = line_start {
+                        if self.has_folded_line {
+                            return Err(ParseError::Malformed);
+                        }
+                        // The next `buf` begins with another head.
+                        *self = Self::default();
+                        return Ok(end);
+                    }
+                    if self.header_count >= max_headers {
+                        return Err(ParseError::Malformed);
+                    }
+                    self.header_count += 1;
+                    if matches!(line_start, LineStart::Folded) {
+                        self.has_folded_line = true;
+                        (Part::Value, start)
+                    } else {
+                        (Part::Name, start)
+                    }
+                }
+                Part::Name => (
+                    Part::Value,
+                    self.end_of_part(buf, field_name(buf, start, unsearched))?,
+                ),
+                Part::Value => (
+                    Part::LineStart,
+                    self.end_of_part(buf, line(buf, start, unsearched))?,
+                ),
+            };
+            self.go_to(next, at);
+        }
+    }
+
+    /// How many bytes of the buffer the next call will not read.
+    pub fn scanned(&self) -> usize {
+        self.unsearched
+    }
+
+    fn go_to(&mut self, part: Part, start: usize) {
+        self.part = part;
+        self.start = start;
+        self.unsearched = start;
+    }
+
+    /// Where the part ends, from what [`line`], [`reason`] or [`field_name`] made of it.
+    fn end_of_part(
+        &mut self,
+        buf: &[u8],
+        part: Result<(&[u8], usize), ParseError>,
+    ) -> Result<usize, ParseError> {
+        if part == Err(ParseError::Incomplete) {
+            // A CR at the end has yet to be told from the one of a CRLF.
+            self.unsearched = buf.len() - usize::from(buf.ends_with(b"\r"));
+        }
+        Ok(part?.1)
+    }
+}
+
+/// The `x` of `HTTP/1.x`, and what follows the space after it.
 fn http_version(buf: &[u8]) -> Result<(u8, &[u8]), ParseError> {
-    let Some(([name @ .., minor], rest @ [_, ..])) = buf.split_first_chunk::<8>() else {
+    let Some(([name @ .., minor], [space, rest @ ..])) = buf.split_first_chunk::<8>() else {
         return Err(ParseError::Incomplete);
     };
-    if name != b"HTTP/1." {
+    if name != b"HTTP/1." || *space != b' ' {
         return Err(ParseError::Malformed);
     }
     Ok((digit(*minor)?, rest))
+}
+
+/// Three digits, and what follows them, which is not empty: its first byte shows that there is no fourth.
+fn status_code(buf: &[u8]) -> Result<(u16, &[u8]), ParseError> {
+    let [hundreds, tens, ones, rest @ ..] = buf else {
+        return Err(ParseError::Incomplete);
+    };
+    if rest.is_empty() {
+        return Err(ParseError::Incomplete);
+    }
+    let status_code = u16::from(digit(*hundreds)?) * 100
+        + u16::from(digit(*tens)?) * 10
+        + u16::from(digit(*ones)?);
+    Ok((status_code, rest))
+}
+
+/// [`line`] for the rest of the status line, without the spaces before the reason.
+#[inline(always)]
+fn reason(buf: &[u8], from: usize, unsearched: usize) -> Result<(&[u8], usize), ParseError> {
+    let (reason, next_line) = line(buf, from, unsearched)?;
+    if !matches!(reason, [] | [b' ', ..]) {
+        return Err(ParseError::Malformed);
+    }
+    Ok((skip_spaces(reason), next_line))
+}
+
+enum LineStart {
+    /// The line is empty, and ends here.
+    EndOfHead(usize),
+    Folded,
+    Field,
+}
+
+/// What the first bytes of the line at `at` tell about it. `header_count` lines came between it and the status line.
+#[inline(always)]
+fn line_start(buf: &[u8], at: usize, header_count: usize) -> Result<LineStart, ParseError> {
+    match buf.get(at..) {
+        None | Some([] | [b'\r']) => Err(ParseError::Incomplete),
+        Some([b'\r', b'\n', ..]) => Ok(LineStart::EndOfHead(at + 2)),
+        Some([b'\n', ..]) => Ok(LineStart::EndOfHead(at + 1)),
+        Some([b'\r', ..]) => Err(ParseError::Malformed),
+        Some([b' ' | b'\t', ..]) if header_count > 0 => Ok(LineStart::Folded),
+        Some(_) => Ok(LineStart::Field),
+    }
 }
 
 fn digit(byte: u8) -> Result<u8, ParseError> {
@@ -126,11 +251,11 @@ fn digit(byte: u8) -> Result<u8, ParseError> {
     }
 }
 
-/// The name that starts at `from`, and where the byte after its colon is.
+/// The name that starts at `from`, and where the byte after its colon is. `unsearched` is as for [`line`].
 #[inline(always)]
-fn field_name(buf: &[u8], from: usize) -> Result<(&[u8], usize), ParseError> {
+fn field_name(buf: &[u8], from: usize, unsearched: usize) -> Result<(&[u8], usize), ParseError> {
     // Nearly every name is letters, digits and hyphens, and that takes far fewer compares than all of `is_token`.
-    let mut end = index_of(buf, from, |byte| {
+    let mut end = index_of(buf, unsearched, |byte| {
         !(byte.is_ascii_alphabetic() | byte.is_ascii_digit() | (byte == b'-'))
     })
     .ok_or(ParseError::Incomplete)?;
@@ -170,10 +295,10 @@ fn is_token(byte: u8) -> bool {
 }
 
 /// The bytes from `from` up to the end of the line, and where the next line starts. The only control character a line
-/// may hold is a tab.
+/// may hold is a tab. The bytes from `from` up to `unsearched` are known to be of the line.
 #[inline(always)]
-fn line(buf: &[u8], from: usize) -> Result<(&[u8], usize), ParseError> {
-    let end = index_of(buf, from, |byte| {
+fn line(buf: &[u8], from: usize, unsearched: usize) -> Result<(&[u8], usize), ParseError> {
+    let end = index_of(buf, unsearched, |byte| {
         ((byte < b' ') & (byte != b'\t')) | (byte == 0x7f)
     })
     .ok_or(ParseError::Incomplete)?;

@@ -22,6 +22,9 @@ export const parserCasesHash = async () =>
 
 export const parsed = (slots: number, data: string) =>
   internals.http1Internals.parseResponse(Buffer.from(data, "hex"), slots);
+/** By parsing everything received after every piece, and then as each client does it. */
+export const received = (slots: number, data: Buffer, piece: number) =>
+  internals.http1Internals.receiveResponse(data, slots, piece).trimEnd().split("\n") as [string, string, string];
 export const decoded = (cuts: number[], data: string) =>
   internals.http1Internals.decodeChunked(Buffer.from(data, "hex"), cuts);
 
@@ -44,15 +47,19 @@ const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 
 /**
  * Answers `GET /<n>` with `responses[n]` and closes the connection. A piece is written once the event loop has
- * polled its sockets, so the client mostly reads them one at a time. Nothing depends on that.
+ * polled its sockets, so the client mostly reads them one at a time. Only a caller that passes `isRead` depends on
+ * that: the next piece waits until it returns true.
  */
-function rawServer(responses: Buffer[], delivery: Delivery) {
-  return Bun.listen<{ request: string }>({
+function rawServer(responses: Buffer[], delivery: Delivery, isRead: () => boolean) {
+  return Bun.listen<{ request: string; closed: boolean }>({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       open(socket) {
-        socket.data = { request: "" };
+        socket.data = { request: "", closed: false };
+      },
+      close(socket) {
+        socket.data.closed = true;
       },
       async data(socket, data) {
         if (socket.data.request.endsWith("\r\n\r\n")) return;
@@ -65,7 +72,8 @@ function rawServer(responses: Buffer[], delivery: Delivery) {
             if (written < 0) return;
             piece = piece.subarray(written);
             socket.flush();
-            await turn();
+            do await turn();
+            while (!isRead() && !socket.data.closed);
           }
         }
         socket.end();
@@ -128,10 +136,11 @@ export const responses = {
 export type Part = keyof typeof responses;
 
 /** What `client` makes of each of `cases`, by label. */
-export async function observed(client: Client, cases: Case[], delivery: Delivery) {
+export async function observed(client: Client, cases: Case[], delivery: Delivery, isRead = () => true) {
   using server = rawServer(
     cases.map(([, text]) => Buffer.from(text, "latin1")),
     delivery,
+    isRead,
   );
   const results: Record<string, string> = {};
   let next = 0;

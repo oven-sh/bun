@@ -2655,7 +2655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn for_each_read_ts_import_equals(
         &mut self,
         aliases: &[js_ast::StoreRef<S::Local>],
-        mut visit: impl FnMut(&mut Self, usize) -> Result<(), Error>,
+        visit: &mut dyn FnMut(&mut Self, usize) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let mut index_of: HashMap<Ref, usize> = HashMap::default();
         if aliases.len() > 1 {
@@ -2703,7 +2703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut read: BumpVec<'a, Option<StmtList<'a>>> =
             bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
-        self.for_each_read_ts_import_equals(&aliases, |p, index| {
+        self.for_each_read_ts_import_equals(&aliases, &mut |p, index| {
             let mut local = aliases[index];
             let mut stmt = Stmt {
                 data: StmtData::SLocal(local),
@@ -2743,7 +2743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let aliases = bun_alloc::vec_from_iter_in(deferred.iter().map(|it| it.1), arena);
         let mut read: BumpVec<'a, Option<js_ast::Part>> =
             bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
-        self.for_each_read_ts_import_equals(&aliases, |p, index| {
+        self.for_each_read_ts_import_equals(&aliases, &mut |p, index| {
             let stmt = Stmt {
                 data: StmtData::SLocal(aliases[index]),
                 loc: deferred[index].2,

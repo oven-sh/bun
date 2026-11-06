@@ -1,6 +1,6 @@
 import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import net from "net";
 import { join } from "path";
@@ -634,21 +634,29 @@ describe("gc entries", () => {
     };
   `;
 
-  // A test that has timed out cannot end its script, which holds an interval. So each script has its own limit, far
-  // above what the slowest build needs.
-  const limit = { timeout: 30_000, killSignal: "SIGKILL" } as const;
+  // A test that has timed out cannot end its script, which holds an interval or waits in the loop of --watch. The
+  // scripts that still run when the tests are over are ended here.
+  const scripts = new Set<{ kill(signal: "SIGKILL"): void }>();
+  afterAll(() => {
+    for (const script of scripts) script.kill("SIGKILL");
+  });
+  const tracked = <T extends { kill(signal: "SIGKILL"): void }>(script: T) => {
+    scripts.add(script);
+    return script;
+  };
 
   async function run(
     script: string,
     { flags = [], env = {} }: { flags?: string[]; env?: Record<string, string> } = {},
   ) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...flags, "-e", prelude + script],
-      env: { ...bunEnv, ...env },
-      stdout: "pipe",
-      stderr: "pipe",
-      ...limit,
-    });
+    await using proc = tracked(
+      Bun.spawn({
+        cmd: [bunExe(), ...flags, "-e", prelude + script],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     return { result: stdout && JSON.parse(stdout), exitCode };
@@ -1060,13 +1068,14 @@ describe("gc entries", () => {
   ])(
     "the entry of a collection that $who arrives before the loop wakes for something else",
     async ({ script, concurrent }) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", BUN_JSC_useConcurrentGC: concurrent },
-        stdout: "pipe",
-        stderr: "pipe",
-        ...limit,
-      });
+      await using proc = tracked(
+        Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", BUN_JSC_useConcurrentGC: concurrent },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe('{"arrived":true}\n');
@@ -1094,11 +1103,12 @@ describe("gc entries", () => {
       1,
     ],
   ])("a collection %s does not keep the event loop alive", async (_, before, after, cleanups) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { PerformanceObserver } = require("node:perf_hooks");
+    await using proc = tracked(
+      Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { PerformanceObserver } = require("node:perf_hooks");
          let delivered = 0;
          let beforeExit = 0;
          let ranUnrefd = false;
@@ -1114,12 +1124,12 @@ describe("gc entries", () => {
            for (let i = 0; i < 20; i++) Bun.gc(true);
          });
          process.on("exit", () => console.log(JSON.stringify({ delivered, beforeExit, ranUnrefd, cleanups })));`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      ...limit,
-    });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect({ printed: stdout && JSON.parse(stdout), signalCode: proc.signalCode }).toEqual({
@@ -1132,11 +1142,12 @@ describe("gc entries", () => {
   // No interval at first. The hand-off finds nothing that holds the loop, and tries again in the turn that the interval of
   // the listener brings.
   test.concurrent("an entry that found nothing to hold the loop arrives once something holds it", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { PerformanceObserver, constants } = require("node:perf_hooks");
+    await using proc = tracked(
+      Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { PerformanceObserver, constants } = require("node:perf_hooks");
          const registry = new FinalizationRegistry(() => {});
          (() => { registry.register({}, 0); })();
          let keepAlive;
@@ -1152,12 +1163,12 @@ describe("gc entries", () => {
          process.once("beforeExit", () => {
            keepAlive = setInterval(() => {}, 1000);
          });`,
-      ],
-      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-      ...limit,
-    });
+        ],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe('{"lists":1}\n');
@@ -1191,14 +1202,15 @@ describe("gc entries", () => {
           });
         `,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), flag, "waits.cjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-        ...limit,
-      });
+      await using proc = tracked(
+        Bun.spawn({
+          cmd: [bunExe(), flag, "waits.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toBe('{"waited":true,"forced":1}\n');
       expect(exitCode).toBe(0);
@@ -1402,19 +1414,21 @@ describe("gc entries", () => {
           waitsSince = performance.now();
         `,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "waits.cjs"],
-        env: {
-          ...bunEnv,
-          BUN_IDLE_GC_SECONDS: "1",
-          BUN_GC_TIMER_INTERVAL: "250",
-          BUN_GC_TIMER_DISABLE: undefined,
-          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
-        },
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      await using proc = tracked(
+        Bun.spawn({
+          cmd: [bunExe(), "waits.cjs"],
+          env: {
+            ...bunEnv,
+            BUN_IDLE_GC_SECONDS: "1",
+            BUN_GC_TIMER_INTERVAL: "250",
+            BUN_GC_TIMER_DISABLE: undefined,
+            BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+          },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({ flags: perf.constants.NODE_PERFORMANCE_GC_FLAGS_NO, live: 100000 });
@@ -1535,13 +1549,15 @@ describe("gc entries", () => {
   // Runs the test files with `bun test`, and gives what they wrote to "forced.log" too.
   async function runTestFiles(files: Record<string, string>, ...flags: string[]) {
     using dir = tempDir("perf-hooks-gc-bun-test", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...flags, ...Object.keys(files).filter(name => name.endsWith(".test.js"))],
-      env: { ...bunEnv, NODE_PATH: undefined },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    await using proc = tracked(
+      Bun.spawn({
+        cmd: [bunExe(), "test", ...flags, ...Object.keys(files).filter(name => name.endsWith(".test.js"))],
+        env: { ...bunEnv, NODE_PATH: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const log = Bun.file(join(String(dir), "forced.log"));
     return { output: stdout + stderr, exitCode, forcedLog: (await log.exists()) ? await log.text() : "" };

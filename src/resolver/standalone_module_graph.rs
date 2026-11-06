@@ -92,6 +92,7 @@ pub fn fold_embedded_path<'a>(
 
 /// The file of `graph` at the first `path_len` bytes of `buf`, or the one under the `.js` name that an entry point
 /// with a source extension, or with none, is embedded under.
+#[inline(always)]
 fn find_file_or_entry_point<Graph: StandaloneModuleGraph + ?Sized>(
     graph: &Graph,
     buf: &mut [u8],

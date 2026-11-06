@@ -3433,10 +3433,25 @@ bool EVPKeyCtxPointer::setRsaOaepLabel(DataPointer&& data)
     return false;
 }
 
+// Not upstream: when a digest meets an RSA key, OpenSSL refuses one that is not on its list for RSA, under every
+// padding, and Node reports ERR_OSSL_DIGEST_NOT_ALLOWED. BoringSSL has such a list only for the DigestInfo of
+// PKCS#1 v1.5, so PSS takes any digest. Of BoringSSL's digests, the ones off OpenSSL's list are the ones without a NID.
+// https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/providers/implementations/signature/rsa_sig.c#L389-L394
+static NEVER_INLINE bool rsaRefusesDigestWithoutNid(const EVP_PKEY* key)
+{
+    int type = EVPKeyPointer::id(key);
+    if (type != EVP_PKEY_RSA && type != EVP_PKEY_RSA2 && type != EVP_PKEY_RSA_PSS) return false;
+    OPENSSL_PUT_ERROR(EVP, EVP_R_INVALID_DIGEST_TYPE);
+    return true;
+}
+
 bool EVPKeyCtxPointer::setSignatureMd(const EVPMDCtxPointer& md)
 {
     if (!ctx_) return false;
-    return EVP_PKEY_CTX_set_signature_md(ctx_.get(), EVP_MD_CTX_md(md.get())) == 1;
+    const EVP_MD* digest = EVP_MD_CTX_md(md.get());
+    if (digest && EVP_MD_type(digest) == NID_undef && rsaRefusesDigestWithoutNid(EVP_PKEY_CTX_get0_pkey(ctx_.get()))) [[unlikely]]
+        return false;
+    return EVP_PKEY_CTX_set_signature_md(ctx_.get(), digest) == 1;
 }
 
 bool EVPKeyCtxPointer::initForDecrypt()
@@ -3808,6 +3823,8 @@ bool EVPMDCtxPointer::copyTo(const EVPMDCtxPointer& other) const
 std::optional<EVP_PKEY_CTX*> EVPMDCtxPointer::signInit(const EVPKeyPointer& key,
     const Digest& digest)
 {
+    if (digest && EVP_MD_type(digest) == NID_undef && rsaRefusesDigestWithoutNid(key.get())) [[unlikely]]
+        return std::nullopt;
     EVP_PKEY_CTX* ctx = nullptr;
     if (!EVP_DigestSignInit(ctx_.get(), &ctx, digest, nullptr, key.get())) {
         return std::nullopt;
@@ -3818,6 +3835,8 @@ std::optional<EVP_PKEY_CTX*> EVPMDCtxPointer::signInit(const EVPKeyPointer& key,
 std::optional<EVP_PKEY_CTX*> EVPMDCtxPointer::verifyInit(
     const EVPKeyPointer& key, const Digest& digest)
 {
+    if (digest && EVP_MD_type(digest) == NID_undef && rsaRefusesDigestWithoutNid(key.get())) [[unlikely]]
+        return std::nullopt;
     EVP_PKEY_CTX* ctx = nullptr;
     if (!EVP_DigestVerifyInit(ctx_.get(), &ctx, digest, nullptr, key.get())) {
         return std::nullopt;

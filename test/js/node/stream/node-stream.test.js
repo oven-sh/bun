@@ -1957,7 +1957,7 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
 // Node defines the operator methods when lib/stream.js loads, and its net, tls, crypto, child_process and
 // worker_threads load that file. In Bun those modules, _http_incoming and the _stream_* modules reach the class
 // and never load node:stream. Each script below runs in a fresh process that has not loaded node:stream.
-// On the main thread a read of process.stdout, process.stderr or process.stdin loads it. console.log does not.
+// Neither does a read of process.stdout, process.stderr or process.stdin, nor console.log (process-stdio.test.ts pins that).
 describe("Readable operators in a process that has not loaded node:stream", () => {
   const lengths = {
     drop: 1,

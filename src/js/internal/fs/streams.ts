@@ -132,7 +132,7 @@ const { internals } = fileHandles;
 if (internals) takeFileHandleInternals(internals);
 else fileHandles.whenLoaded = takeFileHandleInternals;
 
-// A FileHandle comes from node:fs/promises, so node:fs is loaded by the time a stream is made over one.
+// A stream over a FileHandle takes read, write, writev and fsync from node:fs, and loads it at the first such stream.
 function fileHandleStreamFs(fh: FileHandle) {
   const { read, write, fsync, writev } = require("node:fs");
   return {

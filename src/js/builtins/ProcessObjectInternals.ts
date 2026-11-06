@@ -176,7 +176,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     source?.updateRef?.(false);
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("internal/fs/streams").ReadStream;
+  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream: StdinStream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;

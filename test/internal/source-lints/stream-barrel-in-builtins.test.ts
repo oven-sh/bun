@@ -9,21 +9,16 @@ import path from "node:path";
 // the function that needs it. process.stdout, process.stderr, node:zlib and node:http once paid the whole barrel at
 // load (oven-sh/bun#48005).
 //
-// Known: the modules that are node:stream (stream.ts, _stream_wrap.ts, stream.promises.ts), and the requires that sit
-// inside a function and run on first use.
+// A require at the top level of a module starts its line in column 0. One inside a function is indented, and runs on
+// first use. Known: the modules that are node:stream.
 test("built-in modules do not require the node:stream barrel at load", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
-  const barrel = /\brequire\("(?:node:stream|internal\/stream)"\)/;
+  const barrel = /^\S.*\brequire\("(?:node:stream|internal\/stream)"\)/;
 
   const known = new Map([
     ["src/js/node/_stream_wrap.ts", 1],
     ["src/js/node/stream.promises.ts", 1],
     ["src/js/node/stream.ts", 1],
-    // Inside a function, on first use.
-    ["src/js/node/test.ts", 1],
-    ["src/js/node/v8.ts", 1],
-    ["src/js/thirdparty/node-fetch.ts", 3],
-    ["src/js/thirdparty/ws.ts", 1],
   ]);
 
   const found = new Map<string, number>();
@@ -33,7 +28,7 @@ test("built-in modules do not require the node:stream barrel at load", async () 
     if (file.endsWith(".d.ts")) continue;
     scanned++;
     const lines = readFileSync(path.join(repoRoot, file), "utf8").split("\n");
-    const count = lines.filter(line => !/^\s*(?:\/\/|\*|\/\*)/.test(line) && barrel.test(line)).length;
+    const count = lines.filter(line => !/^\/[/*]/.test(line) && barrel.test(line)).length;
     if (count > 0) found.set(file, count);
   }
   expect(scanned).toBeGreaterThan(100);

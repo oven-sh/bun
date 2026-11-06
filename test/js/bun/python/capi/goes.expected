@@ -1,0 +1,4 @@
+SystemError <built-in function dlclose> returned a result with an exception set
+RuntimeError('from the destructor') True True
+7 CDLL
+None

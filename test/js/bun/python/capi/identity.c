@@ -30,3 +30,15 @@ PyObject *types(void)
 }
 
 unsigned long address_of(PyObject *object) { return (unsigned long)(uintptr_t)object; }
+
+/* Whether the object is the int that C makes of the number: by the pointers, and as Py_Is() has it. */
+int is_the_int(PyObject *object, long number)
+{
+    PyObject *made = PyLong_FromLong(number);
+    int result = (object == made) + 2 * Py_Is(object, made) + 4 * (PyLong_AsLong(object) == number);
+    Py_DECREF(made);
+    return result;
+}
+
+/* What a list hands out for its first item. */
+unsigned long address_of_first(PyObject *list) { return (unsigned long)(uintptr_t)PyList_GetItem(list, 0); }

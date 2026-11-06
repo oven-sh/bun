@@ -84,6 +84,14 @@ const char *ask_here(PyObject *object)
     return answers;
 }
 
+/* The length of the list, + 1, before it calls back and after: two digits. */
+long sizes_around(PyObject *list, void (*callback)(void))
+{
+    long before = (long)PyList_Size(list) + 1;
+    callback();
+    return before * 10 + (long)PyList_Size(list) + 1;
+}
+
 /* The same, for when the interpreter that had the API has ended. */
 static PyObject *held;
 void hold(PyObject *object) { held = Py_NewRef(object); }

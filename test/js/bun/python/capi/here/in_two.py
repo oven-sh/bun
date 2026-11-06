@@ -77,6 +77,74 @@ def count_and_ask_by_cdll(libraries):
     return lib.ask_here([1, 2, 3]).decode()
 
 
+# C that this interpreter calls without the GIL makes an object and returns it.
+def made_by_cdll(libraries):
+    lib = ctypes.CDLL(f"{libraries}/libownership.so")
+    lib.list_of_floats.argtypes = [c_long]
+    lib.list_of_floats.restype = py_object
+    return attempt(lib.list_of_floats, 2)
+
+
+# And raises, in each of the ways there are.
+def raise_by_cdll(libraries):
+    lib = ctypes.CDLL(f"{libraries}/libownership.so")
+    lib.raise_string.argtypes = [py_object, c_char_p]
+    lib.raise_object.argtypes = [py_object, py_object]
+    lib.raise_instance.argtypes = [py_object]
+    lib.raise_string.restype = lib.raise_object.restype = lib.raise_instance.restype = None
+    return str([
+        attempt(lib.raise_string, ValueError, b"raised for an interpreter that is not served"),
+        attempt(lib.raise_object, KeyError, "the same"),
+        attempt(lib.raise_instance, LookupError("the same")),
+    ])
+
+
+def load_and_let_go(libraries):
+    lib = ctypes.CDLL(f"{libraries}/libgoes.so")
+    lib.hold.argtypes = [py_object]
+    lib.hold.restype = None
+    lib.hold(Thing())
+    lib.when_it_goes(2)
+    return str(attempt(_ctypes.dlclose, lib._handle))
+
+
+# What has nothing to do with what anybody raised.
+def call_something_else():
+    return str(attempt(ctypes.CDLL(None).abs, -7))
+
+
+def load_something_else():
+    return attempt(lambda: type(ctypes.CDLL(None)).__name__)
+
+
+# The length of a list, and one more, as C is told it before it calls back and after. 0: it is refused.
+def sizes_around(libraries, with_gil, callback):
+    lib = (ctypes.PyDLL if with_gil else ctypes.CDLL)(f"{libraries}/libwithout_gil.so")
+    lib.sizes_around.argtypes = [py_object, CFUNCTYPE(None)]
+    lib.sizes_around.restype = c_long
+    return str(divmod(lib.sizes_around([1, 2, 3], CFUNCTYPE(None)(lambda: callback() and None)), 10))
+
+
+def load_by_cdll(libraries):
+    return type(ctypes.CDLL(f"{libraries}/libeverything.so")).__name__
+
+
+def raise_what_was_kept(libraries):
+    lib = ctypes.PyDLL(f"{libraries}/libeverything.so")
+    lib.raise_what_was_kept.argtypes = [c_char_p]
+    lib.raise_what_was_kept.restype = None
+    return attempt(lib.raise_what_was_kept, b"with what was read as the library was loaded")
+
+
+def hold_a_list(libraries):
+    lib = ctypes.PyDLL(f"{libraries}/libeverything.so")
+    lib.hold.argtypes = [py_object]
+    lib.hold.restype = None
+    lib.hold([1, 2, 3])
+    gc.collect()
+    return "holds a list"
+
+
 types = [object, bool, bytes, dict, float, int, list, str, tuple, type]
 
 
@@ -87,6 +155,11 @@ def identities():
 # null is None, as undefined is, and C knows one None.
 def is_written_as_none(value):
     return str(c_void_p.from_buffer(py_object(value)).value == id(None) and (py_object * 1)(value)[0] is None)
+
+
+# The int 0 has no sign, and JS has a zero with one.
+def is_written_as_zero(value, zero=0):
+    return str(value is zero and id(value) == id(zero) and c_void_p.from_buffer(py_object(value)).value == id(zero) and (py_object * 1)(value)[0] is zero)
 
 
 def identities_agree():

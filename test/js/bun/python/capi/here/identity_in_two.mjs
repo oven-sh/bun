@@ -1,6 +1,6 @@
 // id() of a built-in type that C names by a symbol is the address of the symbol in every interpreter, with the API or without. argv: the directory of the libraries.
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
-import { has_the_api, identities, identities_agree, is_written_as_none } from "./in_two.py";
+import { has_the_api, identities, identities_agree, is_written_as_none, is_written_as_zero } from "./in_two.py";
 
 if (isMainThread) {
   const libraries = process.argv[2];
@@ -13,8 +13,10 @@ if (isMainThread) {
   console.log("main:", String(identities_agree()), String(has_the_api(libraries)), String(identities_agree()));
   console.log("the same in both:", inWorker === first, "and later:", String(identities()) === first);
   console.log("main: null and undefined:", String(is_written_as_none(null)), String(is_written_as_none(undefined)));
+  console.log("main: zero and minus zero:", String(is_written_as_zero(0)), String(is_written_as_zero(-0)));
 } else {
   console.log("worker:", String(identities_agree()), String(has_the_api(workerData)), String(identities_agree()));
   console.log("worker: null and undefined:", String(is_written_as_none(null)), String(is_written_as_none(undefined)));
+  console.log("worker: zero and minus zero:", String(is_written_as_zero(0)), String(is_written_as_zero(-0)));
   parentPort.postMessage(String(identities()));
 }

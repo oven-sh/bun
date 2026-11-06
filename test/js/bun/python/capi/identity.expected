@@ -10,6 +10,22 @@ in a union: True
 as C is handed it: True
 and back: True
 and back: True
+--- every symbol that stands for a type
+True
+58 58 68 66
+[]
+[]
+True True
+--- the hash that object gives follows id()
+[]
+--- an int is one object to C however it was worked out
+5 True True True True True 7
+7 True True True True True 7
+3 True True True True True 7
+100 True True True True True 7
+-1 True True True True True 7
+0 True True True True True 7
+0 True True True True True 7
 --- what goes by identity finds the same type
 True
 True

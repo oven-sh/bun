@@ -49,6 +49,10 @@ set_item = declare("set_item", c_int, py_object, c_long, py_object)
 LOOKS = PYFUNCTYPE(None, py_object)
 tuple_changed_after_a_look = declare("tuple_changed_after_a_look", py_object, LOOKS, py_object, py_object)
 set_item_of_a_tuple_owned_twice = declare("set_item_of_a_tuple_owned_twice", c_int, py_object)
+make_tuple_and_keep_it = declare("make_tuple_and_keep_it", py_object, py_object)
+put_tuple_into_list_and_keep_it = declare("put_tuple_into_list_and_keep_it", py_object, py_object)
+set_item_of_kept_tuple = declare("set_item_of_kept_tuple", c_int, py_object)
+give_back_kept_tuple = declare("give_back_kept_tuple", None)
 list_of_floats = declare("list_of_floats", py_object, c_long)
 raise_object = declare("raise_object", None, py_object, py_object)
 raise_string = declare("raise_string", None, py_object, c_char_p)
@@ -155,6 +159,12 @@ hashes = []
 changed = tuple_changed_after_a_look(LOOKS(lambda t: hashes.append((hash(t), t == (4,)))), 4, 5)
 print(changed, hashes == [(hash((4,)), True)])
 print(attempt(set_item, changed, 0, 99), changed)
+# What C has given away it fills no longer, though it owns one reference again.
+for give in (make_tuple_and_keep_it, lambda item: put_tuple_into_list_and_keep_it(item)[0]):
+    given = give(4)
+    found = {given: "found"}
+    print(attempt(set_item_of_kept_tuple, 5), given, found.get(given), found.get((4,)), found.get((5,)), list(found))
+    give_back_kept_tuple()
 
 print("--- lists")
 print(list_of_floats(0), list_of_floats(3), len(list_of_floats(100000)), list_of_floats(100000)[-1])

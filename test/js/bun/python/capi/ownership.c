@@ -56,6 +56,29 @@ int set_item_of_a_tuple_owned_twice(PyObject *item)
     return status;
 }
 
+/* C gives a tuple away, and keeps a reference of its own. */
+static PyObject *kept_tuple;
+PyObject *make_tuple_and_keep_it(PyObject *item)
+{
+    PyObject *tuple = PyTuple_New(1);
+    if (!tuple || PyTuple_SetItem(tuple, 0, Py_NewRef(item)))
+        return NULL;
+    kept_tuple = Py_NewRef(tuple);
+    return tuple;
+}
+PyObject *put_tuple_into_list_and_keep_it(PyObject *item)
+{
+    PyObject *list = PyList_New(1);
+    PyObject *tuple = PyTuple_New(1);
+    if (!list || !tuple || PyTuple_SetItem(tuple, 0, Py_NewRef(item)))
+        return NULL;
+    kept_tuple = Py_NewRef(tuple);
+    PyList_SetItem(list, 0, tuple);
+    return list;
+}
+int set_item_of_kept_tuple(PyObject *item) { return PyTuple_SetItem(kept_tuple, 0, Py_NewRef(item)); }
+void give_back_kept_tuple(void) { Py_CLEAR(kept_tuple); }
+
 PyObject *list_of_floats(long n)
 {
     PyObject *list = PyList_New(n);
@@ -67,6 +90,7 @@ PyObject *list_of_floats(long n)
 void raise_object(PyObject *type, PyObject *value) { PyErr_SetObject(type, value); }
 void raise_string(PyObject *type, const char *message) { PyErr_SetString(type, message); }
 void raise_none(PyObject *type) { PyErr_SetNone(type); }
+void raise_instance(PyObject *exception) { PyErr_SetRaisedException(Py_NewRef(exception)); }
 /* Both at once. */
 PyObject *raise_and_return(PyObject *type, PyObject *object)
 {

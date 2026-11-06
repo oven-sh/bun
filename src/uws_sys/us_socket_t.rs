@@ -117,7 +117,7 @@ impl us_socket_t {
 
     /// An end of a named pipe or a pipe server, which only Windows has.
     pub fn is_pipe(&self) -> bool {
-        c::us_socket_is_pipe(self) > 0
+        cfg!(windows) && c::us_socket_is_pipe(self) > 0
     }
 
     /// The TLS layer has reported bytes as written that the kernel did not take.

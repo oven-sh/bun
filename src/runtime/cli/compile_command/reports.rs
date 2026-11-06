@@ -73,6 +73,8 @@ pub(super) fn collect_reports(
         executable: None,
         untyped_note,
         module_count: count_modules(&build.statistics),
+        imports_file_with_query: build.imports_file_with_query,
+        replaced_builtins: build.replaced_builtins.clone(),
         engine_time: compute_engine_time(&build.statistics),
         executable_time: Duration::ZERO,
     }

@@ -1,5 +1,6 @@
 use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
+    is_free_name,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
@@ -8,8 +9,8 @@ use crate::bind::{
 };
 use crate::fold::Decisions;
 use crate::hir::{
-    Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList, MemberKey,
-    NodeData, PatKind, StmtKind, UnOp,
+    BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
+    MemberKey, NodeData, PatKind, StmtKind, UnOp,
 };
 use smallvec::SmallVec;
 
@@ -33,13 +34,15 @@ pub(crate) fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Op
     }
 }
 
+/// The module that an import names, and the export it takes, or none for the whole module.
+/// `import { x }` without `from` is a syntax error that the parser recovers from: it names no module.
 pub(crate) fn find_imported_export(
     hir: &File<'_>,
     bound: &Bound<'_>,
     symbol: SymbolId,
 ) -> Option<(Atom, Option<Atom>)> {
     let mut declarations = bound.symbol(symbol).decls.iter();
-    declarations.find_map(|&declaration| match declaration {
+    let imported = declarations.find_map(|&declaration| match declaration {
         Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
             (!hir[import].type_only).then_some((hir[import].spec, None))
         }
@@ -54,7 +57,8 @@ pub(crate) fn find_imported_export(
             (!import.flags.contains(Flags::TYPE_ONLY)).then_some((import.target.spec(), None))
         }
         _ => None,
-    })
+    });
+    imported.filter(|(specifier, _)| !specifier.is_none())
 }
 
 fn is_import_meta_require(hir: &File<'_>, e: ExprId) -> bool {
@@ -174,6 +178,23 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         None
     }
 
+    // `fileURLToPath` for `require("url").fileURLToPath`. A request in `e` is a step: the `require` that it calls may be made of what is asked for here.
+    fn find_export_read_off_module(
+        self,
+        e: ExprId,
+        left: StepsLeft,
+        modules: [Atom; 2],
+    ) -> Option<Atom> {
+        let (specifier, face, names) = self.find_names_read_off_module(e, left)?;
+        let (&export, before) = names.split_first()?;
+        let is_export = match *before {
+            [] => true,
+            [first] => face == ModuleFace::Namespace && first == known::default,
+            _ => false,
+        };
+        (is_export && modules.contains(&specifier)).then_some(export)
+    }
+
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
         let Some((specifier, face, names)) = self.find_names_read_off_module(e, left) else {
             return false;
@@ -193,7 +214,7 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
     }
 }
 
-pub(super) fn may_be_modified(
+pub(crate) fn may_be_modified(
     hir: &File<'_>,
     bound: &Bound<'_>,
     variable: CommonJsVariable,
@@ -280,26 +301,69 @@ pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
         })
 }
 
-fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let e = hir.skip_type_assertions(e);
+// Also in a variable: `const __filename = fileURLToPath(import.meta.url)`, as an ES module makes itself the name that a CommonJS file has.
+pub(crate) fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let text = Text::of(hir, bound, None);
+    names_own_file_behind(text, e, LONGEST_CHAIN_OF_BINDINGS, StepsLeft::ALL)
+}
+
+// Two variables may name each other: `const a = fileURLToPath(b), b = new URL(a)`.
+fn names_own_file_behind(
+    text: Text<'_, '_, '_, '_>,
+    e: ExprId,
+    conversions_left: usize,
+    left: StepsLeft,
+) -> bool {
+    settled_chain(text.hir, text.bound, e)
+        .any(|e| is_written_as_own_file(text, e, conversions_left, left))
+}
+
+fn is_written_as_own_file(
+    text: Text<'_, '_, '_, '_>,
+    e: ExprId,
+    conversions_left: usize,
+    left: StepsLeft,
+) -> bool {
+    let Text { hir, bound, .. } = text;
     if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
         return !may_be_modified(hir, bound, CommonJsVariable::Filename);
     }
     let is_import_meta_member = matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if (name == known::url || name == known::meta_filename || name == known::path)
             && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)));
-    is_import_meta_member && !bound.import_meta_may_be_modified()
+    if is_import_meta_member {
+        return !bound.import_meta_may_be_modified();
+    }
+    let Some(conversions_left) = conversions_left.checked_sub(1) else {
+        return false;
+    };
+    // `fileURLToPath(import.meta.url)`, `new URL(import.meta.url)`
+    let (call, is_conversion) = match expr_kind(hir, e) {
+        Some(ExprKind::Call(call)) => {
+            let modules = [known::url, known::node_url];
+            let export = text.find_export_read_off_module(hir[call].callee, left, modules);
+            (hir[call], export == Some(known::fileURLToPath))
+        }
+        Some(ExprKind::New(call)) => {
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            (hir[call], is_free_name(hir, bound, callee, &[known::URL]))
+        }
+        _ => return false,
+    };
+    is_conversion
+        && call.args.len() == 1
+        && names_own_file_behind(text, hir.id_at(call.args, 0), conversions_left, left)
 }
 
 fn is_made_for_own_file(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {
-    let Text { hir, bound, .. } = text;
+    let hir = text.hir;
     let Some(ExprKind::Call(call)) = expr_kind(hir, hir.skip_type_assertions(e)) else {
         return false;
     };
     let mut arguments = hir.ids(hir[call].args);
     arguments
         .next()
-        .is_some_and(|base| names_own_file(hir, bound, base))
+        .is_some_and(|base| names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left))
         && text.is_create_require(hir[call].callee, left)
 }
 
@@ -497,6 +561,28 @@ pub(super) fn follow_to_own_require(
         {
             e = hir.skip_type_assertions(result);
             continue;
+        }
+        // `module && module.require`, `(0, require)`: what can be called is the right side.
+        if let Some(ExprKind::Binary {
+            op: BinOp::And | BinOp::Comma,
+            right,
+            ..
+        }) = expr_kind(hir, e)
+        {
+            e = hir.skip_type_assertions(right);
+            continue;
+        }
+        // `const load = module.require; load.call(module, "a")`
+        if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
+            && is_free_common_js(
+                hir,
+                bound,
+                hir.skip_type_assertions(object),
+                CommonJsVariable::Module,
+            )
+            && !may_be_modified(hir, bound, CommonJsVariable::Module)
+        {
+            return Some(OwnRequire::OfFile);
         }
         let Some(source) = settled_initializer(hir, bound, e) else {
             if is_made_for_own_file(text, e, left) {

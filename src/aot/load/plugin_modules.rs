@@ -95,6 +95,16 @@ pub(crate) struct PluginModules<'a> {
 }
 
 impl<'a> PluginModules<'a> {
+    /// The tables, which take a while to free.
+    pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
+        Box::new((
+            self.resolutions,
+            self.modules,
+            self.virtual_modules,
+            self.paths_asked_for_load_plugin,
+        ))
+    }
+
     pub(crate) fn new(
         provider: &'a dyn SourceProvider,
         disk: &'a Disk,

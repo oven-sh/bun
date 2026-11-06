@@ -1,5 +1,5 @@
 // The steps of a generator that end in an error or run nothing: next, return and throw on a generator that is running, that has completed, that has not started or that belongs to another realm, and on receivers that are not generators. After each group a plain loop over next() still gets every value.
-// CALLS+ drainSameRealm StepGenerator
+// That a loop over next() steps with the stub is asked of a program that has the library: ../../a-generator-stepped-by-name-makes-no-result-objects.test.ts.
 const lines = [];
 
 function attempt(label, action) {

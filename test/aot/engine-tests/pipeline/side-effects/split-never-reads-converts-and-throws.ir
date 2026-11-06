@@ -116,42 +116,32 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v14: string|object = ResultAt v13
 # CHECK-NEXT: v15: anything = ResultAt v13 index=1
 # CHECK-NEXT: v16: boolean = TypeTest v14 testedType=string
-# CHECK-NEXT: Branch v16 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v17: string) frequency=Rare:
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: v19: undefined = CallDirect v17, v18 function=f37 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b7(v20: object) frequency=Rare:
-# CHECK-NEXT: v21: anything = Call v15, v20
-# CHECK-NEXT: v22: object = RequireObject v21 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v23: anything = PropGet v22 key="done"
-# CHECK-NEXT: v24: boolean = ToBoolean v23
-# CHECK-NEXT: Branch v24 -> taken b8(), notTaken b9()
+# CHECK-NEXT: Branch v16 -> taken b6(), notTaken b7(| 0)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7(v17: object) frequency=Rare:
+# CHECK-NEXT: v18: undefined = CallDirect v17, v15 function=f38 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v25: anything = PropGet v22 key="value"
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: Jump -> next b11(v11, v10)
-# CHECK-NEXT: b11(v26: boolean, v27: int[0, 10]) frequency=Unlikely:
-# CHECK-NEXT: v28: boolean = TypeTest v26 testedType=false
-# CHECK-NEXT: Branch v28 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v27)
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v29: boolean ~ false = Upcast v26 castType=boolean
+# CHECK-NEXT: Jump -> next b9(v11, v10)
+# CHECK-NEXT: b9(v19: boolean, v20: int[0, 10]) frequency=Unlikely:
+# CHECK-NEXT: v21: boolean = TypeTest v19 testedType=false
+# CHECK-NEXT: Branch v21 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v20)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v22: boolean ~ false = Upcast v19 castType=boolean
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v29 -> taken b14(), notTaken b15()
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b5(v27)
-# CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v31: 10 = Integer integer=10
-# CHECK-NEXT: v32: boolean = Less v27, v31
-# CHECK-NEXT: Branch v32 -> taken b16(| 0), notTaken b4(v27)
-# CHECK-NEXT: b16(v33: int[0, 9]) frequency=Unlikely:
-# CHECK-NEXT: v34: 1 = Integer integer=1
-# CHECK-NEXT: v35: int[1, 10] = Add v33, v34
-# CHECK-NEXT: v36: false = Boolean
-# CHECK-NEXT: Jump -> next b11(v36, v35)
+# CHECK-NEXT: Branch v22 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b5(v20)
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: v24: 10 = Integer integer=10
+# CHECK-NEXT: v25: boolean = Less v20, v24
+# CHECK-NEXT: Branch v25 -> taken b14(| 0), notTaken b4(v20)
+# CHECK-NEXT: b14(v26: int[0, 9]) frequency=Unlikely:
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int[1, 10] = Add v26, v27
+# CHECK-NEXT: v29: false = Boolean
+# CHECK-NEXT: Jump -> next b9(v29, v28)
 # CHECK-NEXT: }

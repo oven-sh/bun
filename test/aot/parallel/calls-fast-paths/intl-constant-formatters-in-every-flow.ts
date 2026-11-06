@@ -3,7 +3,7 @@
 // answers as any other formatter. Every result is compared with a formatter whose options are not constants.
 // IR= 1 makeFormatter  = NewFormatterWithPattern 
 // IR= 0 makeFormatter  = New(Plain)?Object 
-// IR= 0 makeFormatter  = FreeGet 
+// IR= 0 makeFormatter  = (GetGlobalBinding|PropGet) 
 // IR= 0 makeFormatter Construct|overload=IntlDateTimeFormat/
 // IR= 0 makeWithOptionsThatEscape NewFormatterWithPattern
 // IR= 1 makeWithOptionsThatEscape  = Construct |overload=IntlDateTimeFormat/

@@ -1,9 +1,9 @@
 // Own keys stay in creation order when instances of one class use more key orders than a layout can number.
-// COUNTER: KeyOrderLimit >= 4465
-// COUNTER: KeyOrderLimit <= 4600
-// COUNTER: DeleteOfRequiredField = 0
-// COUNTER: NoExtraPropertiesWord = 0
-// COUNTER: StoreOfOtherType = 0
+// COUNTER: KeyOrdersPerLayout >= 4465
+// COUNTER: KeyOrdersPerLayout <= 82000
+// COUNTER: CompiledStructuresMade <= 82000
+// COUNTER: FieldsLeftSlotByDelete = 6
+// COUNTER: FieldsLeftSlotByStoreOfOtherType = 0
 const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
 class Query {
   set(name, value) {

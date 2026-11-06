@@ -40,10 +40,7 @@ fn with_search<T>(
 ) -> T {
     let session = Session::new();
     let options = Options::default();
-    let code = CodeOptions {
-        max_computed_candidates: 7,
-        ..CodeOptions::bun_run(b"/p")
-    };
+    let code = CodeOptions::bun_run(b"/p");
     let resolver = Resolver::for_compile(&session, host, &options, &code);
     run(&mut CandidateSearch::new(&resolver, *request))
 }
@@ -325,10 +322,9 @@ fn search_starts_in_request_directory_or_working_directory() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn search_has_limit_and_extension_orders_of_options() {
+fn search_has_extension_orders_of_options() {
     let host = MemoryHost::new(&[]);
     with_search(&host, &import_pattern("./", "/p"), |search| {
-        assert_eq!(search.limit, 7);
         assert_eq!(search.extensions, extensions_of(Import));
     });
     let required = ComputedCodeRequest {

@@ -22,14 +22,14 @@ process.on("exit", function (code) { seen("exit", this, arguments); console.log(
 
 // GENERATED: seen [Symbol.asyncIterator]
 // CHECK-LABEL: function {{*}}name="seen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}, {type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|string|Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}, {type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="lines"
 // CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
 // CHECK-NEXT: v7 = String string=": this "
 // CHECK-NEXT: v8 = Add v0, v7
 // CHECK-NEXT: v9 = TypeTest v1 testedType=undefined
@@ -73,22 +73,23 @@ process.on("exit", function (code) { seen("exit", this, arguments); console.log(
 // CHECK-NEXT: v28 = String string=", "
 // CHECK-NEXT: v29 = Add v27, v28
 // CHECK-NEXT: v30 = PropGet v2 key="length"
-// CHECK-NEXT: v31 = Add v29, v30
-// CHECK-NEXT: v32 = String string=": "
-// CHECK-NEXT: v33 = Add v31, v32
-// CHECK-NEXT: v34 = Builtin builtin=Array
-// CHECK-NEXT: v35 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v36 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v37 = Call v35, v34, v2, v36 calleeName="Array.from"
-// CHECK-NEXT: v38 = Convert v37 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v39 = PropGet v38 key="join"
-// CHECK-NEXT: v40 = Convert v39 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v41 = Call v40, v38 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v43 = Add v33, v42
-// CHECK-NEXT: v44 = Call v6, v4, v43 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v45 = Undefined
-// CHECK-NEXT: Return v45
+// CHECK-NEXT: v31 = Convert v30 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v32 = Add v29, v31
+// CHECK-NEXT: v33 = String string=": "
+// CHECK-NEXT: v34 = Add v32, v33
+// CHECK-NEXT: v35 = Builtin builtin=Array
+// CHECK-NEXT: v36 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v37 = NewClosure function=[[f_4]]
+// CHECK-NEXT: v38 = Call v36, v35, v2, v37 calleeName="Array.from"
+// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+// CHECK-NEXT: v40 = PropGet v39 key="join"
+// CHECK-NEXT: v41 = Convert v40 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
+// CHECK-NEXT: v42 = Call v41, v39 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v43 = Convert v42 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v44 = Add v34, v43
+// CHECK-NEXT: v45 = Call v6, v4, v44 calleeKey="push" calleeName="lines.push"
+// CHECK-NEXT: v46 = Undefined
+// CHECK-NEXT: Return v46
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.asyncIterator]"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest, IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|AsyncGenerator<undefined|null|string> flags=[IsExpected]}] {
@@ -97,9 +98,9 @@ process.on("exit", function (code) { seen("exit", this, arguments); console.log(
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v4 = CreateUnmappedArguments v2, v3
 // CHECK-NEXT: InitialYield v4
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v7 = String string="@@asyncIterator"
-// CHECK-NEXT: v8 = Convert v0 declared={type=undefined|null|string|[[L_6]]|ArrayBuffer|Blob|ReadableStream|String|TypedArray|URLSearchParams flags=[IsExpected]}
+// CHECK-NEXT: v8 = Convert v0 declared={type=undefined|null|string|[[L_7]]|ArrayBuffer|Blob|ReadableStream|String|TypedArray|URLSearchParams flags=[IsExpected]}
 // CHECK-NEXT: v9 = TypeOf v8
 // CHECK-NEXT: v10 = Call v6, -, v7, v9, v4 calleeName="seen"
 // CHECK-NEXT: v11 = String string="c"

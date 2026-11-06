@@ -1,5 +1,5 @@
-// What is pushed is known to be an int32 or a number where the analysis of the whole program says what the operands are, or warm code tests them. A build with every function cold and without
-// the results of the analysis has neither, so there each of the lists is born for every value: empty-literal-without-declared-type-born-cold-no-flow.expected.every-function-cold-and-no-flow-results.txt.
+// An empty list without a declared type is born with the storage for what is pushed into it, also where every function is cold and nothing is known from the analysis of the whole program:
+// the operators say what they make.
 // Flags: --aot-heat=everything-is-cold --aot-disable=flow-results
 // Erased types: not built: empty-literal-without-declared-type-born is built so
 import { jscDescribe } from "bun:jsc";
@@ -66,8 +66,3 @@ for (let round = 0; round < 300; round++) {
 console.log(found, sum);
 console.log(storageOf(flagsOf(4)), storageOf(halvesOf(4)), storageOf(namesOf(4)), storageOf(mixedOf(4)));
 console.log(JSON.stringify([flagsOf(5), halvesOf(3), namesOf(2), mixedOf(3), kept.length]));
-/* Output:
-298 525
-ArrayWithContiguous ArrayWithContiguous ArrayWithContiguous ArrayWithContiguous
-[[0,1,2,3,0],[0.5,1.5,2.5],["n0","n1"],[0,1,"odd",2],3]
-*/

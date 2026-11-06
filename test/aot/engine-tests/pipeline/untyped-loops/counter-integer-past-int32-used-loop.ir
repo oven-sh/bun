@@ -214,8 +214,28 @@ function f5 name="ranToTheEnd" module=m0 position=1211 flags=[IsChecked, HasExpl
 # CHECK-LABEL: function {{*}}name="brokenOutOf"
 # CHECK: module=m0 position=876 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=int[2147483640, 4294967280]}, {type=int[0, 1]}, {type=int[3, 4]}, {type=int[15, 1023]}, {type=int[2, 7]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="ranToTheEnd"
-# CHECK: module=m0 position=1211 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=2147483600}, {type=2}, {type=3}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: 2147483600, v1: 2, v2: 3):
+# CHECK: module=m0 position=1211 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=2147483600}, {type=2}, {type=3}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="brokenOutOf"
+# CHECK: module=m0 position=876 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=int[2147483640, 4294967280]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: int[2147483640, 4294967280]):
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: int[2147483641, 4294967281] = Add v0, v5
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: i32 = BitOr v0, v7
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: int[2147483640, 4294967280] = URShift v0, v9
+# CHECK-NEXT: v11: 2 = Integer integer=2
+# CHECK-NEXT: v12: number = Div v0, v11
+# CHECK-NEXT: v13: "," = String string=","
+# CHECK-NEXT: v14: string = Strcat v0, v13, v6, v13, v8, v13, v10, v13, v12 @0 tail
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ranToTheEnd"
+# CHECK: module=m0 position=1211 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 2147483600 = Integer integer=2147483600
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: 3 = Integer integer=3
 # CHECK-NEXT: v3: Uint32Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g1
 # CHECK-NEXT: v4: boolean = IsInsideView v3, v1 typedArrayType=7 [keyIsIntegral]
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b6()
@@ -268,19 +288,4 @@ function f5 name="ranToTheEnd" module=m0 position=1211 flags=[IsChecked, HasExpl
 # CHECK-NEXT: v44: ":" = String string=":"
 # CHECK-NEXT: v45: string = Strcat v42, v43, v41, v44, v41
 # CHECK-NEXT: Return v45
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="brokenOutOf"
-# CHECK: module=m0 position=876 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=int[2147483640, 4294967280]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: int[2147483640, 4294967280]):
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: int[2147483641, 4294967281] = Add v0, v5
-# CHECK-NEXT: v7: 0 = Integer
-# CHECK-NEXT: v8: i32 = BitOr v0, v7
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: int[0, 4294967295] = URShift v0, v9
-# CHECK-NEXT: v11: 2 = Integer integer=2
-# CHECK-NEXT: v12: number = Div v0, v11
-# CHECK-NEXT: v13: "," = String string=","
-# CHECK-NEXT: v14: string = Strcat v0, v13, v6, v13, v8, v13, v10, v13, v12 @0 tail
-# CHECK-NEXT: Return v14
 # CHECK-NEXT: }

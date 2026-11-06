@@ -20,6 +20,35 @@ enum PatternKind {
     Assignment,
 }
 
+#[derive(Copy, Clone)]
+enum WalkOutwards {
+    ConstContext,
+    AssignmentTarget,
+    ImplyingPattern,
+    CallArgument,
+}
+
+impl WalkOutwards {
+    const COUNT: u32 = 4;
+}
+
+/// Whether `e` is inside `literal`, by their positions. `None` if they share a boundary, as they can
+/// where a bracket is missing.
+fn is_strictly_around(hir: &File, literal: ExprId, e: ExprId) -> Option<bool> {
+    let (outer, inner) = (&hir[literal], &hir[e]);
+    if literal == e {
+        return Some(false);
+    }
+    if outer.pos == inner.pos
+        || outer.end == inner.end
+        || outer.pos == inner.end
+        || outer.end == inner.pos
+    {
+        return None;
+    }
+    Some(outer.pos < inner.pos && inner.end < outer.end)
+}
+
 /// The facts `checkObjectLiteral` computes about the literal before its member loop.
 #[derive(Copy, Clone)]
 struct ObjectLiteralContext {
@@ -319,8 +348,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn is_rechecked(&mut self, file: FileId, e: ExprId) -> bool {
         self.is_rechecking()
-            && (self.contextual.iter().all(|info| info.is_cache)
-                || self.depends_on_pushed_type(file, e))
+            && (self.contextual.has_only_caches() || self.depends_on_pushed_type(file, e))
     }
 
     fn depends_on_pushed_type(&mut self, file: FileId, e: ExprId) -> bool {
@@ -753,29 +781,44 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isConstContext`
     pub fn is_const_context(&mut self, file: FileId, e: ExprId) -> bool {
+        self.is_const_context_walking(file, e, 8)
+    }
+
+    /// Past `most_steps` literals around `e`, it's `is_const_context_far_inside`.
+    fn is_const_context_walking(&mut self, file: FileId, e: ExprId, most_steps: usize) -> bool {
         // FOR SPEED. A literal's parts derive their contextual types from the literal's. If neither
         // that type nor a contextual type pushed for a part along the way has type variables, no
         // `const` type variable can be the contextual type further in.
         let (mut top, mut highest, mut may_be_expected) = (e, ExprId::NONE, false);
-        let is_pushed_with_type_variables = |info: &&ContextualInfo| {
-            info.file == file && info.t.is_some_and(|t| self.has_type_variables(t))
-        };
-        let pushed_with_type_variables: SmallVec<[ExprId; 4]> = (self.contextual.iter())
-            .filter(is_pushed_with_type_variables)
-            .map(|info| info.node)
-            .collect();
-        loop {
-            // `isValidConstAssertionArgument`. The contextual type isn't requested for anything
-            // else.
+        let pushed_with_type_variables = self.pushed_with_type_variables(file);
+        if pushed_with_type_variables.is_empty() {
+            let (outermost, is_const_assertion) = self.end_of_const_context(file, e);
+            if is_const_assertion {
+                return true;
+            }
+            top = self.highest_in_const_context(file, e, outermost);
             if self.is_valid_const_assertion_argument(file, top) {
                 highest = top;
-                may_be_expected |= pushed_with_type_variables.contains(&top);
             }
-            top = match self.const_context_parent(file, top) {
-                ControlFlow::Continue(outer) => outer,
-                ControlFlow::Break(true) => return true,
-                ControlFlow::Break(false) => break,
-            };
+        } else {
+            let mut steps = 0;
+            loop {
+                // `isValidConstAssertionArgument`. The contextual type isn't requested for anything
+                // else.
+                if self.is_valid_const_assertion_argument(file, top) {
+                    highest = top;
+                    may_be_expected |= pushed_with_type_variables.contains(&top);
+                }
+                top = match self.const_context_parent(file, top) {
+                    ControlFlow::Continue(outer) => outer,
+                    ControlFlow::Break(true) => return true,
+                    ControlFlow::Break(false) => break,
+                };
+                steps += 1;
+                if steps > most_steps {
+                    return self.is_const_context_far_inside(file, e, &pushed_with_type_variables);
+                }
+            }
         }
         if highest.is_none()
             || !may_be_expected
@@ -785,6 +828,10 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
+        self.is_const_type_variable_expected_around(file, e)
+    }
+
+    fn is_const_type_variable_expected_around(&mut self, file: FileId, e: ExprId) -> bool {
         let mut at = e;
         loop {
             if self.is_valid_const_assertion_argument(file, at) {
@@ -798,6 +845,103 @@ impl<'p, 's> Checker<'p, 's> {
                 ControlFlow::Break(is_const_assertion) => return is_const_assertion,
             };
         }
+    }
+
+    fn end_of_const_context(&self, file: FileId, e: ExprId) -> (ExprId, bool) {
+        self.walk_outwards(WalkOutwards::ConstContext, file, e, |at| {
+            self.const_context_parent(file, at)
+        })
+    }
+
+    /// `...` isn't a valid argument, so its operand may be the highest one.
+    fn highest_in_const_context(&self, file: FileId, e: ExprId, outermost: ExprId) -> ExprId {
+        match self.hir(file)[outermost].kind {
+            ExprKind::Spread(operand) if outermost != e => operand,
+            _ => outermost,
+        }
+    }
+
+    /// `is_const_context_walking` without a step for each literal around `e`.
+    fn is_const_context_far_inside(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        pushed_with_type_variables: &[ExprId],
+    ) -> bool {
+        let (outermost, is_const_assertion) = self.end_of_const_context(file, e);
+        if is_const_assertion {
+            return true;
+        }
+        let hir = self.hir(file);
+        let highest = self.highest_in_const_context(file, e, outermost);
+        if !self.is_valid_const_assertion_argument(file, highest) {
+            return false;
+        }
+        let mut expected_around: SmallVec<[ExprId; 4]> = SmallVec::new();
+        for &pushed in pushed_with_type_variables {
+            let Some(is_around) = is_strictly_around(hir, pushed, e) else {
+                return self.is_const_context_walking(file, e, usize::MAX);
+            };
+            if (is_around || pushed == e)
+                && self.is_valid_const_assertion_argument(file, pushed)
+                && self.end_of_const_context(file, pushed).0 == outermost
+            {
+                expected_around.push(pushed);
+            }
+        }
+        if expected_around.is_empty()
+            && !self
+                .contextual_type(file, highest, ContextFlags::empty())
+                .is_some_and(|c| self.has_type_variables(c))
+        {
+            return false;
+        }
+        if !self.are_literals_around_pushed(file, e) {
+            return self.is_const_type_variable_expected_around(file, e);
+        }
+        // The contextual type of a literal around `e` is the one pushed for it.
+        if !expected_around.contains(&e) && self.is_valid_const_assertion_argument(file, e) {
+            expected_around.push(e);
+        }
+        expected_around.sort_unstable_by_key(|&literal| std::cmp::Reverse(hir[literal].pos));
+        expected_around.dedup();
+        expected_around.into_iter().any(|literal| {
+            let expected = self.contextual_type(file, literal, ContextFlags::empty());
+            expected.is_some_and(|c| self.is_const_type_variable(c, 0))
+        })
+    }
+
+    /// True if a contextual type is pushed for each literal whose const context `e` shares, each
+    /// below the one for the literal inside it, so that it stays for as long as that one does.
+    fn are_literals_around_pushed(&mut self, file: FileId, e: ExprId) -> bool {
+        let mut places: SmallVec<[usize; 4]> = SmallVec::new();
+        let (mut at, mut below) = (e, usize::MAX);
+        let are_pushed = loop {
+            let literal = match self.const_context_parent(file, at) {
+                ControlFlow::Continue(outer)
+                    if matches!(self.hir(file)[outer].kind, ExprKind::Spread(_)) =>
+                {
+                    self.const_context_parent(file, outer).continue_value()
+                }
+                around => around.continue_value(),
+            };
+            let Some(literal) = literal else {
+                break true;
+            };
+            let place = self.contextual.place_of(file, literal, true);
+            let Some(place) = place.filter(|&place| place < below) else {
+                break false;
+            };
+            if let Some(known) = *self.contextual.are_literals_around_pushed(place) {
+                break known;
+            }
+            places.push(place);
+            (at, below) = (literal, place);
+        };
+        for place in places {
+            *self.contextual.are_literals_around_pushed(place) = Some(are_pushed);
+        }
+        are_pushed
     }
 
     /// The `node.Parent` tests in `isConstContext`. `Continue` carries the array literal, spread
@@ -1094,6 +1238,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A `#b` that no enclosing class declares is still looked up.
         if let Some(any) = access.any_like {
+            if !is_private
+                && !target.written
+                && let Some(listed) = self.type_predicate_listed_for_any(file, e)
+            {
+                return (listed, may_short_circuit);
+            }
             if !is_private || lexical.is_some() {
                 return (any, may_short_circuit);
             }
@@ -1580,6 +1730,12 @@ impl<'p, 's> Checker<'p, 's> {
             receiver
         };
         let key = self.type_of_expr(file, index);
+        if self.is_any(receiver)
+            && !target.written
+            && let Some(listed) = self.type_predicate_listed_for_any(file, e)
+        {
+            return (listed, may_short_circuit);
+        }
         // `isErrorType(objectType) || objectType == silentNeverType`. The object type is returned
         // as is, neither indexed nor narrowed.
         if self.is_error_type(receiver) || receiver == TypeId::SILENT_NEVER {
@@ -2408,14 +2564,14 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn is_definite_assignment_target(&self, file: FileId, e: ExprId) -> bool {
         matches!(
-            self.bound(file).get_assignment_target(self.hir(file), e),
+            self.get_assignment_target(file, e),
             Some(AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf)
         )
     }
 
     /// `getAssignmentTargetKind`
     pub(super) fn target_kind(&self, file: FileId, e: ExprId) -> TargetKind {
-        let target = self.bound(file).get_assignment_target(self.hir(file), e);
+        let target = self.get_assignment_target(file, e);
         TargetKind {
             definite: matches!(
                 target,
@@ -2431,9 +2587,52 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getAssignmentTargetKind(e) != AssignmentKindNone`: `e` is assigned, by `=` or in a pattern
     /// on its left, by an operator that reads it first, or by `++` and `--`.
     pub(super) fn is_assignment_target(&self, file: FileId, e: ExprId) -> bool {
-        self.bound(file)
-            .get_assignment_target(self.hir(file), e)
-            .is_some()
+        self.get_assignment_target(file, e).is_some()
+    }
+
+    /// `GetAssignmentTarget`
+    fn get_assignment_target(&self, file: FileId, e: ExprId) -> Option<AssignmentTarget> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let walk = WalkOutwards::AssignmentTarget;
+        let around = |at| bound.get_assignment_target_or_pattern_around(hir, at);
+        self.walk_outwards(walk, file, e, around).1
+    }
+
+    /// Follows `around` from `e` until it breaks. Returns the last expression reached and what it
+    /// broke with. Where a walk ends is cached, so `around` may depend on the syntax alone.
+    fn walk_outwards<End>(
+        &self,
+        walk: WalkOutwards,
+        file: FileId,
+        e: ExprId,
+        around: impl Fn(ExprId) -> ControlFlow<End, ExprId>,
+    ) -> (ExprId, End) {
+        let mut at = match around(e) {
+            ControlFlow::Continue(outer) => outer,
+            ControlFlow::Break(end) => return (e, end),
+        };
+        let key = file.0 * WalkOutwards::COUNT + walk as u32 + 1;
+        let mut passed: SmallVec<[ExprId; 4]> = SmallVec::new();
+        let end = loop {
+            let outer = match around(at) {
+                ControlFlow::Continue(outer) => outer,
+                ControlFlow::Break(end) => break end,
+            };
+            match self.recent_walks_outwards.borrow().get(key, at.0) {
+                Some(outermost) => at = ExprId(outermost),
+                None => {
+                    passed.push(at);
+                    at = outer;
+                }
+            }
+        };
+        if !passed.is_empty() {
+            let mut recent = self.recent_walks_outwards.borrow_mut();
+            for inner in passed {
+                recent.put(key, inner.0, at.0);
+            }
+        }
+        (at, end)
     }
 
     /// `isMethodAccessForCall`. A call doesn't see through `x!`.
@@ -3731,20 +3930,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// with only expressions in between, along with that argument.
     fn enclosing_call_argument(&self, file: FileId, e: ExprId) -> Option<(ExprId, ExprId)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut child = e;
-        loop {
+        let call_or_expression_around = |child: ExprId| {
             let parent = match bound.parent_of_expr(child) {
                 Parent::Expr(parent) if parent.is_some() => parent,
                 Parent::Prop(prop) => bound.prop_owner[prop.idx()],
-                _ => return None,
+                _ => return ControlFlow::Break(None),
             };
             if let ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) =
                 hir[parent].kind
             {
-                return (hir[call].callee != child).then_some((parent, child));
+                return ControlFlow::Break((hir[call].callee != child).then_some((parent, child)));
             }
-            child = parent;
-        }
+            ControlFlow::Continue(parent)
+        };
+        let walk = WalkOutwards::CallArgument;
+        self.walk_outwards(walk, file, e, call_or_expression_around)
+            .1
     }
 
     /// `checkObjectLiteral`
@@ -5096,19 +5297,18 @@ impl<'p, 's> Checker<'p, 's> {
             matches!(hir[pat].kind, PatKind::Object(_) | PatKind::Array(_))
                 .then_some(PatternKind::Binding)
         };
-        let mut at = e;
-        loop {
-            at = match bound.parent_of_expr(at) {
-                Parent::VarInit(d) if hir[d].ty.is_none() => return binding(hir[d].pat),
-                Parent::ParamDefault(p) if hir[p].ty.is_none() => return binding(hir[p].pat),
-                Parent::PatPropDefault(p) => return binding(hir[p].value),
-                Parent::PatElemDefault(p) => return binding(hir[p].pat),
+        let pattern_or_expression_around = |at: ExprId| {
+            ControlFlow::Break(match bound.parent_of_expr(at) {
+                Parent::VarInit(d) if hir[d].ty.is_none() => binding(hir[d].pat),
+                Parent::ParamDefault(p) if hir[p].ty.is_none() => binding(hir[p].pat),
+                Parent::PatPropDefault(p) => binding(hir[p].value),
+                Parent::PatElemDefault(p) => binding(hir[p].pat),
                 Parent::Prop(p) => {
                     let owner = bound.prop_owner[p.idx()];
-                    if owner.is_none() || !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return None;
+                    if owner.is_some() && matches!(hir[owner].kind, ExprKind::Object(_)) {
+                        return ControlFlow::Continue(owner);
                     }
-                    owner
+                    None
                 }
                 Parent::Expr(parent) => match hir[parent].kind {
                     // `getContextualTypeForBinaryOperand`
@@ -5116,25 +5316,23 @@ impl<'p, 's> Checker<'p, 's> {
                         op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish),
                         target,
                         value,
-                    } if value == at => {
-                        return (target.is_some()
-                            && matches!(
-                                hir[target].kind,
-                                ExprKind::Object(_) | ExprKind::Array(_)
-                            ))
-                        .then_some(PatternKind::Assignment);
-                    }
+                    } if value == at => (target.is_some()
+                        && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_)))
+                    .then_some(PatternKind::Assignment),
                     ExprKind::Array(_)
                     | ExprKind::Spread(_)
                     | ExprKind::NonNull(_)
                     | ExprKind::AsConst(_)
                     | ExprKind::Cond { .. }
-                    | ExprKind::Binary { .. } => parent,
-                    _ => return None,
+                    | ExprKind::Binary { .. } => return ControlFlow::Continue(parent),
+                    _ => None,
                 },
-                _ => return None,
-            };
-        }
+                _ => None,
+            })
+        };
+        let walk = WalkOutwards::ImplyingPattern;
+        self.walk_outwards(walk, file, e, pattern_or_expression_around)
+            .1
     }
 
     /// True if `e`, which is part of an assignment target, belongs to an assignment that's being

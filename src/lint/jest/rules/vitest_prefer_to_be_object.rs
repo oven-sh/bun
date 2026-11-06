@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// This rule enforces using `toBeObject()` to check if a value is of type `Object`.
 pub struct PreferToBeObject;
 
-const PREFER_TO_BE_OBJECT: Message =
-    Message::new("", "Prefer `toBeObject()` for object assertions");
+const PREFER_TO_BE_OBJECT: &Message =
+    &Message::new("", "Prefer `toBeObject()` for object assertions");
 
 impl Rule for PreferToBeObject {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-to-be-object", Kind::Suggestion)

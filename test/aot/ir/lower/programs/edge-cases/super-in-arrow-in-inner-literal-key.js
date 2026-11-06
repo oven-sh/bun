@@ -55,7 +55,7 @@ console.log({ __proto__: { s: "outer" }, m() { return Object.keys({ __proto__: {
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=anything}, {type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=anything variableName="this"}, {type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

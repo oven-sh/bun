@@ -142,7 +142,7 @@ test("the first suspension of an activation makes the object for its frame witho
       operationAOTSaveFrameAndAwait: "every call",
       operationAOTSaveFrameAndAwaitCall: "every call",
     },
-    generators: { ...few, operationAOTSaveFrameAndYield: "every call" },
+    generators: few,
     asyncGenerators: { ...few, operationAOTSaveFrameAndYield: "every call" },
   });
 }, 240_000);

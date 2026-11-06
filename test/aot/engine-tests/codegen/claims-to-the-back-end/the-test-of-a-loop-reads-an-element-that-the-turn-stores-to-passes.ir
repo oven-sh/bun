@@ -1,4 +1,4 @@
-# The test of a loop reads an element. The turn stores to that element on a way that is seldom taken and reads it again behind that way.
+# The turn reads an element, stores to that element on a way that is seldom taken and reads it again behind that way.
 # FORM: AsRead
 # RUN: run-in-shell
 # OPTIONS: check=MovedLoads
@@ -83,9 +83,9 @@ function f1 name="total" module=m0 flags=[HasExplicitName] length=1 thisType={ty
     Jump -> next b2(v2, v4)
   b2(v5, v6):
     LoopHint
-    v8 = ElemGet v0, v6
-    v9 = Convert v8 declared={type=number flags=[IsExpected]}
-    v10 = Integer integer=-1
+    v8 = Integer integer=64
+    v9 = Convert v6 declared={type=number flags=[IsExpected]}
+    v10 = Integer integer=64
     v11 = StrictEq v9, v10
     Branch v11 -> taken b3(), notTaken b4()
   b3():

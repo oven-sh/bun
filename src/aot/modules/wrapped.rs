@@ -232,8 +232,10 @@ impl Finder<'_, '_> {
             (ExprKind::Fn(_), false) => argument,
             (ExprKind::Object(properties), true) if properties.len() == 1 => {
                 let property = hir[properties.at(0)];
+                // `{ __proto__: f }` has no member.
                 let is_plain = matches!(property.kind, PropKind::Init | PropKind::Method)
-                    && matches!(property.key, PropKey::Name(_));
+                    && matches!(property.key, PropKey::Name(_))
+                    && !hir::is_proto_setter(&property);
                 if !is_plain {
                     return None;
                 }
@@ -656,7 +658,7 @@ impl Finder<'_, '_> {
             }
         }
         by_callback.sort_unstable_by_key(|entry: &(FnId, u32)| entry.0);
-        by_symbol.sort_unstable_by_key(|entry: &(SymbolId, Role, u32)| entry.0);
+        by_symbol.shared_sort_unstable_by_key(|entry: &(SymbolId, Role, u32)| entry.0);
         FileModules {
             modules,
             by_callback: by_callback.into_boxed_slice(),

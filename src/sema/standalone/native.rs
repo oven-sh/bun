@@ -1135,7 +1135,7 @@ extern "C" fn simdutf__base64_length_from_binary(len: usize, options: c_int) -> 
 }
 /// Answers simdutf's INVALID_BASE64_CHARACTER: `bun_base64::decode` then uses its own decoder.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__base64_decode_from_binary(
+extern "C" fn simdutf__base64_decode_from_binary(
     _p: *const u8,
     _len: usize,
     _out: *mut u8,
@@ -1214,6 +1214,10 @@ extern "C" fn Bun__StackCheck__initialize() {
 #[unsafe(no_mangle)]
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
+}
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ramSize() -> usize {
+    8 << 30
 }
 #[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]

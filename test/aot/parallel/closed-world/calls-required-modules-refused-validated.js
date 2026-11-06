@@ -1,4 +1,4 @@
-// closed-world/calls-into-loaded-modules-refused without the loads by computed names: the modules are required by their constant names alone, and that opens nothing either. The program calls what they export in a way the compiler cannot follow, and the calls throw. It is built with --no-compile-function-source, so each error also says to rebuild without that flag. node:repl is not among the modules: its own code compiles text, which the compiler sees, and a program that requires it runs text from then on. node:worker_threads reaches nothing that evaluates text in this realm or loads machine code: a module like that is compiled whole once the program hands it on, so its Worker is made.
+// closed-world/calls-into-loaded-modules-refused without the loads by computed names: the modules are required by their constant names alone, and that opens nothing either. The program calls what they export in a way the compiler cannot follow, and the calls into node:vm and bun:ffi throw, and so does module._compile. It is built with --no-compile-function-source, and the errors are the same. node:repl is not among the modules: its own code compiles text, which the compiler sees, and a program that requires it runs text from then on. node:worker_threads reaches nothing that evaluates text in this realm or loads machine code: a module like that is compiled whole once the program hands it on, so its Worker is made. The text that the Worker starts from is not refused either: it runs apart from the compiled program, as in plain Bun, and opens nothing in the program (closed-world/worker-from-text-evaluates-and-the-program-is-still-refused).
 // What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
 // Flags: --aot-refuse-code-from-disk --no-compile-function-source --aot-validate
 const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
@@ -32,6 +32,7 @@ attempt("module._compile", () => call(unknown(module), "_compile", "module.expor
 attempt("ffi.dlopen", () => call(ffi, "dlopen", missing, { nothing: { args: [], returns: "void" } }));
 attempt("ffi.linkSymbols", () => typeof call(ffi, "linkSymbols", { nothing: { ptr: 1, args: [], returns: "void" } }));
 attempt("ffi.CFunction", () => typeof call(ffi, "CFunction", { ptr: 1, args: [], returns: "void" }));
+// Nothing refuses this one: the Worker is made from the text, and terminate() under a spelled name answers a promise.
 attempt("a Worker of node:worker_threads from text", () => typeof call(construct(threads, "Worker", "process.exit(0)", { eval: true }), "terminate"));
 /* Output:
 vm.createContext: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
@@ -45,5 +46,5 @@ module._compile: refused: Code generation from strings disallowed for this conte
 ffi.dlopen: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ffi.linkSymbols: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ffi.CFunction: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-a Worker of node:worker_threads from text: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a Worker of node:worker_threads from text: object
 */

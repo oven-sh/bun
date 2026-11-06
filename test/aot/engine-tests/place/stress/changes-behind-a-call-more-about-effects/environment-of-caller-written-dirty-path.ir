@@ -90,234 +90,234 @@ layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f4
 variable g0 name="factor" module=m0 declared={type=number|absent site=w0}
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f2
-    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = Integer integer=2
-    v5 = Convert v4 declared={type=number site=w0}
-    PutModuleVariable v5 variable=g0
-    v7 = Integer
-    v8 = Convert v7 declared={type=number site=w5}
-    Jump -> next b2(v8)
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = Integer integer=2 @1036
+    v5 = Convert v4 declared={type=number site=w0} @1036
+    PutModuleVariable v5 variable=g0 @1019
+    v7 = Integer @1973
+    v8 = Convert v7 declared={type=number site=w5} @1973
+    Jump -> next b2(v8) @1965
   b2(v9: number):
-    LoopHint
-    v11 = Integer integer=300
-    v12 = Less v9, v11
-    Branch v12 -> taken b3(| 0), notTaken b17(| 0)
+    LoopHint @1965
+    v11 = Integer integer=300 @1984
+    v12 = Less v9, v11 @1976
+    Branch v12 -> taken b3(| 0), notTaken b17(| 0) @1976
   b3(v13):
-    Jump -> next b4()
+    Jump -> next b4() @1976
   b4():
-    v14 = Integer integer=100
-    v15 = Mod v13, v14
-    v16 = Integer integer=99
-    v17 = StrictEq v15, v16
-    v18 = Convert v17 declared={type=boolean site=w6}
-    v19 = ToBoolean v18
-    Branch v19 -> taken b5(| 0), notTaken b7(| 0)
+    v14 = Integer integer=100 @2026
+    v15 = Mod v13, v14 @2018
+    v16 = Integer integer=99 @2034
+    v17 = StrictEq v15, v16 @2018
+    v18 = Convert v17 declared={type=boolean site=w6} @2018
+    v19 = ToBoolean v18 @2044
+    Branch v19 -> taken b5(| 0), notTaken b7(| 0) @2044
   b5(v20):
-    Jump -> next b6()
+    Jump -> next b6() @2044
   b6():
-    v21 = GetModuleVariable variable=g0
-    v22 = CheckInitialized v21 name="factor"
-    v23 = String string="strike"
-    v24 = Convert v23 declared={type=number site=w0} illTypedCause=FromLooseType
-    PutModuleVariable v24 variable=g0
-    Jump -> next b8(v20)
+    v21 = GetModuleVariable variable=g0 @2053
+    v22 = CheckInitialized v21 name="factor" @2053
+    v23 = String string="strike" @2062
+    v24 = Convert v23 declared={type=number site=w0} illTypedCause=FromLooseType @2053
+    PutModuleVariable v24 variable=g0 @2053
+    Jump -> next b8(v20) @2053
   b7(v26):
-    Jump -> next b8(v26)
+    Jump -> next b8(v26) @2044
   b8(v27: boolean):
-    v28 = Call v1, -, v13 calleeName="holder"
-    v29 = Convert v28 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]}
-    v30 = String string=" | "
-    v31 = Add v29, v30
-    v32 = Call v3, -, v13 calleeName="outer"
-    v33 = Convert v32 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]}
-    v34 = Add v31, v33
-    v35 = Convert v34 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
-    v36 = GetModuleVariable variable=g0
-    v37 = CheckInitialized v36 name="factor"
-    v38 = Integer integer=2
-    v39 = Convert v38 declared={type=number site=w0}
-    PutModuleVariable v39 variable=g0
-    v41 = ToBoolean v27
-    Branch v41 -> taken b9(| 0), notTaken b10(| 0)
+    v28 = Call v1, -, v13 calleeName="holder" @2094
+    v29 = Convert v28 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} @2094
+    v30 = String string=" | " @2110
+    v31 = Add v29, v30 @2094
+    v32 = Call v3, -, v13 calleeName="outer" @2118
+    v33 = Convert v32 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} @2118
+    v34 = Add v31, v33 @2118
+    v35 = Convert v34 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} @2094
+    v36 = GetModuleVariable variable=g0 @2134
+    v37 = CheckInitialized v36 name="factor" @2134
+    v38 = Integer integer=2 @2143
+    v39 = Convert v38 declared={type=number site=w0} @2134
+    PutModuleVariable v39 variable=g0 @2134
+    v41 = ToBoolean v27 @2152
+    Branch v41 -> taken b9(| 0), notTaken b10(| 0) @2152
   b9(v42):
-    Jump -> next b13(v13)
+    Jump -> next b13(v13) @2152
   b10(v43):
-    Jump -> next b11()
+    Jump -> next b11() @2152
   b11():
-    v44 = Integer
-    v45 = StrictEq v13, v44
-    Branch v45 -> taken b12(| 0), notTaken b14(| 0)
+    v44 = Integer @2173
+    v45 = StrictEq v13, v44 @2152
+    Branch v45 -> taken b12(| 0), notTaken b14(| 0) @2152
   b12(v46):
-    Jump -> next b13(v46)
+    Jump -> next b13(v46) @2152
   b13(v47: number):
-    v48 = Builtin builtin=GlobalThis
-    v49 = PropGet v48 key="console" [isFreeName]
-    v50 = Convert v49 declared={type=builtin(Console) flags=[IsExpected]}
-    v51 = PropGet v50 key="log"
-    v52 = Convert v51 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v53 = String string=": "
-    v54 = Add v47, v53
-    v55 = Add v54, v35
-    v56 = Call v52, v50, v55 calleeKey="log" calleeName="console.log"
-    Jump -> next b15(v47)
+    v48 = Builtin builtin=GlobalThis @2176
+    v49 = PropGet v48 key="console" [isFreeName] @2176
+    v50 = Convert v49 declared={type=builtin(Console) flags=[IsExpected]} @2176
+    v51 = PropGet v50 key="log" @2176
+    v52 = Convert v51 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2176
+    v53 = String string=": " @2196
+    v54 = Add v47, v53 @2188
+    v55 = Add v54, v35 @2207
+    v56 = Call v52, v50, v55 calleeKey="log" calleeName="console.log" @2184
+    Jump -> next b15(v47) @2176
   b14(v57):
-    Jump -> next b15(v57)
+    Jump -> next b15(v57) @2152
   b15(v58: number):
-    Jump -> next b16()
+    Jump -> next b16() @2176
   b16():
-    v59 = Increment v58
-    v60 = Convert v59 declared={type=number site=w5}
-    Jump -> next b2(v60)
+    v59 = Increment v58 @2184
+    v60 = Convert v59 declared={type=number site=w5} @1989
+    Jump -> next b2(v60) @1989
   b17(v61):
-    Jump -> next b18()
+    Jump -> next b18() @1976
   b18():
-    v62 = Undefined
-    Return v62
+    v62 = Undefined @1989
+    Return v62 @1989
 }
 function f1 name="holder" module=m0 position=1040 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
-    Jump -> next b1()
+    Jump -> next b1() @1040
   b1():
-    v1 = NewObject layout=L0
-    v2 = NewClosure v1, v0 function=f3
-    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = Convert v0 declared={type=number site=w10}
-    PutEnvironmentField v1, v4 layout=L0
-    v6 = Integer
-    v7 = Convert v6 declared={type=number site=w11}
-    PutEnvironmentField v1, v7 layout=L0 field=1
-    v9 = GetEnvironmentField v1 layout=L0
-    v10 = CheckInitialized v9 name="hits"
-    v11 = Convert v10 declared={type=number site=w12}
-    v12 = Call v3 calleeName="read"
-    v13 = Convert v12 declared={type=number site=w14}
-    v14 = String string=" "
-    v15 = Add v11, v14
-    v16 = Add v15, v13
-    v17 = String string=" "
-    v18 = Add v16, v17
-    v19 = GetEnvironmentField v1 layout=L0
-    v20 = CheckInitialized v19 name="hits"
-    v21 = Add v18, v20
-    v22 = String string=" "
-    v23 = Add v21, v22
-    v24 = GetEnvironmentField v1 layout=L0 field=1
-    v25 = CheckInitialized v24 name="last"
-    v26 = Add v23, v25
-    v27 = Convert v26 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
-    Return v27
+    v1 = NewObject layout=L0 @1056
+    v2 = NewClosure v1, v0 function=f3 @1056
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1056
+    v4 = Convert v0 declared={type=number site=w10} @1094
+    PutEnvironmentField v1, v4 layout=L0 @1087
+    v6 = Integer @1114
+    v7 = Convert v6 declared={type=number site=w11} @1114
+    PutEnvironmentField v1, v7 layout=L0 field=1 @1107
+    v9 = GetEnvironmentField v1 layout=L0 @1317
+    v10 = CheckInitialized v9 name="hits" @1317
+    v11 = Convert v10 declared={type=number site=w12} @1317
+    v12 = Call v3 calleeName="read" @1337
+    v13 = Convert v12 declared={type=number site=w14} @1337
+    v14 = String string=" " @1367
+    v15 = Add v11, v14 @1354
+    v16 = Add v15, v13 @1373
+    v17 = String string=" " @1379
+    v18 = Add v16, v17 @1373
+    v19 = GetEnvironmentField v1 layout=L0 @1385
+    v20 = CheckInitialized v19 name="hits" @1385
+    v21 = Add v18, v20 @1385
+    v22 = String string=" " @1392
+    v23 = Add v21, v22 @1385
+    v24 = GetEnvironmentField v1 layout=L0 field=1 @1398
+    v25 = CheckInitialized v24 name="last" @1398
+    v26 = Add v23, v25 @1398
+    v27 = Convert v26 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]} @1398
+    Return v27 @1398
 }
 function f2 name="outer" module=m0 position=1534 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
-    Jump -> next b1()
+    Jump -> next b1() @1534
   b1():
-    v1 = NewObject layout=L1
-    v2 = NewClosure v1 function=f4
-    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    PutEnvironmentField v1, v3 layout=L1
-    v5 = NewClosure v1 function=f5
-    v6 = Convert v5 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v7 = Convert v0 declared={type=number site=w15}
-    PutEnvironmentField v1, v7 layout=L1 field=1
-    v9 = GetEnvironmentField v1 layout=L1 field=1
-    v10 = CheckInitialized v9 name="hits"
-    v11 = Convert v10 declared={type=number site=w16}
-    v12 = Call v6 calleeName="between"
-    v13 = Convert v12 declared={type=number site=w19}
-    v14 = String string=" "
-    v15 = Add v11, v14
-    v16 = Add v15, v13
-    v17 = String string=" "
-    v18 = Add v16, v17
-    v19 = GetEnvironmentField v1 layout=L1 field=1
-    v20 = CheckInitialized v19 name="hits"
-    v21 = Add v18, v20
-    v22 = Convert v21 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
-    Return v22
+    v1 = NewObject layout=L1 @1549
+    v2 = NewClosure v1 function=f4 @1549
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1549
+    PutEnvironmentField v1, v3 layout=L1 @1549
+    v5 = NewClosure v1 function=f5 @1549
+    v6 = Convert v5 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1549
+    v7 = Convert v0 declared={type=number site=w15} @1587
+    PutEnvironmentField v1, v7 layout=L1 field=1 @1580
+    v9 = GetEnvironmentField v1 layout=L1 field=1 @1876
+    v10 = CheckInitialized v9 name="hits" @1876
+    v11 = Convert v10 declared={type=number site=w16} @1876
+    v12 = Call v6 calleeName="between" @1896
+    v13 = Convert v12 declared={type=number site=w19} @1896
+    v14 = String string=" " @1929
+    v15 = Add v11, v14 @1916
+    v16 = Add v15, v13 @1935
+    v17 = String string=" " @1941
+    v18 = Add v16, v17 @1935
+    v19 = GetEnvironmentField v1 layout=L1 field=1 @1947
+    v20 = CheckInitialized v19 name="hits" @1947
+    v21 = Add v18, v20 @1947
+    v22 = Convert v21 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} @1947
+    Return v22 @1947
 }
 function f3 name="read" module=m0 position=1119 flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=number site=w1}] thisType={type=anything} results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L0, v1: number):
-    Jump -> next b1()
+    Jump -> next b1() @1119
   b1():
-    v2 = GetModuleVariable variable=g0
-    v3 = CheckInitialized v2 name="factor"
-    v4 = Convert v3 declared={type=number site=w20}
-    v5 = Integer integer=3
-    v6 = Mul v4, v5
-    v7 = Convert v6 declared={type=number site=w21}
-    v8 = String string="strike"
-    v9 = StrictEq v4, v8
-    Branch v9 -> taken b2(| 0), notTaken b4(| 0)
+    v2 = GetModuleVariable variable=g0 @1159
+    v3 = CheckInitialized v2 name="factor" @1159
+    v4 = Convert v3 declared={type=number site=w20} @1159
+    v5 = Integer integer=3 @1191
+    v6 = Mul v4, v5 @1187
+    v7 = Convert v6 declared={type=number site=w21} @1187
+    v8 = String string="strike" @1217
+    v9 = StrictEq v4, v8 @1203
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @1203
   b2(v10):
-    Jump -> next b3()
+    Jump -> next b3() @1203
   b3():
-    v11 = GetEnvironmentField v0 layout=L0
-    v12 = CheckInitialized v11 name="hits"
-    v13 = Integer integer=-1
-    v14 = Convert v13 declared={type=number site=w10}
-    PutEnvironmentField v0, v14 layout=L0
-    v16 = GetEnvironmentField v0 layout=L0 field=1
-    v17 = CheckInitialized v16 name="last"
-    v18 = Convert v1 declared={type=number site=w11}
-    PutEnvironmentField v0, v18 layout=L0 field=1
-    Jump -> next b5()
+    v11 = GetEnvironmentField v0 layout=L0 @1235
+    v12 = CheckInitialized v11 name="hits" @1235
+    v13 = Integer integer=-1 @1242
+    v14 = Convert v13 declared={type=number site=w10} @1235
+    PutEnvironmentField v0, v14 layout=L0 @1235
+    v16 = GetEnvironmentField v0 layout=L0 field=1 @1252
+    v17 = CheckInitialized v16 name="last" @1252
+    v18 = Convert v1 declared={type=number site=w11} @1252
+    PutEnvironmentField v0, v18 layout=L0 field=1 @1252
+    Jump -> next b5() @1252
   b4(v20):
-    Jump -> next b5()
+    Jump -> next b5() @1203
   b5():
-    Return v7
+    Return v7 @1283
 }
 function f4 name="read" module=m0 position=1596 flags=[IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w17}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1):
-    Jump -> next b1()
+    Jump -> next b1() @1596
   b1():
-    v1 = GetModuleVariable variable=g0
-    v2 = CheckInitialized v1 name="factor"
-    v3 = Convert v2 declared={type=number site=w22}
-    v4 = Integer integer=3
-    v5 = Mul v3, v4
-    v6 = Convert v5 declared={type=number site=w23}
-    v7 = String string="strike"
-    v8 = StrictEq v3, v7
-    Branch v8 -> taken b2(| 0), notTaken b4(| 0)
+    v1 = GetModuleVariable variable=g0 @1636
+    v2 = CheckInitialized v1 name="factor" @1636
+    v3 = Convert v2 declared={type=number site=w22} @1636
+    v4 = Integer integer=3 @1668
+    v5 = Mul v3, v4 @1664
+    v6 = Convert v5 declared={type=number site=w23} @1664
+    v7 = String string="strike" @1694
+    v8 = StrictEq v3, v7 @1680
+    Branch v8 -> taken b2(| 0), notTaken b4(| 0) @1680
   b2(v9):
-    Jump -> next b3()
+    Jump -> next b3() @1680
   b3():
-    v10 = GetEnvironmentField v0 layout=L1 field=1
-    v11 = CheckInitialized v10 name="hits"
-    v12 = Integer integer=-1
-    v13 = Convert v12 declared={type=number site=w15}
-    PutEnvironmentField v0, v13 layout=L1 field=1
-    Jump -> next b5()
+    v10 = GetEnvironmentField v0 layout=L1 field=1 @1704
+    v11 = CheckInitialized v10 name="hits" @1704
+    v12 = Integer integer=-1 @1711
+    v13 = Convert v12 declared={type=number site=w15} @1704
+    PutEnvironmentField v0, v13 layout=L1 field=1 @1704
+    Jump -> next b5() @1704
   b4(v15):
-    Jump -> next b5()
+    Jump -> next b5() @1680
   b5():
-    Return v6
+    Return v6 @1726
 }
 function f5 name="between" module=m0 position=1741 flags=[IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w18}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1):
-    Jump -> next b1()
+    Jump -> next b1() @1741
   b1():
-    v1 = GetEnvironmentField v0 layout=L1 field=1
-    v2 = CheckInitialized v1 name="hits"
-    v3 = Convert v2 declared={type=number site=w24}
-    v4 = GetEnvironmentField v0 layout=L1
-    v5 = Call v4 calleeName="read"
-    v6 = Convert v5 declared={type=number site=w25}
-    v7 = Add v6, v3
-    v8 = GetEnvironmentField v0 layout=L1 field=1
-    v9 = CheckInitialized v8 name="hits"
-    v10 = Sub v7, v9
-    v11 = Convert v10 declared={type=number site=w18}
-    Return v11
+    v1 = GetEnvironmentField v0 layout=L1 field=1 @1789
+    v2 = CheckInitialized v1 name="hits" @1789
+    v3 = Convert v2 declared={type=number site=w24} @1789
+    v4 = GetEnvironmentField v0 layout=L1 @1811
+    v5 = Call v4 calleeName="read" @1811
+    v6 = Convert v5 declared={type=number site=w25} @1811
+    v7 = Add v6, v3 @1811
+    v8 = GetEnvironmentField v0 layout=L1 field=1 @1845
+    v9 = CheckInitialized v8 name="hits" @1845
+    v10 = Sub v7, v9 @1811
+    v11 = Convert v10 declared={type=number site=w18} @1811
+    Return v11 @1811
 }
 # -- generated: f0
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=2 module=m0}, {callee=f4 callPosition=4294967295 parent=3 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=2118 module=m0}, {callee=f1 callPosition=2094 module=m0}, {callee=f5 callPosition=1896 parent=1 module=m0}, {callee=f3 callPosition=1337 parent=2 module=m0}, {callee=f4 callPosition=1811 parent=3 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: PutModuleVariable v0 variable=g0

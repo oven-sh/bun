@@ -135,6 +135,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if self.file.scopes.initial_function(symbol).is_some() {
                 continue;
             }
+            self.file.queries.note_idle_between_statements();
             let id = function::declare_source_function(self.file, function, None);
             let closure = self.emit_closure(id, None);
             let name = self.file.bound.symbol(symbol).name;

@@ -185,8 +185,11 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
 }
 
 function getValidatedPath(p: string | URL | null | undefined): string {
-  if (p instanceof URL) return Bun.fileURLToPath(p);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (typeof p !== "string") {
+    const path = require("internal/url").toPathIfFileURL(p);
+    if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+    return path;
+  }
   return require("node:path").resolve(p);
 }
 
@@ -652,6 +655,8 @@ function writeAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
+  if (IS_COMPILED_AHEAD_OF_TIME && this[kFs] == null)
+    throw new TypeError(`${this[kFs]} is not an object (evaluating 'size')`);
   this[kFs].write!(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
@@ -817,6 +822,14 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
   cb(null);
 }
 
+// How the engine's "is not a function" names what it found.
+function describeForError(value: unknown): string {
+  if (typeof value === "string") return `"${value}"`;
+  if (typeof value !== "object" || value === null) return String(value);
+  const name = value.constructor?.name;
+  return "an instance of " + (typeof name === "string" && name !== "" ? name : "Object");
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -826,11 +839,16 @@ function writeFast(
   encoding?: string | null | ErrorCallback,
   cb?: ErrorCallback,
 ): boolean {
+  // The engine's errors quote the source of the expression that failed. A compiled frame has none, so what they say of a receiver that is no stream is written out.
+  if (IS_COMPILED_AHEAD_OF_TIME && this == null)
+    throw new TypeError(`${this} is not an object (evaluating 'kWriteMonkeyPatchDefense')`);
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding as string, cb);
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
   const state = this._writableState;
+  if (IS_COMPILED_AHEAD_OF_TIME && state === null)
+    throw new TypeError("null is not an object (evaluating 'kWriteMonkeyPatchDefense')");
   if (state !== undefined && (state.ending || state.destroyed)) {
     return writablePrototypeWrite.$call(this, data, encoding as string, cb);
   }
@@ -867,7 +885,17 @@ function writeFast(
       return true; // No backpressure
     }
   } else {
-    const result: any = this._write(data, encoding!, cb);
+    let result: any;
+    if (IS_COMPILED_AHEAD_OF_TIME) {
+      const write: any = this._write;
+      if (typeof write !== "function")
+        throw new TypeError(
+          `this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is ${describeForError(write)})`,
+        );
+      result = write.$call(this, data, encoding, cb);
+    } else {
+      result = this._write(data, encoding!, cb);
+    }
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_agent.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c7494682bc21dc2e3ec7e56d4de7e66688ab4289f0007044a358f32e5d1b4cc8.
+// Written against that file with the SHA-256 9161c607d9c8f981ce072e148aa617473a8be3f076599f05727c3c23a97b8aff.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_agent.js
@@ -11,11 +11,14 @@ const { parseProxyConfigFromEnv, checkShouldUseProxy } = http;
 const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
 const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyTunnel;
 const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
-const { kEmptyObject, once } = require("internal/shared");
+const shared = require("internal/shared");
+const { kEmptyObject, once } = shared;
+const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
 const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
+const handleHasPendingRead: (handle: unknown) => boolean = $bindgen("socket_body.bind.ts", "hasPendingRead");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -27,6 +30,16 @@ const kRequestAsyncResource = Symbol("requestAsyncResource");
 const kOwnerFrame = Symbol("ownerFrame");
 const AsyncContextFrame = require("internal/async_context_frame");
 const ObjectDefineProperty = Object.defineProperty;
+
+// kDestroyOnRead only acts when the event loop polls for I/O. Data that
+// reached the OS socket buffer after the last poll has not been seen by it
+// yet, so check for it directly before handing an idle socket to a request.
+function hasPendingRead(socket: $Node.HttpClientSocket) {
+  // A socket that is still connecting has nothing to read yet, and a pending
+  // connect error must be reported to the request rather than swallowed here.
+  if (socket.connecting) return false;
+  return handleHasPendingRead(socket._handle);
+}
 
 function freeSocketErrorListener(this: $Node.HttpClientSocket, err: Error) {
   const socket = this;
@@ -99,6 +112,7 @@ declare global {
     }
 
     interface HttpClientSocket {
+      _handle?: unknown;
       [kDestroyOnRead]?: boolean;
     }
   }
@@ -176,6 +190,12 @@ function Agent(this: $Node.Agent, options?: $Node.AgentOptions): void {
 
     const requests = this.requests[name];
     if (requests?.length) {
+      if (hasPendingRead(socket)) {
+        // onClose() will create a new socket for the pending request.
+        $debug("PENDING DATA on released socket - destroying");
+        socket.destroy();
+        return;
+      }
       const req = requests.shift()!;
       const reqAsyncRes = req[kRequestAsyncResource];
       if (reqAsyncRes) {
@@ -333,6 +353,11 @@ Agent.prototype.addRequest = function addRequest(
       freeSockets.shift();
     }
     socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    while (socket && hasPendingRead(socket)) {
+      $debug("PENDING DATA on FREE socket - destroying");
+      socket.destroy();
+      socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    }
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
@@ -711,13 +736,68 @@ function shouldUseEnvProxy() {
   return true;
 }
 
+// An agent counts as used from where it is made, so this one is made at the first read. It is made of what there is now.
+const usesEnvProxy = shouldUseEnvProxy();
+const { env } = process;
+const proxyEnvOfGlobalAgent = usesEnvProxy
+  ? {
+      http_proxy: env.http_proxy,
+      HTTP_PROXY: env.HTTP_PROXY,
+      https_proxy: env.https_proxy,
+      HTTPS_PROXY: env.HTTPS_PROXY,
+      no_proxy: env.no_proxy,
+      NO_PROXY: env.NO_PROXY,
+    }
+  : undefined;
+const maxSocketsOfGlobalAgent = Agent.defaultMaxSockets;
+const graphFrameOfGlobalAgent = AsyncContextFrame.currentGraphFrame();
+const captureRejectionsOfGlobalAgent = EventEmitter.captureRejections;
+const prototypeOfGlobalAgent = Agent.prototype;
+const onOfGlobalAgent = EventEmitter.prototype.on;
+const eventsOfGlobalAgent = Object.create(null);
+let globalAgent!: $Node.Agent;
+let isGlobalAgentMade = false;
+
+function createGlobalAgent() {
+  const frame = AsyncContextFrame.exchange(graphFrameOfGlobalAgent);
+  const captureRejections = EventEmitter.captureRejections;
+  EventEmitter.captureRejections = captureRejectionsOfGlobalAgent;
+  try {
+    const agent = {
+      __proto__: prototypeOfGlobalAgent,
+      on: onOfGlobalAgent,
+      _events: eventsOfGlobalAgent,
+      _eventsCount: 0,
+    } as unknown as $Node.Agent;
+    Agent.$call(agent, {
+      keepAlive: true,
+      scheduling: "lifo",
+      timeout: 5000,
+      proxyEnv: proxyEnvOfGlobalAgent,
+    });
+    delete (agent as { on?: unknown }).on;
+    agent[kShapeMode] = false;
+    agent.maxSockets = maxSocketsOfGlobalAgent;
+    if (usesEnvProxy) agent.options.proxyEnv = process.env;
+    return agent;
+  } finally {
+    EventEmitter.captureRejections = captureRejections;
+    AsyncContextFrame.exchange(frame);
+  }
+}
+
 export default {
   Agent,
-  globalAgent: new Agent({
-    keepAlive: true,
-    scheduling: "lifo",
-    timeout: 5000,
-    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-  }),
+  get globalAgent() {
+    if (!isGlobalAgentMade) {
+      isGlobalAgentMade = true;
+      globalAgent = createGlobalAgent();
+    }
+    return globalAgent;
+  },
+  set globalAgent(value) {
+    isGlobalAgentMade = true;
+    globalAgent = value;
+  },
   shouldUseEnvProxy,
 };

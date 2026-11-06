@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""external-data-in-containers.py <seed>: external data of the wrong type goes into an array, Map or Set with inferred element types.
-The seed picks the way in and the kind of data: an even seed a string where a number is declared, an odd seed a number where a string is declared. Each program takes it out again in every way and uses it. The program type-checks: with // @ts-nocheck nothing would be asserted.
-As plain Bun, line by line: an inferred type over external data is a prediction, so nothing may throw that plain Bun does not throw."""
+"""external-data-in-containers.py <seed>: External data of the wrong type goes into an array, Map or Set with inferred
+element types. The seed picks the path and the kind of data.
+"""
 import sys
 seed = int(sys.argv[1]); f = "ns"[seed % 2]
 GOOD = {"n": "1", "s": "'z'"}[f]; T = {"n": "number", "s": "string"}[f]

@@ -9,11 +9,15 @@
 //                     object is younger than any collection, or a later store into it has the barrier. The number of barriers is
 //                     held for every program. The share of stores that go without is printed and not held: it falls where code
 //                     that needed few barriers is no longer compiled, and the program has fewer barriers all the same.
+//   rounds            the passes run over a function in rounds until a round changes nothing, and a limit ends the rounds that do not
+//                     end by themselves. Two passes that undo each other never come to rest: in every function where they meet, every
+//                     round up to the limit runs all the passes that look again behind a change, and the code is none the better.
+//                     The number of functions that end at the limit is held for every program.
 //
 // To take a pass out: this test says by a run what the pass does to these programs. A pass that changes them is at work, whatever a
 // benchmark says, and what it buys has to be asked of the programs (--aot-disable=pass:<name>).
 //
-// It prints one line a pass that begins with PASS: the changes by program.
+// It prints one line a pass that begins with PASS: the changes by program; and one that begins with ROUNDS.
 import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
@@ -43,12 +47,8 @@ const passesThatReportNoChange = [
   "SummarizeForInlining",
   "VerifyProgram",
 ];
-/**
- * ExpandLongArrayLiterals finds work in the server on Fastify alone, whose build takes longer than the three together.
- * CallThroughMethodTable finds work in the servers on node:http, Express, Koa and Fastify. Here each call of a method by name finds
- * one method, and is a direct call behind a test.
- */
-const passesWithoutWorkHere = ["CallThroughMethodTable", "ExpandLongArrayLiterals"];
+/** ExpandLongArrayLiterals finds work in the server on Fastify alone, whose build takes longer than the three together. */
+const passesWithoutWorkHere = ["ExpandLongArrayLiterals"];
 /** Two of them count what they decide. */
 const statisticsOfPassesThatReportNoChange = {
   ElideStackChecks: "FunctionsEnteredWithoutStackCheck",
@@ -65,6 +65,15 @@ const barriersAtMost: Record<string, number> = {
   thin: 519,
   elysia: 2353,
   terminal: 199,
+};
+/**
+ * The functions of each program whose rounds end at the limit, on Linux x64: chains of calls that are inlined a level a round.
+ * The bound is twice that and two. A pair of passes that undid each other took the servers to five times as many.
+ */
+const functionsAtLimitOfRounds: Record<string, number> = {
+  thin: 0,
+  elysia: 19,
+  terminal: 0,
 };
 /** The whole text of the terminal program lies in this repository, and its number is small: it is held where it was read. */
 const isHeldHere = (program: string) => program !== "terminal" || (isLinux && process.arch === "x64");
@@ -127,5 +136,14 @@ describe("every pass changes a real program", () => {
     );
     // The text of Bun's own modules differs a little from platform to platform, and so do the counts: five in a hundred.
     expect(seen.filter(row => isHeldHere(row.program) && row.emitted > barriersAtMost[row.program] * 1.05)).toEqual([]);
+  });
+
+  test("the rounds of the passes end by themselves in all but a few functions", () => {
+    const seen = programs.map(program => ({
+      program,
+      atLimit: reports.get(program)!.statistics.MaxOptimizationRoundsHits ?? 0,
+    }));
+    console.log(`ROUNDS ${seen.map(row => `${row.program} ${row.atLimit}`).join(", ")}`);
+    expect(seen.filter(row => row.atLimit > functionsAtLimitOfRounds[row.program] * 2 + 2)).toEqual([]);
   });
 });

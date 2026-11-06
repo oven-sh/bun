@@ -181,7 +181,7 @@ module.exports = { exported: keys, own() { return keys.kOwn; } };
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|symbol flags=[IsExpected]}, {type=undefined|null|symbol flags=[IsExpected]}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|symbol flags=[IsExpected] variableName="kState"}, {type=undefined|null|symbol flags=[IsExpected] variableName="kCount"}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|symbol, v1: undefined|null|symbol, v2: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -336,7 +336,7 @@ export function unrelated(): number { return 201; }
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_11]] flags=[OmitsNull, OmitsUndefined] variableName="ns"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

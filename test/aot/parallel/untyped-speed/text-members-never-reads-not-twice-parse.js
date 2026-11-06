@@ -1,6 +1,6 @@
 // A text with three members, two of which are read. Two literals of the program have one of the names that are read, and neither has the others.
-// COUNT: arrivals <= 6200
-// COUNT: branches <= 6600
+// COUNT: arrivalsAndBranches <= 11100
+// COUNT: arrivals <= 1100
 // COUNT: operations <= 300
 // COUNT: cells <= 200
 const shelf = { name: "shelf", width: 3 },

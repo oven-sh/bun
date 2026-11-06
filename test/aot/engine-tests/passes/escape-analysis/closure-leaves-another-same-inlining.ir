@@ -271,9 +271,9 @@ function f19 module=m1 kind=Module thisType={type=anything} results=[{type=anyth
 # -- generated: f0 bothGoIntoOneCall
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 112, patchpoints: 21, rare instructions: 8, polls: 3
+# CHECK-NEXT: instructions: 113, patchpoints: 23, rare instructions: 8, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="bothGoIntoOneCall"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 55, patchpoints: 6
+# CHECK-NEXT: instructions: 48, patchpoints: 6
 # CHECK-NEXT: end of function f5

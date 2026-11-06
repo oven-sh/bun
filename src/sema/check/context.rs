@@ -46,6 +46,126 @@ pub(super) fn index_of_node(hir: &File, items: IdList<ExprId>, e: ExprId) -> Opt
         .or_else(|| hir.ids(items).position(|i| i == e))
 }
 
+/// `contextualInfos`
+#[derive(Default)]
+pub(super) struct PushedContextualTypes {
+    infos: Vec<ContextualInfo>,
+    /// Among the lowest `examined` entries.
+    with_type_variables: SmallVec<[u32; 4]>,
+    examined: usize,
+    pushed_by_callers: u32,
+    /// Indexes into `infos` from `SEARCHED_ONE_BY_ONE` on, lowest first.
+    higher: FxHashMap<(FileId, ExprId), SmallVec<[u32; 1]>>,
+}
+
+impl PushedContextualTypes {
+    const SEARCHED_ONE_BY_ONE: usize = 64;
+
+    #[inline]
+    pub(super) fn is_empty(&self) -> bool {
+        self.infos.is_empty()
+    }
+
+    #[inline]
+    pub(super) fn has_only_caches(&self) -> bool {
+        self.pushed_by_callers == 0
+    }
+
+    #[inline]
+    fn next_unexamined(&self) -> Option<Option<TypeId>> {
+        self.infos.get(self.examined).map(|info| info.t)
+    }
+
+    #[inline]
+    fn examined(&mut self, has_type_variables: bool) {
+        if has_type_variables {
+            self.with_type_variables.push(self.examined as u32);
+        }
+        self.examined += 1;
+    }
+
+    #[inline]
+    fn nodes_with_type_variables(&self, file: FileId) -> SmallVec<[ExprId; 4]> {
+        let infos = (self.with_type_variables.iter()).map(|&at| &self.infos[at as usize]);
+        infos
+            .filter(|info| info.file == file)
+            .map(|info| info.node)
+            .collect()
+    }
+
+    #[inline]
+    fn push(&mut self, info: ContextualInfo) {
+        let at = self.infos.len();
+        self.pushed_by_callers += u32::from(!info.is_cache);
+        if at >= Self::SEARCHED_ONE_BY_ONE {
+            let places = self.higher.entry((info.file, info.node)).or_default();
+            places.push(at as u32);
+        }
+        self.infos.push(info);
+    }
+
+    #[inline]
+    fn pop(&mut self) {
+        let Some(info) = self.infos.pop() else {
+            return;
+        };
+        let at = self.infos.len();
+        if self.examined > at {
+            self.examined = at;
+            if self.with_type_variables.last() == Some(&(at as u32)) {
+                self.with_type_variables.pop();
+            }
+        }
+        self.pushed_by_callers -= u32::from(!info.is_cache);
+        if at >= Self::SEARCHED_ONE_BY_ONE {
+            self.forget_highest_place_of(info);
+        }
+    }
+
+    fn forget_highest_place_of(&mut self, info: ContextualInfo) {
+        let key = (info.file, info.node);
+        if let Some(places) = self.higher.get_mut(&key) {
+            places.pop();
+            if places.is_empty() {
+                self.higher.remove(&key);
+            }
+        }
+    }
+
+    #[inline]
+    fn find(&self, file: FileId, node: ExprId, include_caches: bool) -> Option<ContextualInfo> {
+        let place = self.place_of(file, node, include_caches)?;
+        Some(self.infos[place])
+    }
+
+    #[inline]
+    pub(super) fn place_of(
+        &self,
+        file: FileId,
+        node: ExprId,
+        include_caches: bool,
+    ) -> Option<usize> {
+        let lower = &self.infos[..self.infos.len().min(Self::SEARCHED_ONE_BY_ONE)];
+        let found = lower.iter().position(|info| {
+            info.file == file && info.node == node && (include_caches || !info.is_cache)
+        });
+        if found.is_some() || self.infos.len() <= Self::SEARCHED_ONE_BY_ONE {
+            return found;
+        }
+        let mut places = self
+            .higher
+            .get(&(file, node))?
+            .iter()
+            .map(|&at| at as usize);
+        places.find(|&at| include_caches || !self.infos[at].is_cache)
+    }
+
+    #[inline]
+    pub(super) fn are_literals_around_pushed(&mut self, place: usize) -> &mut Option<bool> {
+        &mut self.infos[place].are_literals_around_pushed
+    }
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `getSpreadIndices`: returns the first and the last spread among `items`, which are the
     /// elements of the array literal or the arguments of the call `owner`.
@@ -623,7 +743,17 @@ impl<'p, 's> Checker<'p, 's> {
             node,
             t,
             is_cache,
+            are_literals_around_pushed: None,
         });
+    }
+
+    /// The nodes of `file` with a pushed type that may contain type variables.
+    pub(super) fn pushed_with_type_variables(&mut self, file: FileId) -> SmallVec<[ExprId; 4]> {
+        while let Some(t) = self.contextual.next_unexamined() {
+            let has_type_variables = t.is_some_and(|t| self.has_type_variables(t));
+            self.contextual.examined(has_type_variables);
+        }
+        self.contextual.nodes_with_type_variables(file)
     }
 
     /// `popContextualType`
@@ -634,18 +764,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `findContextualNode`. A node that's checked again while it's being checked has several
     /// entries. The search starts at the one pushed first.
+    #[inline]
     pub(super) fn find_contextual_node(
         &self,
         file: FileId,
         node: ExprId,
         include_caches: bool,
     ) -> Option<ContextualInfo> {
-        let mut infos = self.contextual.iter();
-        infos
-            .find(|info| {
-                info.file == file && info.node == node && (include_caches || !info.is_cache)
-            })
-            .copied()
+        self.contextual.find(file, node, include_caches)
     }
 
     /// `getContextualType`

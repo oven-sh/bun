@@ -4338,6 +4338,8 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.js", "if (a) {\n  x;\n}", " else if (b) {\n  y;\n}", " else z;\n", 8000],
     // doc comments that start where another one ends
     ["a.js", "", "/**\n * a\n *//**\n * b\n */\na;\n", "", 4000],
+    // the child before an element
+    ["a.jsx", "x = <a>\n", "{/* c */}\n<b />\n", "</a>;\n", 4000],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

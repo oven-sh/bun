@@ -84,13 +84,17 @@ impl Quick {
             return false;
         }
         let children = self.n.at(parent + 6);
-        let mut index: i32 = 0;
-        let mut i: i32 = 1;
-        while i <= self.n.at(children) {
-            if self.n.at(children + i) == n {
-                index = i;
+        // (they stand in the order of the text)
+        let start = self.n.at(n + 1);
+        let mut index: i32 = 1;
+        let mut end = self.n.at(children) + 1;
+        while index < end {
+            let middle = (index + end) >> 1;
+            if self.n.at(self.n.at(children + middle) + 1) < start {
+                index = middle + 1;
+            } else {
+                end = middle;
             }
-            i += 1;
         }
         let mut i = index - 1;
         while i >= 1 {

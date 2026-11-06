@@ -14,15 +14,18 @@ describe("LazyHash quirks", () => {
 });
 
 test.each([
-  ["Hash", () => createHash("sha256")],
-  ["Hmac", () => createHmac("sha256", "key")],
-])("%s reports a chunk written after digest()", async (_, make) => {
+  ["Hash", "late", () => createHash("sha256")],
+  ["Hmac", "late", () => createHmac("sha256", "key")],
+  ["Hmac", "", () => createHmac("sha256", "key")],
+] as const)("%s reports the chunk %j written after digest()", async (_, chunk, make) => {
   const hash = make();
   hash.update("x");
   hash.digest();
   const error = once(hash, "error");
-  expect(hash.write("late")).toBe(false);
-  expect(await error).toEqual([expect.objectContaining({ code: "ERR_CRYPTO_HASH_UPDATE_FAILED" })]);
+  expect(hash.write(chunk)).toBe(false);
+  expect(await error).toEqual([
+    expect.objectContaining({ code: "ERR_CRYPTO_HASH_UPDATE_FAILED", message: "Hash update failed" }),
+  ]);
   expect(() => hash.update("late")).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
 });
 

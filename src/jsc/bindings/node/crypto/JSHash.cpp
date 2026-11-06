@@ -177,15 +177,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     JSValue hashWrapper = callFrame->argument(0);
 
-    // Hash.prototype._transform passes `false` for Node's native update(): none of the checks of Hash.prototype.update(), and `false` for a failure.
-    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L168-L195
-    bool isTransform = callFrame->argument(3).isFalse();
-    auto updateFailed = [&] {
-        return isTransform ? JSValue::encode(jsBoolean(false)) : Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+    // Hash.prototype._transform passes `false` to get Node's native update(): none of the checks of Hash.prototype.update(), and `false` instead of a throw.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L168-L194
+    bool checked = !callFrame->argument(3).isFalse();
+    auto updateFailed = [&]() -> EncodedJSValue {
+        return checked ? Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject) : JSValue::encode(jsBoolean(false));
     };
 
     // Check if the Hash is already finalized
-    if (hash->m_finalized && !isTransform) {
+    if (checked && hash->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -204,7 +204,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
 
         // Validate encoding
-        if (!isTransform && encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
+        if (checked && encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 

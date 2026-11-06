@@ -129,12 +129,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
     }
 
-    // Hmac.prototype._transform passes `false`, as Hash.prototype._transform does.
-    bool isTransform = callFrame->argument(3).isFalse();
+    // `false` comes from Hash.prototype._transform, which Hmac shares: see jsHashProtoFuncUpdate.
+    bool checked = !callFrame->argument(3).isFalse();
 
     // Check if the HMAC is already finalized
     if (hmac->m_finalized) {
-        if (isTransform) {
+        if (!checked) {
             return JSValue::encode(jsBoolean(false));
         }
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
@@ -154,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
 
         // validateEncoding()
-        if (!isTransform && encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
+        if (checked && encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 

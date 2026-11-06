@@ -2748,8 +2748,8 @@ declare namespace $Node {
     verify(options: unknown, signature: CryptoData, signatureEncoding?: string): boolean;
   }
   interface NativeHash {
-    /** `checked` false is for `_transform`: after `digest()` the answer is `false`, and hex may have an odd length. */
     update<T>(self: T, data: CryptoData, encoding?: string): T;
+    /** For `_transform`: a failed update, as after `digest()`, returns `false` instead of throwing, and hex may have an odd length. */
     update<T>(self: T, data: CryptoData, encoding: string | undefined, checked: false): T | false;
     digest(outputEncoding?: string | null, finalize?: boolean): Buffer | string;
   }

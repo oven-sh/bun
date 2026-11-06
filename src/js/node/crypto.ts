@@ -646,11 +646,12 @@ crypto_exports.createECDH = function createECDH(curve: string) {
   function getDecoder(decoder: Decoder | null, encoding: string) {
     const normalizedEncoding = normalizeEncoding(encoding);
     decoder ||= new StringDecoder(encoding);
-    if (decoder.encoding !== normalizedEncoding) {
+    const current = decoder.encoding;
+    if (current !== normalizedEncoding) {
       if (normalizedEncoding === undefined) {
         throw $ERR_UNKNOWN_ENCODING(encoding);
       }
-      throw $ERR_INVALID_ARG_VALUE("outputEncoding", encoding, `cannot be changed from '${decoder.encoding}'`);
+      throw $ERR_INVALID_ARG_VALUE("outputEncoding", encoding, `cannot be changed from '${current}'`);
     }
     return decoder;
   }

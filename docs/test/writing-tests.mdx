@@ -656,7 +656,7 @@ These run after the check, and read its result in `task.result.state`:
 - `onTestFinished` and `onTestFailed` callbacks from `"vitest"` or the [test context](#test-context)
 - the part of an [`aroundEach`](/test/lifecycle#wrapping-tests) hook after `runTest()`
 
-An assertion in one of them doesn't count for the test: it can't complete the count, and it can't exceed it. A call to `expect.assertions()` or `expect.hasAssertions()` there is an error.
+An assertion in one of them doesn't count for that check: it can't complete the count, and it can't exceed it. If one of them calls `expect.assertions()` or `expect.hasAssertions()`, Bun checks the new count when that callback is done.
 
 A test from [`"vitest"`](#importing-from-vitest), `test.extend()` or `test.for()` has an earlier check. A count that's set when its callback ends is checked then, as in Vitest, so an assertion in `afterEach` doesn't count for it.
 

@@ -48,17 +48,15 @@ pub(crate) struct TestContext {
     /// `BunTest::extra_execution_entries` owns the entries.
     deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,
     fixtures: JsCell<Vec<usize>>,
-    count_check: Cell<Option<CountCheck>>,
+    count_failure: Cell<Option<CountFailure>>,
 }
 
-/// What the checks of `expect.assertions()` and `expect.hasAssertions()` found for one attempt.
+/// What the check of `expect.assertions()` or `expect.hasAssertions()` that failed an attempt compared.
 #[derive(Copy, Clone)]
-struct CountCheck {
+struct CountFailure {
     attempt: u32,
-    /// The check after the hooks of the test is done. The deferred callbacks read the result, so nothing is checked later.
-    is_last: bool,
-    /// The expectation and the number of `expect()` calls that the check which failed the attempt compared.
-    failed: Option<(ExpectAssertions, u32)>,
+    expected: ExpectAssertions,
+    received: u32,
 }
 
 pub(crate) use crate::generated_bindgen::test_context::js_TestContext as js;
@@ -101,7 +99,7 @@ impl TestContext {
             sequence_index,
             deferred: JsCell::new(Vec::new()),
             fixtures: JsCell::new(Vec::new()),
-            count_check: Cell::new(None),
+            count_failure: Cell::new(None),
         }
         .to_js(global)
     }
@@ -181,21 +179,13 @@ impl TestContext {
         true
     }
 
-    fn count_check(&self, attempt: u32) -> Option<CountCheck> {
-        self.count_check.get().filter(|check| check.attempt == attempt)
+    pub(crate) fn count_failed(&self, attempt: u32, expected: ExpectAssertions, received: u32) {
+        self.count_failure.set(Some(CountFailure { attempt, expected, received }));
     }
 
-    pub(crate) fn count_is_final(&self, attempt: u32) -> bool {
-        self.count_check(attempt).is_some_and(|check| check.is_last)
-    }
-
-    pub(crate) fn failed_count(&self, attempt: u32) -> Option<(ExpectAssertions, u32)> {
-        self.count_check(attempt)?.failed
-    }
-
-    pub(crate) fn count_checked(&self, attempt: u32, is_last: bool, failed: Option<(ExpectAssertions, u32)>) {
-        let earlier = self.count_check(attempt).and_then(|check| check.failed);
-        self.count_check.set(Some(CountCheck { attempt, is_last, failed: earlier.or(failed) }));
+    pub(crate) fn count_failure(&self, attempt: u32) -> Option<(ExpectAssertions, u32)> {
+        let failure = self.count_failure.get().filter(|failure| failure.attempt == attempt)?;
+        Some((failure.expected, failure.received))
     }
 
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {

@@ -895,7 +895,7 @@ declare module "bun:test" {
    * - The timeout applies to the time before `runTest()` is called, and again to the time after its promise resolves.
    *   The time in between isn't counted.
    * - `expect.assertions()` and `expect.hasAssertions()` are checked before `runTest()` resolves. An assertion after
-   *   that isn't counted.
+   *   that doesn't count for them.
    *
    * @example
    * ```ts
@@ -1262,7 +1262,8 @@ declare module "bun:test" {
     /**
      * Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first.
      *
-     * `expect.assertions()` and `expect.hasAssertions()` are checked before `fn` runs, so an assertion in `fn` isn't counted.
+     * `expect.assertions()` and `expect.hasAssertions()` are checked before `fn` runs, so an assertion in `fn` doesn't
+     * count for them.
      */
     onTestFinished(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
     /** Like `onTestFinished()`, but only runs if the test failed. */

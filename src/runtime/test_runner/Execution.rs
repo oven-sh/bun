@@ -320,31 +320,23 @@ impl ExecutionSequence {
         self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
-    /// `is_last`: the hooks of the test are done. The deferred callbacks read the result, so nothing is checked after this.
-    fn check_expect_assertions(&mut self, is_last: bool) {
-        if self.count_is_final() {
-            return;
-        }
+    fn check_expect_assertions(&mut self) {
         let failure = match self.expect_assertions {
-            ExpectAssertions::NotSet => None,
-            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Some(Result::FailBecauseExpectedHasAssertions),
+            ExpectAssertions::NotSet => return,
+            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Result::FailBecauseExpectedHasAssertions,
             ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
-                Some(Result::FailBecauseExpectedAssertionCount)
+                Result::FailBecauseExpectedAssertionCount
             }
             ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => {
-                // A count that is met when the callback of a "vitest" test ends stays met, whatever its hooks assert.
-                if !is_last {
-                    self.expect_assertions = ExpectAssertions::NotSet;
-                }
-                None
+                self.expect_assertions = ExpectAssertions::NotSet;
+                return;
             }
         };
-        let failure = failure.filter(|_| self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip);
-        if let Some(context) = self.test_context() {
-            let compared = failure.map(|_| (self.expect_assertions, self.expect_call_count));
-            context.count_checked(self.attempt, is_last, compared);
-        }
-        if let Some(failure) = failure {
+        if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
+            if let Some(context) = self.test_context() {
+                // What runs after this check can assert and set a count, and the report is about what was compared here.
+                context.count_failed(self.attempt, self.expect_assertions, self.expect_call_count);
+            }
             self.result = failure;
         }
     }
@@ -352,13 +344,8 @@ impl ExecutionSequence {
     /// The expectation and the number of `expect()` calls that the check which failed this attempt compared.
     pub(crate) fn checked_count(&self) -> (ExpectAssertions, u32) {
         self.test_context()
-            .and_then(|context| context.failed_count(self.attempt))
+            .and_then(|context| context.count_failure(self.attempt))
             .unwrap_or((self.expect_assertions, self.expect_call_count))
-    }
-
-    /// Whether the last check of the count is done. What runs after it can't ask for a count.
-    pub(crate) fn count_is_final(&self) -> bool {
-        self.test_context().is_some_and(|context| context.count_is_final(self.attempt))
     }
 }
 
@@ -686,7 +673,7 @@ impl Execution {
             }
             if entry.calling.is_vitest() {
                 if Some(entry_ptr) == sequence.test_entry {
-                    sequence.check_expect_assertions(false);
+                    sequence.check_expect_assertions();
                 }
                 let left_around_all = entry.around == Some((Around::All, AroundPhase::TearDown));
                 if let (true, Some(scope)) = (left_around_all, entry.base.parent) {
@@ -703,8 +690,8 @@ impl Execution {
         }
 
         if sequence.active_entry.is_none() {
-            // Jest counts the assertions of a test until its last hook is done. The deferred callbacks come after that.
-            sequence.check_expect_assertions(true);
+            // A deferred callback reads the result, so the count is checked before each one is taken, and at the end.
+            sequence.check_expect_assertions();
             sequence.active_entry = sequence.take_deferred();
         }
 

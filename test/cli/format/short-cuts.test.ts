@@ -56,6 +56,20 @@ function expectSame(name: string, texts: string[], options: string[][]) {
   );
 }
 
+/** The most memory that formatting `text` takes at any time. */
+async function memoryInMegabytes(name: string, text: string, flags: string[]) {
+  using dir = tempDir("format-short-cuts", { [name]: text });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...flags, name],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+  return (proc.resourceUsage()?.maxRSS ?? 0) / (1 << 20);
+}
+
 describe("YAML", () => {
   // An item with a block scalar in it doesn't go the long way by itself, whichever `#` starts the comment behind the header.
   const headersBehindQuotes = [
@@ -660,6 +674,7 @@ describe("GraphQL", () => {
         ["--tab-width=5000", "--print-width=20"],
         ["--tab-width=64", "--print-width=5"],
         ["--tab-width=32", "--print-width=40"],
+        ["--tab-width=4294967295"],
         ["--use-tabs"],
         ["--use-tabs", "--tab-width=8", "--print-width=30"],
         ["--no-bracket-spacing"],
@@ -681,6 +696,10 @@ describe("GraphQL", () => {
     const [short, long] = await format(formatted.texts, []);
     expect(short.texts).toEqual(long.texts);
     expect(short.said).toEqual(long.said);
+  });
+
+  test("an indentation that is too long for a string is not written", async () => {
+    expect(await memoryInMegabytes("a.graphql", "{a{b}}\n", ["--tab-width=4294967295"])).toBeLessThan(2000);
   });
 });
 

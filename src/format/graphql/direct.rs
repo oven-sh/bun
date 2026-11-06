@@ -133,6 +133,8 @@ struct Direct<'t, 'o> {
     comment: u32,
 
     printer: doc::Printer<'o>,
+    /// An indentation was left out because the output would be too long with it.
+    is_too_long: bool,
     /// The part of the source that's been written but not copied to the output yet.
     run_start: usize,
     run_end: usize,
@@ -242,6 +244,7 @@ fn write(
         last_end: 0,
         comment: NO_COMMENT,
         printer: doc::Printer::new(options, text, out),
+        is_too_long: false,
         run_start: 0,
         run_end: 0,
         gap: Gap::Nothing,
@@ -264,8 +267,9 @@ fn write(
         attached: &mut scratch.attached,
         document: &mut scratch.document,
     };
-    let is_done =
-        direct.document(as_printed_to).is_ok() && !crate::is_too_long(direct.printer.out.len());
+    let is_done = direct.document(as_printed_to).is_ok()
+        && !direct.is_too_long
+        && !crate::is_too_long(direct.printer.out.len());
     if !is_done {
         out.truncate(len);
     }
@@ -441,9 +445,9 @@ impl<'t> Direct<'t, '_> {
                 let indentation = if self.use_tabs { b'\t' } else { b' ' };
                 let len = out.len() + self.gap_lines as usize;
                 out.resize(len, b'\n');
-                // The caller finds out at the end.
-                if !crate::is_too_long(len) {
-                    out.resize(len + indentation_len, indentation);
+                match crate::is_too_long(len.saturating_add(indentation_len)) {
+                    true => self.is_too_long = true,
+                    false => out.resize(len + indentation_len, indentation),
                 }
                 self.line_start = out.len();
                 self.line_indent = self.gap_level as usize * self.tab_width;

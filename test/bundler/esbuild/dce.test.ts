@@ -1608,25 +1608,6 @@ describe("bundler", () => {
     },
     dce: true,
   });
-  // `{ key: value }[key]` reads a property that the literal has itself. The
-  // lowering of a class writes it to name an anonymous function.
-  itBundled("dce/TreeShakingObjectLiteralOwnKey", {
-    files: {
-      "/entry.js": /* js */ `
-        let remove1 = { "#x": () => {} }["#x"]
-        let remove2 = { "a-b": class {} }["a-b"]
-        class REMOVE3 { static x = { "#x": function () {} }["#x"] }
-
-        let keep1 = { "#x": x }["#x"]
-        let keep2 = { "#x": () => {} }["#y"]
-        let keep3 = { get "#x"() { return 1 } }["#x"]
-        let keep4 = { "#x": () => {}, "#y": 1 }["#x"]
-        class KEEP5 { static x = { "#x": x }["#x"] }
-      `,
-    },
-    treeShaking: true,
-    dce: true,
-  });
   // Sibling of edgecase/TsEnumKeyedLiteralObjectTreeShaking#31755 for classes:
   // the computed-key check must unwrap EInlinedEnum before is_primitive_literal.
   itBundled("dce/TreeShakingClassEnumKey", {

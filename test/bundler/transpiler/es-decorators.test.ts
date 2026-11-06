@@ -1922,9 +1922,9 @@ describe("ES Decorators", () => {
     });
 
     test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
-      // Its name is not one the class, a class around it or a class in it
-      // declares, and its initializer runs as the field it is: no new.target,
-      // any constructor, a storage of its own for each evaluation of the class.
+      // Its name is not one that the file declares, and its initializer runs
+      // as the field it is: no new.target, any constructor, a storage of its
+      // own for each evaluation of the class.
       const { stdout, stderr, exitCode } = await runDecorator(`
         const dec = (v, ctx) => {};
         class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
@@ -1943,7 +1943,19 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("a read or a write of an undecorated accessor #x names its private field", async () => {
+    test.concurrent("the private field of an undecorated accessor #x has a name that the file does not declare", () => {
+      const print = (source: string) => new Bun.Transpiler({ loader: "js" }).transformSync(source);
+      expect(print("class A { accessor #x = 1 }")).toContain("#x_accessor_storage = 1;");
+      // A number follows when the file declares a #private name of that form. It has one digit more than any of them.
+      const declared = "class A { accessor #x = 1 } class B { #y_accessor_storage = 2 }";
+      expect(print(declared)).toContain("#x_accessor_storage1 = 1;");
+      const nested = "class A { accessor #x = 1; static B = class { #x_accessor_storage12 = 2 } }";
+      expect(print(nested)).toContain("#x_accessor_storage100 = 1;");
+      const itself = "class A { accessor #x_accessor_storage = 1 }";
+      expect(print(itself)).toContain("#x_accessor_storage_accessor_storage1 = 1;");
+    });
+
+    test.concurrent("every form of read and write reaches an undecorated accessor #x", async () => {
       using dir = tempDir("es-dec-accessor-forms", {
         "forms.js": `
           class U {
@@ -1969,13 +1981,6 @@ describe("ES Decorators", () => {
       expect(filterStderr(stderr)).toBe("");
       expect(stdout).toBe('[1,3,5,5,5,12,7,"12",true,true,true]\n');
       expect(exitCode).toBe(0);
-
-      // No call of the getter or the setter is printed. `#p in o` asks for them.
-      const printed = await runIn(String(dir), ["build", "--no-bundle", "forms.js"]);
-      expect(filterStderr(printed.stderr)).toBe("");
-      expect(printed.stdout).not.toMatch(/\.#[ps]\b/);
-      expect(printed.stdout).toContain("#p in o");
-      expect(printed.exitCode).toBe(0);
     });
 
     test.concurrent("a direct eval reaches an undecorated accessor #x as a getter and a setter", async () => {
@@ -2015,7 +2020,7 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("an anonymous function in an undecorated accessor #x has the name #x in a bundle", async () => {
+    test.concurrent("an anonymous function in an undecorated accessor #x has the name #x", async () => {
       using dir = tempDir("es-dec-accessor-name", {
         "names.js": `
           class C {
@@ -2027,12 +2032,42 @@ describe("ES Decorators", () => {
           console.log(JSON.stringify(new C().names()));
         `,
       });
-      // Bun parses this bundle again when it runs it. It does not parse a "--target=bun" bundle again.
-      const build = await runIn(String(dir), ["build", "names.js", "--target=node", "--outfile=out.js"]);
+      const plain = await runIn(String(dir), ["names.js"]);
+      expect(filterStderr(plain.stderr)).toBe("");
+      expect(plain.stdout).toBe('["#p","#s","#q"]\n');
+      expect(plain.exitCode).toBe(0);
+
+      // Bun does not parse a "--target=bun" bundle again when it runs it.
+      const build = await runIn(String(dir), ["build", "names.js", "--target=bun", "--outfile=out.js"]);
       expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
       expect(filterStderr(stderr)).toBe("");
       expect(stdout).toBe('["#p","#s","#q"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a bundle keeps a class with a static accessor #x above the module that extends it", async () => {
+      // "c.js" is required first and imports "b.js", which extends C before the body of "c.js" ran.
+      using dir = tempDir("es-dec-accessor-hoist", {
+        "entry.js": `
+          const { C } = require("./c.js");
+          const { D } = require("./b.js");
+          console.log(typeof C, typeof D, new D() instanceof C, C.kind());
+        `,
+        "c.js": `
+          import "./b.js";
+          export class C { static accessor #s = () => {}; static kind() { return typeof C.#s; } }
+        `,
+        "b.js": `
+          import { C } from "./c.js";
+          export class D extends C {}
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "entry.js", "--target=bun", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("function function true function\n");
       expect(exitCode).toBe(0);
     });
 

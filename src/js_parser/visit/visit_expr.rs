@@ -973,8 +973,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Asked before the visit, which can leave a function bare that the key does not name: `{ f: (0, () => {}) }`.
-        let target_names_value = e_.target.names_its_one_value();
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -984,8 +982,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
 
         match e_.index.data {
-            // A second visit finds the field of an `accessor #x` here. No scope lists that field by name.
-            Data::EPrivateIdentifier(private) if p.is_accessor_storage(private.ref_) => {}
             Data::EPrivateIdentifier(mut private) => {
                 let name = p.load_name_from_ref(private.ref_);
                 let result = p.find_symbol(e_.index.loc, name).expect("unreachable");
@@ -1056,11 +1052,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 BStr::new(name)
                             ),
                         );
-                    } else if let Some(storage) = p.accessor_storage(kind, private.ref_) {
-                        // What the getter and the setter of an `accessor #x` do, without the call.
-                        p.ignore_usage(private.ref_);
-                        p.record_usage(storage);
-                        private.ref_ = storage;
                     }
                 }
 
@@ -1117,8 +1108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target)
-                                .with_is_property_access_target(in_.is_property_access_target)
-                                .with_target_names_value(target_names_value);
+                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1498,7 +1488,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let target_names_value = e_.target.names_its_one_value();
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1546,8 +1535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
-                .with_is_property_access_target(in_.is_property_access_target)
-                .with_target_names_value(target_names_value);
+                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,

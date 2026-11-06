@@ -134,6 +134,31 @@ export function join(first: string, second: string): string {
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
   });
 
+  test("the field under an undecorated accessor #x keeps the type of the accessor", async () => {
+    using dir = tempDir("build-dts-accessor", {
+      ...project,
+      "src/join.ts": `export class Mode {
+  accessor #mode: "idle" | "busy" = "idle";
+  static accessor #count: number = 0;
+  busy(): boolean {
+    return this.#mode === "busy";
+  }
+  static next(): number {
+    return ++Mode.#count;
+  }
+}
+export function join(first: string, second: string): string {
+  return first + " " + second + (new Mode().busy() ? "!" : "") + Mode.next();
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain('#mode_accessor_storage: "idle" | "busy" = "idle";');
+    expect(typed).toContain("static #count_accessor_storage: number = 0;");
+  });
+
   test("a build without it writes what it always did", async () => {
     using dir = tempDir("build-without-dts", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out");

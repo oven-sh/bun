@@ -931,7 +931,6 @@ impl IdentifierOpts {
     const IS_CALL_TARGET: u8 = 1 << 4;
     const IS_TEMPLATE_TAG: u8 = 1 << 5;
     const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
-    const TARGET_NAMES_VALUE: u8 = 1 << 7;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -970,12 +969,6 @@ impl IdentifierOpts {
         self.0 & Self::IS_PROPERTY_ACCESS_TARGET != 0
     }
 
-    /// The target is `{ key: value }` as written, and the key names `value`: an anonymous function or class.
-    #[inline]
-    pub(crate) const fn target_names_value(self) -> bool {
-        self.0 & Self::TARGET_NAMES_VALUE != 0
-    }
-
     // Builder-style helpers (this stays a packed u8 rather than a
     // named-field struct).
     #[inline]
@@ -1010,11 +1003,6 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_property_access_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_PROPERTY_ACCESS_TARGET) | ((v as u8) << 6);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_target_names_value(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::TARGET_NAMES_VALUE) | ((v as u8) << 7);
         self
     }
 }

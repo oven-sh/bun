@@ -4,7 +4,6 @@ use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
-use crate::lower::lower_decorators::PlainAccessor;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParseStatementOptions, PropertyOpts,
@@ -721,33 +720,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
 
-                        let field: symbol::Kind = if opts.is_static {
+                        let declare: symbol::Kind = if opts.is_static {
                             symbol::Kind::PrivateStaticField
                         } else {
                             symbol::Kind::PrivateField
-                        };
-                        // An undecorated `accessor #x` is a getter and a setter over a field of its own.
-                        let is_plain_accessor =
-                            kind == PropertyKind::AutoAccessor && opts.ts_decorators.len() == 0;
-                        let declare: symbol::Kind = match (is_plain_accessor, opts.is_static) {
-                            (true, true) => symbol::Kind::PrivateStaticGetSetPair,
-                            (true, false) => symbol::Kind::PrivateGetSetPair,
-                            (false, _) => field,
                         };
 
                         private.ref_ = p
                             .declare_symbol(declare, key.loc, name)
                             .expect("unreachable");
-                        if is_plain_accessor {
-                            // No scope lists the field by name. The lowering names it.
-                            let storage = p.new_symbol(field, name);
-                            VecExt::append(&mut p.current_scope_mut().generated, storage);
-                            p.plain_accessors.push(PlainAccessor {
-                                name: private.ref_,
-                                storage,
-                                class_body: p.current_scope_ref(),
-                            });
-                        }
                     }
                     _ => {}
                 }

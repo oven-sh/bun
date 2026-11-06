@@ -1478,6 +1478,46 @@ test("disposes", () => {
   expect(plain.exitCode).toBe(0);
 });
 
+test("every line of a class with an undecorated accessor #x that ran is reported as run", async () => {
+  using dir = tempDir("cov-accessor", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    // An accessor with no value, and one whose value is on the next line, have no code of their own on their line.
+    "lib.ts": `export class C {
+  accessor #a = 1;
+  accessor #bare;
+  static accessor #s = 2;
+  static accessor #sbare;
+  accessor #next =
+    3;
+  use() {
+    this.#bare = this.#a + 1;
+    C.#sbare = C.#s + 1;
+    this.#next = this.#next + 1;
+    return this.#bare + C.#sbare + this.#next;
+  }
+}
+`,
+    "lib.test.ts": `
+      import { test, expect } from "bun:test";
+      import { C } from "./lib";
+      test("use", () => { expect(new C().use()).toBe(9); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("(pass) use");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  expect(lcov.match(/^DA:\d+,0$/gm)).toBeNull();
+  expect(lcov.match(/^L[FH]:\d+$/gm)).toEqual(["LF:12", "LH:12"]);
+  expect(exitCode).toBe(0);
+});
+
 test("reports an error for a coverage directory longer than the path buffer", async () => {
   // A bunfig value can be longer than the buffer on every platform.
   using dir = tempDir("coverage-dir-too-long", {

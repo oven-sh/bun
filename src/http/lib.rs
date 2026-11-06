@@ -5353,8 +5353,8 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 self.state.flags.strip_tls_identity_on_redirect = !hop.same_origin
-                    && !hop.https_upgrade
-                    && self.flags.redirect_credentials == RedirectCredentialsPolicy::HttpsUpgrade
+                    && (!hop.https_upgrade
+                        || self.flags.redirect_credentials == RedirectCredentialsPolicy::SameOrigin)
                     && self.tls_props.is_some();
                 self.state.flags.is_redirect_pending = true;
                 if self.method.has_request_body() {

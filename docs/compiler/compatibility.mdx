@@ -57,7 +57,7 @@ bun compile ./strings.ts && ./strings
 
 `ShadowRealm` isn't supported. An executable has no such global, so code that uses it throws a `ReferenceError` when it runs, and the build warns. Use a `node:vm` context.
 
-Code from a string answers `#x in obj` with `false` for an `accessor #x` field of an instance until that field has its value. Compiled code and `bun run` answer `true` from the first field initializer of the class.
+Code from a string answers `#x in obj` with `false` for an `accessor #x` field of an instance until that field has its value. Compiled code and `bun run` answer `true` from the first field initializer of the class. A read or a store of the field from such code before then throws a `TypeError` either way, for a `static accessor #x` too: `bun run` reports the line of the field and a frame named `#x`, an executable the line of that code.
 
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
 

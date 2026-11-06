@@ -2491,12 +2491,20 @@ const extraSections = `
   out.privateAccessorBrand = [${privateAccessorClasses("")}].map((C) => C.probe(new C()));
   out.privateStaticAccessorBrand = [${privateAccessorClasses("static ")}].map((C) => C.probe(C));
 
-  // A constructor that returns an object puts the pair on that object, once.
+  // A constructor that returns an object puts the pair on that object, once:
+  // before the value, so also when the value throws.
   class Ret { constructor(o) { return o; } }
-  class Twice extends Ret { accessor #p = 1; static has(o) { return #p in o; } }
+  let fails = true;
+  const value = () => { if (fails) throw new RangeError("no value"); return 1; };
+  class Twice extends Ret {
+    accessor #p = value();
+    static has(o) { return #p in o; }
+    static read(o) { return o.#p; }
+  }
   const o = {};
-  new Twice(o);
-  out.privateAccessorTwice = [Twice.has(o), attempt(() => new Twice(o))];
+  const first = attempt(() => new Twice(o));
+  fails = false;
+  out.privateAccessorTwice = [first, Twice.has(o), attempt(() => new Twice(o) === o), attempt(() => Twice.read(o))];
 }
 
 // Undecorated \`#private\` members of a decorated class stay native, so every
@@ -2845,7 +2853,7 @@ const extraExpected = {
   // The pair by hand, the accessor alone, the accessor next to a decorated method.
   privateAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
   privateStaticAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
-  privateAccessorTwice: [true, "TypeError"],
+  privateAccessorTwice: ["RangeError", true, "TypeError", "TypeError"],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],

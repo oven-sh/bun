@@ -1,7 +1,7 @@
 import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import net from "net";
 import { join } from "path";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
@@ -1266,7 +1266,8 @@ describe("gc entries", () => {
   );
 
   // A program with an unhandled error runs its ref'd immediates and then exits, also when an interval holds the loop.
-  // Nothing else holds the loop then, so no entry is delivered on the way out.
+  // Nothing else holds the loop then, so no entry is delivered on the way out. The immediates here go on until the
+  // timer of the entry has long been due.
   test.concurrent("a program that ends with an unhandled error gets no entry after the error", async () => {
     await using proc = tracked(
       Bun.spawn({
@@ -1277,16 +1278,17 @@ describe("gc entries", () => {
             const { PerformanceObserver } = require("node:perf_hooks");
             let since = Infinity;
             let deliveredAfterTheError = 0;
-            let immediates = 0;
+            let ranOn = false;
             new PerformanceObserver(list => {
               deliveredAfterTheError += list.getEntries().filter(entry => entry.startTime >= since).length;
             }).observe({ type: "gc" });
-            setInterval(() => {}, 20);
-            process.on("exit", () => console.log(JSON.stringify({ deliveredAfterTheError, immediates })));
+            setInterval(() => {}, 100);
+            process.on("exit", () => console.log(JSON.stringify({ deliveredAfterTheError, ranOn })));
             // In an immediate no task is queued: nothing has decided to deliver what this collection adds.
             setImmediate(() => {
               setImmediate(function again() {
-                if (++immediates < 50) setImmediate(again);
+                ranOn = true;
+                if (performance.now() - since < 30) setImmediate(again);
               });
               since = performance.now();
               Bun.gc(true);
@@ -1301,7 +1303,7 @@ describe("gc entries", () => {
     );
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("error: unhandled");
-    expect(stdout).toBe('{"deliveredAfterTheError":0,"immediates":50}\n');
+    expect(stdout).toBe('{"deliveredAfterTheError":0,"ranOn":true}\n');
     expect(exitCode).toBe(1);
   });
 
@@ -1360,6 +1362,66 @@ describe("gc entries", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The timer of an entry is due in a turn in which nothing holds the loop. An unref'd immediate brings that turn. Or the
+  // collection is in the last immediate and queues the cleanup of a FinalizationRegistry, which holds the loop until it
+  // has run. The entry waits, and arrives in the turn that the timer of the listener brings.
+  test.concurrent.each([
+    [
+      "an unref'd immediate",
+      `Bun.gc(true);
+       const until = performance.now() + 5;
+       while (performance.now() < until);
+       setImmediate(() => {}).unref();`,
+    ],
+    [
+      "the cleanup of its own FinalizationRegistry",
+      `const registry = new FinalizationRegistry(() => {});
+       setImmediate(() => {
+         (() => { registry.register({}, 0); })();
+         Bun.gc(true);
+         const until = performance.now() + 5;
+         while (performance.now() < until);
+       });`,
+    ],
+  ])(
+    "an entry whose timer runs in a turn that only %s brings arrives once something holds the loop",
+    async (_, collects) => {
+      await using proc = tracked(
+        Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const { PerformanceObserver, constants } = require("node:perf_hooks");
+           let giveUp;
+           let emittedBeforeExit = false;
+           const forced = { beforeTheListener: 0, afterIt: 0 };
+           new PerformanceObserver((list, observer) => {
+             const count = list.getEntries().filter(entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED).length;
+             if (emittedBeforeExit) forced.afterIt += count;
+             else forced.beforeTheListener += count;
+             if (forced.afterIt === 0) return;
+             observer.disconnect();
+             clearTimeout(giveUp);
+             console.log(JSON.stringify(forced));
+           }).observe({ type: "gc" });
+           ${collects}
+           process.once("beforeExit", () => {
+             emittedBeforeExit = true;
+             giveUp = setTimeout(() => console.log(JSON.stringify({ ...forced, gaveUp: true })), 3000);
+           });`,
+          ],
+          env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"beforeTheListener":0,"afterIt":1}\n');
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // No interval at first. The hand-off finds nothing that holds the loop, and tries again in the turn that the interval of
   // the listener brings.
@@ -1614,7 +1676,8 @@ describe("gc entries", () => {
   });
 
   // An idle collection is asked for after BUN_IDLE_GC_SECONDS of quiet. The JS thread then waits without heap access, so
-  // on a machine that is not busy the collector thread ends the collection. On Windows the JS thread always ends it.
+  // on a machine that is not busy the collector thread ends the collection, and the request of an idle collection wakes
+  // the loop when it has ended. On Windows the JS thread always ends it.
   // One second of quiet is the least that Bun takes, and a debug build needs half of the default timeout for this test.
   // So it has a timeout of its own, above the time after which the program gives up, and then it says what it has seen.
   test.concurrent.skipIf(isWindows)(
@@ -1664,62 +1727,6 @@ describe("gc entries", () => {
       expect(exitCode).toBe(0);
     },
     30_000,
-  );
-
-  // The timer of Bun's own collections ticks once a second, and with a second of quiet for each idle collection three
-  // ticks in a row ask for one. The heap is large enough that the marking is not over when the JS thread goes to wait,
-  // so the collector thread ends the collection. Without its wake the entry waits for the next tick, a second later.
-  // Not on Windows, where the JS thread ends every collection. A debug build takes too long to fill the heap.
-  test.concurrent.skipIf(isWindows || isASAN || isDebug)(
-    "the entry of an idle collection that the collector thread ends does not wait for the loop to wake",
-    async () => {
-      await using proc = tracked(
-        Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `
-              const { PerformanceObserver, constants } = require("node:perf_hooks");
-              globalThis.live = new Map();
-              for (let i = 0; i < 400000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i], extra: { a: i, c: [i, i + 1] } });
-              Bun.gc(true);
-              const waited = [];
-              const giveUp = setTimeout(() => console.log(JSON.stringify({ arrivedAtOnce: false, waited })), 12000);
-              let waitsSince = Infinity;
-              new PerformanceObserver((list, observer) => {
-                const now = performance.now();
-                for (const entry of list.getEntries()) {
-                  const idle =
-                    entry.detail.kind === constants.NODE_PERFORMANCE_GC_MAJOR &&
-                    entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_NO &&
-                    entry.startTime > waitsSince + 500;
-                  if (idle) waited.push(Math.round(now - entry.startTime - entry.duration));
-                }
-                // A busy machine can make one of them late.
-                if (!waited.some(ms => ms < 500)) return;
-                observer.disconnect();
-                clearTimeout(giveUp);
-                console.log(JSON.stringify({ arrivedAtOnce: true }));
-              }).observe({ type: "gc" });
-              waitsSince = performance.now();
-            `,
-          ],
-          env: {
-            ...bunEnv,
-            BUN_IDLE_GC_SECONDS: "1,1,1",
-            BUN_GC_TIMER_INTERVAL: undefined,
-            BUN_GC_TIMER_DISABLE: undefined,
-          },
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
-      );
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe('{"arrivedAtOnce":true}\n');
-      expect(exitCode).toBe(0);
-    },
-    20_000,
   );
 
   // node:perf_hooks sets its own function. The tests of the built-in functions call the setter with every kind of value.

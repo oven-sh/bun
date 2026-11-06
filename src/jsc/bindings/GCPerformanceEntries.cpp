@@ -53,9 +53,6 @@ void GCPerformanceEntries::didGarbageCollect(CollectionScope scope)
     // With a delay the timer is in the heap of timers, which bounds the next wait of the loop. With none it is not (WTFTimer::update).
     if (armsTimer)
         setTimeUntilFire(1_ms);
-    // A timer that another thread arms does not end a wait of the JS thread in the loop, so that thread wakes it here.
-    if (auto* vmHandle = WebCore::clientData(m_vm)->vmHandle; vmHandle && !m_vm.currentThreadIsHoldingAPILock())
-        Bun__VmHandle__wake(vmHandle);
 }
 
 bool GCPerformanceEntries::hasRecords()

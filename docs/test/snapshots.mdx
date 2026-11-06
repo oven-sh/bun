@@ -253,6 +253,8 @@ exports[`snapshot with dynamic values 1`] = `
 `;
 ```
 
+A `URL` is stored as its whole href, with the username, the password and the query. If the address changes between runs, for example a server on a random port, match it with `expect.any(URL)`.
+
 ## Custom Serializers
 
 Use `expect.addSnapshotSerializer()` to change how snapshot matchers print certain values. It applies to those values at any depth in a snapshot:
@@ -296,7 +298,7 @@ Inline snapshots don't record which runner wrote them, so Bun accepts a match in
 
 With `--update-snapshots`, Bun removes entries that no test uses anymore from a file in Jest's or Vitest's format. It keeps entries for tests that were skipped, filtered out or failed. A file in Bun's format keeps only the entries of tests that ran.
 
-Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
+Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, printed DOM nodes as plain objects, and printed every `URL` as `URL {}`. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them. Until then, an entry with `URL {}` passes for any address.
 
 ## Best Practices
 

@@ -79,6 +79,10 @@ pub(crate) enum MessageLevel {
 
 const REACT_19_ELEMENT: &[u8] = b"react.transitional.element";
 
+fn is_react_19_element(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+    Ok(value.get_own_truthy(global, "$$typeof")? == Some(JSValue::symbol_for(global, REACT_19_ELEMENT)))
+}
+
 #[derive(Copy, Clone, Default)]
 pub(crate) struct FormatOptions {
     pub(crate) enable_colors: bool,
@@ -2193,8 +2197,12 @@ impl<'a> Formatter<'a> {
                                 let tag = Tag::get(children, self.global_this)?;
 
                                 // Older versions printed a child only if it was a string, an element or an array.
+                                // A React 19 element was a plain object to them.
                                 let older_bun_printed =
-                                    matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
+                                    matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array)
+                                        && !(self.like_older_bun.is_some()
+                                            && tag.tag == Tag::JSX
+                                            && is_react_19_element(children, self.global_this)?);
                                 let print_children = older_bun_printed
                                     || (self.like_older_bun.is_none()
                                         && !children.is_null()
@@ -2239,16 +2247,14 @@ impl<'a> Formatter<'a> {
                                                     self.indent += 1;
                                                     // As for an item of a list. It is restored after the props.
                                                     self.quote_strings = false;
-                                                    let r: JsResult<()> = (|| {
-                                                        self.write_indent(writer.ctx)
-                                                            .expect("unreachable");
-                                                        self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            tag,
-                                                            writer.ctx,
-                                                            children,
-                                                            self.global_this,
-                                                        )
-                                                    })();
+                                                    self.write_indent(writer.ctx)
+                                                        .expect("unreachable");
+                                                    let r = self.format::<W, ENABLE_ANSI_COLORS>(
+                                                        tag,
+                                                        writer.ctx,
+                                                        children,
+                                                        self.global_this,
+                                                    );
                                                     self.indent = self.indent.saturating_sub(1);
                                                     r?;
                                                 }
@@ -2551,9 +2557,7 @@ impl<'a> Formatter<'a> {
             return Ok(());
         }
         let mut result = result;
-        if result.tag == Tag::JSX
-            && value.get_own_truthy(global_this, "$$typeof")? == Some(JSValue::symbol_for(global_this, REACT_19_ELEMENT))
-        {
+        if result.tag == Tag::JSX && is_react_19_element(value, global_this)? {
             // Older versions printed it as a plain object, along with the fiber in its `_owner`.
             match self.like_older_bun {
                 Some(_) => result.tag = Tag::Object,

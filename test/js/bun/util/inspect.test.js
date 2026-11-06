@@ -1736,14 +1736,16 @@ describe.each(["react.element", "react.transitional.element"])("jsx with one chi
             process.stdout.write("\\n" + error.message + "\\n");
           }
         }
-        console.log(cell(6));`,
+        console.log(cell(6));
+        console.error(cell(7));`,
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "ignore",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const printed = child => `<td>\n  ${child}\n</td>\n`;
+    expect(stderr).toContain(printed(7));
     expect({
       start: stdout.slice(0, printed(5).length),
       lines: stdout.split("\n").filter(line => /^[a-z]/.test(line)),

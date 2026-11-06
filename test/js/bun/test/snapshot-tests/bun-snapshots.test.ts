@@ -295,4 +295,28 @@ describe.concurrent("a React element in Bun's snapshot format", () => {
       });
     });
   });
+
+  // To an older Bun a React 19 element was an object: no child that it printed, and an object in a list.
+  test("what an older Bun wrote for a react.element that holds a React 19 element passes", async () => {
+    const object = `{\n    "$$typeof": Symbol(react.transitional.element),\n    "key": null,\n    "props": {\n      "children": "x",\n    },\n    "ref": null,\n    "type": "b",\n  }`;
+    const file = (onlyChild: string, inList: string) =>
+      header + `\nexports[\`the only child 1\`] = \`${onlyChild}\`;\n\nexports[\`in a list 1\`] = \`${inList}\`;\n`;
+    const older = file("<td />", `<td>\n  ${object}\n</td>`);
+    using dir = tempDir("snapshot-older-bun-react-19-child", {
+      "a.test.js": `
+          const el = (symbol, type, children) => ({ $$typeof: Symbol.for(symbol), type, key: null, ref: null, props: { children } });
+          const bold = () => el("react.transitional.element", "b", "x");
+          test("the only child", () => { expect(el("react.element", "td", bold())).toMatchSnapshot(); });
+          test("in a list", () => { expect(el("react.element", "td", [bold()])).toMatchSnapshot(); });
+        `,
+      "__snapshots__/a.test.js.snap": older,
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+
+    const read = await runTests(String(dir), {});
+    expect(snap()).toBe(older);
+    const updated = await runTests(String(dir), {}, "--update-snapshots");
+    expect(snap()).toBe(file("<td>\n  <b>x</b>\n</td>", "<td>\n  <b>x</b>\n</td>"));
+    expect([read.fail, updated.fail, read.exitCode, updated.exitCode]).toEqual([0, 0, 0, 0]);
+  });
 });

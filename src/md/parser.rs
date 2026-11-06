@@ -473,7 +473,7 @@ impl<'a> Parser<'a> {
     //   is_setext_underline, is_hr_line, is_atx_header_line,
     //   is_opening_code_fence, is_closing_code_fence,
     //   is_html_block_start_condition, is_html_block_end_condition,
-    //   html_tag_name, is_block_level_html_tag, is_complete_html_tag,
+    //   html_tag_name, is_complete_html_tag,
     //   is_table_underline, count_table_row_columns, is_container_mark
     //
     // ref_defs.rs — impl Parser:

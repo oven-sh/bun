@@ -558,3 +558,79 @@ impl HeadingIdTracker {
         self.text_buf.clear();
     }
 }
+
+/// True for the name of a tag, in whatever case, that starts an HTML block of kind 6 of CommonMark: wherever it is at the
+/// start of a line, whatever follows it.
+pub fn is_block_level_html_tag(name: &[u8]) -> bool {
+    let mut lowercase = [0u8; 10];
+    let Some(lowercase) = lowercase.get_mut(..name.len()) else {
+        return false;
+    };
+    lowercase.copy_from_slice(name);
+    lowercase.make_ascii_lowercase();
+    matches!(
+        &*lowercase,
+        b"address"
+            | b"article"
+            | b"aside"
+            | b"base"
+            | b"basefont"
+            | b"blockquote"
+            | b"body"
+            | b"caption"
+            | b"center"
+            | b"col"
+            | b"colgroup"
+            | b"dd"
+            | b"details"
+            | b"dialog"
+            | b"dir"
+            | b"div"
+            | b"dl"
+            | b"dt"
+            | b"fieldset"
+            | b"figcaption"
+            | b"figure"
+            | b"footer"
+            | b"form"
+            | b"frame"
+            | b"frameset"
+            | b"h1"
+            | b"h2"
+            | b"h3"
+            | b"h4"
+            | b"h5"
+            | b"h6"
+            | b"head"
+            | b"header"
+            | b"hr"
+            | b"html"
+            | b"iframe"
+            | b"legend"
+            | b"li"
+            | b"link"
+            | b"main"
+            | b"menu"
+            | b"menuitem"
+            | b"nav"
+            | b"noframes"
+            | b"ol"
+            | b"optgroup"
+            | b"option"
+            | b"p"
+            | b"param"
+            | b"search"
+            | b"section"
+            | b"summary"
+            | b"table"
+            | b"tbody"
+            | b"td"
+            | b"tfoot"
+            | b"th"
+            | b"thead"
+            | b"title"
+            | b"tr"
+            | b"track"
+            | b"ul"
+    )
+}

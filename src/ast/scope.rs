@@ -325,10 +325,7 @@ impl Members {
     }
 }
 
-/// The label of a `Kind::Label` scope: its symbol, and where its name is written.
-///
-/// Only the index of the symbol is kept. The rest of its `Ref` is the source index of the
-/// file being parsed. The index is stored plus one, so that `NONE` is all zero bits.
+/// The label of a `Kind::Label` scope. Its symbol's source index is the file's, so only the index is kept.
 #[derive(Clone, Copy)]
 pub struct ScopeLabel {
     symbol_index_plus_one: u32,
@@ -352,13 +349,11 @@ impl ScopeLabel {
         }
     }
 
-    /// Index of the label's symbol in the symbol table of its file.
     #[inline]
     pub const fn symbol_index(self) -> Option<u32> {
         self.symbol_index_plus_one.checked_sub(1)
     }
 
-    /// Where the label's name is written, if there is a label.
     #[inline]
     pub const fn name_loc(self) -> crate::Loc {
         self.name_loc
@@ -441,7 +436,7 @@ impl Default for Scope {
     }
 }
 
-// The parser allocates one `Scope` per block, function and class body.
+// 128 bytes is a mimalloc size class, and the next one is 160.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<Scope>() <= 128);
 

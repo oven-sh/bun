@@ -306,7 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn report_duplicate_constructor(&mut self, key: Expr) {
-        let mut range = crate::lexer::range_of_identifier(self.source, key.loc);
+        let mut range = self.source.range_of_identifier(key.loc);
         if range.len == 0 {
             // `"constructor"() {}`
             range = self.source.range_of_string(key.loc);

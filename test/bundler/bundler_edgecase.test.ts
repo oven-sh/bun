@@ -4226,7 +4226,7 @@ describe("bundler", () => {
     },
   });
 
-  // Early errors of the language in every mode. A bundle that contains one does not load.
+  // Early errors of the language in every mode.
   itBundled("edgecase/SecondClassConstructorIsAnError", {
     files: {
       "/entry.js": /* js */ `
@@ -4261,6 +4261,24 @@ describe("bundler", () => {
       `,
     },
     bundling: false,
+    bundleErrors: {
+      "/entry.js": ['Duplicate label "outer"'],
+    },
+  });
+  // The renamer gives the two labels different names, so this build used to pass.
+  itBundled("edgecase/LabelThatRepeatsAnEnclosingLabelIsAnErrorWithMinifyIdentifiers", {
+    files: {
+      "/entry.js": /* js */ `
+        outer: {
+          outer: {
+            console.log("in");
+            break outer;
+          }
+          console.log("after");
+        }
+      `,
+    },
+    minifyIdentifiers: true,
     bundleErrors: {
       "/entry.js": ['Duplicate label "outer"'],
     },

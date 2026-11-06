@@ -8140,10 +8140,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    /// `a: { a: ; }`. Called with the scope of the new label pushed, so the walk
-    /// starts at its parent. Like `find_label_symbol`, it ends where the function does.
+    /// `a: { a: ; }`, up to the function that holds the label, as in `find_label_symbol`.
     #[inline(never)]
     pub(crate) fn report_label_if_duplicate(&mut self, name: &[u8], name_loc: bun_ast::Loc) {
+        debug_assert!(self.current_scope_ref().kind == js_ast::scope::Kind::Label);
         let mut enclosing = self.current_scope_ref().parent;
 
         while let Some(scope) = enclosing {
@@ -8156,10 +8156,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 self.log().add_range_error_fmt_with_note(
                     Some(self.source),
-                    js_lexer::range_of_identifier(self.source, name_loc),
+                    self.source.range_of_identifier(name_loc),
                     format_args!("Duplicate label \"{}\"", bstr::BStr::new(name)),
                     format_args!("The original label \"{}\" is here:", bstr::BStr::new(name)),
-                    js_lexer::range_of_identifier(self.source, scope.label.name_loc()),
+                    self.source.range_of_identifier(scope.label.name_loc()),
                 );
                 return;
             }

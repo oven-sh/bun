@@ -3258,6 +3258,22 @@ console.log(<div {...obj} key="after" />);`),
     throw new Error("Expected parse error for code\n\t" + code);
   };
 
+  // Every error of a transform: its message, then "line:column text" of what its range and its note cover.
+  const parseErrors = (code, loader = "js") => {
+    const bytes = Buffer.from(code);
+    const where = ({ line, column, offset, length }) => `${line}:${column} ${bytes.subarray(offset, offset + length)}`;
+    try {
+      transpiler.transformSync(code, loader);
+    } catch (e) {
+      return (e instanceof AggregateError ? e.errors : [e]).map(error => [
+        error.message,
+        where(error.position),
+        ...error.notes.map(note => where(note.position)),
+      ]);
+    }
+    return [];
+  };
+
   describe("parser", () => {
     it("arrays", () => {
       expectPrinted("[]", "[]");
@@ -4164,22 +4180,6 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
-  // Every error of a transform: its message, then "line:column text" of what its range and its note cover.
-  const parseErrors = (code, loader = "js") => {
-    const where = ({ line, column, length, lineText }) =>
-      `${line}:${column} ${lineText.slice(column - 1, column - 1 + length)}`;
-    try {
-      transpiler.transformSync(code, loader);
-    } catch (e) {
-      return (e instanceof AggregateError ? e.errors : [e]).map(error => [
-        error.message,
-        where(error.position),
-        ...error.notes.map(note => where(note.position)),
-      ]);
-    }
-    return [];
-  };
-
   it("a class has at most one constructor", () => {
     const message = "Classes cannot contain more than one constructor";
 
@@ -4190,6 +4190,12 @@ class Foo {
     ]);
     expect(parseErrors('class A { constructor() {} "constructo\\u0072"() {} }')).toEqual([
       [message, '1:28 "constructo\\u0072"'],
+    ]);
+    expect(parseErrors("class A { constructor() {} constructo\\u{72}() {} }")).toEqual([
+      [message, "1:28 constructo\\u{72}"],
+    ]);
+    expect(parseErrors("class A { constructor() {} \\u{63}onstructor() {} }")).toEqual([
+      [message, "1:28 \\u{63}onstructor"],
     ]);
     expect(parseErrors("(class { constructor() {} x = 1; constructor() {} })")).toEqual([
       [message, "1:34 constructor"],
@@ -4265,6 +4271,8 @@ class Foo {
     // The name is compared, not its spelling.
     expect(parseErrors("a: {\n  \\u0061: ;\n}")).toEqual([[message("a"), "2:3 \\u0061", "1:1 a"]]);
     expect(parseErrors("\\u0061: {\n  a: ;\n}")).toEqual([[message("a"), "2:3 a", "1:1 \\u0061"]]);
+    expect(parseErrors("a: {\n  \\u{61}: ;\n}")).toEqual([[message("a"), "2:3 \\u{61}", "1:1 a"]]);
+    expect(parseErrors("a\\u{62}: {\n  ab: ;\n}")).toEqual([[message("ab"), "2:3 ab", "1:1 a\\u{62}"]]);
     // The note points at the nearest label of that name.
     expect(parseErrors("a: {\n  b: {\n    a: {\n      b: {\n        a: ;\n      }\n    }\n  }\n}")).toEqual([
       [message("a"), "3:5 a", "1:1 a"],
@@ -6595,20 +6603,21 @@ describe("parse error flood", () => {
     expect(exitCode).toBe(0);
   }, 90_000);
 
-  it("reports duplicate-label floods in linear time", async () => {
+  it("reports a flood of duplicates of three labels in linear time", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const transpiler = new Bun.Transpiler({ loader: "js" });
-          // The first label is far into the file, and every duplicate gets a note that points back at it.
+          // Each first label is far into the file, and every duplicate gets a note that points back at its own.
           const check = (label, first, repeats) => {
+            const filler = Buffer.alloc(3 * repeats, "{}\\n").toString();
+            const duplicates = first.map(([, name]) => name + ":;\\n").join("");
             const input =
-              Buffer.alloc(3 * repeats, "{}\\n").toString() +
-              first + ":{\\n" +
-              Buffer.alloc(4 * repeats, "a:;\\n").toString() +
-              "}";
+              first.map(([spelling]) => filler + spelling + ":{\\n").join("") +
+              Buffer.alloc(duplicates.length * repeats, duplicates).toString() +
+              Buffer.alloc(first.length, "}").toString();
             let threw;
             try {
               transpiler.transformSync(input);
@@ -6616,13 +6625,13 @@ describe("parse error flood", () => {
               threw = e;
             }
             if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
-            const said = new Set(threw.errors.map(e => e.message + " / note at line " + e.notes[0]?.position.line));
-            const expected = 'Duplicate label "a" / note at line ' + (repeats + 1);
-            if (said.size !== 1 || !said.has(expected)) throw new Error("expected only: " + expected + ", got " + [...said]);
+            const said = [...new Set(threw.errors.map(e => e.message + " / note at line " + e.notes[0]?.position.line))];
+            const expected = first.map(([, name], i) => 'Duplicate label "' + name + '" / note at line ' + (i + 1) * (repeats + 1));
+            if (said.sort().join() !== expected.sort().join()) throw new Error("expected " + expected + ", got " + said);
             console.log("OK " + label);
           };
-          check("plain first label", "a", 40000);
-          check("escaped first label", "\\\\u0061", 40000);
+          check("escaped first label", [["\\\\u0061", "a"]], 40000);
+          check("three first labels", [["x", "x"], ["y", "y"], ["z", "z"]], 20000);
           console.log("DONE");
         `,
       ],
@@ -6634,7 +6643,7 @@ describe("parse error flood", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("OK plain first label\nOK escaped first label\nDONE\n");
+    expect(stdout).toBe("OK escaped first label\nOK three first labels\nDONE\n");
     expect(exitCode).toBe(0);
   }, 90_000);
 });

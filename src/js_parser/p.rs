@@ -5503,6 +5503,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
+        debug_assert!(
+            !part_stmts
+                .iter()
+                .any(|stmt| matches!(stmt.data, js_ast::StmtData::STsImportEquals(_))),
+            "the list of an `S::TsImportEquals` ends with one that has no `local`"
+        );
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
@@ -8923,9 +8929,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                 // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
                 // a valid non-owning duplicate.
-                let mut part = core::mem::ManuallyDrop::new(unsafe {
-                    core::ptr::read(&raw const parts[idx])
-                });
+                let mut part =
+                    core::mem::ManuallyDrop::new(unsafe { core::ptr::read(&raw const parts[idx]) });
                 self.import_records_for_current_part.clear();
                 self.declared_symbols.clear_retaining_capacity();
 
@@ -8946,9 +8951,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
                 if !part.stmts.is_empty() {
-                    if self.module_scope().contains_direct_eval
-                        && part.declared_symbols.len() > 0
-                    {
+                    if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
                         // If this file contains a direct call to "eval()", all parts that
                         // declare top-level symbols must be kept since the eval'd code may
                         // reference those symbols.

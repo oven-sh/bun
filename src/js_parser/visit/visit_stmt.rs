@@ -2585,72 +2585,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// What the visit of `const a = b.c` does that cannot wait for a reader of `a`.
+    /// What the visit of `const a = b.c` does that cannot wait for a reader of
+    /// `a`: a reader that follows a constant of the const local prefix gets its value.
     #[cold]
     pub(crate) fn defer_ts_import_equals(&mut self, local: &S::Local) {
-        let (alias, value) = ts_import_equals_decl(local);
-        let root = entity_name_root(value);
-        let js_ast::ExprData::EIdentifier(id) = root.data else {
+        if self.cur_scope().is_after_const_local_prefix {
             return;
-        };
-        let name = self.load_name_from_ref(id.ref_);
-        if self.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, root.loc),
-                name,
-            )
-            .expect("unreachable");
         }
-
-        // A reader that follows a constant of the const local prefix gets its value.
-        if !self.cur_scope().is_after_const_local_prefix
-            && let Some(constant) = self.ts_import_equals_const_value(value, root.loc, name)
-        {
+        let (alias, value) = ts_import_equals_decl(local);
+        if let Some(constant) = self.ts_import_equals_const_value(value) {
             self.const_values.put(alias, constant).expect("oom");
         }
     }
 
     /// The value the visit gives `b.c` where that is a constant: a member of a
     /// TypeScript enum, or a `b` that is one itself. Records no use of `b`.
-    fn ts_import_equals_const_value(
-        &mut self,
-        value: Expr,
-        root_loc: bun_ast::Loc,
-        root_name: &'a [u8],
-    ) -> Option<Expr> {
-        let root = self
-            .find_symbol_with_record_usage::<false>(root_loc, root_name)
+    fn ts_import_equals_const_value(&mut self, value: Expr) -> Option<Expr> {
+        let root = entity_name_root(value);
+        let js_ast::ExprData::EIdentifier(id) = root.data else {
+            return None;
+        };
+        let root_name = self.load_name_from_ref(id.ref_);
+        let root_ref = self
+            .find_symbol_with_record_usage::<false>(root.loc, root_name)
             .ok()?
             .r#ref;
-        if !root.is_valid() {
+        if !root_ref.is_valid() {
             return None;
         }
         if !matches!(value.data, js_ast::ExprData::EDot(_))
             && self.options.features.inlining
-            && let Some(constant) = self.const_values.get(&root)
+            && let Some(constant) = self.const_values.get(&root_ref)
         {
             return Some(*constant);
         }
 
         use js_ast::ts::Data as Member;
-        let mut member = match &self.symbols[root.inner_index() as usize].namespace_alias {
-            Some(alias) => match self.ref_to_ts_namespace_member.get(&alias.namespace_ref) {
-                Some(Member::Namespace(namespace)) => {
-                    let members: &js_ast::TSNamespaceMemberMap = namespace;
-                    members.get(alias.alias.slice())?.data
-                }
-                _ => return None,
-            },
-            None => *self.ref_to_ts_namespace_member.get(&root)?,
-        };
+        let mut member = *self.ref_to_ts_namespace_member.get(&root_ref)?;
         let mut dots = BumpVec::new_in(self.arena);
         let mut target = value;
         while let js_ast::ExprData::EDot(dot) = target.data {
             dots.push((dot.name.slice(), target.loc));
             target = dot.target;
         }
-        let (mut name, mut loc) = (root_name, root_loc);
+        let (mut name, mut loc) = (root_name, root.loc);
         for &(dot_name, dot_loc) in dots.iter().rev() {
             let Member::Namespace(namespace) = member else {
                 return None;
@@ -2751,30 +2729,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// One Part for each top-level statement: gives each alias that a value
-    /// reads its Part. `deferred` has the index in `parts` where the Part of
-    /// each `S::TsImportEquals` goes.
+    /// One Part for each top-level statement: makes the Part of each alias that
+    /// a value reads. `deferred` has the index in `parts` where each alias belongs.
     #[cold]
     pub(crate) fn append_read_ts_import_equals(
         &mut self,
         parts: &mut BumpVec<'a, js_ast::Part>,
-        deferred: &[(usize, Stmt)],
+        deferred: &[(usize, js_ast::StoreRef<S::Local>, bun_ast::Loc)],
     ) -> Result<(), Error> {
         let arena = self.arena;
-        let aliases = bun_alloc::vec_from_iter_in(
-            deferred.iter().filter_map(|(_, stmt)| match stmt.data {
-                StmtData::STsImportEquals(alias) => alias.local,
-                _ => None,
-            }),
-            arena,
-        );
-        debug_assert!(aliases.len() == deferred.len());
+        let aliases = bun_alloc::vec_from_iter_in(deferred.iter().map(|it| it.1), arena);
         let mut read: BumpVec<'a, Option<js_ast::Part>> =
             bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
         self.for_each_read_ts_import_equals(&aliases, |p, index| {
             let stmt = Stmt {
                 data: StmtData::SLocal(aliases[index]),
-                loc: deferred[index].1.loc,
+                loc: deferred[index].2,
             };
             let mut part = BumpVec::new_in(arena);
             p.append_part(&mut part, arena.alloc_slice_copy(&[stmt]))?;
@@ -2786,10 +2756,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts,
             BumpVec::with_capacity_in(parts.len() + aliases.len(), arena),
         );
-        let mut next = 0;
-        let mut position = 0;
         let mut all = all.into_iter();
-        loop {
+        let mut next = 0;
+        for position in 0.. {
             while next < aliases.len() && deferred[next].0 == position {
                 match read[next].take() {
                     Some(part) => parts.push(part),
@@ -2801,18 +2770,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             };
             parts.push(part);
-            position += 1;
         }
         Ok(())
     }
 
-    /// An import that only this alias names stays as an import of nothing, and its module still runs.
+    /// What the visit does for the `b` of an alias that no value reads, with no use of `b`.
     fn drop_ts_import_equals(&mut self, local: &S::Local) {
         let root = entity_name_root(ts_import_equals_decl(local).1);
         let js_ast::ExprData::EIdentifier(id) = root.data else {
             return;
         };
         let name = self.load_name_from_ref(id.ref_);
+        if self.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, root.loc),
+                name,
+            )
+            .expect("unreachable");
+        }
+        // An import that only this alias names stays as an import of nothing: its module still runs.
         if let Ok(found) = self.find_symbol_with_record_usage::<false>(root.loc, name)
             && found.r#ref.is_valid()
         {

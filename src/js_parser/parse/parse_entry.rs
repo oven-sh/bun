@@ -1180,7 +1180,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let mut deferred_ts_import_equals = BumpVec::<(usize, Stmt)>::new_in(arena);
+            // The index in `parts` where each `S::TsImportEquals` belongs.
+            let mut deferred_ts_import_equals = BumpVec::new_in(arena);
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (i, stmt) in stmts.iter().enumerate() {
@@ -1290,7 +1291,7 @@ impl<'a> Parser<'a> {
                     js_ast::StmtData::STsImportEquals(alias) => {
                         if let Some(local) = alias.local {
                             p.defer_ts_import_equals(&local);
-                            deferred_ts_import_equals.push((parts.len(), *stmt));
+                            deferred_ts_import_equals.push((parts.len(), local, stmt.loc));
                         }
                     }
                     _ => {

@@ -6977,8 +6977,12 @@ pub mod bv2_impl {
                             continue 'outer;
                         }
 
-                        if loader == Loader::Css {
-                            // Do not use cached files for CSS.
+                        // Do not use cached files for CSS, nor a cached stylesheet in JS: its importer declares the
+                        // names it imports, which a CSS module's source gives.
+                        if loader == Loader::Css
+                            || import_record.loader.or_else(|| path.loader(&self.transpiler.options.loaders))
+                                == Some(Loader::Css)
+                        {
                             break 'brk;
                         }
 

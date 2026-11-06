@@ -981,3 +981,46 @@ test("bun bake hydrates a page with server props, and loads it again when only i
   });
   await client.expectElemText("button", "count 10");
 });
+devTest("css module class list edit refreshes the importing component without a reload", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import App from "./App.tsx";
+      console.log("root:" + typeof App);
+    `,
+    "App.module.css": `
+      .title { color: red; }
+    `,
+    "App.tsx": `
+      import styles from "./App.module.css";
+      console.log("App:" + Object.keys(styles).sort().join(","));
+      export default function App() {
+        return <h1 className={styles.title}>hello</h1>;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("App:title", "root:function");
+    // App.tsx is a Fast Refresh boundary: it re-evaluates with the new class
+    // map, the root module does not, and the page does not reload.
+    await dev.write(
+      "App.module.css",
+      `
+        .title { color: red; }
+        .subtitle { color: blue; }
+      `,
+    );
+    await c.expectMessage("App:subtitle,title");
+    // A style-only edit re-evaluates nothing. The App.tsx edit after it shows
+    // that exactly one message arrived since.
+    await dev.patch("App.module.css", { find: "blue", replace: "green" });
+    await dev.patch("App.tsx", { find: "hello", replace: "world" });
+    await c.expectMessage("App:subtitle,title");
+  },
+});

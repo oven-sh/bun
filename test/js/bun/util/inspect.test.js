@@ -1520,12 +1520,15 @@ describe("a property named constructor", () => {
 
   it("next to an accessor, and as an accessor", () => {
     expect(Bun.inspect({ constructor: "K", get g() {} })).toBe('{\n  constructor: "K",\n  g: [Getter],\n}');
+    let called = false;
     const accessor = {
       get constructor() {
+        called = true;
         return 1;
       },
     };
     expect(Bun.inspect(accessor)).toBe("{\n  constructor: [Getter],\n}");
+    expect(called).toBe(false);
   });
 
   it("nested", () => {

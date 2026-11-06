@@ -148,7 +148,7 @@ describe.concurrent("a snapshot that an older Bun wrote for objects with a 'cons
         expect({ constructor: "K", id: 5 }).toMatchSnapshot({ id: expect.any(Number) });
       });
       test("but for one line", () => {
-        expect(() => expect({ ...values(), more: 1 }).toMatchInlineSnapshot(\`\n${olderBun}\n\`)).toThrow();
+        expect(() => expect({ ...values(), more: 1 }).toMatchInlineSnapshot(\`\n${olderBun}\n\`)).toThrow('+   "more": 1,');
       });
     `;
     const snapshots =

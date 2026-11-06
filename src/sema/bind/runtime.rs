@@ -203,6 +203,7 @@ pub struct EarlyRedeclaration {
 pub struct EvalScope {
     pub scope: ScopeId,
     pub symbols: IdList<SymbolId>,
+    pub file_symbols: IdList<SymbolId>,
     pub constructor_symbols: IdList<SymbolId>,
     pub is_sloppy: bool,
 }

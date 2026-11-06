@@ -1,4 +1,4 @@
-// `bun build` has a value for a member where its visit of the initializer ends in a number or a text, in a function as at the top of a file, and has it in place of a callee too. It puts no constant in place of its name, and compares like with like alone.
+// `bun build` has a value for a member where its visit of the initializer ends in a number or a text, in a function as at the top of a file, and has it in place of a callee too. It compares like with like alone. A constant from outside the function is in place of its name, as under `bun run`.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="called"
 // CHECK: = NewObject
@@ -14,8 +14,9 @@
 // CHECK-NEXT: [[compared]] = Integer integer=7 @
 // CHECK-NEXT: = Call {{*}}, [[chosen]], [[either]], [[asserted]], [[compared]] calleeName="use"
 // CHECK-LABEL: function {{*}}name="leftToTheObject"
-// CHECK: = PropGet {{*}}key="fromConstant"
+// CHECK-NOT: = PropGet {{*}}key="fromConstant"
 // CHECK: = PropGet {{*}}key="unlike"
+// CHECK-NOT: = PropGet {{*}}key="fromConstant"
 
 declare function use(...values: unknown[]): void;
 

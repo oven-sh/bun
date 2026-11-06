@@ -1,5 +1,6 @@
 // RUN: link
-// CHECK: evalscope {{*}}bindings=[{name="x" kind=Constant depth=2 variable={{*}}}, {name="N"
+// CHECK: evalscope [[names]] bindings=[{name="x" kind=Constant variable={{*}}}, {name="N"
+// CHECK: evalscope {{*}}outer=[[names]]
 
 const x = "outer";
 namespace N {

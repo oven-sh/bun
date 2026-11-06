@@ -122,6 +122,7 @@ pub(super) struct ScopeWalk {
     pub(super) names_called: Vec<SymbolId>,
     pub(super) argument_reads: Vec<(WalkedFunctionId, ArgumentRead)>,
     pub(super) eval_uses: Vec<EvalUse>,
+    pub(super) evals_under_names_of_file: Vec<(WalkedFunctionId, u32)>,
     pub(super) stored_slots: Vec<(ScopeId, ScopeSlot)>,
     pub(super) this_bindings: Vec<(ScopeId, bool)>,
     pub(super) symbol_initializations: Vec<Option<Initialization>>,

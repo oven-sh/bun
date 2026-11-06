@@ -128,10 +128,6 @@ pub(super) fn normalize_uses(
         uses.push((WalkedFunctionId::MODULE_BODY, callee));
         is_in_order = false;
     }
-    if !is_in_order {
-        sort_unique(&mut uses);
-    }
-
     let stored_eval_uses = walk.eval_uses.iter().filter_map(|&eval_use| {
         let binding = normalize(eval_use.function, eval_use.binding)?;
         Some(EvalUse {
@@ -142,6 +138,49 @@ pub(super) fn normalize_uses(
     let mut eval_uses: Vec<EvalUse> = stored_eval_uses.collect();
     eval_uses.shared_sort_unstable();
     eval_uses.dedup();
+    if let Some((_, eval)) = bound.runtime.eval_scopes().first()
+        && !walk.evals_under_names_of_file.is_empty()
+    {
+        let is_variable_of_module = |&symbol: &SymbolId| {
+            matches!(forms[symbol.idx()], BindingForm::Stored)
+                && context.is_module_level_scope[context.declaring_scope(symbol).idx()]
+        };
+        let (variables, others): (Vec<SymbolId>, Vec<SymbolId>) = bound
+            .ids(eval.file_symbols)
+            .partition(is_variable_of_module);
+        let mut is_body_met = vec![false; walk.functions.len()];
+        let mut uses_of_names: Vec<(WalkedFunctionId, BindingRef)> = Vec::new();
+        let mut eval_uses_of_names: Vec<EvalUse> = Vec::new();
+        for &(function, time) in &walk.evals_under_names_of_file {
+            let body = context.module_bodies[function.index()];
+            let variables = match std::mem::replace(&mut is_body_met[body.index()], true) {
+                true => &[][..],
+                false => &variables[..],
+            };
+            for &symbol in variables.iter().chain(&others) {
+                let Some(binding) = normalize(function, BindingRef::Symbol(symbol)) else {
+                    continue;
+                };
+                uses_of_names.push((function, binding));
+                eval_uses_of_names.push(EvalUse {
+                    function,
+                    binding,
+                    time,
+                });
+            }
+        }
+        sort_unique(&mut eval_uses_of_names);
+        eval_uses = merge_unique(&eval_uses, &eval_uses_of_names);
+        if is_in_order {
+            sort_unique(&mut uses_of_names);
+            uses = merge_unique(&uses, &uses_of_names);
+        } else {
+            uses.append(&mut uses_of_names);
+        }
+    }
+    if !is_in_order {
+        sort_unique(&mut uses);
+    }
 
     let walked_references = walk.function_references.iter();
     let walked_references = walked_references.filter_map(|&(user, function)| {
@@ -159,6 +198,19 @@ pub(super) fn normalize_uses(
         references,
         entry_captures,
     }
+}
+
+fn merge_unique<T: Ord + Copy>(mut first: &[T], mut second: &[T]) -> Vec<T> {
+    let mut merged = Vec::with_capacity(first.len() + second.len());
+    while let (Some(&of_first), Some(&of_second)) = (first.first(), second.first()) {
+        let order = of_first.cmp(&of_second);
+        merged.push(if order.is_gt() { of_second } else { of_first });
+        first = &first[usize::from(order.is_le())..];
+        second = &second[usize::from(order.is_ge())..];
+    }
+    merged.extend_from_slice(first);
+    merged.extend_from_slice(second);
+    merged
 }
 
 #[inline]

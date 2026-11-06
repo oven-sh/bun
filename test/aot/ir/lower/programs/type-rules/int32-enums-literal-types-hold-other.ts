@@ -1,7 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // DIAGNOSTIC: ConstantNotInt32 2
-// DIAGNOSTIC: UnprovenInt32 13
+// DIAGNOSTIC: UnprovenInt32 12
 
 // An enum or a union of literals is an `int32` by proof only if every member is one: not with a fraction, -0 or 2 ** 31 among the members, with members computed when the program runs, or for an enum that is only declared. Arithmetic on an enum value is held to the range of an int32, not to that of the members, because TypeScript lets any number into a numeric enum. structural-types/an-enum-that-holds-any-number-is-taken-for-an-int32 has the enums that are accepted, with other numbers in them.
 import type { int32 } from "bun";

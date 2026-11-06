@@ -109,7 +109,7 @@ exports.n = 1;
 // CHECK-NEXT: v28 = StrictEq v25, v27
 // CHECK-NEXT: Branch v28 -> taken b7(), notTaken b8(| 0)
 // CHECK-NEXT: b7():
-// CHECK-NEXT: v29 = DirectEval v26, v7, v2, v6, v11, v12 evalScope=e3
+// CHECK-NEXT: v29 = DirectEval v26, v7, v2, v6, v11, v12 evalScope=e4
 // CHECK-NEXT: Jump -> next b9(v29)
 // CHECK-NEXT: b8(v30):
 // CHECK-NEXT: v31 = Call v30, v17, v26 calleeName="eval"

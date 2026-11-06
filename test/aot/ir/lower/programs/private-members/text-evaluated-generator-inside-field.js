@@ -154,7 +154,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Branch v23 -> taken b5(), notTaken b6(| 0)
 // CHECK-NEXT: b5() handler=b12():
 // CHECK-NEXT: v24 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v25 = DirectEval v18, v1, v3, v18, v9, v0, v8, v24 evalScope=e0
+// CHECK-NEXT: v25 = DirectEval v18, v1, v3, v18, v9, v0, v8, v24 evalScope=e1
 // CHECK-NEXT: Jump -> next b7(v25)
 // CHECK-NEXT: b6(v26) handler=b12():
 // CHECK-NEXT: v27 = Call v26, -, v18 calleeName="eval"
@@ -244,7 +244,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2(| 0)
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v17 = GetModuleVariable variable=[[g_18]]
-// CHECK-NEXT: v18 = DirectEval v14, v1, v3, v9, v0, v8, v17 evalScope=e1
+// CHECK-NEXT: v18 = DirectEval v14, v1, v3, v9, v0, v8, v17 evalScope=e2
 // CHECK-NEXT: Jump -> next b3(v18)
 // CHECK-NEXT: b2(v19):
 // CHECK-NEXT: v20 = Call v19, -, v14 calleeName="eval"
@@ -275,7 +275,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: v16 = StrictEq v13, v15
 // CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2(| 0)
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v17 = DirectEval v14, v4, v6, v1, v0, v9, v3 evalScope=e2
+// CHECK-NEXT: v17 = DirectEval v14, v4, v6, v1, v0, v9, v3 evalScope=e3
 // CHECK-NEXT: Jump -> next b3(v17)
 // CHECK-NEXT: b2(v18):
 // CHECK-NEXT: v19 = Call v18, -, v14 calleeName="eval"
@@ -306,7 +306,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: v17 = StrictEq v14, v16
 // CHECK-NEXT: Branch v17 -> taken b1(), notTaken b2(| 0)
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v18 = DirectEval v15, v5, v7, v1, v0, v10, v3, v4 evalScope=e3
+// CHECK-NEXT: v18 = DirectEval v15, v5, v7, v1, v0, v10, v3, v4 evalScope=e4
 // CHECK-NEXT: Jump -> next b3(v18)
 // CHECK-NEXT: b2(v19):
 // CHECK-NEXT: v20 = Call v19, -, v15 calleeName="eval"

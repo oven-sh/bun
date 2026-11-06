@@ -44,7 +44,14 @@ pub(crate) struct MemberRead {
 #[derive(Copy, Clone)]
 struct MemberValue {
     value: Constant,
-    is_known_to_build_alone: bool,
+    known_to: KnownTo,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum KnownTo {
+    EveryTranspiler,
+    BunRun,
+    BuildAlone,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -180,7 +187,7 @@ struct Initializers<'a> {
     declaration: EnumId,
     earlier: &'a [Option<MemberValue>],
     named: Named,
-    is_known_to_build_alone: &'a Cell<bool>,
+    known_to: &'a Cell<KnownTo>,
     relies_on: &'a RefCell<Vec<Sym>>,
     asked_for: &'a Cell<Option<DeclarationKey>>,
 }
@@ -189,10 +196,12 @@ impl Initializers<'_> {
     fn find_earlier(&self, hir: &hir::File<'_>, member: EnumMemberId) -> Option<Constant> {
         let index = (member.0 - hir[self.declaration].members.start) as usize;
         let earlier = self.earlier.get(index).copied().flatten()?;
-        if earlier.is_known_to_build_alone {
-            self.is_known_to_build_alone.set(true);
-        }
+        self.rest_on(earlier.known_to);
         Some(earlier.value)
+    }
+
+    fn rest_on(&self, known_to: KnownTo) {
+        self.known_to.set(self.known_to.get().max(known_to));
     }
 }
 
@@ -604,7 +613,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
     pub(crate) fn find_read(&self, file: FileId, access: ExprId) -> Option<MemberRead> {
         let named = self.find_named_member(file, access)?;
         let values = self.values_of((named.0.file, named.1, Named::OwnAndEarlier));
-        let read = self.read_member(file, access, named, values)?;
+        let (read, _) = self.read_member(file, access, named, values)?;
         let may_be_stored_over = read.validity == Validity::WhileObjectIsNotHandedOn
             && (self.declarations_of(named.0))
                 .any(|declaration| self.values_of(declaration).may_store_over_members);
@@ -629,7 +638,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let values = self.values_of((file, declaration, Named::OwnAndEarlier));
         let index = (member.0 - self.files.hir(file)[declaration].members.start) as usize;
         let known = self.known.value_at(values, index)?;
-        (!known.is_known_to_build_alone).then_some(known.value)
+        (known.known_to != KnownTo::BuildAlone).then_some(known.value)
     }
 
     pub(crate) fn find_signed_member_in_place(
@@ -667,18 +676,20 @@ impl<'a, 's> KnownObjects<'a, 's> {
         access: ExprId,
         (enumeration, declaration, member): (Sym, EnumId, EnumMemberId),
         values: Evaluated,
-    ) -> Option<MemberRead> {
+    ) -> Option<(MemberRead, KnownTo)> {
         let declared_in = self.files.hir(enumeration.file);
         let index = (member.0 - declared_in[declaration].members.start) as usize;
-        let MemberValue {
-            value,
-            is_known_to_build_alone,
-        } = self.known.value_at(values, index)?;
+        let MemberValue { value, known_to } = self.known.value_at(values, index)?;
         let name = declared_in[member].name;
         if enumeration.file != file && self.is_laid_on_object_prototype(name) {
             return None;
         }
-        let validity = if !is_known_to_build_alone {
+        let is_in_place = match known_to {
+            KnownTo::EveryTranspiler => true,
+            KnownTo::BunRun => enumeration.file == file,
+            KnownTo::BuildAlone => false,
+        };
+        let validity = if is_in_place {
             Validity::Always
         } else if enumeration.file != file
             && !self.graph.half(ModuleRef::File(file))
@@ -690,11 +701,12 @@ impl<'a, 's> KnownObjects<'a, 's> {
         } else {
             return None;
         };
-        Some(MemberRead {
+        let read = MemberRead {
             object: enumeration,
             value,
             validity,
-        })
+        };
+        Some((read, known_to))
     }
 
     pub(crate) fn find_lookup(&self, file: FileId, object: ExprId) -> Option<Sym> {
@@ -946,7 +958,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let mut values: Vec<Option<MemberValue>> = Vec::with_capacity(members.len());
         let mut may_store_over_members = false;
         let mut counted = Some(0.0);
-        let is_known_to_build_alone = Cell::new(false);
+        let known_to = Cell::new(KnownTo::EveryTranspiler);
         let relies_on = RefCell::new(Vec::new());
         let asked_for = Cell::new(None);
         for member in members.iter() {
@@ -954,13 +966,13 @@ impl<'a, 's> KnownObjects<'a, 's> {
             let value = if node.computed_name.is_some() {
                 None
             } else if let Some(initializer) = node.init.some() {
-                is_known_to_build_alone.set(false);
+                known_to.set(KnownTo::EveryTranspiler);
                 let initializers = Initializers {
                     file,
                     declaration,
                     earlier: &values,
                     named,
-                    is_known_to_build_alone: &is_known_to_build_alone,
+                    known_to: &known_to,
                     relies_on: &relies_on,
                     asked_for: &asked_for,
                 };
@@ -982,7 +994,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
             may_store_over_members |= !holds_number && !holds_string;
             values.push(value.map(|value| MemberValue {
                 value,
-                is_known_to_build_alone: is_known_to_build_alone.get(),
+                known_to: known_to.get(),
             }));
         }
         Ok(DeclarationValues {
@@ -1017,9 +1029,24 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let mut value = loop {
             match (decisions.constant(hir, leftmost), hir[leftmost].kind) {
                 (FoldedValue::Constant(constant), _) => {
-                    if !decisions.is_constant_in_bun_run(hir, leftmost) {
-                        initializers.is_known_to_build_alone.set(true);
-                    }
+                    initializers.rest_on(match () {
+                        () if decisions.is_constant_in_bun_run(hir, leftmost) => {
+                            KnownTo::EveryTranspiler
+                        }
+                        () if decisions.is_constant_under_minify_syntax(hir, leftmost) => {
+                            KnownTo::BunRun
+                        }
+                        () => KnownTo::BuildAlone,
+                    });
+                    break constant;
+                }
+                (FoldedValue::ConstantOutsideDeadZone(constant), _)
+                    if decisions.is_constant_under_minify_syntax(hir, leftmost) =>
+                {
+                    initializers.rest_on(match decisions.is_constant_in_bun_run(hir, leftmost) {
+                        true => KnownTo::EveryTranspiler,
+                        false => KnownTo::BunRun,
+                    });
                     break constant;
                 }
                 (_, ExprKind::Binary { op, left, right }) => {
@@ -1042,7 +1069,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 None => {
                     let operands = [value, self.evaluate_constant(initializers, right)?];
                     if !fold::is_computed_by_transpiler(atoms, op, operands) {
-                        initializers.is_known_to_build_alone.set(true);
+                        initializers.rest_on(KnownTo::BuildAlone);
                     }
                     fold::apply_binary(atoms, op, operands, MAX_FOLDED_STRING_BYTES)?
                 }
@@ -1088,10 +1115,14 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 let [Decl::EnumMember(member)] = *bound.symbol(symbol).decls else {
                     return None;
                 };
-                if bound.enum_member_owner[member.idx()] != initializers.declaration {
-                    return None;
+                let owner = bound.enum_member_owner[member.idx()];
+                if owner == initializers.declaration {
+                    return initializers.find_earlier(hir, member);
                 }
-                initializers.find_earlier(hir, member)
+                let id = bound.declared_symbol(Decl::Enum(owner));
+                let enumeration = Sym { file, id };
+                let (owner, member) = self.find_member(enumeration, hir[member].name)?;
+                self.evaluate_member_found(initializers, expression, (enumeration, owner, member))
             }
             ExprKind::Dot { .. } | ExprKind::Index { .. } => self
                 .evaluate_length(initializers, expression)
@@ -1120,7 +1151,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let Constant::String(text) = self.evaluate(initializers, text)? else {
             return None;
         };
-        initializers.is_known_to_build_alone.set(true);
+        initializers.rest_on(KnownTo::BuildAlone);
         let length = strings::wtf8_len_utf16(self.files.atoms.bytes(text));
         Some(Constant::Number(f64::from(length)))
     }
@@ -1130,6 +1161,16 @@ impl<'a, 's> KnownObjects<'a, 's> {
         initializers: Initializers<'_>,
         access: ExprId,
     ) -> Option<Constant> {
+        let found = self.find_named_member(initializers.file, access)?;
+        self.evaluate_member_found(initializers, access, found)
+    }
+
+    fn evaluate_member_found(
+        &self,
+        initializers: Initializers<'_>,
+        access: ExprId,
+        found: (Sym, EnumId, EnumMemberId),
+    ) -> Option<Constant> {
         let Initializers {
             file,
             declaration,
@@ -1137,7 +1178,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
             ..
         } = initializers;
         let hir = self.files.hir(file);
-        let found = self.find_named_member(file, access)?;
         let (enumeration, owner, member) = found;
         if enumeration.file == file && owner == declaration {
             return initializers.find_earlier(hir, member);
@@ -1158,10 +1198,11 @@ impl<'a, 's> KnownObjects<'a, 's> {
             initializers.asked_for.set(Some(other));
             return None;
         };
-        let read = self.read_member(file, access, found, values)?;
-        if enumeration.file != file {
-            initializers.is_known_to_build_alone.set(true);
-        }
+        let (read, known_to) = self.read_member(file, access, found, values)?;
+        initializers.rest_on(match enumeration.file == file {
+            true => known_to,
+            false => KnownTo::BuildAlone,
+        });
         if read.validity == Validity::WhileObjectIsNotHandedOn {
             let mut parts: SmallVec<[Evaluated; 1]> = SmallVec::new();
             for part in self.declarations_of(enumeration) {
@@ -1176,7 +1217,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
                     }
                 }
             }
-            initializers.is_known_to_build_alone.set(true);
+            initializers.rest_on(KnownTo::BuildAlone);
             let mut relies_on = initializers.relies_on.borrow_mut();
             let relied_on = self.known.relied_on.borrow();
             let relied_on_there = parts.iter().flat_map(|part| &relied_on[part.relied_on()]);

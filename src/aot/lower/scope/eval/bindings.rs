@@ -107,6 +107,27 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
+    fn is_reached_without_operand(&self, symbol: SymbolId) -> bool {
+        match self.scopes.form(symbol) {
+            BindingForm::Stored => {
+                let placement = self.scopes.placement(BindingRef::Symbol(symbol));
+                placement.is_none_or(|placement| matches!(placement.storage, Storage::Variable(_)))
+            }
+            BindingForm::Import => match self.inputs.modules.import_binding(self.file, symbol) {
+                ImportBinding::Variable(_) => !self.may_be_answered_by_mock(symbol),
+                ImportBinding::Synthetic(export) => is_filled_by_loader(self, export),
+                ImportBinding::CapturedBuiltin { .. }
+                | ImportBinding::BuiltinMember { .. }
+                | ImportBinding::Unbound
+                | ImportBinding::Unused
+                | ImportBinding::Local => true,
+                _ => false,
+            },
+            BindingForm::ContainerMember { .. } | BindingForm::NotAValue => true,
+            BindingForm::Callee { .. } | BindingForm::MappedArgument { .. } => false,
+        }
+    }
+
     pub(super) fn find_spelled_name(&self, symbol: SymbolId) -> Atom {
         let data = self.bound.symbol(symbol);
         if data.name != known::default {
@@ -132,11 +153,52 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .is_some()
     }
 
+    pub(super) fn collect_bindings_of_file(
+        &mut self,
+        eval_scope: EvalScope,
+    ) -> (Vec<EvalBinding>, Vec<SymbolId>) {
+        let file_scope = module::file_scope(self.file);
+        let variables_of_evals = [ScopeSlot::EvalVariables, ScopeSlot::ParameterEvalVariables];
+        let holds_variables_of_evals = variables_of_evals.into_iter().any(|slot| {
+            let variables = BindingRef::Slot(file_scope, slot);
+            self.file.scopes.placement(variables).is_some()
+        });
+        let names = self.file.bound.ids(eval_scope.file_symbols);
+        let (listed_once, handed_over): (Vec<SymbolId>, Vec<SymbolId>) =
+            names.partition(|&symbol| {
+                !holds_variables_of_evals && self.file.is_reached_without_operand(symbol)
+            });
+        let mut record = EvalRecord {
+            lowering: self,
+            context: EvalContext {
+                flags: EvalScopeFlags::default(),
+                this_scope: None,
+                owner: CodeUnit::File,
+                class: None,
+            },
+            entered_from_parameters: FunctionScopes::new(),
+            bindings: Vec::with_capacity(listed_once.len()),
+            operands: SmallVec::new(),
+            environments: SmallVec::new(),
+            arguments_objects: SmallVec::new(),
+        };
+        for symbol in listed_once {
+            record.add_symbol(symbol, 1);
+        }
+        debug_assert!(
+            record.operands.is_empty(),
+            "what is listed once for a file needs no operand of a call"
+        );
+        record.bindings.shared_sort_by_key(|binding| binding.depth);
+        (record.bindings, handed_over)
+    }
+
     pub(super) fn collect_eval_bindings(
         &mut self,
         call: ExprId,
         eval_scope: EvalScope,
         context: EvalContext,
+        names_of_file: &[SymbolId],
     ) -> (Vec<EvalBinding>, EvalOperands) {
         let bound = self.file.bound;
         let depths = compute_scope_depths(self.file, eval_scope.scope);
@@ -151,7 +213,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             environments: SmallVec::new(),
             arguments_objects: SmallVec::new(),
         };
-        for symbol in bound.ids(eval_scope.symbols) {
+        let names_of_file = names_of_file.iter().copied();
+        for symbol in bound.ids(eval_scope.symbols).chain(names_of_file) {
             let Some(depth) = find_entry(&depths, bound.symbol_scope(symbol)) else {
                 debug_assert!(
                     false,

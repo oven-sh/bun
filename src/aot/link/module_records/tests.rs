@@ -343,7 +343,11 @@ fn import_call_of_replaced_namespace_resolves_the_object() {
         let program = link_program(&[("main.js", main.as_str())]);
         print_functions_of(&program, module_named(&program, "main.js"))
     };
-    for (head, specifier) in [("", "'bun'"), ("", "'b' + 'un'")] {
+    for (head, specifier) in [
+        ("", "'bun'"),
+        ("", "'b' + 'un'"),
+        ("const name = 'bun';\n", "name"),
+    ] {
         let replaced = print(head, specifier);
         assert!(!replaced.contains(" = ImportModule "), "{head}{specifier}");
         assert!(
@@ -353,7 +357,6 @@ fn import_call_of_replaced_namespace_resolves_the_object() {
     }
     for (head, specifier) in [
         ("", "'node:buffer'"),
-        ("const name = 'bun';\n", "name"),
         ("console.log(1);\nconst name = 'bun';\n", "name"),
         ("let name = 'bun';\n", "name"),
     ] {

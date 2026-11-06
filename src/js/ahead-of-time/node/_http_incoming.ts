@@ -1291,11 +1291,20 @@ internals.onRequestBodyData = onBodyData;
 
 // `stream` and `chunk` as in addChunk(): a TypeError about a replaced emit() quotes the call.
 function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, isLast: boolean, aborted: number) {
+  // Behind the yes no read off the request runs code of the program: an accessor laid on one of its fields lies outside its slot.
+  if (
+    aborted !== NodeHTTPResponseAbortEvent.none ||
+    !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(stream, IncomingMessage))
+  ) {
+    ("unlikely");
+    return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
+  }
   const state = stream._readableState;
   const flags = state[kState];
   const word = flags & ~kDecoding;
+  // Only the native server hands over a body this way.
+  const socket: $Node.HttpServerSocket | null | undefined = stream.socket as any;
   if (
-    aborted !== NodeHTTPResponseAbortEvent.none ||
     !isLast ||
     bytes === undefined ||
     (word !== kBodyReading &&
@@ -1310,15 +1319,14 @@ function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, 
       !findsWithoutAsking(stream, "read", read)) ||
     (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream, "_read")) &&
       !findsWithoutAsking(stream, "_read", incomingMessageRead)) ||
+    (socket != null && !(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "_unrefTimer"))) ||
     !ticksAreUnseen()
   ) {
     ("unlikely");
     return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
   }
 
-  // Only the native server hands over a body this way.
-  const socket: $Node.HttpServerSocket | null | undefined = stream.socket as any;
-  socket?._unrefTimer?.();
+  socket?._unrefTimer();
 
   state[kState] = flags & ~kReading;
   const chunk = (flags & kDecoder) !== 0 ? state[kDecoderValue]!.write(bytes) : bytes;

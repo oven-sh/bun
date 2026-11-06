@@ -2816,7 +2816,8 @@ fn find_object_replacing_namespace(
     module: ModuleRef,
 ) -> Option<BuiltinId> {
     let first = (arguments.len() > 0).then(|| hir.skip_type_assertions(hir.id_at(arguments, 0)));
-    let is_name_read = first.is_some_and(|name| decisions.is_constant_in_bun_run(hir, name));
+    let is_name_read =
+        first.is_some_and(|name| decisions.is_constant_under_minify_syntax(hir, name));
     match (module, is_name_read) {
         (ModuleRef::Runtime(module), true) => table::object_replacing_namespace(module),
         (

@@ -117,9 +117,9 @@ fn position(list: &[SymbolId], symbol: SymbolId) -> usize {
 }
 
 fn eval_symbols(s: &Analyzed<'_>) -> Vec<SymbolId> {
-    s.bound
-        .ids(s.bound.runtime.eval_scopes()[0].1.symbols)
-        .collect()
+    let scope = s.bound.runtime.eval_scopes()[0].1;
+    let names_of_file = s.bound.ids(scope.file_symbols);
+    s.bound.ids(scope.symbols).chain(names_of_file).collect()
 }
 
 fn analyzed_classic_jsx(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
@@ -873,8 +873,7 @@ fn direct_and_indirect_eval() {
 fn eval_visible_symbols() {
     let text = r#"var g; function f(a) { let b; { let a; eval(""); } }"#;
     analyzed("a.cjs", text, |s| {
-        let scope = s.bound.runtime.eval_scopes()[0].1;
-        let symbols: Vec<SymbolId> = s.bound.ids(scope.symbols).collect();
+        let symbols = eval_symbols(s);
         let inner_a = position(&symbols, s.variable("a", 1));
         let b = position(&symbols, s.variable("b", 0));
         let g = position(&symbols, s.variable("g", 0));
@@ -900,6 +899,32 @@ fn member_of_a_namespace_hides_no_name_from_evaluated_text() {
         let symbols = eval_symbols(s);
         assert!(!symbols.contains(&outer), "{symbols:?}");
         assert!(symbols.contains(&local), "{symbols:?}");
+    });
+}
+
+#[test]
+fn every_eval_of_a_file_has_one_list_of_the_names_of_the_file() {
+    let text = r#"let a, h; function f(a, h) { eval(""); } function g(h) { let b; eval(""); } { let h; eval(""); }"#;
+    analyzed("a.js", text, |s| {
+        let scopes = s.bound.runtime.eval_scopes();
+        assert_eq!(scopes.len(), 3);
+        let names_of_file: Vec<SymbolId> = s.bound.ids(scopes[0].1.file_symbols).collect();
+        let expected = [
+            s.variable("a", 0),
+            function_symbol(s, "f"),
+            function_symbol(s, "g"),
+        ];
+        assert_eq!(names_of_file.len(), expected.len(), "{names_of_file:?}");
+        for symbol in expected {
+            assert!(names_of_file.contains(&symbol), "{names_of_file:?}");
+        }
+        assert!(!s.bound.is_visible_to_eval(s.variable("h", 0)));
+        for (_, scope) in scopes {
+            assert_eq!(scope.file_symbols, scopes[0].1.file_symbols);
+            for symbol in s.bound.ids(scope.symbols) {
+                assert!(!names_of_file.contains(&symbol), "{names_of_file:?}");
+            }
+        }
     });
 }
 

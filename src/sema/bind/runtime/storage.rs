@@ -123,6 +123,7 @@ define_tables! {
             import_meta_may_be_modified: bool,
             may_name_own_require: bool,
             may_name_own_path: bool,
+            may_require_get_members: std::sync::OnceLock<bool>,
             hoists_top_level_variables: bool,
             first_appended_symbol: u32,
             appended_symbol_end: u32,

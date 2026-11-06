@@ -1,9 +1,10 @@
-// A read of a member is its value only where Bun's transpiler has the value there. It follows no name in brackets that is not ASCII and no optional link, and reads nothing out of a literal.
+// A read of a member is its value only where Bun's transpiler has the value there. It follows no name in brackets that is not ASCII and no optional link. The length of a literal is a value, as under `bun run`.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="afterOtherName"
 // CHECK: = PropGet {{*}}key="Next"
 // CHECK-LABEL: function {{*}}name="fromLength"
-// CHECK: = PropGet {{*}}key="Length"
+// CHECK-NOT: = PropGet {{*}}key="Length"
+// CHECK: = Integer integer=4 @
 // CHECK-LABEL: function {{*}}name="fromOtherName"
 // CHECK: = PropGet {{*}}key="FromOtherName"
 // CHECK-LABEL: function {{*}}name="inCase"
@@ -12,9 +13,8 @@
 // CHECK: = StrictEq
 // CHECK: = PropGet {{*}}key="Known"
 // CHECK: = StrictEq
-// CHECK: = PropGet {{*}}key="Length"
-// CHECK: = StrictEq
-// CHECK-NOT: Switch
+// CHECK-NOT: = PropGet {{*}}key="Length"
+// CHECK: Switch {{*}}cases=[4]
 // CHECK-LABEL: function {{*}}name="known"
 // CHECK-NOT: key="\u{e9}"
 // CHECK-NOT: key="Known"

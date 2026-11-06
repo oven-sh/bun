@@ -230,6 +230,17 @@ impl Walker<'_, '_> {
             self.record_eval_use(context, BindingRef::Symbol(symbol), time);
             self.record_store(context, BindingRef::Symbol(symbol));
         }
+        let under_names_of_file = (context.function, time);
+        self.walk
+            .evals_under_names_of_file
+            .push(under_names_of_file);
+        let is_repeated_or_guarded =
+            context.enclosing_try.is_some() || context.enclosing_loop.is_some();
+        if is_repeated_or_guarded && context.function == WalkedFunctionId::MODULE_BODY {
+            for symbol in bound.ids(eval.file_symbols) {
+                self.record_store(context, BindingRef::Symbol(symbol));
+            }
+        }
         self.visit_constructor_symbols(eval, context);
         let first_use = self.walk.uses.len();
         self.use_this(context);

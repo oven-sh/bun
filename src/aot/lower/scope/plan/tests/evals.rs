@@ -88,6 +88,34 @@ fn eval_in_hoisted_function_needs_a_field() {
     });
 }
 
+const EVALS_IN_TWO_FUNCTIONS: &str = "let a = 1; const b = 2; \
+    function f(s) { return eval(s); } function g(s) { return eval(s); } f(''); g('');";
+
+#[test]
+fn names_of_file_seen_by_evals_are_variables_of_module() {
+    analyze_source("main.mjs", EVALS_IN_TWO_FUNCTIONS, |probe| {
+        for name in ["a", "b", "f", "g"] {
+            let placement = probe.placement_of(name);
+            assert!(matches!(placement.storage, Storage::Variable(_)), "{name}");
+            assert!(placement.is_shared, "{name}");
+        }
+        for name in ["f", "g"] {
+            assert!(probe.captures_of(name).is_empty(), "{name}");
+        }
+    });
+}
+
+#[test]
+fn names_of_file_that_runs_again_reach_every_function_with_eval() {
+    analyze_source_that_runs_again("main.cjs", EVALS_IN_TWO_FUNCTIONS, |probe| {
+        assert!(is_field(probe.placement_of("a").storage));
+        let environment = Capture::Environment(probe.file_scope());
+        for name in ["f", "g"] {
+            assert!(probe.captures_of(name).contains(&environment), "{name}");
+        }
+    });
+}
+
 #[test]
 fn slot_stored_by_eval_has_a_field() {
     let exports_in = |source: &str| {

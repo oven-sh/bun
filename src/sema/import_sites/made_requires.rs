@@ -309,6 +309,10 @@ fn is_only_called_or_read(
 }
 
 pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
+    bound.may_require_get_members(|| compute_may_require_get_members(hir, bound))
+}
+
+fn compute_may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     let own_require = Binding::CommonJs(CommonJsVariable::Require);
     let mut names = bound.ident_bindings().iter();
     bound.import_meta_may_be_modified()

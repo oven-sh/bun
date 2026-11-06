@@ -107,6 +107,7 @@ client.on("data", part => {
   arrived += part;
   if (/\r\n\r\nok\d*$/.test(arrived)) whole();
 });
+const closed = new Promise(resolve => client.on("close", resolve));
 client.on("close", () => (seen.push("the connection closes"), whole()));
 const body = answers[answer].body;
 console.log(process.env.CASE);
@@ -122,6 +123,10 @@ for (let i = 0; i < 3 && !client.destroyed; i++) {
     );
   });
   await new Promise(resolve => setTimeout(resolve, 30));
+  // A connection that is being closed is waited for: on a slow machine its event comes behind the thirty milliseconds.
+  if (client.destroyed || seen.some(word => word.startsWith("clientError"))) {
+    await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 2000))]);
+  }
   console.log(
     "  request",
     i + 1,

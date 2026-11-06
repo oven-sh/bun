@@ -1,5 +1,6 @@
 // RUN: link
-// CHECK: evalscope [[scope]] mode=Sloppy {{*}}bindings=[{kind=EvalVariables depth=1 operand={{*}}}, {name="q" depth=3
+// CHECK: evalscope [[names]] bindings=[{name="q" depth=1
+// CHECK: evalscope [[scope]] mode=Sloppy {{*}}bindings=[{kind=EvalVariables depth=1 operand={{*}}}, {{*}}outer=[[names]]
 // CHECK: SetLiteralPrototype [[head]], [[null]]
 // CHECK-NEXT: [[variables]] = FinishObject [[head]]
 // CHECK: = DirectEval {{*}}[[variables]]{{*}}evalScope=[[scope]]

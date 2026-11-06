@@ -14,6 +14,7 @@ mod module_table;
 mod move_records;
 mod numbering;
 mod program_keys;
+mod rings_of_bases;
 mod state;
 mod tables;
 #[cfg(test)]
@@ -399,6 +400,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let defined = &mut program_tables.layouts;
     let other_definitions = core::mem::take(&mut program_tables.other_layout_definitions);
     let views = unite_layout_definitions(defined, other_definitions, &mut types, in_parallel);
+    rings_of_bases::cut_rings_of_bases(defined);
     let keys = &numbering.layout_keys;
     fields_of_base_functions::take_fields_of_base_functions(defined, keys, in_parallel);
     steps.end("unite layouts");

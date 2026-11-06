@@ -472,7 +472,7 @@ import { Color } from "./colors";
 console.log(Color.Red); // An executable prints 1. bun run prints 2.
 ```
 
-A member has such a value if its initializer is made of numbers, strings, other such members and operators. `Color.Size` has none in an executable, and neither does a member that reads a `const`: those are read from the object. `bun run` can work both out, and so can a build with `--minify-syntax`. `Color["é"]`, `Color?.Red` and `Color[key]` always read the object.
+A member has such a value if its initializer is made of numbers, strings, other such members and operators. `bun run` also works out `"red".length` and a `const` from outside the enum's own block, and so does an executable: `Color.Size` is `3` in `colors.ts` itself, and a member after it without an initializer counts on from it. Other files read `Color.Size` from the object, as under `bun run`. With `--no-aot`, `bun build` works neither out unless you pass `--minify-syntax`: `Color.Size` is read from the object everywhere, and the member after it is `undefined`. `Color["é"]`, `Color?.Red` and `Color[key]` always read the object.
 
 ## Where `--no-aot` goes another way
 
@@ -484,6 +484,7 @@ An executable behaves like one built with `--no-aot` wherever that differs from 
 | `void limit` before `const limit` has run                                                  | Throws a `ReferenceError`          | `undefined`, under `bun run` too                                                           |
 | `Color.Red = 9`, where `Color` is an enum of another file                                  | Stores to the enum's object        | Doesn't start: `SyntaxError: Left side of assignment is not a reference`                   |
 | `Depth.Low ** 2`, where `Low = -5`                                                         | `25`                               | Doesn't start: `SyntaxError: Unexpected token '**'`                                        |
+| `enum Code { Ok = BASE, Fail }` in a namespace or a function, with `const BASE` outside it | `Fail` is `BASE + 1`, as `bun run` | `Fail` is `undefined`. `BASE + 1` with `--minify-syntax`                                   |
 | `function f(first, this: any) {}`, where `this` isn't the first parameter                  | Stops the build with `TS2680`      | Drops the parameter, under `bun run` too                                                   |
 | An accessor without a body in a class: `get size(): number;`                               | Stops the build with `TS1005`      | Drops the accessor, under `bun run` too                                                    |
 | `enum Header { "content-type" = 1, "content-type" = 2 }`                                   | Stops the build with `TS2300`      | `Header["content-type"]` is `2`, under `bun run` too                                       |

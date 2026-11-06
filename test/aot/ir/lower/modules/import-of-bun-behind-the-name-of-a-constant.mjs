@@ -7,10 +7,10 @@
 
 // RUN(NAMED): lower
 // NAMED-LABEL: function {{*}}name="named"
-// NAMED-NOT: Return
-// NAMED: = Import
+// NAMED-NOT: = Import
+// NAMED: Return
 
-// `Bun` stands in place of `import("bun")` where the name is written out. Behind the name of a constant the module is loaded. `bun run` prints "bun" in place of `first`, and so has `Bun` there too.
+// `Bun` stands in place of `import("bun")` where the name is written out, and behind the name of a constant too: `bun run` prints "bun" in place of `first`, and so has `Bun` there.
 const first = "bun";
 
 export function written() {

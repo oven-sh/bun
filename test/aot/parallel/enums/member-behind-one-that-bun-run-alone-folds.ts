@@ -1,6 +1,5 @@
 // @ts-nocheck
-// `bun run` puts a number in place of each of these initializers, so the member behind it counts on from that number. An executable leaves them to the run time, with `--aot` and without, and the member behind has no value.
-// Reference: bun build --compile
+// `bun run` puts a number in place of each of these initializers, so the member behind it counts on from that number, and so does an executable built with `--aot`. `bun build --compile` without `--minify-syntax` leaves them to the run time, and the member behind has no value there.
 function show(name: string, seen: any, byName: unknown[]) {
   console.log(name, "by name", byName.map(String).join(" "), "by key", String(seen["First"]), String(seen["Next"]), String(seen["Last"]), "keys", Object.keys(seen).join("+"));
 }

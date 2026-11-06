@@ -12,7 +12,7 @@ mod test_run_ways;
 mod throwing;
 
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind};
+use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, StmtId};
 use bun_sema::program::{FileId, Files};
@@ -22,6 +22,7 @@ use std::cell::OnceCell;
 use super::commonjs::CommonJsState;
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
+use super::scope::NamesOfFileForEvals;
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::{BuiltinId, RuntimeFunction};
 use crate::ir::{DataId, FunctionId, StringId, ValueId};
@@ -41,6 +42,8 @@ pub(crate) struct ModuleState {
     pub(in crate::lower) commonjs: CommonJsState,
     pub(in crate::lower) known_member_values: KnownMemberValues,
     pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
+    pub(in crate::lower) names_of_file_for_evals: Option<NamesOfFileForEvals>,
+    pub(in crate::lower) names_of_file_by_text: OnceCell<FxHashMap<Atom, SymbolId>>,
 }
 
 #[derive(Default, Clone)]

@@ -546,6 +546,10 @@ impl Bound<'_> {
         self.runtime.file_uses_arguments
     }
 
+    pub fn may_require_get_members(&self, compute: impl FnOnce() -> bool) -> bool {
+        *self.runtime.may_require_get_members.get_or_init(compute)
+    }
+
     pub fn import_meta_may_be_modified(&self) -> bool {
         self.runtime.import_meta_may_be_modified
     }

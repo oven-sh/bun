@@ -37,6 +37,7 @@ pub(in crate::lower) use self::called_declarations::{
 pub(in crate::lower) use self::called_initializers::find_function_that_initializes;
 pub(in crate::lower) use self::enter::MakerOfScope;
 pub(in crate::lower) use self::environments::environment_layout;
+pub(in crate::lower) use self::eval::NamesOfFileForEvals;
 pub(crate) use self::eval::lower_direct_eval;
 pub(crate) use self::identifiers::find_tested_local;
 pub(in crate::lower) use self::plan::is_let_declaration;

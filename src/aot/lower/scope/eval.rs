@@ -1,7 +1,7 @@
 mod bindings;
 
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, CodeUnit, ScopeId, ScopeKind};
+use bun_sema::bind::{self, Binding, CodeUnit, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnKind, IdList};
 
@@ -9,10 +9,17 @@ use super::BindingForm;
 use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
-use crate::ir::{Edge, ValueId};
+use crate::ir::{Edge, EvalScopeId, ValueId};
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 use crate::modules::ModuleKind;
+use std::rc::Rc;
+
+#[derive(Clone)]
+pub(in crate::lower) struct NamesOfFileForEvals {
+    listed_once: Option<EvalScopeId>,
+    handed_over: Rc<[SymbolId]>,
+}
 
 #[derive(Copy, Clone)]
 pub(super) struct EvalContext {
@@ -95,7 +102,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let mut symbols = bound.ids(eval_scope.symbols);
-        if let Some(symbol) = symbols.find(|&symbol| self.find_spelled_name(symbol) == name) {
+        let symbol = symbols.find(|&symbol| self.find_spelled_name(symbol) == name);
+        if let Some(symbol) = symbol.or_else(|| self.find_name_of_file(eval_scope, name)) {
             return match self.scopes.form(symbol) {
                 BindingForm::Stored => Some((Binding::Symbol(symbol), name)),
                 _ => None,
@@ -107,6 +115,16 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut variables = commonjs::undeclared_wrapper_parameters(bound);
         let variable = variables.find(|variable| variable.name() == name)?;
         Some((Binding::CommonJs(variable), name))
+    }
+
+    fn find_name_of_file(&self, eval_scope: &bind::EvalScope, name: Atom) -> Option<SymbolId> {
+        let by_text = self.modules.names_of_file_by_text.get_or_init(|| {
+            let names = self.bound.ids(eval_scope.file_symbols);
+            names
+                .map(|symbol| (self.find_spelled_name(symbol), symbol))
+                .collect()
+        });
+        by_text.get(&name).copied()
     }
 
     fn compute_eval_context(&self, scope: ScopeId) -> EvalContext {
@@ -161,6 +179,25 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn list_names_of_file(&mut self, eval_scope: bind::EvalScope) -> NamesOfFileForEvals {
+        if let Some(names) = &self.file.modules.names_of_file_for_evals {
+            return names.clone();
+        }
+        let (bindings, handed_over) = self.collect_bindings_of_file(eval_scope);
+        let listed_once = (!bindings.is_empty()).then(|| {
+            self.file.fragment.add_eval_scope(EvalScope {
+                bindings,
+                ..EvalScope::default()
+            })
+        });
+        let names = NamesOfFileForEvals {
+            listed_once,
+            handed_over: handed_over.into(),
+        };
+        self.file.modules.names_of_file_for_evals = Some(names.clone());
+        names
+    }
+
     fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
         let text = match arguments {
             Arguments::Values(values) => match values.first() {
@@ -186,7 +223,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .this_scope
                 .is_some_and(|scope| self.file.is_code_of_constructor(scope));
         let new_target = has_new_target.then(|| self.get_new_target());
-        let (bindings, operands) = self.collect_eval_bindings(call, eval_scope, context);
+        let names_of_file = self.list_names_of_file(eval_scope);
+        let handed_over = &names_of_file.handed_over;
+        let (bindings, operands) =
+            self.collect_eval_bindings(call, eval_scope, context, handed_over);
         let mode = if eval_scope.is_sloppy {
             ECMAMode::Sloppy
         } else {
@@ -196,6 +236,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             mode,
             flags,
             bindings,
+            outer: names_of_file.listed_once,
         });
         self.builder
             .direct_eval(scope, text, this_value, new_target, &operands)

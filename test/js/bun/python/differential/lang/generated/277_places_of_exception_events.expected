@@ -1,0 +1,76 @@
+status: 0
+script: 3d41f31d2f85f1be
+source: c2f4efbe0734bc1c
+---
+'%-20s' % name [name='except', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        x = 1\n    return 1\n'] => except              
+' '.join(log) [name='except', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        x = 1\n    return 1\n'] => RAISE:4 HANDLED:None
+'%-20s' % name [name='except as', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError as e:\n        x = 1\n    return 1\n'] => except as           
+' '.join(log) [name='except as', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError as e:\n        x = 1\n    return 1\n'] => RAISE:4 HANDLED:None
+'%-20s' % name [name='no match', src='\ndef f():\n    try:\n        raise KeyError\n    except ValueError:\n        x = 1\n    return 1\n'] => no match            
+' '.join(log) [name='no match', src='\ndef f():\n    try:\n        raise KeyError\n    except ValueError:\n        x = 1\n    return 1\n'] => RAISE:4 HANDLED:None RERAISE:5 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='second', src='\ndef f():\n    try:\n        raise KeyError\n    except ValueError:\n        x = 1\n    except KeyError:\n        x = 2\n    return 1\n'] => second              
+' '.join(log) [name='second', src='\ndef f():\n    try:\n        raise KeyError\n    except ValueError:\n        x = 1\n    except KeyError:\n        x = 2\n    return 1\n'] => RAISE:4 HANDLED:None
+'%-20s' % name [name='bare', src='\ndef f():\n    try:\n        raise KeyError\n    except:\n        x = 1\n    return 1\n'] => bare                
+' '.join(log) [name='bare', src='\ndef f():\n    try:\n        raise KeyError\n    except:\n        x = 1\n    return 1\n'] => RAISE:4 HANDLED:None
+'%-20s' % name [name='finally', src='\ndef f():\n    try:\n        raise KeyError\n    finally:\n        x = 1\n    return 1\n'] => finally             
+' '.join(log) [name='finally', src='\ndef f():\n    try:\n        raise KeyError\n    finally:\n        x = 1\n    return 1\n'] => RAISE:4 HANDLED:None RERAISE:6 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='with', src='\ndef f():\n    with CM():\n        raise KeyError\n    return 1\n'] => with                
+' '.join(log) [name='with', src='\ndef f():\n    with CM():\n        raise KeyError\n    return 1\n'] => RAISE:4 HANDLED:3 RERAISE:3 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='with swallowed', src='\ndef f():\n    with SW():\n        raise KeyError\n    return 1\n'] => with swallowed      
+' '.join(log) [name='with swallowed', src='\ndef f():\n    with SW():\n        raise KeyError\n    return 1\n'] => RAISE:4 HANDLED:3
+'%-20s' % name [name='raise in handler', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        raise ValueError\n    return 1\n'] => raise in handler    
+' '.join(log) [name='raise in handler', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        raise ValueError\n    return 1\n'] => RAISE:4 HANDLED:None RAISE:6 HANDLED:None RERAISE:None UNWIND:None ValueError
+'%-20s' % name [name='reraise in handler', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        raise\n    return 1\n'] => reraise in handler  
+' '.join(log) [name='reraise in handler', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        raise\n    return 1\n'] => RAISE:4 HANDLED:None RERAISE:6 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='raise in handler as', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError as e:\n        raise ValueError\n    return 1\n'] => raise in handler as 
+' '.join(log) [name='raise in handler as', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError as e:\n        raise ValueError\n    return 1\n'] => RAISE:4 HANDLED:None RAISE:6 HANDLED:None RERAISE:None HANDLED:None RERAISE:None UNWIND:None ValueError
+'%-20s' % name [name='nested', src='\ndef f():\n    try:\n        try:\n            raise KeyError\n        except ValueError:\n            x = 1\n    except KeyError:\n        x = 2\n    return 1\n'] => nested              
+' '.join(log) [name='nested', src='\ndef f():\n    try:\n        try:\n            raise KeyError\n        except ValueError:\n            x = 1\n    except KeyError:\n        x = 2\n    return 1\n'] => RAISE:5 HANDLED:None RERAISE:6 HANDLED:None RERAISE:None HANDLED:None
+'%-20s' % name [name='nested finally', src='\ndef f():\n    try:\n        try:\n            raise KeyError\n        finally:\n            x = 1\n    except KeyError:\n        x = 2\n    return 1\n'] => nested finally      
+' '.join(log) [name='nested finally', src='\ndef f():\n    try:\n        try:\n            raise KeyError\n        finally:\n            x = 1\n    except KeyError:\n        x = 2\n    return 1\n'] => RAISE:5 HANDLED:None RERAISE:7 HANDLED:None RERAISE:None HANDLED:None
+'%-20s' % name [name='callee', src='\ndef g():\n    raise KeyError\ndef f():\n    try:\n        g()\n    except KeyError:\n        x = 1\n    return 1\n'] => callee              
+' '.join(log) [name='callee', src='\ndef g():\n    raise KeyError\ndef f():\n    try:\n        g()\n    except KeyError:\n        x = 1\n    return 1\n'] => RAISE:3 UNWIND:3 RAISE:6 HANDLED:None
+'%-20s' % name [name='for', src='\ndef f():\n    for i in (1, 2):\n        try:\n            raise KeyError\n        except KeyError:\n            continue\n    return 1\n'] => for                 
+' '.join(log) [name='for', src='\ndef f():\n    for i in (1, 2):\n        try:\n            raise KeyError\n        except KeyError:\n            continue\n    return 1\n'] => RAISE:5 HANDLED:None RAISE:5 HANDLED:None
+'%-20s' % name [name='except star', src="\ndef f():\n    try:\n        raise ExceptionGroup('g', [KeyError()])\n    except* KeyError:\n        x = 1\n    return 1\n"] => except star         
+' '.join(log) [name='except star', src="\ndef f():\n    try:\n        raise ExceptionGroup('g', [KeyError()])\n    except* KeyError:\n        x = 1\n    return 1\n"] => RAISE:4 HANDLED:None
+'%-20s' % name [name='generator', src='\ndef g():\n    try:\n        yield 1\n    except KeyError:\n        yield 2\ndef f():\n    it = g(); next(it); it.throw(KeyError); it.close()\n    return 1\n'] => generator           
+' '.join(log) [name='generator', src='\ndef g():\n    try:\n        yield 1\n    except KeyError:\n        yield 2\ndef f():\n    it = g(); next(it); it.throw(KeyError); it.close()\n    return 1\n'] => THROW:4 RAISE:4 HANDLED:None THROW:6 RAISE:6 HANDLED:None RERAISE:None HANDLED:None RERAISE:None UNWIND:None
+'%-20s' % name [name='comprehension', src='\ndef f():\n    try:\n        [1 // i for i in (1, 0)]\n    except ZeroDivisionError:\n        x = 1\n    return 1\n'] => comprehension       
+' '.join(log) [name='comprehension', src='\ndef f():\n    try:\n        [1 // i for i in (1, 0)]\n    except ZeroDivisionError:\n        x = 1\n    return 1\n'] => RAISE:4 HANDLED:None RERAISE:4 HANDLED:None
+'%-20s' % name [name='with as', src='\ndef f():\n    with CM() as c:\n        raise KeyError\n    return 1\n'] => with as             
+' '.join(log) [name='with as', src='\ndef f():\n    with CM() as c:\n        raise KeyError\n    return 1\n'] => RAISE:4 HANDLED:3 RERAISE:3 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='two withs', src='\ndef f():\n    with CM(), SW():\n        raise KeyError\n    return 1\n'] => two withs           
+' '.join(log) [name='two withs', src='\ndef f():\n    with CM(), SW():\n        raise KeyError\n    return 1\n'] => RAISE:4 HANDLED:3
+'%-20s' % name [name='two withs, the other way', src='\ndef f():\n    with SW(), CM():\n        raise KeyError\n    return 1\n'] => two withs, the other way
+' '.join(log) [name='two withs, the other way', src='\ndef f():\n    with SW(), CM():\n        raise KeyError\n    return 1\n'] => RAISE:4 HANDLED:3 RERAISE:3 HANDLED:None RERAISE:None HANDLED:3
+'%-20s' % name [name='with over lines', src='\ndef f():\n    with (CM() as a,\n          CM() as b):\n        raise KeyError\n    return 1\n'] => with over lines     
+' '.join(log) [name='with over lines', src='\ndef f():\n    with (CM() as a,\n          CM() as b):\n        raise KeyError\n    return 1\n'] => RAISE:5 HANDLED:4 RERAISE:4 HANDLED:None RERAISE:None HANDLED:3 RERAISE:3 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='with in try', src='\ndef f():\n    try:\n        with CM():\n            raise KeyError\n    except KeyError:\n        x = 1\n    return 1\n'] => with in try         
+' '.join(log) [name='with in try', src='\ndef f():\n    try:\n        with CM():\n            raise KeyError\n    except KeyError:\n        x = 1\n    return 1\n'] => RAISE:5 HANDLED:4 RERAISE:4 HANDLED:None RERAISE:None HANDLED:None
+'%-20s' % name [name='try in with', src='\ndef f():\n    with CM():\n        try:\n            raise KeyError\n        except ValueError:\n            x = 1\n    return 1\n'] => try in with         
+' '.join(log) [name='try in with', src='\ndef f():\n    with CM():\n        try:\n            raise KeyError\n        except ValueError:\n            x = 1\n    return 1\n'] => RAISE:5 HANDLED:None RERAISE:6 HANDLED:None RERAISE:None HANDLED:3 RERAISE:3 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='finally in a loop', src='\ndef f():\n    for i in (1, 2):\n        try:\n            raise KeyError\n        finally:\n            break\n    return 1\n'] => finally in a loop   
+' '.join(log) [name='finally in a loop', src='\ndef f():\n    for i in (1, 2):\n        try:\n            raise KeyError\n        finally:\n            break\n    return 1\n'] => RAISE:5 HANDLED:None
+'%-20s' % name [name='return in finally', src='\ndef f():\n    try:\n        raise KeyError\n    finally:\n        return 1\n'] => return in finally   
+' '.join(log) [name='return in finally', src='\ndef f():\n    try:\n        raise KeyError\n    finally:\n        return 1\n'] => RAISE:4 HANDLED:None
+'%-20s' % name [name='else', src='\ndef f():\n    try:\n        x = 1\n    except KeyError:\n        x = 2\n    else:\n        raise ValueError\n    return 1\n'] => else                
+' '.join(log) [name='else', src='\ndef f():\n    try:\n        x = 1\n    except KeyError:\n        x = 2\n    else:\n        raise ValueError\n    return 1\n'] => RAISE:8 UNWIND:8 ValueError
+'%-20s' % name [name='handler in handler', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        try:\n            raise ValueError\n        except ValueError:\n            x = 1\n    return 1\n'] => handler in handler  
+' '.join(log) [name='handler in handler', src='\ndef f():\n    try:\n        raise KeyError\n    except KeyError:\n        try:\n            raise ValueError\n        except ValueError:\n            x = 1\n    return 1\n'] => RAISE:4 HANDLED:None RAISE:7 HANDLED:None
+'%-20s' % name [name='async with', src='\nclass ACM:\n    async def __aenter__(self): return self\n    async def __aexit__(self, *a): return False\nasync def c():\n    async with ACM():\n        raise KeyError\ndef f():\n    try:\n        c().send(None)\n    except StopIteration:\n        pass\n'] => async with          
+' '.join(log) [name='async with', src='\nclass ACM:\n    async def __aenter__(self): return self\n    async def __aexit__(self, *a): return False\nasync def c():\n    async with ACM():\n        raise KeyError\ndef f():\n    try:\n        c().send(None)\n    except StopIteration:\n        pass\n'] => RAISE:7 HANDLED:6 RERAISE:6 HANDLED:None RERAISE:None HANDLED:None RERAISE:None UNWIND:None RAISE:10 HANDLED:None RERAISE:11 HANDLED:None RERAISE:None UNWIND:None KeyError
+'%-20s' % name [name='out of a generator', src='\ndef g():\n    yield 1\n    raise KeyError\ndef f():\n    for x in g():\n        pass\n'] => out of a generator  
+' '.join(log) [name='out of a generator', src='\ndef g():\n    yield 1\n    raise KeyError\ndef f():\n    for x in g():\n        pass\n'] => RAISE:4 HANDLED:None RERAISE:None UNWIND:None RAISE:6 UNWIND:6 KeyError
+'%-20s' % name [name='out of a coroutine', src='\nasync def c():\n    raise KeyError\ndef f():\n    c().send(None)\n'] => out of a coroutine  
+' '.join(log) [name='out of a coroutine', src='\nasync def c():\n    raise KeyError\ndef f():\n    c().send(None)\n'] => RAISE:3 HANDLED:None RERAISE:None UNWIND:None RAISE:5 UNWIND:5 KeyError
+'%-20s' % name [name='out of an asynchronous generator', src='\nasync def a():\n    yield 1\n    raise KeyError\nasync def c():\n    async for x in a():\n        pass\ndef f():\n    c().send(None)\n'] => out of an asynchronous generator
+' '.join(log) [name='out of an asynchronous generator', src='\nasync def a():\n    yield 1\n    raise KeyError\nasync def c():\n    async for x in a():\n        pass\ndef f():\n    c().send(None)\n'] => RAISE:4 HANDLED:None RERAISE:None UNWIND:None RAISE:6 HANDLED:6 RERAISE:6 HANDLED:None RERAISE:None UNWIND:None RAISE:9 UNWIND:9 KeyError
+'%-20s' % name [name='out of a generator expression', src='\ndef f():\n    return list(1 // x for x in (1, 0))\n'] => out of a generator expression
+' '.join(log) [name='out of a generator expression', src='\ndef f():\n    return list(1 // x for x in (1, 0))\n'] => RAISE:3 HANDLED:None RERAISE:None UNWIND:None RAISE:3 UNWIND:3 ZeroDivisionError
+'%-20s' % name [name='StopIteration in a generator', src='\ndef g():\n    yield 1\n    raise StopIteration\ndef f():\n    for x in g():\n        pass\n'] => StopIteration in a generator
+' '.join(log) [name='StopIteration in a generator', src='\ndef g():\n    yield 1\n    raise StopIteration\ndef f():\n    for x in g():\n        pass\n'] => RAISE:4 HANDLED:None RERAISE:None UNWIND:None RAISE:6 UNWIND:6 RuntimeError
+'%-20s' % name [name='thrown into one that has not started', src='\ndef g():\n    yield 1\ndef f():\n    g().throw(KeyError)\n'] => thrown into one that has not started
+' '.join(log) [name='thrown into one that has not started', src='\ndef g():\n    yield 1\ndef f():\n    g().throw(KeyError)\n'] => THROW:2 RAISE:2 UNWIND:2 RAISE:5 UNWIND:5 KeyError
+'%-20s' % name [name='through a generator that delegates', src='\ndef inner():\n    yield 1\n    raise KeyError\ndef g():\n    yield from inner()\ndef f():\n    for x in g():\n        pass\n'] => through a generator that delegates
+' '.join(log) [name='through a generator that delegates', src='\ndef inner():\n    yield 1\n    raise KeyError\ndef g():\n    yield from inner()\ndef f():\n    for x in g():\n        pass\n'] => RAISE:4 HANDLED:None RERAISE:None UNWIND:None RAISE:6 HANDLED:None RERAISE:None UNWIND:None RAISE:8 UNWIND:8 KeyError

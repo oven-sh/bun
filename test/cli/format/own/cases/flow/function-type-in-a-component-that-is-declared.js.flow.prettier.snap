@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+declare component C(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,
+);
+declare export component D(
+  ...aaaaaaaaaaaaaaaaaaaaaaaa: (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+);
+declare function f(
+  a: A,
+): (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy %checks(a);
+declare function g(): hook (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+type E = { [(?A) => B]: V };
+type F = component(...(?A) => B);
+declare class G {
+  [(?A) => B]: V;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+declare component C(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,
+);
+declare export component D(
+  ...aaaaaaaaaaaaaaaaaaaaaaaa: (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+);
+declare function f(
+  a: A,
+): (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy %checks(a);
+declare function g(): hook (Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) => Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;
+type E = { [(?A) => B]: V };
+type F = component(...(?A) => B);
+declare class G {
+  [(?A) => B]: V;
+}
+
+===================== End =====================

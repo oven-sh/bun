@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+declare module.exports: (
+  *,
+) => symbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbol &
+  voidvoidvoidvoidvoidvoidvoidvoidvoidvoid;
+class B {
+  static ccccccccc: (
+    *,
+  ) => symbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbol &
+    voidvoidvoidvoidvoidvoidvoidvoidvoid = 1;
+}
+type X = (
+  *,
+) => symbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbol &
+  voidvoidvoidvoidvoidvoidvoidvoidvoidvoidvoid;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+declare module.exports: (
+  *,
+) => symbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbol &
+  voidvoidvoidvoidvoidvoidvoidvoidvoidvoid;
+class B {
+  static ccccccccc: (
+    *,
+  ) => symbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbol &
+    voidvoidvoidvoidvoidvoidvoidvoidvoid = 1;
+}
+type X = (
+  *,
+) => symbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbolsymbol &
+  voidvoidvoidvoidvoidvoidvoidvoidvoidvoidvoid;
+
+===================== End =====================

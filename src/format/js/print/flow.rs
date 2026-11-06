@@ -319,12 +319,22 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
         (_, Node::Param(param)) => {
             param.pat().tag() == PatTag::Missing
                 && is_function_type_param(param)
+                && !is_key_of_indexer_or_rest_of_component(param)
                 && func
                     .params_with_this()
                     .any(|it| it.ty().is_some_and(|it| it.tag() == TypeTag::JSDoc))
         }
         _ => false,
     }
+}
+
+/// `{ [A]: B }`, `component(...A)`: a parameter without a name in the tree that is no `FunctionTypeParam`.
+fn is_key_of_indexer_or_rest_of_component(param: Param<'_>) -> bool {
+    param.func().is_some_and(|func| match func.owner() {
+        Node::Member(member) => member.kind() == MemberKind::IndexSignature,
+        Node::Type(ty) => keyword_of_function_type(ty, func) == Some("component"),
+        _ => false,
+    })
 }
 
 /// Writes `content`, which is `ty` without parentheses, adding parentheses if `ty` needs them.
@@ -568,12 +578,18 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
         || only.is_rest()
         || only.pat().tag() != PatTag::Missing
         || only.flow_outer_name().is_some()
-        || !only.ty().is_some_and(is_simple_type)
+        // `*` is an `ExistsTypeAnnotation`, which `isSimpleType` does not list.
+        || !(only.ty()).is_some_and(|it| is_simple_type(it) && it.first_token() != b"*")
     {
         return false;
     }
     let is_function_type = keyword_of_function_type(ty, func).is_none();
-    match ty.parent() {
+    // For `T %checks(e)`, Prettier's return type is the `T`.
+    let parent = match ty.parent() {
+        Node::Type(parent) if as_declared_predicate(parent).is_some() => parent.parent(),
+        parent => parent,
+    };
+    match parent {
         // `static` is a matter of an `ObjectTypeProperty`. The property of a class has a `TypeAnnotation`.
         Node::Member(member) => {
             is_function_type
@@ -582,13 +598,20 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
                 && (!member.is_static()
                     || matches!(member.parent(), Node::Class(class) if !is_declared_class(class)))
         }
-        Node::Param(param) => is_function_type && !is_function_type_param(param),
+        // The parameter of a component that is only declared has a `TypeAnnotation` too.
+        Node::Param(param) => {
+            is_function_type
+                && (!is_function_type_param(param)
+                    || matches!(param.func().map(Func::owner), Some(Node::Stmt(statement))
+                        if has_word_in(statement.file(), statement.modifiers(), b"component")))
+        }
         Node::VarDecl(_) => is_function_type,
         // (the value of an indexer is the return type of its signature)
         Node::Func(owner) => match owner.owner() {
             Node::Type(_) => true,
             Node::Member(member) if member.kind() == MemberKind::IndexSignature => false,
-            _ => is_function_type,
+            // A signature and a function that is only declared are a `FunctionTypeAnnotation` too.
+            _ => is_function_type || (!owner.has_body() && !owner.is_arrow()),
         },
         Node::Stmt(statement) => match statement.kind() {
             // See `write_pseudo_type_alias`.

@@ -42,8 +42,8 @@ def raising(number, frame):
 
 
 signal.signal(signal.SIGALRM, raising)
-signal.setitimer(signal.ITIMER_REAL, 0.001)
 try:
+    signal.setitimer(signal.ITIMER_REAL, 0.001)
     while True:
         os.urandom(1 << 24)
 except KeyError as e:

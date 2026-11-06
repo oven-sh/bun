@@ -2242,19 +2242,6 @@ struct ModulesToEvict {
     bool hasLoadSettled { false };
 };
 
-} // namespace Zig
-
-JSC::JSPromise* Bun::pendingLoadOf(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
-{
-    JSC::JSPromise* promise = entry->loadPromise();
-    if (!promise && entry->status() == JSC::ModuleRegistryEntry::Status::Fetching)
-        promise = entry->ensureModulePromise(globalObject);
-    return promise && promise->status() == JSC::JSPromise::Status::Pending ? promise : nullptr;
-}
-
-namespace Zig {
-using Bun::pendingLoadOf;
-
 // JSC parks the error of a failed import() in a new entry that nothing fetches, so a module that imports it would wait forever.
 static bool isNeverFetched(JSC::ModuleRegistryEntry* entry)
 {
@@ -2291,7 +2278,7 @@ __attribute__((minsize)) static void moveLoadedModule(Zig::GlobalObject* globalO
 
     auto fromKey = JSC::Identifier::fromString(vm, from);
     auto* entry = loader->getRegisteredMayBeNull(fromKey, JSC::ScriptFetchParameters::Type::JavaScript);
-    if (entry && entry->record() && entry->status() < JSC::ModuleRegistryEntry::Status::FetchFailed && !pendingLoadOf(globalObject, entry)) {
+    if (entry && entry->record() && entry->status() < JSC::ModuleRegistryEntry::Status::FetchFailed && !Bun::pendingLoadOf(globalObject, entry)) {
         auto* record = entry->record();
         loader->removeEntry(fromKey);
         auto* moved = loader->ensureRegistered(globalObject, JSC::Identifier::fromString(vm, to), JSC::ScriptFetchParameters::Type::JavaScript);
@@ -2371,7 +2358,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         String key(mapKey.first);
         auto* record = entry->record();
-        if (JSC::JSPromise* pendingLoad = pendingLoadOf(globalObject, entry.get())) {
+        if (JSC::JSPromise* pendingLoad = Bun::pendingLoadOf(globalObject, entry.get())) {
             loading.set(key, pendingLoad);
             pendingLoads.append(pendingLoad);
             if (record && asks.add(record).isNewEntry)
@@ -2527,7 +2514,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
         if (leavesRegistry && !clearsRegistry) {
             auto identifier = JSC::Identifier::fromString(vm, key);
-            ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));
+            ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !Bun::pendingLoadOf(globalObject, loader->registryEntry(identifier)));
             giveLoadedModuleBackToPreloadModuleMock(globalObject, key);
             keepPreloadModule(key, loader->getRegisteredMayBeNull(identifier, JSC::ScriptFetchParameters::Type::JavaScript));
             loader->removeEntry(identifier);
@@ -4456,6 +4443,14 @@ bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMoc
     String key = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, true);
     return Zig::registeredModuleMock(globalObject, key) == mock;
+}
+
+JSC::JSPromise* pendingLoadOf(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
+{
+    JSC::JSPromise* promise = entry->loadPromise();
+    if (!promise && entry->status() == JSC::ModuleRegistryEntry::Status::Fetching)
+        promise = entry->ensureModulePromise(globalObject);
+    return promise && promise->status() == JSC::JSPromise::Status::Pending ? promise : nullptr;
 }
 
 void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)

@@ -59,6 +59,10 @@ pub trait PipeWriter {
     #[cfg(windows)]
     fn console(&self) -> Option<&crate::console::Utf8Carry>;
 
+    /// Whether the fd is one for `write_synchronous`, once a write has asked.
+    #[cfg(windows)]
+    fn is_synchronous(&self) -> &core::cell::OnceCell<bool>;
+
     #[cfg(windows)]
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         if let PollOrFd::Poll(poll) = *self.handle()
@@ -70,7 +74,14 @@ pub trait PipeWriter {
             return self
                 .try_write_with_write_fn(buf, |fd, buf| crate::console::write(fd, carry, buf));
         }
-        self.try_write_with_write_fn(buf, sys::write)
+        self.try_write_with_write_fn(buf, |fd, buf| {
+            use sys::windows::fs::{is_synchronous, write_synchronous};
+            if *self.is_synchronous().get_or_init(|| is_synchronous(fd)) {
+                write_synchronous(fd, buf)
+            } else {
+                sys::write(fd, buf)
+            }
+        })
     }
 
     /// Only reads `get_file_type()` / `get_fd()` from `self`; takes `&self` so
@@ -365,6 +376,8 @@ pub struct BufferedWriter<Parent: BufferedWriterParent> {
     rwf_unsupported: core::cell::Cell<bool>,
     #[cfg(windows)]
     console: Option<crate::console::Utf8Carry>,
+    #[cfg(windows)]
+    is_synchronous: core::cell::OnceCell<bool>,
 }
 
 impl<Parent: BufferedWriterParent> Default for BufferedWriter<Parent> {
@@ -379,6 +392,8 @@ impl<Parent: BufferedWriterParent> Default for BufferedWriter<Parent> {
             rwf_unsupported: core::cell::Cell::new(false),
             #[cfg(windows)]
             console: None,
+            #[cfg(windows)]
+            is_synchronous: core::cell::OnceCell::new(),
         }
     }
 }
@@ -414,6 +429,10 @@ impl<Parent: BufferedWriterParent> PipeWriter for BufferedWriter<Parent> {
     #[cfg(windows)]
     fn console(&self) -> Option<&crate::console::Utf8Carry> {
         self.console.as_ref()
+    }
+    #[cfg(windows)]
+    fn is_synchronous(&self) -> &core::cell::OnceCell<bool> {
+        &self.is_synchronous
     }
 }
 
@@ -626,6 +645,7 @@ impl<Parent: BufferedWriterParent> BufferedWriter<Parent> {
             #[cfg(windows)]
             {
                 self.console = crate::console::Utf8Carry::for_fd(fd);
+                self.is_synchronous = core::cell::OnceCell::new();
             }
             return sys::Result::Ok(());
         }
@@ -699,6 +719,8 @@ pub struct StreamingWriter<Parent: StreamingWriterParent> {
     rwf_unsupported: core::cell::Cell<bool>,
     #[cfg(windows)]
     console: Option<crate::console::Utf8Carry>,
+    #[cfg(windows)]
+    is_synchronous: core::cell::OnceCell<bool>,
 }
 
 impl<Parent: StreamingWriterParent> Default for StreamingWriter<Parent> {
@@ -714,6 +736,8 @@ impl<Parent: StreamingWriterParent> Default for StreamingWriter<Parent> {
             rwf_unsupported: core::cell::Cell::new(false),
             #[cfg(windows)]
             console: None,
+            #[cfg(windows)]
+            is_synchronous: core::cell::OnceCell::new(),
         }
     }
 }
@@ -749,6 +773,10 @@ impl<Parent: StreamingWriterParent> PipeWriter for StreamingWriter<Parent> {
     #[cfg(windows)]
     fn console(&self) -> Option<&crate::console::Utf8Carry> {
         self.console.as_ref()
+    }
+    #[cfg(windows)]
+    fn is_synchronous(&self) -> &core::cell::OnceCell<bool> {
+        &self.is_synchronous
     }
 }
 
@@ -1179,6 +1207,7 @@ impl<Parent: StreamingWriterParent> StreamingWriter<Parent> {
             } else {
                 crate::console::Utf8Carry::for_fd(fd)
             };
+            self.is_synchronous = core::cell::OnceCell::new();
         }
         sys::Result::Ok(())
     }

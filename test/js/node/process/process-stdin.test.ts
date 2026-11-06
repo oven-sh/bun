@@ -315,6 +315,40 @@ describe.concurrent("the chunk after the one that was delivered is for whoever r
   });
 });
 
+describe.concurrent("a child that inherits stdin does not wait for the read that its parent is in", () => {
+  test.each([
+    `console.log("started")`,
+    `process.stdout.write("started\\n")`,
+    `require("fs").writeSync(1, "started\\n")`,
+    `const fs = require("fs"); fs.readSync(fs.openSync(process.execPath), Buffer.alloc(2)); console.error("started")`,
+    `console.log(Bun.spawnSync([process.execPath, "-e", "console.log('started')"], { stdin: "inherit" }).stdout.toString().trim())`,
+  ])("%s", async child => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdin.on("data", () => {
+          // The next read has begun long before the child is up.
+          setImmediate(async () => {
+            const child = Bun.spawn([process.execPath, "-e", ${JSON.stringify(child)}], { stdio: ["inherit", "inherit", "inherit"] });
+            process.exit(await child.exited);
+          });
+        });`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write("go");
+    proc.stdin.flush();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toBe("started\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test.skipIf(!isWindows)("a socket as stdin ends when its peer is done sending", async () => {
   const ws2_32 = dlopen("ws2_32.dll", {
     WSASocketW: { args: ["i32", "i32", "i32", "ptr", "u32", "u32"], returns: "u64" },

@@ -600,33 +600,35 @@ fn with_transfer_event<R>(transfer: impl FnOnce(HANDLE) -> R) -> Win32Result<R> 
     }
 }
 
-/// Whether `handle` is a standard handle for synchronous I/O, whose transfers are over when the call returns and need no event.
+/// Whether transfers on `fd` need no event. Like a transfer, the question waits for a call of whoever shares `fd`, so it comes right before the first one.
+pub fn is_synchronous(fd: Fd) -> bool {
+    let mut io: IO_STATUS_BLOCK = zeroed();
+    let mut mode: ULONG = 0;
+    // SAFETY: both out-params outlive the call.
+    let status = unsafe {
+        ntdll::NtQueryInformationFile(
+            fd.native(),
+            &raw mut io,
+            from_mut(&mut mode).cast(),
+            size_of::<ULONG>() as ULONG,
+            FILE_INFORMATION_CLASS::FileModeInformation,
+        )
+    };
+    NT_SUCCESS(status) && mode & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT) != 0
+}
+
+/// [`is_synchronous`] for the standard handles, each of which is asked once.
 fn is_synchronous_stdio(handle: HANDLE) -> bool {
     static HANDLES: OnceLock<[usize; 3]> = OnceLock::new();
-    let synchronous = |id: DWORD| {
-        let handle = kernel32::GetStdHandle(id);
-        let mut io: IO_STATUS_BLOCK = zeroed();
-        let mut mode: ULONG = 0;
-        // SAFETY: both out-params outlive the call.
-        let status = unsafe {
-            ntdll::NtQueryInformationFile(
-                handle,
-                &raw mut io,
-                from_mut(&mut mode).cast(),
-                size_of::<ULONG>() as ULONG,
-                FILE_INFORMATION_CLASS::FileModeInformation,
-            )
-        };
-        let flags = FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT;
-        if NT_SUCCESS(status) && mode & flags != 0 {
-            handle as usize
-        } else {
-            INVALID_HANDLE_VALUE as usize
-        }
-    };
+    static ANSWERS: [OnceLock<bool>; 3] = [const { OnceLock::new() }; 3];
     HANDLES
-        .get_or_init(|| [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(synchronous))
-        .contains(&(handle as usize))
+        .get_or_init(|| {
+            [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE]
+                .map(|id| kernel32::GetStdHandle(id) as usize)
+        })
+        .iter()
+        .position(|&it| it == handle as usize)
+        .is_some_and(|i| *ANSWERS[i].get_or_init(|| is_synchronous(Fd::from_system(handle))))
 }
 
 /// An operation on an overlapped handle that its thread waits for in [`transfer_once`].
@@ -682,12 +684,13 @@ pub(super) fn cancel_transfer(thread_id: DWORD) -> Win32Result<()> {
 /// [`transfer_once`], and again for as long as a pipe takes nothing of a write without saying why.
 fn transfer(
     handle: HANDLE,
+    is_synchronous: bool,
     direction: Direction,
     buf: PlatformIoVec,
     offset: Option<i64>,
 ) -> (usize, Option<Win32Error>) {
     loop {
-        let (transferred, error) = transfer_once(handle, direction, buf, offset);
+        let (transferred, error) = transfer_once(handle, is_synchronous, direction, buf, offset);
         // A pipe write that does not fit succeeds with 0 bytes in `PIPE_NOWAIT` mode, or if the reader takes a read back just then.
         let again = direction == Direction::Write
             && transferred == 0
@@ -703,6 +706,7 @@ fn transfer(
 /// One `NtReadFile` or `NtWriteFile` of what a `DWORD` can count (`None`: at the file position), over when this returns, and unseen by a completion port.
 fn transfer_once(
     handle: HANDLE,
+    is_synchronous: bool,
     direction: Direction,
     buf: PlatformIoVec,
     offset: Option<i64>,
@@ -754,7 +758,7 @@ fn transfer_once(
         // SAFETY: the operation is over.
         NTSTATUS(unsafe { (*io).Status } as u32)
     };
-    let status = if is_synchronous_stdio(handle) {
+    let status = if is_synchronous {
         Ok(issue(null_mut()))
     } else {
         with_transfer_event(issue)
@@ -777,6 +781,7 @@ fn transfer_once(
 /// One transfer per buffer, or per `DWORD`'s worth of it, until one fails. Positional I/O leaves the file position as it was.
 fn for_each_buffer(
     handle: HANDLE,
+    is_synchronous: bool,
     direction: Direction,
     bufs: &[PlatformIoVec],
     position: i64,
@@ -797,7 +802,7 @@ fn for_each_buffer(
                 iov_len: (buf.iov_len - done).min(u32::MAX as usize),
             };
             let offset = positional.then(|| position.wrapping_add(bytes as i64));
-            let (transferred, failure) = transfer(handle, direction, part, offset);
+            let (transferred, failure) = transfer(handle, is_synchronous, direction, part, offset);
             bytes += transferred;
             done += transferred;
             if failure.is_some() {
@@ -825,8 +830,10 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     if bufs.is_empty() {
         return Ok(0);
     }
-    let result = valid_handle(fd)
-        .and_then(|handle| for_each_buffer(handle, Direction::Read, bufs, position));
+    let result = valid_handle(fd).and_then(|handle| {
+        let is_synchronous = is_synchronous_stdio(handle);
+        for_each_buffer(handle, is_synchronous, Direction::Read, bufs, position)
+    });
     syslog!(
         "read({}, {} bufs, {}) = {:?}",
         fd,
@@ -843,12 +850,19 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     }
 }
 
-fn write_buffers(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
+fn write_buffers(
+    fd: Fd,
+    is_synchronous: fn(HANDLE) -> bool,
+    bufs: &[PlatformIoVec],
+    position: i64,
+) -> Maybe<usize> {
     if bufs.is_empty() {
         return Ok(0);
     }
-    let result = valid_handle(fd)
-        .and_then(|handle| for_each_buffer(handle, Direction::Write, bufs, position));
+    let result = valid_handle(fd).and_then(|handle| {
+        let is_synchronous = is_synchronous(handle);
+        for_each_buffer(handle, is_synchronous, Direction::Write, bufs, position)
+    });
     syslog!(
         "write({}, {} bufs, {}) = {:?}",
         fd,
@@ -871,7 +885,7 @@ fn write_buffers(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> 
 pub fn pwritev(fd: Fd, bufs: &[PlatformIoVecConst], position: i64) -> Maybe<usize> {
     // SAFETY: the two types differ only in the mutability of `base` (layout asserted at their definition), and a write does not write to it.
     let bufs = unsafe { core::slice::from_raw_parts(bufs.as_ptr().cast(), bufs.len()) };
-    write_buffers(fd, bufs, position)
+    write_buffers(fd, is_synchronous_stdio, bufs, position)
 }
 
 pub fn readv(fd: Fd, bufs: &[PlatformIoVec]) -> Maybe<usize> {
@@ -879,7 +893,7 @@ pub fn readv(fd: Fd, bufs: &[PlatformIoVec]) -> Maybe<usize> {
 }
 
 pub fn writev(fd: Fd, bufs: &[PlatformIoVec]) -> Maybe<usize> {
-    write_buffers(fd, bufs, -1)
+    write_buffers(fd, is_synchronous_stdio, bufs, -1)
 }
 
 pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Maybe<usize> {
@@ -896,6 +910,15 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
 
 pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     pwrite(fd, buf, -1)
+}
+
+/// [`write`] to an `fd` that [`is_synchronous`].
+pub fn write_synchronous(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+    let buf = PlatformIoVec {
+        iov_base: buf.as_ptr().cast_mut().cast(),
+        iov_len: buf.len(),
+    };
+    write_buffers(fd, |_| true, &[buf], -1)
 }
 
 /// Seconds and nanoseconds since the Unix epoch.

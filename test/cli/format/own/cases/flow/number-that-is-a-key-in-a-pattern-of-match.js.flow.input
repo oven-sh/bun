@@ -1,0 +1,10 @@
+const a = match (b) {
+  {.5: const c} => c,
+  {5.: const c} => c,
+  {5.0: const c} => c,
+  {0XAB: const c} => c,
+  {1E5: const c} => c,
+  {1_0: const c} => c,
+  {10n: const c} => c,
+  {0XABn: const c} => c,
+};

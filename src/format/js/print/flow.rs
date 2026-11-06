@@ -19,6 +19,7 @@ use crate::js::format::{
     write_expression,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::typescript::is_simple_type;
 use crate::prelude::*;
@@ -1609,6 +1610,12 @@ fn write_match_object_pattern_property<'a>(property: Prop<'a>, f: &mut Formatter
     let format_key = format_with(|f| {
         format_name(span, f, |f| match key.kind() {
             KeyKind::String(_) => write!(f, FormatStringLiteral { span }),
+            KeyKind::Number(_) => match f.source_text().text_for(&span) {
+                big_int if big_int.ends_with(b"n") => {
+                    write!(f, text_without_whitespace(&big_int.to_ascii_lowercase()))
+                }
+                number => write!(f, format_number_token(number)),
+            },
             _ => write!(f, source_text(span)),
         });
     });

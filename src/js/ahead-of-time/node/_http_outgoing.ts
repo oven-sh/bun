@@ -1,11 +1,10 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7eb68379dcc85e37da343c90d1da52f21b0bd91937cea041c06b56a6db7551fc.
+// Written against that file with the SHA-256 c1059f98e59d3cf81e694d9760919f73d1d5d8fda690e3fab93a3624b19940d8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
-require("internal/stream");
 const { Stream } = require("internal/streams/legacy");
 const { validateString } = require("internal/validators");
 const { isUint8Array } = require("node:util/types");

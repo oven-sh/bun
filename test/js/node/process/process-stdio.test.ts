@@ -186,6 +186,175 @@ describe.concurrent("process-stdio", () => {
   });
 });
 
+// The first read of process.stdout or process.stderr makes an fs.WriteStream. What that loads is the Writable class and what it
+// needs: not node:stream as a whole (which adds pipeline, compose and the other classes to the Stream function that Writable
+// inherits from), not Readable, and not node:fs. oven-sh/bun#48005: the barrel cost a first read of process.stdout about as
+// much as an empty process. A built-in module that loads calls Object.defineProperty. A require of one that is loaded calls
+// nothing: the count of calls under a require says whether the stream had loaded the module.
+describe.concurrent("the first read of a standard stream loads only what it needs", () => {
+  // `bun -e` of a CommonJS text loads the built-in module that a top-level name of the text names: no binding here is
+  // called `stream` or `fs`.
+  const whatIsLoaded = (name: string) => `
+    const standard = process.${name};
+    let calls = 0;
+    const real = Object.defineProperty;
+    Object.defineProperty = function (...args) { calls++; return real.apply(this, args); };
+    const nodeFs = require("node:fs");
+    const fsLoads = calls > 0;
+    calls = 0;
+    require("node:_stream_readable");
+    const readableLoads = calls > 0;
+    Object.defineProperty = real;
+    let Stream = standard.constructor;
+    while (Stream.name !== "Stream") Stream = Object.getPrototypeOf(Stream);
+    process.${name}.write(JSON.stringify({
+      write: typeof standard.write,
+      barrel: typeof Stream.pipeline,
+      readable: "Readable" in Stream,
+      fsWriteStream: typeof Object.getOwnPropertyDescriptor(nodeFs, "WriteStream").get,
+      fsReadStream: typeof Object.getOwnPropertyDescriptor(nodeFs, "ReadStream").get,
+      fsLoads,
+      readableLoads,
+    }) + "\\n");
+  `;
+  const writeStreamOnly = {
+    write: "function",
+    barrel: "undefined",
+    readable: false,
+    fsWriteStream: "function",
+    fsReadStream: "function",
+    fsLoads: true,
+    readableLoads: true,
+  };
+
+  test.each(["stdout", "stderr"] as const)("process.%s on a pipe", async name => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", whatIsLoaded(name)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [written, other] = name === "stdout" ? [stdout, stderr] : [stderr, stdout];
+    expect({ loaded: JSON.parse(written), other }).toEqual({ loaded: writeStreamOnly, other: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["stdout", "stderr"] as const)("process.%s on a file", async name => {
+    using dir = tempDir("stdio-loads", {});
+    const file = Bun.file(path.join(String(dir), name));
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", whatIsLoaded(name)],
+      env: bunEnv,
+      stdout: name === "stdout" ? file : "pipe",
+      stderr: name === "stderr" ? file : "pipe",
+    });
+    const [other, exitCode] = await Promise.all([(name === "stdout" ? proc.stderr : proc.stdout).text(), proc.exited]);
+    expect({ loaded: JSON.parse(await file.text()), other }).toEqual({ loaded: writeStreamOnly, other: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.stdin is a Readable of node:fs, and still loads no node:stream", async () => {
+    const script = `
+      const standard = process.stdin;
+      let Stream = standard.constructor;
+      while (Stream.name !== "Stream") Stream = Object.getPrototypeOf(Stream);
+      console.log(JSON.stringify({
+        read: typeof standard.read,
+        map: typeof standard.map,
+        barrel: typeof Stream.pipeline,
+      }));
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin: new Blob(["x"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({
+      loaded: { read: "function", map: "function", barrel: "undefined" },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:stream, loaded after process.stdout, is the class of process.stdout", async () => {
+    const script = `
+      const standard = process.stdout;
+      const nodeFs = require("node:fs");
+      const { Writable, Readable, Stream } = require("node:stream");
+      console.log(JSON.stringify({
+        writable: standard instanceof Writable,
+        stream: standard instanceof Stream,
+        fsWriteStream: standard instanceof nodeFs.WriteStream,
+        readStream: new nodeFs.ReadStream(process.execPath) instanceof Readable,
+      }));
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({
+      loaded: { writable: true, stream: true, fsWriteStream: true, readStream: true },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // fs.ReadStream goes below Readable at the first read of its `prototype`. What node:fs hands out has been there: its
+  // statics and its prototype chain are whole before anything is constructed.
+  test("fs.ReadStream is whole before the first instance", async () => {
+    const script = `
+      process.stdout;
+      const nodeFs = require("node:fs");
+      const describe = ReadStream => {
+        const { get, writable, enumerable } = Object.getOwnPropertyDescriptor(ReadStream, "prototype");
+        return { get: typeof get, writable, enumerable, from: typeof ReadStream.from, parent: Object.getPrototypeOf(ReadStream).name };
+      };
+      console.log(JSON.stringify({ ReadStream: describe(nodeFs.ReadStream), FileReadStream: describe(nodeFs.FileReadStream) }));
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const whole = { get: "undefined", writable: true, enumerable: false, from: "function", parent: "Readable" };
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({
+      loaded: { ReadStream: whole, FileReadStream: whole },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // process.stdout and process.stderr are built from the class in internal/fs/streams, not from node:fs, which they do
+  // not load. A replaced fs.WriteStream is not their class (Node's are a net.Socket or a SyncWriteStream, never an
+  // fs.WriteStream). process.stdin comes from node:fs: a replaced fs.ReadStream is its class, as in Node for a file.
+  test("a replaced fs.WriteStream is not the class of process.stdout, a replaced fs.ReadStream is the class of process.stdin", async () => {
+    const script = `
+      const nodeFs = require("node:fs");
+      class Out extends nodeFs.WriteStream {}
+      class In extends nodeFs.ReadStream {}
+      nodeFs.WriteStream = Out;
+      nodeFs.ReadStream = In;
+      console.log(JSON.stringify({
+        stdout: process.stdout.constructor.name,
+        stderr: process.stderr.constructor.name,
+        stdin: process.stdin.constructor.name,
+      }));
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin: new Blob(["x"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ loaded: JSON.parse(stdout), stderr }).toEqual({
+      loaded: { stdout: "WriteStream", stderr: "WriteStream", stdin: "In" },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open
 // file description, so spawn clears it again for a child's fds 0-2 (libuv does the same), and the native console writer must
 // wait on EAGAIN instead of dropping the rest of the line.

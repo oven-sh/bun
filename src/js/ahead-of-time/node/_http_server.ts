@@ -1,21 +1,15 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 79f70f96c7867ffb7b3519a5365d46be8afd1693d17ba0c6e3090895494a4920.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
 const EventEmitter = require("node:events");
-const { Stream } = require("node:stream");
-const { Stream: StreamOfLibrary } = require("internal/streams/legacy");
+const { Stream } = require("internal/streams/legacy");
 const StreamPrototype = Stream.prototype;
 // A name read from `plainStream` is looked up from Stream.prototype on. No constructor runs: the other text makes no stream here.
 function PlainStream() {}
-$toClass(PlainStream, "PlainStream", StreamOfLibrary);
-if (Stream !== StreamOfLibrary) Object.setPrototypeOf(PlainStream.prototype, StreamPrototype);
+$toClass(PlainStream, "PlainStream", Stream);
 const plainStream: any = new PlainStream();
-const DuplexPrototype = Stream.Duplex.prototype;
-const ReadablePrototype = Stream.Readable.prototype;
-const duplexResume = DuplexPrototype.resume;
-const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
 const { queueTick1, queueTick2, ticksAreUnhooked, ring } = require("internal/process/next_tick_queue");
 const kFlowing = 1 << 24;
@@ -152,6 +146,11 @@ const HEADER_SPILLED = 1 << 6;
 const HEADER_MAP_IS_MISSING = 1 << 7;
 const HEADER_UNUSUAL = HEADER_DATE | HEADER_CONNECTION | HEADER_KEEP_ALIVE | HEADER_TRANSFER_ENCODING | HEADER_SPILLED;
 const { FakeSocket } = require("internal/http/FakeSocket");
+// Loaded here, where the other text's FakeSocket loads Duplex: a test that replaced built-in functions sees the same calls.
+const DuplexPrototype = require("internal/streams/duplex").prototype;
+const ReadablePrototype = require("internal/streams/readable").prototype;
+const duplexResume = DuplexPrototype.resume;
+const duplexRemoveListener = DuplexPrototype.removeListener;
 const NumberIsNaN = Number.isNaN;
 
 const { IncomingMessage } = require("node:_http_incoming");

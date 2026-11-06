@@ -1,7 +1,6 @@
-// fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
-const { Readable, Writable, finished } = require("node:stream");
-const fs = require("node:fs");
-const { read, write, fsync, writev } = fs;
+// process.stdout is a WriteStream: the Writable class and finished() load here, not node:stream, Readable or node:fs.
+const Writable = require("internal/streams/writable");
+const finished = require("internal/streams/end-of-stream");
 const fileHandles = require("internal/fs/file_handles");
 type FileHandleInternals = NonNullable<typeof fileHandles.internals>;
 type FileHandle = $Node.FileHandle;
@@ -132,51 +131,55 @@ const { internals } = fileHandles;
 if (internals) takeFileHandleInternals(internals);
 else fileHandles.whenLoaded = takeFileHandleInternals;
 
-const fileHandleStreamFs = (fh: FileHandle) => ({
-  // try to use the basic fs.read/write/fsync if available, since they are less
-  // abstractions. however, node.js allows patching the file handle, so this has
-  // to be checked for.
-  read:
-    fh.read === fileHandlePrototypeRead
-      ? read
-      : function (
-          fd: number | null,
-          buf: Buffer,
-          offset: number,
-          length: number,
-          pos: number | undefined,
-          cb: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
-        ) {
-          return fh.read(buf, offset, length, pos).then(
-            ({ bytesRead, buffer }) => cb(null, bytesRead, buffer),
-            err => cb(err, 0, buf),
-          );
-        },
-  write:
-    fh.write === fileHandlePrototypeWrite
-      ? write
-      : function (
-          fd: number | null,
-          buffer: Buffer,
-          offset: number,
-          length: number,
-          position: number | undefined,
-          cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
-        ) {
-          return fh.write(buffer, offset, length, position).then(
-            ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer),
-            err => cb(err, 0, buffer),
-          );
-        },
-  writev: fh.writev === fileHandlePrototypeWritev ? writev : undefined,
-  fsync:
-    fh.sync === fileHandlePrototypeFsync
-      ? fsync
-      : function (fd: number, cb: ErrorCallback) {
-          return fh.sync().then(() => cb(), cb);
-        },
-  close: streamFileHandleClose.bind(fh),
-});
+// node:fs loads with the first stream over a FileHandle.
+function fileHandleStreamFs(fh: FileHandle) {
+  const { read, write, fsync, writev } = require("node:fs");
+  return {
+    // try to use the basic fs.read/write/fsync if available, since they are less
+    // abstractions. however, node.js allows patching the file handle, so this has
+    // to be checked for.
+    read:
+      fh.read === fileHandlePrototypeRead
+        ? read
+        : function (
+            fd: number | null,
+            buf: Buffer,
+            offset: number,
+            length: number,
+            pos: number | undefined,
+            cb: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
+          ) {
+            return fh.read(buf, offset, length, pos).then(
+              ({ bytesRead, buffer }) => cb(null, bytesRead, buffer),
+              err => cb(err, 0, buf),
+            );
+          },
+    write:
+      fh.write === fileHandlePrototypeWrite
+        ? write
+        : function (
+            fd: number | null,
+            buffer: Buffer,
+            offset: number,
+            length: number,
+            position: number | undefined,
+            cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
+          ) {
+            return fh.write(buffer, offset, length, position).then(
+              ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer),
+              err => cb(err, 0, buffer),
+            );
+          },
+    writev: fh.writev === fileHandlePrototypeWritev ? writev : undefined,
+    fsync:
+      fh.sync === fileHandlePrototypeFsync
+        ? fsync
+        : function (fd: number, cb: ErrorCallback) {
+            return fh.sync().then(() => cb(), cb);
+          },
+    close: streamFileHandleClose.bind(fh),
+  };
+}
 
 function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
   $assert(this[kFd] == fd, "fd mismatch");
@@ -270,9 +273,9 @@ function ReadStream(
 
   if (windowsHandle != null) {
     validateWindowsHandle(windowsHandle, fd, customFs);
-    this[kFs] = fs;
+    this[kFs] = require("node:fs");
   } else if (fd == null) {
-    this[kFs] = customFs || fs;
+    this[kFs] = customFs || require("node:fs");
     this.fd = null;
     this.path = getValidatedPath(path);
     const { flags, mode } = options;
@@ -292,7 +295,7 @@ function ReadStream(
       validateInt32(fd, "fd", 0, 2147483647);
     }
     this.fd = fd as number;
-    this[kFs] = customFs || fs;
+    this[kFs] = customFs || require("node:fs");
   } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
@@ -340,11 +343,27 @@ function ReadStream(
   // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
-  Readable.$call(this, options);
+  require("internal/streams/readable").$call(this, options);
   return this as unknown as void;
 }
-$toClass(ReadStream, "ReadStream", Readable);
+$toClass(ReadStream, "ReadStream");
 const readStreamPrototype = ReadStream.prototype;
+
+// The class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
+Object.defineProperty(ReadStream, "prototype", {
+  get() {
+    const Readable = require("internal/streams/readable");
+    Object.setPrototypeOf(readStreamPrototype, Readable.prototype);
+    Object.setPrototypeOf(ReadStream, Readable);
+    Object.defineProperty(ReadStream, "prototype", { value: readStreamPrototype, writable: true });
+    return readStreamPrototype;
+  },
+  set(value) {
+    Object.defineProperty(ReadStream, "prototype", { value, writable: true });
+  },
+  enumerable: false,
+  configurable: true,
+});
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
   get(this: $Node.ReadStream) {
@@ -525,9 +544,7 @@ function WriteStream(
   let { fd, autoClose, fs: customFs, start, flush, windowsHandle } = options;
   if (windowsHandle != null) {
     validateWindowsHandle(windowsHandle, fd, customFs);
-    this[kFs] = fs;
   } else if (fd == null) {
-    this[kFs] = customFs || fs;
     this.fd = null;
     // Internal $fastPath callers (writableFromFileSink) discard .path; do not
     // resolve it - path.resolve("") needs process.cwd(), which throws when
@@ -550,12 +567,11 @@ function WriteStream(
       validateInt32(fd, "fd", 0, 2147483647);
     }
     this.fd = fd as number;
-    this[kFs] = customFs || fs;
   } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
-    this[kFs] = customFs = fileHandleStreamFs(fd);
+    customFs = fileHandleStreamFs(fd);
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];
@@ -579,7 +595,6 @@ function WriteStream(
     if (!writev) this._writev = null!;
   } else {
     this._writev = undefined;
-    $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
   if (flush == null) {
@@ -610,6 +625,13 @@ function WriteStream(
     } catch {
       fastPath = false;
     }
+  }
+
+  // A stream that writes through a FileSink never calls node:fs, and process.stdout does not load it.
+  if (customFs) this[kFs] = customFs;
+  else if (!fastPath) {
+    this[kFs] = require("node:fs");
+    $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
   // Enable fast path

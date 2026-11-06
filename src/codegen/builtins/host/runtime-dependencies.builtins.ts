@@ -58,6 +58,10 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
   ...load,
   when: b.whenTestsReplaceBuiltins,
 }));
+// A standard output is a WriteStream, which writes through a FileSink and loads no node:fs. The input is a ReadStream, which reads through node:fs.
+const standardOutputModulesThatTestsCanWatch = standardStreamModulesThatTestsCanWatch.filter(
+  load => load.module !== "node:fs",
+);
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
   "node:child_process": channelModules,
@@ -75,14 +79,14 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
     },
   ],
   "process.openStdin": standardStreamModules,
-  "console._stderr": standardStreamModulesThatTestsCanWatch,
-  "console._stdout": standardStreamModulesThatTestsCanWatch,
-  "process.stderr": standardStreamModulesThatTestsCanWatch,
+  "console._stderr": standardOutputModulesThatTestsCanWatch,
+  "console._stdout": standardOutputModulesThatTestsCanWatch,
+  "process.stderr": standardOutputModulesThatTestsCanWatch,
   "process.stdin": [
     ...standardStreamModulesThatTestsCanWatch,
     ...standardStreamModules.map(load => ({ ...load, when: b.whenProgramStores("process.nextTick") })),
   ],
-  "process.stdout": standardStreamModulesThatTestsCanWatch,
+  "process.stdout": standardOutputModulesThatTestsCanWatch,
 };
 
 const bundlerPluginFunctions = functionsIn(

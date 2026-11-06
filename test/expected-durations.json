@@ -5828,7 +5828,7 @@
   "aot/parallel/library-modules/stream-members-replaced-by-not-function.js": {
     "default": 700
   },
-  "aot/parallel/library-modules/stream-operators-arrive-with-first-pipe.js": {
+  "aot/parallel/library-modules/stream-operators-come-with-the-readable-class.js": {
     "default": 700
   },
   "aot/parallel/library-modules/stream-proxy-traps.js": {

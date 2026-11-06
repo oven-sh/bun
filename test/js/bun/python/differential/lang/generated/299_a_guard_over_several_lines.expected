@@ -1,0 +1,2255 @@
+status: 0
+script: fd4e2b80956eae81
+source: 9e024ca06aea84b8
+---
+function | only | _ | one line | None None None None None None
+function | only | _ | or | None None None None None None
+function | only | _ | and | None None None None None None
+function | only | _ | below | None None None None None None
+function | only | _ | not | None None None None None None
+function | only | _ | conditional | None None None None None None
+function | only | _ | compare | None None None None None TypeError
+function | only | _ | call | None None None None None None
+function | only | _ | not or | None None None None None None
+function | only | _ | walrus | None None None None None None
+function | only | v | one line | None None None None None None
+function | only | v | or | None None None None None None
+function | only | v | and | None None None None None None
+function | only | v | below | None None None None None None
+function | only | v | not | None None None None None None
+function | only | v | conditional | None None None None None None
+function | only | v | compare | None None None None None TypeError
+function | only | v | call | None None None None None None
+function | only | v | not or | None None None None None None
+function | only | v | walrus | None None None None None None
+function | only | 1 | one line | None None None None None None
+function | only | 1 | or | None None None None None None
+function | only | 1 | and | None None None None None None
+function | only | 1 | below | None None None None None None
+function | only | 1 | not | None None None None None None
+function | only | 1 | conditional | None None None None None None
+function | only | 1 | compare | None None None None None None
+function | only | 1 | call | None None None None None None
+function | only | 1 | not or | None None None None None None
+function | only | 1 | walrus | None None None None None None
+function | only | [x] | one line | None None None None None None
+function | only | [x] | or | None None None None None None
+function | only | [x] | and | None None None None None None
+function | only | [x] | below | None None None None None None
+function | only | [x] | not | None None None None None None
+function | only | [x] | conditional | None None None None None None
+function | only | [x] | compare | None None None None None TypeError
+function | only | [x] | call | None None None None None None
+function | only | [x] | not or | None None None None None None
+function | only | [x] | walrus | None None None None None None
+function | only | two lines | one line | None None None None None None
+function | only | two lines | or | None None None None None None
+function | only | two lines | and | None None None None None None
+function | only | two lines | below | None None None None None None
+function | only | two lines | not | None None None None None None
+function | only | two lines | conditional | None None None None None None
+function | only | two lines | compare | None None None None None None
+function | only | two lines | call | None None None None None None
+function | only | two lines | not or | None None None None None None
+function | only | two lines | walrus | None None None None None None
+function | last of two | _ | one line | None None None None None None
+function | last of two | _ | or | None None None None None None
+function | last of two | _ | and | None None None None None None
+function | last of two | _ | below | None None None None None None
+function | last of two | _ | not | None None None None None None
+function | last of two | _ | conditional | None None None None None None
+function | last of two | _ | compare | None None None None None TypeError
+function | last of two | _ | call | None None None None None None
+function | last of two | _ | not or | None None None None None None
+function | last of two | _ | walrus | None None None None None None
+function | last of two | v | one line | None None None None None None
+function | last of two | v | or | None None None None None None
+function | last of two | v | and | None None None None None None
+function | last of two | v | below | None None None None None None
+function | last of two | v | not | None None None None None None
+function | last of two | v | conditional | None None None None None None
+function | last of two | v | compare | None None None None None TypeError
+function | last of two | v | call | None None None None None None
+function | last of two | v | not or | None None None None None None
+function | last of two | v | walrus | None None None None None None
+function | last of two | 1 | one line | None None None None None None
+function | last of two | 1 | or | None None None None None None
+function | last of two | 1 | and | None None None None None None
+function | last of two | 1 | below | None None None None None None
+function | last of two | 1 | not | None None None None None None
+function | last of two | 1 | conditional | None None None None None None
+function | last of two | 1 | compare | None None None None None None
+function | last of two | 1 | call | None None None None None None
+function | last of two | 1 | not or | None None None None None None
+function | last of two | 1 | walrus | None None None None None None
+function | last of two | [x] | one line | None None None None None None
+function | last of two | [x] | or | None None None None None None
+function | last of two | [x] | and | None None None None None None
+function | last of two | [x] | below | None None None None None None
+function | last of two | [x] | not | None None None None None None
+function | last of two | [x] | conditional | None None None None None None
+function | last of two | [x] | compare | None None None None None TypeError
+function | last of two | [x] | call | None None None None None None
+function | last of two | [x] | not or | None None None None None None
+function | last of two | [x] | walrus | None None None None None None
+function | last of two | two lines | one line | None None None None None None
+function | last of two | two lines | or | None None None None None None
+function | last of two | two lines | and | None None None None None None
+function | last of two | two lines | below | None None None None None None
+function | last of two | two lines | not | None None None None None None
+function | last of two | two lines | conditional | None None None None None None
+function | last of two | two lines | compare | None None None None None None
+function | last of two | two lines | call | None None None None None None
+function | last of two | two lines | not or | None None None None None None
+function | last of two | two lines | walrus | None None None None None None
+function | first of two | _ | one line | None None None None None None
+function | first of two | _ | or | None None None None None None
+function | first of two | _ | and | None None None None None None
+function | first of two | _ | below | None None None None None None
+function | first of two | _ | not | None None None None None None
+function | first of two | _ | conditional | None None None None None None
+function | first of two | _ | compare | None None None None None TypeError
+function | first of two | _ | call | None None None None None None
+function | first of two | _ | not or | None None None None None None
+function | first of two | _ | walrus | None None None None None None
+function | first of two | v | one line | None None None None None None
+function | first of two | v | or | None None None None None None
+function | first of two | v | and | None None None None None None
+function | first of two | v | below | None None None None None None
+function | first of two | v | not | None None None None None None
+function | first of two | v | conditional | None None None None None None
+function | first of two | v | compare | None None None None None TypeError
+function | first of two | v | call | None None None None None None
+function | first of two | v | not or | None None None None None None
+function | first of two | v | walrus | None None None None None None
+function | first of two | 1 | one line | None None None None None None
+function | first of two | 1 | or | None None None None None None
+function | first of two | 1 | and | None None None None None None
+function | first of two | 1 | below | None None None None None None
+function | first of two | 1 | not | None None None None None None
+function | first of two | 1 | conditional | None None None None None None
+function | first of two | 1 | compare | None None None None None None
+function | first of two | 1 | call | None None None None None None
+function | first of two | 1 | not or | None None None None None None
+function | first of two | 1 | walrus | None None None None None None
+function | first of two | [x] | one line | None None None None None None
+function | first of two | [x] | or | None None None None None None
+function | first of two | [x] | and | None None None None None None
+function | first of two | [x] | below | None None None None None None
+function | first of two | [x] | not | None None None None None None
+function | first of two | [x] | conditional | None None None None None None
+function | first of two | [x] | compare | None None None None None TypeError
+function | first of two | [x] | call | None None None None None None
+function | first of two | [x] | not or | None None None None None None
+function | first of two | [x] | walrus | None None None None None None
+function | first of two | two lines | one line | None None None None None None
+function | first of two | two lines | or | None None None None None None
+function | first of two | two lines | and | None None None None None None
+function | first of two | two lines | below | None None None None None None
+function | first of two | two lines | not | None None None None None None
+function | first of two | two lines | conditional | None None None None None None
+function | first of two | two lines | compare | None None None None None None
+function | first of two | two lines | call | None None None None None None
+function | first of two | two lines | not or | None None None None None None
+function | first of two | two lines | walrus | None None None None None None
+function | last of three | _ | one line | None None None None None None
+function | last of three | _ | or | None None None None None None
+function | last of three | _ | and | None None None None None None
+function | last of three | _ | below | None None None None None None
+function | last of three | _ | not | None None None None None None
+function | last of three | _ | conditional | None None None None None None
+function | last of three | _ | compare | None None None None None TypeError
+function | last of three | _ | call | None None None None None None
+function | last of three | _ | not or | None None None None None None
+function | last of three | _ | walrus | None None None None None None
+function | last of three | v | one line | None None None None None None
+function | last of three | v | or | None None None None None None
+function | last of three | v | and | None None None None None None
+function | last of three | v | below | None None None None None None
+function | last of three | v | not | None None None None None None
+function | last of three | v | conditional | None None None None None None
+function | last of three | v | compare | None None None None None TypeError
+function | last of three | v | call | None None None None None None
+function | last of three | v | not or | None None None None None None
+function | last of three | v | walrus | None None None None None None
+function | last of three | 1 | one line | None None None None None None
+function | last of three | 1 | or | None None None None None None
+function | last of three | 1 | and | None None None None None None
+function | last of three | 1 | below | None None None None None None
+function | last of three | 1 | not | None None None None None None
+function | last of three | 1 | conditional | None None None None None None
+function | last of three | 1 | compare | None None None None None None
+function | last of three | 1 | call | None None None None None None
+function | last of three | 1 | not or | None None None None None None
+function | last of three | 1 | walrus | None None None None None None
+function | last of three | [x] | one line | None None None None None None
+function | last of three | [x] | or | None None None None None None
+function | last of three | [x] | and | None None None None None None
+function | last of three | [x] | below | None None None None None None
+function | last of three | [x] | not | None None None None None None
+function | last of three | [x] | conditional | None None None None None None
+function | last of three | [x] | compare | None None None None None TypeError
+function | last of three | [x] | call | None None None None None None
+function | last of three | [x] | not or | None None None None None None
+function | last of three | [x] | walrus | None None None None None None
+function | last of three | two lines | one line | None None None None None None
+function | last of three | two lines | or | None None None None None None
+function | last of three | two lines | and | None None None None None None
+function | last of three | two lines | below | None None None None None None
+function | last of three | two lines | not | None None None None None None
+function | last of three | two lines | conditional | None None None None None None
+function | last of three | two lines | compare | None None None None None None
+function | last of three | two lines | call | None None None None None None
+function | last of three | two lines | not or | None None None None None None
+function | last of three | two lines | walrus | None None None None None None
+function | in front of default | _ | one line | None None None None None None
+function | in front of default | _ | or | None None None None None None
+function | in front of default | _ | and | None None None None None None
+function | in front of default | _ | below | None None None None None None
+function | in front of default | _ | not | None None None None None None
+function | in front of default | _ | conditional | None None None None None None
+function | in front of default | _ | compare | None None None None None TypeError
+function | in front of default | _ | call | None None None None None None
+function | in front of default | _ | not or | None None None None None None
+function | in front of default | _ | walrus | None None None None None None
+function | in front of default | v | one line | None None None None None None
+function | in front of default | v | or | None None None None None None
+function | in front of default | v | and | None None None None None None
+function | in front of default | v | below | None None None None None None
+function | in front of default | v | not | None None None None None None
+function | in front of default | v | conditional | None None None None None None
+function | in front of default | v | compare | None None None None None TypeError
+function | in front of default | v | call | None None None None None None
+function | in front of default | v | not or | None None None None None None
+function | in front of default | v | walrus | None None None None None None
+function | in front of default | 1 | one line | None None None None None None
+function | in front of default | 1 | or | None None None None None None
+function | in front of default | 1 | and | None None None None None None
+function | in front of default | 1 | below | None None None None None None
+function | in front of default | 1 | not | None None None None None None
+function | in front of default | 1 | conditional | None None None None None None
+function | in front of default | 1 | compare | None None None None None None
+function | in front of default | 1 | call | None None None None None None
+function | in front of default | 1 | not or | None None None None None None
+function | in front of default | 1 | walrus | None None None None None None
+function | in front of default | [x] | one line | None None None None None None
+function | in front of default | [x] | or | None None None None None None
+function | in front of default | [x] | and | None None None None None None
+function | in front of default | [x] | below | None None None None None None
+function | in front of default | [x] | not | None None None None None None
+function | in front of default | [x] | conditional | None None None None None None
+function | in front of default | [x] | compare | None None None None None TypeError
+function | in front of default | [x] | call | None None None None None None
+function | in front of default | [x] | not or | None None None None None None
+function | in front of default | [x] | walrus | None None None None None None
+function | in front of default | two lines | one line | None None None None None None
+function | in front of default | two lines | or | None None None None None None
+function | in front of default | two lines | and | None None None None None None
+function | in front of default | two lines | below | None None None None None None
+function | in front of default | two lines | not | None None None None None None
+function | in front of default | two lines | conditional | None None None None None None
+function | in front of default | two lines | compare | None None None None None None
+function | in front of default | two lines | call | None None None None None None
+function | in front of default | two lines | not or | None None None None None None
+function | in front of default | two lines | walrus | None None None None None None
+return | only | _ | one line | 0 2 0 0 2 2
+return | only | _ | or | 0 2 2 2 2 2
+return | only | _ | and | 0 0 0 0 2 2
+return | only | _ | below | 0 2 0 0 2 2
+return | only | _ | not | 2 0 2 2 0 0
+return | only | _ | conditional | 0 0 0 2 2 2
+return | only | _ | compare | 0 0 0 0 0 TypeError
+return | only | _ | call | 0 2 0 0 2 2
+return | only | _ | not or | 2 0 0 0 0 0
+return | only | _ | walrus | 0 2 2 2 2 2
+return | only | v | one line | 0 2 0 0 2 2
+return | only | v | or | 0 2 2 2 2 2
+return | only | v | and | 0 0 0 0 2 2
+return | only | v | below | 0 2 0 0 2 2
+return | only | v | not | 2 0 2 2 0 0
+return | only | v | conditional | 0 0 0 2 2 2
+return | only | v | compare | 0 0 0 0 0 TypeError
+return | only | v | call | 0 2 0 0 2 2
+return | only | v | not or | 2 0 0 0 0 0
+return | only | v | walrus | 0 2 2 2 2 2
+return | only | 1 | one line | 0 0 0 0 0 0
+return | only | 1 | or | 0 0 2 0 0 0
+return | only | 1 | and | 0 0 0 0 0 0
+return | only | 1 | below | 0 0 0 0 0 0
+return | only | 1 | not | 0 0 2 0 0 0
+return | only | 1 | conditional | 0 0 0 0 0 0
+return | only | 1 | compare | 0 0 0 0 0 0
+return | only | 1 | call | 0 0 0 0 0 0
+return | only | 1 | not or | 0 0 0 0 0 0
+return | only | 1 | walrus | 0 0 2 0 0 0
+return | only | [x] | one line | 0 0 0 0 0 2
+return | only | [x] | or | 0 0 0 0 0 2
+return | only | [x] | and | 0 0 0 0 0 2
+return | only | [x] | below | 0 0 0 0 0 2
+return | only | [x] | not | 0 0 0 0 0 3
+return | only | [x] | conditional | 0 0 0 0 0 2
+return | only | [x] | compare | 0 0 0 0 0 TypeError
+return | only | [x] | call | 0 0 0 0 0 2
+return | only | [x] | not or | 0 0 0 0 0 3
+return | only | [x] | walrus | 0 0 0 0 0 2
+return | only | two lines | one line | 0 2 0 0 0 0
+return | only | two lines | or | 0 2 2 0 0 0
+return | only | two lines | and | 0 0 0 0 0 0
+return | only | two lines | below | 0 2 0 0 0 0
+return | only | two lines | not | 2 0 2 0 0 0
+return | only | two lines | conditional | 0 0 0 0 0 0
+return | only | two lines | compare | 0 0 0 0 0 0
+return | only | two lines | call | 0 2 0 0 0 0
+return | only | two lines | not or | 2 0 0 0 0 0
+return | only | two lines | walrus | 0 2 2 0 0 0
+return | last of two | _ | one line | 0 2 0 0 7 2
+return | last of two | _ | or | 0 2 2 2 7 2
+return | last of two | _ | and | 0 0 0 0 7 2
+return | last of two | _ | below | 0 2 0 0 7 2
+return | last of two | _ | not | 2 0 2 2 7 0
+return | last of two | _ | conditional | 0 0 0 2 7 2
+return | last of two | _ | compare | 0 0 0 0 7 TypeError
+return | last of two | _ | call | 0 2 0 0 7 2
+return | last of two | _ | not or | 2 0 0 0 7 0
+return | last of two | _ | walrus | 0 2 2 2 7 2
+return | last of two | v | one line | 0 2 0 0 7 2
+return | last of two | v | or | 0 2 2 2 7 2
+return | last of two | v | and | 0 0 0 0 7 2
+return | last of two | v | below | 0 2 0 0 7 2
+return | last of two | v | not | 2 0 2 2 7 0
+return | last of two | v | conditional | 0 0 0 2 7 2
+return | last of two | v | compare | 0 0 0 0 7 TypeError
+return | last of two | v | call | 0 2 0 0 7 2
+return | last of two | v | not or | 2 0 0 0 7 0
+return | last of two | v | walrus | 0 2 2 2 7 2
+return | last of two | 1 | one line | 0 0 0 0 7 0
+return | last of two | 1 | or | 0 0 2 0 7 0
+return | last of two | 1 | and | 0 0 0 0 7 0
+return | last of two | 1 | below | 0 0 0 0 7 0
+return | last of two | 1 | not | 0 0 2 0 7 0
+return | last of two | 1 | conditional | 0 0 0 0 7 0
+return | last of two | 1 | compare | 0 0 0 0 7 0
+return | last of two | 1 | call | 0 0 0 0 7 0
+return | last of two | 1 | not or | 0 0 0 0 7 0
+return | last of two | 1 | walrus | 0 0 2 0 7 0
+return | last of two | [x] | one line | 0 0 0 0 7 2
+return | last of two | [x] | or | 0 0 0 0 7 2
+return | last of two | [x] | and | 0 0 0 0 7 2
+return | last of two | [x] | below | 0 0 0 0 7 2
+return | last of two | [x] | not | 0 0 0 0 7 3
+return | last of two | [x] | conditional | 0 0 0 0 7 2
+return | last of two | [x] | compare | 0 0 0 0 7 TypeError
+return | last of two | [x] | call | 0 0 0 0 7 2
+return | last of two | [x] | not or | 0 0 0 0 7 3
+return | last of two | [x] | walrus | 0 0 0 0 7 2
+return | last of two | two lines | one line | 0 2 0 0 7 0
+return | last of two | two lines | or | 0 2 2 0 7 0
+return | last of two | two lines | and | 0 0 0 0 7 0
+return | last of two | two lines | below | 0 2 0 0 7 0
+return | last of two | two lines | not | 2 0 2 0 7 0
+return | last of two | two lines | conditional | 0 0 0 0 7 0
+return | last of two | two lines | compare | 0 0 0 0 7 0
+return | last of two | two lines | call | 0 2 0 0 7 0
+return | last of two | two lines | not or | 2 0 0 0 7 0
+return | last of two | two lines | walrus | 0 2 2 0 7 0
+return | first of two | _ | one line | 0 2 0 0 2 2
+return | first of two | _ | or | 0 2 2 2 2 2
+return | first of two | _ | and | 0 0 0 0 2 2
+return | first of two | _ | below | 0 2 0 0 2 2
+return | first of two | _ | not | 2 0 2 2 7 0
+return | first of two | _ | conditional | 0 0 0 2 2 2
+return | first of two | _ | compare | 0 0 0 0 7 TypeError
+return | first of two | _ | call | 0 2 0 0 2 2
+return | first of two | _ | not or | 2 0 0 0 7 0
+return | first of two | _ | walrus | 0 2 2 2 2 2
+return | first of two | v | one line | 0 2 0 0 2 2
+return | first of two | v | or | 0 2 2 2 2 2
+return | first of two | v | and | 0 0 0 0 2 2
+return | first of two | v | below | 0 2 0 0 2 2
+return | first of two | v | not | 2 0 2 2 7 0
+return | first of two | v | conditional | 0 0 0 2 2 2
+return | first of two | v | compare | 0 0 0 0 7 TypeError
+return | first of two | v | call | 0 2 0 0 2 2
+return | first of two | v | not or | 2 0 0 0 7 0
+return | first of two | v | walrus | 0 2 2 2 2 2
+return | first of two | 1 | one line | 0 0 0 0 7 0
+return | first of two | 1 | or | 0 0 2 0 7 0
+return | first of two | 1 | and | 0 0 0 0 7 0
+return | first of two | 1 | below | 0 0 0 0 7 0
+return | first of two | 1 | not | 0 0 2 0 7 0
+return | first of two | 1 | conditional | 0 0 0 0 7 0
+return | first of two | 1 | compare | 0 0 0 0 7 0
+return | first of two | 1 | call | 0 0 0 0 7 0
+return | first of two | 1 | not or | 0 0 0 0 7 0
+return | first of two | 1 | walrus | 0 0 2 0 7 0
+return | first of two | [x] | one line | 0 0 0 0 7 2
+return | first of two | [x] | or | 0 0 0 0 7 2
+return | first of two | [x] | and | 0 0 0 0 7 2
+return | first of two | [x] | below | 0 0 0 0 7 2
+return | first of two | [x] | not | 0 0 0 0 7 3
+return | first of two | [x] | conditional | 0 0 0 0 7 2
+return | first of two | [x] | compare | 0 0 0 0 7 TypeError
+return | first of two | [x] | call | 0 0 0 0 7 2
+return | first of two | [x] | not or | 0 0 0 0 7 3
+return | first of two | [x] | walrus | 0 0 0 0 7 2
+return | first of two | two lines | one line | 0 2 0 0 7 0
+return | first of two | two lines | or | 0 2 2 0 7 0
+return | first of two | two lines | and | 0 0 0 0 7 0
+return | first of two | two lines | below | 0 2 0 0 7 0
+return | first of two | two lines | not | 2 0 2 0 7 0
+return | first of two | two lines | conditional | 0 0 0 0 7 0
+return | first of two | two lines | compare | 0 0 0 0 7 0
+return | first of two | two lines | call | 0 2 0 0 7 0
+return | first of two | two lines | not or | 2 0 0 0 7 0
+return | first of two | two lines | walrus | 0 2 2 0 7 0
+return | last of three | _ | one line | 0 2 0 0 7 2
+return | last of three | _ | or | 0 2 2 2 7 2
+return | last of three | _ | and | 0 0 0 0 7 2
+return | last of three | _ | below | 0 2 0 0 7 2
+return | last of three | _ | not | 2 0 2 2 7 0
+return | last of three | _ | conditional | 0 0 0 2 7 2
+return | last of three | _ | compare | 0 0 0 0 7 TypeError
+return | last of three | _ | call | 0 2 0 0 7 2
+return | last of three | _ | not or | 2 0 0 0 7 0
+return | last of three | _ | walrus | 0 2 2 2 7 2
+return | last of three | v | one line | 0 2 0 0 7 2
+return | last of three | v | or | 0 2 2 2 7 2
+return | last of three | v | and | 0 0 0 0 7 2
+return | last of three | v | below | 0 2 0 0 7 2
+return | last of three | v | not | 2 0 2 2 7 0
+return | last of three | v | conditional | 0 0 0 2 7 2
+return | last of three | v | compare | 0 0 0 0 7 TypeError
+return | last of three | v | call | 0 2 0 0 7 2
+return | last of three | v | not or | 2 0 0 0 7 0
+return | last of three | v | walrus | 0 2 2 2 7 2
+return | last of three | 1 | one line | 0 0 0 0 7 0
+return | last of three | 1 | or | 0 0 2 0 7 0
+return | last of three | 1 | and | 0 0 0 0 7 0
+return | last of three | 1 | below | 0 0 0 0 7 0
+return | last of three | 1 | not | 0 0 2 0 7 0
+return | last of three | 1 | conditional | 0 0 0 0 7 0
+return | last of three | 1 | compare | 0 0 0 0 7 0
+return | last of three | 1 | call | 0 0 0 0 7 0
+return | last of three | 1 | not or | 0 0 0 0 7 0
+return | last of three | 1 | walrus | 0 0 2 0 7 0
+return | last of three | [x] | one line | 0 0 0 0 7 2
+return | last of three | [x] | or | 0 0 0 0 7 2
+return | last of three | [x] | and | 0 0 0 0 7 2
+return | last of three | [x] | below | 0 0 0 0 7 2
+return | last of three | [x] | not | 0 0 0 0 7 3
+return | last of three | [x] | conditional | 0 0 0 0 7 2
+return | last of three | [x] | compare | 0 0 0 0 7 TypeError
+return | last of three | [x] | call | 0 0 0 0 7 2
+return | last of three | [x] | not or | 0 0 0 0 7 3
+return | last of three | [x] | walrus | 0 0 0 0 7 2
+return | last of three | two lines | one line | 0 2 0 0 7 0
+return | last of three | two lines | or | 0 2 2 0 7 0
+return | last of three | two lines | and | 0 0 0 0 7 0
+return | last of three | two lines | below | 0 2 0 0 7 0
+return | last of three | two lines | not | 2 0 2 0 7 0
+return | last of three | two lines | conditional | 0 0 0 0 7 0
+return | last of three | two lines | compare | 0 0 0 0 7 0
+return | last of three | two lines | call | 0 2 0 0 7 0
+return | last of three | two lines | not or | 2 0 0 0 7 0
+return | last of three | two lines | walrus | 0 2 2 0 7 0
+return | in front of default | _ | one line | 9 2 9 9 2 2
+return | in front of default | _ | or | 9 2 2 2 2 2
+return | in front of default | _ | and | 9 9 9 9 2 2
+return | in front of default | _ | below | 9 2 9 9 2 2
+return | in front of default | _ | not | 2 9 2 2 9 9
+return | in front of default | _ | conditional | 9 9 9 2 2 2
+return | in front of default | _ | compare | 9 9 9 9 9 TypeError
+return | in front of default | _ | call | 9 2 9 9 2 2
+return | in front of default | _ | not or | 2 9 9 9 9 9
+return | in front of default | _ | walrus | 9 2 2 2 2 2
+return | in front of default | v | one line | 9 2 9 9 2 2
+return | in front of default | v | or | 9 2 2 2 2 2
+return | in front of default | v | and | 9 9 9 9 2 2
+return | in front of default | v | below | 9 2 9 9 2 2
+return | in front of default | v | not | 2 9 2 2 9 9
+return | in front of default | v | conditional | 9 9 9 2 2 2
+return | in front of default | v | compare | 9 9 9 9 9 TypeError
+return | in front of default | v | call | 9 2 9 9 2 2
+return | in front of default | v | not or | 2 9 9 9 9 9
+return | in front of default | v | walrus | 9 2 2 2 2 2
+return | in front of default | 1 | one line | 9 9 9 9 9 9
+return | in front of default | 1 | or | 9 9 2 9 9 9
+return | in front of default | 1 | and | 9 9 9 9 9 9
+return | in front of default | 1 | below | 9 9 9 9 9 9
+return | in front of default | 1 | not | 9 9 2 9 9 9
+return | in front of default | 1 | conditional | 9 9 9 9 9 9
+return | in front of default | 1 | compare | 9 9 9 9 9 9
+return | in front of default | 1 | call | 9 9 9 9 9 9
+return | in front of default | 1 | not or | 9 9 9 9 9 9
+return | in front of default | 1 | walrus | 9 9 2 9 9 9
+return | in front of default | [x] | one line | 9 9 9 9 9 2
+return | in front of default | [x] | or | 9 9 9 9 9 2
+return | in front of default | [x] | and | 9 9 9 9 9 2
+return | in front of default | [x] | below | 9 9 9 9 9 2
+return | in front of default | [x] | not | 9 9 9 9 9 9
+return | in front of default | [x] | conditional | 9 9 9 9 9 2
+return | in front of default | [x] | compare | 9 9 9 9 9 TypeError
+return | in front of default | [x] | call | 9 9 9 9 9 2
+return | in front of default | [x] | not or | 9 9 9 9 9 9
+return | in front of default | [x] | walrus | 9 9 9 9 9 2
+return | in front of default | two lines | one line | 9 2 9 9 9 9
+return | in front of default | two lines | or | 9 2 2 9 9 9
+return | in front of default | two lines | and | 9 9 9 9 9 9
+return | in front of default | two lines | below | 9 2 9 9 9 9
+return | in front of default | two lines | not | 2 9 2 9 9 9
+return | in front of default | two lines | conditional | 9 9 9 9 9 9
+return | in front of default | two lines | compare | 9 9 9 9 9 9
+return | in front of default | two lines | call | 9 2 9 9 9 9
+return | in front of default | two lines | not or | 2 9 9 9 9 9
+return | in front of default | two lines | walrus | 9 2 2 9 9 9
+arm | only | _ | one line | 0 2 0 0 2 2
+arm | only | _ | or | 0 2 2 2 2 2
+arm | only | _ | and | 0 0 0 0 2 2
+arm | only | _ | below | 0 2 0 0 2 2
+arm | only | _ | not | 2 0 2 2 0 0
+arm | only | _ | conditional | 0 0 0 2 2 2
+arm | only | _ | compare | 0 0 0 0 0 TypeError
+arm | only | _ | call | 0 2 0 0 2 2
+arm | only | _ | not or | 2 0 0 0 0 0
+arm | only | _ | walrus | 0 2 2 2 2 2
+arm | only | v | one line | 0 2 0 0 2 2
+arm | only | v | or | 0 2 2 2 2 2
+arm | only | v | and | 0 0 0 0 2 2
+arm | only | v | below | 0 2 0 0 2 2
+arm | only | v | not | 2 0 2 2 0 0
+arm | only | v | conditional | 0 0 0 2 2 2
+arm | only | v | compare | 0 0 0 0 0 TypeError
+arm | only | v | call | 0 2 0 0 2 2
+arm | only | v | not or | 2 0 0 0 0 0
+arm | only | v | walrus | 0 2 2 2 2 2
+arm | only | 1 | one line | 0 0 0 0 0 0
+arm | only | 1 | or | 0 0 2 0 0 0
+arm | only | 1 | and | 0 0 0 0 0 0
+arm | only | 1 | below | 0 0 0 0 0 0
+arm | only | 1 | not | 0 0 2 0 0 0
+arm | only | 1 | conditional | 0 0 0 0 0 0
+arm | only | 1 | compare | 0 0 0 0 0 0
+arm | only | 1 | call | 0 0 0 0 0 0
+arm | only | 1 | not or | 0 0 0 0 0 0
+arm | only | 1 | walrus | 0 0 2 0 0 0
+arm | only | [x] | one line | 0 0 0 0 0 2
+arm | only | [x] | or | 0 0 0 0 0 2
+arm | only | [x] | and | 0 0 0 0 0 2
+arm | only | [x] | below | 0 0 0 0 0 2
+arm | only | [x] | not | 0 0 0 0 0 3
+arm | only | [x] | conditional | 0 0 0 0 0 2
+arm | only | [x] | compare | 0 0 0 0 0 TypeError
+arm | only | [x] | call | 0 0 0 0 0 2
+arm | only | [x] | not or | 0 0 0 0 0 3
+arm | only | [x] | walrus | 0 0 0 0 0 2
+arm | only | two lines | one line | 0 2 0 0 0 0
+arm | only | two lines | or | 0 2 2 0 0 0
+arm | only | two lines | and | 0 0 0 0 0 0
+arm | only | two lines | below | 0 2 0 0 0 0
+arm | only | two lines | not | 2 0 2 0 0 0
+arm | only | two lines | conditional | 0 0 0 0 0 0
+arm | only | two lines | compare | 0 0 0 0 0 0
+arm | only | two lines | call | 0 2 0 0 0 0
+arm | only | two lines | not or | 2 0 0 0 0 0
+arm | only | two lines | walrus | 0 2 2 0 0 0
+arm | last of two | _ | one line | 0 2 0 0 7 2
+arm | last of two | _ | or | 0 2 2 2 7 2
+arm | last of two | _ | and | 0 0 0 0 7 2
+arm | last of two | _ | below | 0 2 0 0 7 2
+arm | last of two | _ | not | 2 0 2 2 7 0
+arm | last of two | _ | conditional | 0 0 0 2 7 2
+arm | last of two | _ | compare | 0 0 0 0 7 TypeError
+arm | last of two | _ | call | 0 2 0 0 7 2
+arm | last of two | _ | not or | 2 0 0 0 7 0
+arm | last of two | _ | walrus | 0 2 2 2 7 2
+arm | last of two | v | one line | 0 2 0 0 7 2
+arm | last of two | v | or | 0 2 2 2 7 2
+arm | last of two | v | and | 0 0 0 0 7 2
+arm | last of two | v | below | 0 2 0 0 7 2
+arm | last of two | v | not | 2 0 2 2 7 0
+arm | last of two | v | conditional | 0 0 0 2 7 2
+arm | last of two | v | compare | 0 0 0 0 7 TypeError
+arm | last of two | v | call | 0 2 0 0 7 2
+arm | last of two | v | not or | 2 0 0 0 7 0
+arm | last of two | v | walrus | 0 2 2 2 7 2
+arm | last of two | 1 | one line | 0 0 0 0 7 0
+arm | last of two | 1 | or | 0 0 2 0 7 0
+arm | last of two | 1 | and | 0 0 0 0 7 0
+arm | last of two | 1 | below | 0 0 0 0 7 0
+arm | last of two | 1 | not | 0 0 2 0 7 0
+arm | last of two | 1 | conditional | 0 0 0 0 7 0
+arm | last of two | 1 | compare | 0 0 0 0 7 0
+arm | last of two | 1 | call | 0 0 0 0 7 0
+arm | last of two | 1 | not or | 0 0 0 0 7 0
+arm | last of two | 1 | walrus | 0 0 2 0 7 0
+arm | last of two | [x] | one line | 0 0 0 0 7 2
+arm | last of two | [x] | or | 0 0 0 0 7 2
+arm | last of two | [x] | and | 0 0 0 0 7 2
+arm | last of two | [x] | below | 0 0 0 0 7 2
+arm | last of two | [x] | not | 0 0 0 0 7 3
+arm | last of two | [x] | conditional | 0 0 0 0 7 2
+arm | last of two | [x] | compare | 0 0 0 0 7 TypeError
+arm | last of two | [x] | call | 0 0 0 0 7 2
+arm | last of two | [x] | not or | 0 0 0 0 7 3
+arm | last of two | [x] | walrus | 0 0 0 0 7 2
+arm | last of two | two lines | one line | 0 2 0 0 7 0
+arm | last of two | two lines | or | 0 2 2 0 7 0
+arm | last of two | two lines | and | 0 0 0 0 7 0
+arm | last of two | two lines | below | 0 2 0 0 7 0
+arm | last of two | two lines | not | 2 0 2 0 7 0
+arm | last of two | two lines | conditional | 0 0 0 0 7 0
+arm | last of two | two lines | compare | 0 0 0 0 7 0
+arm | last of two | two lines | call | 0 2 0 0 7 0
+arm | last of two | two lines | not or | 2 0 0 0 7 0
+arm | last of two | two lines | walrus | 0 2 2 0 7 0
+arm | first of two | _ | one line | 0 2 0 0 2 2
+arm | first of two | _ | or | 0 2 2 2 2 2
+arm | first of two | _ | and | 0 0 0 0 2 2
+arm | first of two | _ | below | 0 2 0 0 2 2
+arm | first of two | _ | not | 2 0 2 2 7 0
+arm | first of two | _ | conditional | 0 0 0 2 2 2
+arm | first of two | _ | compare | 0 0 0 0 7 TypeError
+arm | first of two | _ | call | 0 2 0 0 2 2
+arm | first of two | _ | not or | 2 0 0 0 7 0
+arm | first of two | _ | walrus | 0 2 2 2 2 2
+arm | first of two | v | one line | 0 2 0 0 2 2
+arm | first of two | v | or | 0 2 2 2 2 2
+arm | first of two | v | and | 0 0 0 0 2 2
+arm | first of two | v | below | 0 2 0 0 2 2
+arm | first of two | v | not | 2 0 2 2 7 0
+arm | first of two | v | conditional | 0 0 0 2 2 2
+arm | first of two | v | compare | 0 0 0 0 7 TypeError
+arm | first of two | v | call | 0 2 0 0 2 2
+arm | first of two | v | not or | 2 0 0 0 7 0
+arm | first of two | v | walrus | 0 2 2 2 2 2
+arm | first of two | 1 | one line | 0 0 0 0 7 0
+arm | first of two | 1 | or | 0 0 2 0 7 0
+arm | first of two | 1 | and | 0 0 0 0 7 0
+arm | first of two | 1 | below | 0 0 0 0 7 0
+arm | first of two | 1 | not | 0 0 2 0 7 0
+arm | first of two | 1 | conditional | 0 0 0 0 7 0
+arm | first of two | 1 | compare | 0 0 0 0 7 0
+arm | first of two | 1 | call | 0 0 0 0 7 0
+arm | first of two | 1 | not or | 0 0 0 0 7 0
+arm | first of two | 1 | walrus | 0 0 2 0 7 0
+arm | first of two | [x] | one line | 0 0 0 0 7 2
+arm | first of two | [x] | or | 0 0 0 0 7 2
+arm | first of two | [x] | and | 0 0 0 0 7 2
+arm | first of two | [x] | below | 0 0 0 0 7 2
+arm | first of two | [x] | not | 0 0 0 0 7 3
+arm | first of two | [x] | conditional | 0 0 0 0 7 2
+arm | first of two | [x] | compare | 0 0 0 0 7 TypeError
+arm | first of two | [x] | call | 0 0 0 0 7 2
+arm | first of two | [x] | not or | 0 0 0 0 7 3
+arm | first of two | [x] | walrus | 0 0 0 0 7 2
+arm | first of two | two lines | one line | 0 2 0 0 7 0
+arm | first of two | two lines | or | 0 2 2 0 7 0
+arm | first of two | two lines | and | 0 0 0 0 7 0
+arm | first of two | two lines | below | 0 2 0 0 7 0
+arm | first of two | two lines | not | 2 0 2 0 7 0
+arm | first of two | two lines | conditional | 0 0 0 0 7 0
+arm | first of two | two lines | compare | 0 0 0 0 7 0
+arm | first of two | two lines | call | 0 2 0 0 7 0
+arm | first of two | two lines | not or | 2 0 0 0 7 0
+arm | first of two | two lines | walrus | 0 2 2 0 7 0
+arm | last of three | _ | one line | 0 2 0 0 7 2
+arm | last of three | _ | or | 0 2 2 2 7 2
+arm | last of three | _ | and | 0 0 0 0 7 2
+arm | last of three | _ | below | 0 2 0 0 7 2
+arm | last of three | _ | not | 2 0 2 2 7 0
+arm | last of three | _ | conditional | 0 0 0 2 7 2
+arm | last of three | _ | compare | 0 0 0 0 7 TypeError
+arm | last of three | _ | call | 0 2 0 0 7 2
+arm | last of three | _ | not or | 2 0 0 0 7 0
+arm | last of three | _ | walrus | 0 2 2 2 7 2
+arm | last of three | v | one line | 0 2 0 0 7 2
+arm | last of three | v | or | 0 2 2 2 7 2
+arm | last of three | v | and | 0 0 0 0 7 2
+arm | last of three | v | below | 0 2 0 0 7 2
+arm | last of three | v | not | 2 0 2 2 7 0
+arm | last of three | v | conditional | 0 0 0 2 7 2
+arm | last of three | v | compare | 0 0 0 0 7 TypeError
+arm | last of three | v | call | 0 2 0 0 7 2
+arm | last of three | v | not or | 2 0 0 0 7 0
+arm | last of three | v | walrus | 0 2 2 2 7 2
+arm | last of three | 1 | one line | 0 0 0 0 7 0
+arm | last of three | 1 | or | 0 0 2 0 7 0
+arm | last of three | 1 | and | 0 0 0 0 7 0
+arm | last of three | 1 | below | 0 0 0 0 7 0
+arm | last of three | 1 | not | 0 0 2 0 7 0
+arm | last of three | 1 | conditional | 0 0 0 0 7 0
+arm | last of three | 1 | compare | 0 0 0 0 7 0
+arm | last of three | 1 | call | 0 0 0 0 7 0
+arm | last of three | 1 | not or | 0 0 0 0 7 0
+arm | last of three | 1 | walrus | 0 0 2 0 7 0
+arm | last of three | [x] | one line | 0 0 0 0 7 2
+arm | last of three | [x] | or | 0 0 0 0 7 2
+arm | last of three | [x] | and | 0 0 0 0 7 2
+arm | last of three | [x] | below | 0 0 0 0 7 2
+arm | last of three | [x] | not | 0 0 0 0 7 3
+arm | last of three | [x] | conditional | 0 0 0 0 7 2
+arm | last of three | [x] | compare | 0 0 0 0 7 TypeError
+arm | last of three | [x] | call | 0 0 0 0 7 2
+arm | last of three | [x] | not or | 0 0 0 0 7 3
+arm | last of three | [x] | walrus | 0 0 0 0 7 2
+arm | last of three | two lines | one line | 0 2 0 0 7 0
+arm | last of three | two lines | or | 0 2 2 0 7 0
+arm | last of three | two lines | and | 0 0 0 0 7 0
+arm | last of three | two lines | below | 0 2 0 0 7 0
+arm | last of three | two lines | not | 2 0 2 0 7 0
+arm | last of three | two lines | conditional | 0 0 0 0 7 0
+arm | last of three | two lines | compare | 0 0 0 0 7 0
+arm | last of three | two lines | call | 0 2 0 0 7 0
+arm | last of three | two lines | not or | 2 0 0 0 7 0
+arm | last of three | two lines | walrus | 0 2 2 0 7 0
+arm | in front of default | _ | one line | 9 2 9 9 2 2
+arm | in front of default | _ | or | 9 2 2 2 2 2
+arm | in front of default | _ | and | 9 9 9 9 2 2
+arm | in front of default | _ | below | 9 2 9 9 2 2
+arm | in front of default | _ | not | 2 9 2 2 9 9
+arm | in front of default | _ | conditional | 9 9 9 2 2 2
+arm | in front of default | _ | compare | 9 9 9 9 9 TypeError
+arm | in front of default | _ | call | 9 2 9 9 2 2
+arm | in front of default | _ | not or | 2 9 9 9 9 9
+arm | in front of default | _ | walrus | 9 2 2 2 2 2
+arm | in front of default | v | one line | 9 2 9 9 2 2
+arm | in front of default | v | or | 9 2 2 2 2 2
+arm | in front of default | v | and | 9 9 9 9 2 2
+arm | in front of default | v | below | 9 2 9 9 2 2
+arm | in front of default | v | not | 2 9 2 2 9 9
+arm | in front of default | v | conditional | 9 9 9 2 2 2
+arm | in front of default | v | compare | 9 9 9 9 9 TypeError
+arm | in front of default | v | call | 9 2 9 9 2 2
+arm | in front of default | v | not or | 2 9 9 9 9 9
+arm | in front of default | v | walrus | 9 2 2 2 2 2
+arm | in front of default | 1 | one line | 9 9 9 9 9 9
+arm | in front of default | 1 | or | 9 9 2 9 9 9
+arm | in front of default | 1 | and | 9 9 9 9 9 9
+arm | in front of default | 1 | below | 9 9 9 9 9 9
+arm | in front of default | 1 | not | 9 9 2 9 9 9
+arm | in front of default | 1 | conditional | 9 9 9 9 9 9
+arm | in front of default | 1 | compare | 9 9 9 9 9 9
+arm | in front of default | 1 | call | 9 9 9 9 9 9
+arm | in front of default | 1 | not or | 9 9 9 9 9 9
+arm | in front of default | 1 | walrus | 9 9 2 9 9 9
+arm | in front of default | [x] | one line | 9 9 9 9 9 2
+arm | in front of default | [x] | or | 9 9 9 9 9 2
+arm | in front of default | [x] | and | 9 9 9 9 9 2
+arm | in front of default | [x] | below | 9 9 9 9 9 2
+arm | in front of default | [x] | not | 9 9 9 9 9 9
+arm | in front of default | [x] | conditional | 9 9 9 9 9 2
+arm | in front of default | [x] | compare | 9 9 9 9 9 TypeError
+arm | in front of default | [x] | call | 9 9 9 9 9 2
+arm | in front of default | [x] | not or | 9 9 9 9 9 9
+arm | in front of default | [x] | walrus | 9 9 9 9 9 2
+arm | in front of default | two lines | one line | 9 2 9 9 9 9
+arm | in front of default | two lines | or | 9 2 2 9 9 9
+arm | in front of default | two lines | and | 9 9 9 9 9 9
+arm | in front of default | two lines | below | 9 2 9 9 9 9
+arm | in front of default | two lines | not | 2 9 2 9 9 9
+arm | in front of default | two lines | conditional | 9 9 9 9 9 9
+arm | in front of default | two lines | compare | 9 9 9 9 9 9
+arm | in front of default | two lines | call | 9 2 9 9 9 9
+arm | in front of default | two lines | not or | 2 9 9 9 9 9
+arm | in front of default | two lines | walrus | 9 2 2 9 9 9
+arm, nothing behind | only | _ | one line | None None None None None None
+arm, nothing behind | only | _ | or | None None None None None None
+arm, nothing behind | only | _ | and | None None None None None None
+arm, nothing behind | only | _ | below | None None None None None None
+arm, nothing behind | only | _ | not | None None None None None None
+arm, nothing behind | only | _ | conditional | None None None None None None
+arm, nothing behind | only | _ | compare | None None None None None TypeError
+arm, nothing behind | only | _ | call | None None None None None None
+arm, nothing behind | only | _ | not or | None None None None None None
+arm, nothing behind | only | _ | walrus | None None None None None None
+arm, nothing behind | only | v | one line | None None None None None None
+arm, nothing behind | only | v | or | None None None None None None
+arm, nothing behind | only | v | and | None None None None None None
+arm, nothing behind | only | v | below | None None None None None None
+arm, nothing behind | only | v | not | None None None None None None
+arm, nothing behind | only | v | conditional | None None None None None None
+arm, nothing behind | only | v | compare | None None None None None TypeError
+arm, nothing behind | only | v | call | None None None None None None
+arm, nothing behind | only | v | not or | None None None None None None
+arm, nothing behind | only | v | walrus | None None None None None None
+arm, nothing behind | only | 1 | one line | None None None None None None
+arm, nothing behind | only | 1 | or | None None None None None None
+arm, nothing behind | only | 1 | and | None None None None None None
+arm, nothing behind | only | 1 | below | None None None None None None
+arm, nothing behind | only | 1 | not | None None None None None None
+arm, nothing behind | only | 1 | conditional | None None None None None None
+arm, nothing behind | only | 1 | compare | None None None None None None
+arm, nothing behind | only | 1 | call | None None None None None None
+arm, nothing behind | only | 1 | not or | None None None None None None
+arm, nothing behind | only | 1 | walrus | None None None None None None
+arm, nothing behind | only | [x] | one line | None None None None None None
+arm, nothing behind | only | [x] | or | None None None None None None
+arm, nothing behind | only | [x] | and | None None None None None None
+arm, nothing behind | only | [x] | below | None None None None None None
+arm, nothing behind | only | [x] | not | None None None None None None
+arm, nothing behind | only | [x] | conditional | None None None None None None
+arm, nothing behind | only | [x] | compare | None None None None None TypeError
+arm, nothing behind | only | [x] | call | None None None None None None
+arm, nothing behind | only | [x] | not or | None None None None None None
+arm, nothing behind | only | [x] | walrus | None None None None None None
+arm, nothing behind | only | two lines | one line | None None None None None None
+arm, nothing behind | only | two lines | or | None None None None None None
+arm, nothing behind | only | two lines | and | None None None None None None
+arm, nothing behind | only | two lines | below | None None None None None None
+arm, nothing behind | only | two lines | not | None None None None None None
+arm, nothing behind | only | two lines | conditional | None None None None None None
+arm, nothing behind | only | two lines | compare | None None None None None None
+arm, nothing behind | only | two lines | call | None None None None None None
+arm, nothing behind | only | two lines | not or | None None None None None None
+arm, nothing behind | only | two lines | walrus | None None None None None None
+arm, nothing behind | last of two | _ | one line | None None None None None None
+arm, nothing behind | last of two | _ | or | None None None None None None
+arm, nothing behind | last of two | _ | and | None None None None None None
+arm, nothing behind | last of two | _ | below | None None None None None None
+arm, nothing behind | last of two | _ | not | None None None None None None
+arm, nothing behind | last of two | _ | conditional | None None None None None None
+arm, nothing behind | last of two | _ | compare | None None None None None TypeError
+arm, nothing behind | last of two | _ | call | None None None None None None
+arm, nothing behind | last of two | _ | not or | None None None None None None
+arm, nothing behind | last of two | _ | walrus | None None None None None None
+arm, nothing behind | last of two | v | one line | None None None None None None
+arm, nothing behind | last of two | v | or | None None None None None None
+arm, nothing behind | last of two | v | and | None None None None None None
+arm, nothing behind | last of two | v | below | None None None None None None
+arm, nothing behind | last of two | v | not | None None None None None None
+arm, nothing behind | last of two | v | conditional | None None None None None None
+arm, nothing behind | last of two | v | compare | None None None None None TypeError
+arm, nothing behind | last of two | v | call | None None None None None None
+arm, nothing behind | last of two | v | not or | None None None None None None
+arm, nothing behind | last of two | v | walrus | None None None None None None
+arm, nothing behind | last of two | 1 | one line | None None None None None None
+arm, nothing behind | last of two | 1 | or | None None None None None None
+arm, nothing behind | last of two | 1 | and | None None None None None None
+arm, nothing behind | last of two | 1 | below | None None None None None None
+arm, nothing behind | last of two | 1 | not | None None None None None None
+arm, nothing behind | last of two | 1 | conditional | None None None None None None
+arm, nothing behind | last of two | 1 | compare | None None None None None None
+arm, nothing behind | last of two | 1 | call | None None None None None None
+arm, nothing behind | last of two | 1 | not or | None None None None None None
+arm, nothing behind | last of two | 1 | walrus | None None None None None None
+arm, nothing behind | last of two | [x] | one line | None None None None None None
+arm, nothing behind | last of two | [x] | or | None None None None None None
+arm, nothing behind | last of two | [x] | and | None None None None None None
+arm, nothing behind | last of two | [x] | below | None None None None None None
+arm, nothing behind | last of two | [x] | not | None None None None None None
+arm, nothing behind | last of two | [x] | conditional | None None None None None None
+arm, nothing behind | last of two | [x] | compare | None None None None None TypeError
+arm, nothing behind | last of two | [x] | call | None None None None None None
+arm, nothing behind | last of two | [x] | not or | None None None None None None
+arm, nothing behind | last of two | [x] | walrus | None None None None None None
+arm, nothing behind | last of two | two lines | one line | None None None None None None
+arm, nothing behind | last of two | two lines | or | None None None None None None
+arm, nothing behind | last of two | two lines | and | None None None None None None
+arm, nothing behind | last of two | two lines | below | None None None None None None
+arm, nothing behind | last of two | two lines | not | None None None None None None
+arm, nothing behind | last of two | two lines | conditional | None None None None None None
+arm, nothing behind | last of two | two lines | compare | None None None None None None
+arm, nothing behind | last of two | two lines | call | None None None None None None
+arm, nothing behind | last of two | two lines | not or | None None None None None None
+arm, nothing behind | last of two | two lines | walrus | None None None None None None
+arm, nothing behind | first of two | _ | one line | None None None None None None
+arm, nothing behind | first of two | _ | or | None None None None None None
+arm, nothing behind | first of two | _ | and | None None None None None None
+arm, nothing behind | first of two | _ | below | None None None None None None
+arm, nothing behind | first of two | _ | not | None None None None None None
+arm, nothing behind | first of two | _ | conditional | None None None None None None
+arm, nothing behind | first of two | _ | compare | None None None None None TypeError
+arm, nothing behind | first of two | _ | call | None None None None None None
+arm, nothing behind | first of two | _ | not or | None None None None None None
+arm, nothing behind | first of two | _ | walrus | None None None None None None
+arm, nothing behind | first of two | v | one line | None None None None None None
+arm, nothing behind | first of two | v | or | None None None None None None
+arm, nothing behind | first of two | v | and | None None None None None None
+arm, nothing behind | first of two | v | below | None None None None None None
+arm, nothing behind | first of two | v | not | None None None None None None
+arm, nothing behind | first of two | v | conditional | None None None None None None
+arm, nothing behind | first of two | v | compare | None None None None None TypeError
+arm, nothing behind | first of two | v | call | None None None None None None
+arm, nothing behind | first of two | v | not or | None None None None None None
+arm, nothing behind | first of two | v | walrus | None None None None None None
+arm, nothing behind | first of two | 1 | one line | None None None None None None
+arm, nothing behind | first of two | 1 | or | None None None None None None
+arm, nothing behind | first of two | 1 | and | None None None None None None
+arm, nothing behind | first of two | 1 | below | None None None None None None
+arm, nothing behind | first of two | 1 | not | None None None None None None
+arm, nothing behind | first of two | 1 | conditional | None None None None None None
+arm, nothing behind | first of two | 1 | compare | None None None None None None
+arm, nothing behind | first of two | 1 | call | None None None None None None
+arm, nothing behind | first of two | 1 | not or | None None None None None None
+arm, nothing behind | first of two | 1 | walrus | None None None None None None
+arm, nothing behind | first of two | [x] | one line | None None None None None None
+arm, nothing behind | first of two | [x] | or | None None None None None None
+arm, nothing behind | first of two | [x] | and | None None None None None None
+arm, nothing behind | first of two | [x] | below | None None None None None None
+arm, nothing behind | first of two | [x] | not | None None None None None None
+arm, nothing behind | first of two | [x] | conditional | None None None None None None
+arm, nothing behind | first of two | [x] | compare | None None None None None TypeError
+arm, nothing behind | first of two | [x] | call | None None None None None None
+arm, nothing behind | first of two | [x] | not or | None None None None None None
+arm, nothing behind | first of two | [x] | walrus | None None None None None None
+arm, nothing behind | first of two | two lines | one line | None None None None None None
+arm, nothing behind | first of two | two lines | or | None None None None None None
+arm, nothing behind | first of two | two lines | and | None None None None None None
+arm, nothing behind | first of two | two lines | below | None None None None None None
+arm, nothing behind | first of two | two lines | not | None None None None None None
+arm, nothing behind | first of two | two lines | conditional | None None None None None None
+arm, nothing behind | first of two | two lines | compare | None None None None None None
+arm, nothing behind | first of two | two lines | call | None None None None None None
+arm, nothing behind | first of two | two lines | not or | None None None None None None
+arm, nothing behind | first of two | two lines | walrus | None None None None None None
+arm, nothing behind | last of three | _ | one line | None None None None None None
+arm, nothing behind | last of three | _ | or | None None None None None None
+arm, nothing behind | last of three | _ | and | None None None None None None
+arm, nothing behind | last of three | _ | below | None None None None None None
+arm, nothing behind | last of three | _ | not | None None None None None None
+arm, nothing behind | last of three | _ | conditional | None None None None None None
+arm, nothing behind | last of three | _ | compare | None None None None None TypeError
+arm, nothing behind | last of three | _ | call | None None None None None None
+arm, nothing behind | last of three | _ | not or | None None None None None None
+arm, nothing behind | last of three | _ | walrus | None None None None None None
+arm, nothing behind | last of three | v | one line | None None None None None None
+arm, nothing behind | last of three | v | or | None None None None None None
+arm, nothing behind | last of three | v | and | None None None None None None
+arm, nothing behind | last of three | v | below | None None None None None None
+arm, nothing behind | last of three | v | not | None None None None None None
+arm, nothing behind | last of three | v | conditional | None None None None None None
+arm, nothing behind | last of three | v | compare | None None None None None TypeError
+arm, nothing behind | last of three | v | call | None None None None None None
+arm, nothing behind | last of three | v | not or | None None None None None None
+arm, nothing behind | last of three | v | walrus | None None None None None None
+arm, nothing behind | last of three | 1 | one line | None None None None None None
+arm, nothing behind | last of three | 1 | or | None None None None None None
+arm, nothing behind | last of three | 1 | and | None None None None None None
+arm, nothing behind | last of three | 1 | below | None None None None None None
+arm, nothing behind | last of three | 1 | not | None None None None None None
+arm, nothing behind | last of three | 1 | conditional | None None None None None None
+arm, nothing behind | last of three | 1 | compare | None None None None None None
+arm, nothing behind | last of three | 1 | call | None None None None None None
+arm, nothing behind | last of three | 1 | not or | None None None None None None
+arm, nothing behind | last of three | 1 | walrus | None None None None None None
+arm, nothing behind | last of three | [x] | one line | None None None None None None
+arm, nothing behind | last of three | [x] | or | None None None None None None
+arm, nothing behind | last of three | [x] | and | None None None None None None
+arm, nothing behind | last of three | [x] | below | None None None None None None
+arm, nothing behind | last of three | [x] | not | None None None None None None
+arm, nothing behind | last of three | [x] | conditional | None None None None None None
+arm, nothing behind | last of three | [x] | compare | None None None None None TypeError
+arm, nothing behind | last of three | [x] | call | None None None None None None
+arm, nothing behind | last of three | [x] | not or | None None None None None None
+arm, nothing behind | last of three | [x] | walrus | None None None None None None
+arm, nothing behind | last of three | two lines | one line | None None None None None None
+arm, nothing behind | last of three | two lines | or | None None None None None None
+arm, nothing behind | last of three | two lines | and | None None None None None None
+arm, nothing behind | last of three | two lines | below | None None None None None None
+arm, nothing behind | last of three | two lines | not | None None None None None None
+arm, nothing behind | last of three | two lines | conditional | None None None None None None
+arm, nothing behind | last of three | two lines | compare | None None None None None None
+arm, nothing behind | last of three | two lines | call | None None None None None None
+arm, nothing behind | last of three | two lines | not or | None None None None None None
+arm, nothing behind | last of three | two lines | walrus | None None None None None None
+arm, nothing behind | in front of default | _ | one line | None None None None None None
+arm, nothing behind | in front of default | _ | or | None None None None None None
+arm, nothing behind | in front of default | _ | and | None None None None None None
+arm, nothing behind | in front of default | _ | below | None None None None None None
+arm, nothing behind | in front of default | _ | not | None None None None None None
+arm, nothing behind | in front of default | _ | conditional | None None None None None None
+arm, nothing behind | in front of default | _ | compare | None None None None None TypeError
+arm, nothing behind | in front of default | _ | call | None None None None None None
+arm, nothing behind | in front of default | _ | not or | None None None None None None
+arm, nothing behind | in front of default | _ | walrus | None None None None None None
+arm, nothing behind | in front of default | v | one line | None None None None None None
+arm, nothing behind | in front of default | v | or | None None None None None None
+arm, nothing behind | in front of default | v | and | None None None None None None
+arm, nothing behind | in front of default | v | below | None None None None None None
+arm, nothing behind | in front of default | v | not | None None None None None None
+arm, nothing behind | in front of default | v | conditional | None None None None None None
+arm, nothing behind | in front of default | v | compare | None None None None None TypeError
+arm, nothing behind | in front of default | v | call | None None None None None None
+arm, nothing behind | in front of default | v | not or | None None None None None None
+arm, nothing behind | in front of default | v | walrus | None None None None None None
+arm, nothing behind | in front of default | 1 | one line | None None None None None None
+arm, nothing behind | in front of default | 1 | or | None None None None None None
+arm, nothing behind | in front of default | 1 | and | None None None None None None
+arm, nothing behind | in front of default | 1 | below | None None None None None None
+arm, nothing behind | in front of default | 1 | not | None None None None None None
+arm, nothing behind | in front of default | 1 | conditional | None None None None None None
+arm, nothing behind | in front of default | 1 | compare | None None None None None None
+arm, nothing behind | in front of default | 1 | call | None None None None None None
+arm, nothing behind | in front of default | 1 | not or | None None None None None None
+arm, nothing behind | in front of default | 1 | walrus | None None None None None None
+arm, nothing behind | in front of default | [x] | one line | None None None None None None
+arm, nothing behind | in front of default | [x] | or | None None None None None None
+arm, nothing behind | in front of default | [x] | and | None None None None None None
+arm, nothing behind | in front of default | [x] | below | None None None None None None
+arm, nothing behind | in front of default | [x] | not | None None None None None None
+arm, nothing behind | in front of default | [x] | conditional | None None None None None None
+arm, nothing behind | in front of default | [x] | compare | None None None None None TypeError
+arm, nothing behind | in front of default | [x] | call | None None None None None None
+arm, nothing behind | in front of default | [x] | not or | None None None None None None
+arm, nothing behind | in front of default | [x] | walrus | None None None None None None
+arm, nothing behind | in front of default | two lines | one line | None None None None None None
+arm, nothing behind | in front of default | two lines | or | None None None None None None
+arm, nothing behind | in front of default | two lines | and | None None None None None None
+arm, nothing behind | in front of default | two lines | below | None None None None None None
+arm, nothing behind | in front of default | two lines | not | None None None None None None
+arm, nothing behind | in front of default | two lines | conditional | None None None None None None
+arm, nothing behind | in front of default | two lines | compare | None None None None None None
+arm, nothing behind | in front of default | two lines | call | None None None None None None
+arm, nothing behind | in front of default | two lines | not or | None None None None None None
+arm, nothing behind | in front of default | two lines | walrus | None None None None None None
+loop | only | _ | one line | 0 2 0 0 2 2
+loop | only | _ | or | 0 2 2 2 2 2
+loop | only | _ | and | 0 0 0 0 2 2
+loop | only | _ | below | 0 2 0 0 2 2
+loop | only | _ | not | 2 0 2 2 0 0
+loop | only | _ | conditional | 0 0 0 2 2 2
+loop | only | _ | compare | 0 0 0 0 0 TypeError
+loop | only | _ | call | 0 2 0 0 2 2
+loop | only | _ | not or | 2 0 0 0 0 0
+loop | only | _ | walrus | 0 2 2 2 2 2
+loop | only | v | one line | 0 2 0 0 2 2
+loop | only | v | or | 0 2 2 2 2 2
+loop | only | v | and | 0 0 0 0 2 2
+loop | only | v | below | 0 2 0 0 2 2
+loop | only | v | not | 2 0 2 2 0 0
+loop | only | v | conditional | 0 0 0 2 2 2
+loop | only | v | compare | 0 0 0 0 0 TypeError
+loop | only | v | call | 0 2 0 0 2 2
+loop | only | v | not or | 2 0 0 0 0 0
+loop | only | v | walrus | 0 2 2 2 2 2
+loop | only | 1 | one line | 0 0 0 0 0 0
+loop | only | 1 | or | 0 0 2 0 0 0
+loop | only | 1 | and | 0 0 0 0 0 0
+loop | only | 1 | below | 0 0 0 0 0 0
+loop | only | 1 | not | 0 0 2 0 0 0
+loop | only | 1 | conditional | 0 0 0 0 0 0
+loop | only | 1 | compare | 0 0 0 0 0 0
+loop | only | 1 | call | 0 0 0 0 0 0
+loop | only | 1 | not or | 0 0 0 0 0 0
+loop | only | 1 | walrus | 0 0 2 0 0 0
+loop | only | [x] | one line | 0 0 0 0 0 2
+loop | only | [x] | or | 0 0 0 0 0 2
+loop | only | [x] | and | 0 0 0 0 0 2
+loop | only | [x] | below | 0 0 0 0 0 2
+loop | only | [x] | not | 0 0 0 0 0 3
+loop | only | [x] | conditional | 0 0 0 0 0 2
+loop | only | [x] | compare | 0 0 0 0 0 TypeError
+loop | only | [x] | call | 0 0 0 0 0 2
+loop | only | [x] | not or | 0 0 0 0 0 3
+loop | only | [x] | walrus | 0 0 0 0 0 2
+loop | only | two lines | one line | 0 2 0 0 0 0
+loop | only | two lines | or | 0 2 2 0 0 0
+loop | only | two lines | and | 0 0 0 0 0 0
+loop | only | two lines | below | 0 2 0 0 0 0
+loop | only | two lines | not | 2 0 2 0 0 0
+loop | only | two lines | conditional | 0 0 0 0 0 0
+loop | only | two lines | compare | 0 0 0 0 0 0
+loop | only | two lines | call | 0 2 0 0 0 0
+loop | only | two lines | not or | 2 0 0 0 0 0
+loop | only | two lines | walrus | 0 2 2 0 0 0
+loop | last of two | _ | one line | 0 2 0 0 7 2
+loop | last of two | _ | or | 0 2 2 2 7 2
+loop | last of two | _ | and | 0 0 0 0 7 2
+loop | last of two | _ | below | 0 2 0 0 7 2
+loop | last of two | _ | not | 2 0 2 2 7 0
+loop | last of two | _ | conditional | 0 0 0 2 7 2
+loop | last of two | _ | compare | 0 0 0 0 7 TypeError
+loop | last of two | _ | call | 0 2 0 0 7 2
+loop | last of two | _ | not or | 2 0 0 0 7 0
+loop | last of two | _ | walrus | 0 2 2 2 7 2
+loop | last of two | v | one line | 0 2 0 0 7 2
+loop | last of two | v | or | 0 2 2 2 7 2
+loop | last of two | v | and | 0 0 0 0 7 2
+loop | last of two | v | below | 0 2 0 0 7 2
+loop | last of two | v | not | 2 0 2 2 7 0
+loop | last of two | v | conditional | 0 0 0 2 7 2
+loop | last of two | v | compare | 0 0 0 0 7 TypeError
+loop | last of two | v | call | 0 2 0 0 7 2
+loop | last of two | v | not or | 2 0 0 0 7 0
+loop | last of two | v | walrus | 0 2 2 2 7 2
+loop | last of two | 1 | one line | 0 0 0 0 7 0
+loop | last of two | 1 | or | 0 0 2 0 7 0
+loop | last of two | 1 | and | 0 0 0 0 7 0
+loop | last of two | 1 | below | 0 0 0 0 7 0
+loop | last of two | 1 | not | 0 0 2 0 7 0
+loop | last of two | 1 | conditional | 0 0 0 0 7 0
+loop | last of two | 1 | compare | 0 0 0 0 7 0
+loop | last of two | 1 | call | 0 0 0 0 7 0
+loop | last of two | 1 | not or | 0 0 0 0 7 0
+loop | last of two | 1 | walrus | 0 0 2 0 7 0
+loop | last of two | [x] | one line | 0 0 0 0 7 2
+loop | last of two | [x] | or | 0 0 0 0 7 2
+loop | last of two | [x] | and | 0 0 0 0 7 2
+loop | last of two | [x] | below | 0 0 0 0 7 2
+loop | last of two | [x] | not | 0 0 0 0 7 3
+loop | last of two | [x] | conditional | 0 0 0 0 7 2
+loop | last of two | [x] | compare | 0 0 0 0 7 TypeError
+loop | last of two | [x] | call | 0 0 0 0 7 2
+loop | last of two | [x] | not or | 0 0 0 0 7 3
+loop | last of two | [x] | walrus | 0 0 0 0 7 2
+loop | last of two | two lines | one line | 0 2 0 0 7 0
+loop | last of two | two lines | or | 0 2 2 0 7 0
+loop | last of two | two lines | and | 0 0 0 0 7 0
+loop | last of two | two lines | below | 0 2 0 0 7 0
+loop | last of two | two lines | not | 2 0 2 0 7 0
+loop | last of two | two lines | conditional | 0 0 0 0 7 0
+loop | last of two | two lines | compare | 0 0 0 0 7 0
+loop | last of two | two lines | call | 0 2 0 0 7 0
+loop | last of two | two lines | not or | 2 0 0 0 7 0
+loop | last of two | two lines | walrus | 0 2 2 0 7 0
+loop | first of two | _ | one line | 0 2 0 0 2 2
+loop | first of two | _ | or | 0 2 2 2 2 2
+loop | first of two | _ | and | 0 0 0 0 2 2
+loop | first of two | _ | below | 0 2 0 0 2 2
+loop | first of two | _ | not | 2 0 2 2 7 0
+loop | first of two | _ | conditional | 0 0 0 2 2 2
+loop | first of two | _ | compare | 0 0 0 0 7 TypeError
+loop | first of two | _ | call | 0 2 0 0 2 2
+loop | first of two | _ | not or | 2 0 0 0 7 0
+loop | first of two | _ | walrus | 0 2 2 2 2 2
+loop | first of two | v | one line | 0 2 0 0 2 2
+loop | first of two | v | or | 0 2 2 2 2 2
+loop | first of two | v | and | 0 0 0 0 2 2
+loop | first of two | v | below | 0 2 0 0 2 2
+loop | first of two | v | not | 2 0 2 2 7 0
+loop | first of two | v | conditional | 0 0 0 2 2 2
+loop | first of two | v | compare | 0 0 0 0 7 TypeError
+loop | first of two | v | call | 0 2 0 0 2 2
+loop | first of two | v | not or | 2 0 0 0 7 0
+loop | first of two | v | walrus | 0 2 2 2 2 2
+loop | first of two | 1 | one line | 0 0 0 0 7 0
+loop | first of two | 1 | or | 0 0 2 0 7 0
+loop | first of two | 1 | and | 0 0 0 0 7 0
+loop | first of two | 1 | below | 0 0 0 0 7 0
+loop | first of two | 1 | not | 0 0 2 0 7 0
+loop | first of two | 1 | conditional | 0 0 0 0 7 0
+loop | first of two | 1 | compare | 0 0 0 0 7 0
+loop | first of two | 1 | call | 0 0 0 0 7 0
+loop | first of two | 1 | not or | 0 0 0 0 7 0
+loop | first of two | 1 | walrus | 0 0 2 0 7 0
+loop | first of two | [x] | one line | 0 0 0 0 7 2
+loop | first of two | [x] | or | 0 0 0 0 7 2
+loop | first of two | [x] | and | 0 0 0 0 7 2
+loop | first of two | [x] | below | 0 0 0 0 7 2
+loop | first of two | [x] | not | 0 0 0 0 7 3
+loop | first of two | [x] | conditional | 0 0 0 0 7 2
+loop | first of two | [x] | compare | 0 0 0 0 7 TypeError
+loop | first of two | [x] | call | 0 0 0 0 7 2
+loop | first of two | [x] | not or | 0 0 0 0 7 3
+loop | first of two | [x] | walrus | 0 0 0 0 7 2
+loop | first of two | two lines | one line | 0 2 0 0 7 0
+loop | first of two | two lines | or | 0 2 2 0 7 0
+loop | first of two | two lines | and | 0 0 0 0 7 0
+loop | first of two | two lines | below | 0 2 0 0 7 0
+loop | first of two | two lines | not | 2 0 2 0 7 0
+loop | first of two | two lines | conditional | 0 0 0 0 7 0
+loop | first of two | two lines | compare | 0 0 0 0 7 0
+loop | first of two | two lines | call | 0 2 0 0 7 0
+loop | first of two | two lines | not or | 2 0 0 0 7 0
+loop | first of two | two lines | walrus | 0 2 2 0 7 0
+loop | last of three | _ | one line | 0 2 0 0 7 2
+loop | last of three | _ | or | 0 2 2 2 7 2
+loop | last of three | _ | and | 0 0 0 0 7 2
+loop | last of three | _ | below | 0 2 0 0 7 2
+loop | last of three | _ | not | 2 0 2 2 7 0
+loop | last of three | _ | conditional | 0 0 0 2 7 2
+loop | last of three | _ | compare | 0 0 0 0 7 TypeError
+loop | last of three | _ | call | 0 2 0 0 7 2
+loop | last of three | _ | not or | 2 0 0 0 7 0
+loop | last of three | _ | walrus | 0 2 2 2 7 2
+loop | last of three | v | one line | 0 2 0 0 7 2
+loop | last of three | v | or | 0 2 2 2 7 2
+loop | last of three | v | and | 0 0 0 0 7 2
+loop | last of three | v | below | 0 2 0 0 7 2
+loop | last of three | v | not | 2 0 2 2 7 0
+loop | last of three | v | conditional | 0 0 0 2 7 2
+loop | last of three | v | compare | 0 0 0 0 7 TypeError
+loop | last of three | v | call | 0 2 0 0 7 2
+loop | last of three | v | not or | 2 0 0 0 7 0
+loop | last of three | v | walrus | 0 2 2 2 7 2
+loop | last of three | 1 | one line | 0 0 0 0 7 0
+loop | last of three | 1 | or | 0 0 2 0 7 0
+loop | last of three | 1 | and | 0 0 0 0 7 0
+loop | last of three | 1 | below | 0 0 0 0 7 0
+loop | last of three | 1 | not | 0 0 2 0 7 0
+loop | last of three | 1 | conditional | 0 0 0 0 7 0
+loop | last of three | 1 | compare | 0 0 0 0 7 0
+loop | last of three | 1 | call | 0 0 0 0 7 0
+loop | last of three | 1 | not or | 0 0 0 0 7 0
+loop | last of three | 1 | walrus | 0 0 2 0 7 0
+loop | last of three | [x] | one line | 0 0 0 0 7 2
+loop | last of three | [x] | or | 0 0 0 0 7 2
+loop | last of three | [x] | and | 0 0 0 0 7 2
+loop | last of three | [x] | below | 0 0 0 0 7 2
+loop | last of three | [x] | not | 0 0 0 0 7 3
+loop | last of three | [x] | conditional | 0 0 0 0 7 2
+loop | last of three | [x] | compare | 0 0 0 0 7 TypeError
+loop | last of three | [x] | call | 0 0 0 0 7 2
+loop | last of three | [x] | not or | 0 0 0 0 7 3
+loop | last of three | [x] | walrus | 0 0 0 0 7 2
+loop | last of three | two lines | one line | 0 2 0 0 7 0
+loop | last of three | two lines | or | 0 2 2 0 7 0
+loop | last of three | two lines | and | 0 0 0 0 7 0
+loop | last of three | two lines | below | 0 2 0 0 7 0
+loop | last of three | two lines | not | 2 0 2 0 7 0
+loop | last of three | two lines | conditional | 0 0 0 0 7 0
+loop | last of three | two lines | compare | 0 0 0 0 7 0
+loop | last of three | two lines | call | 0 2 0 0 7 0
+loop | last of three | two lines | not or | 2 0 0 0 7 0
+loop | last of three | two lines | walrus | 0 2 2 0 7 0
+loop | in front of default | _ | one line | 9 2 9 9 2 2
+loop | in front of default | _ | or | 9 2 2 2 2 2
+loop | in front of default | _ | and | 9 9 9 9 2 2
+loop | in front of default | _ | below | 9 2 9 9 2 2
+loop | in front of default | _ | not | 2 9 2 2 9 9
+loop | in front of default | _ | conditional | 9 9 9 2 2 2
+loop | in front of default | _ | compare | 9 9 9 9 9 TypeError
+loop | in front of default | _ | call | 9 2 9 9 2 2
+loop | in front of default | _ | not or | 2 9 9 9 9 9
+loop | in front of default | _ | walrus | 9 2 2 2 2 2
+loop | in front of default | v | one line | 9 2 9 9 2 2
+loop | in front of default | v | or | 9 2 2 2 2 2
+loop | in front of default | v | and | 9 9 9 9 2 2
+loop | in front of default | v | below | 9 2 9 9 2 2
+loop | in front of default | v | not | 2 9 2 2 9 9
+loop | in front of default | v | conditional | 9 9 9 2 2 2
+loop | in front of default | v | compare | 9 9 9 9 9 TypeError
+loop | in front of default | v | call | 9 2 9 9 2 2
+loop | in front of default | v | not or | 2 9 9 9 9 9
+loop | in front of default | v | walrus | 9 2 2 2 2 2
+loop | in front of default | 1 | one line | 9 9 9 9 9 9
+loop | in front of default | 1 | or | 9 9 2 9 9 9
+loop | in front of default | 1 | and | 9 9 9 9 9 9
+loop | in front of default | 1 | below | 9 9 9 9 9 9
+loop | in front of default | 1 | not | 9 9 2 9 9 9
+loop | in front of default | 1 | conditional | 9 9 9 9 9 9
+loop | in front of default | 1 | compare | 9 9 9 9 9 9
+loop | in front of default | 1 | call | 9 9 9 9 9 9
+loop | in front of default | 1 | not or | 9 9 9 9 9 9
+loop | in front of default | 1 | walrus | 9 9 2 9 9 9
+loop | in front of default | [x] | one line | 9 9 9 9 9 2
+loop | in front of default | [x] | or | 9 9 9 9 9 2
+loop | in front of default | [x] | and | 9 9 9 9 9 2
+loop | in front of default | [x] | below | 9 9 9 9 9 2
+loop | in front of default | [x] | not | 9 9 9 9 9 9
+loop | in front of default | [x] | conditional | 9 9 9 9 9 2
+loop | in front of default | [x] | compare | 9 9 9 9 9 TypeError
+loop | in front of default | [x] | call | 9 9 9 9 9 2
+loop | in front of default | [x] | not or | 9 9 9 9 9 9
+loop | in front of default | [x] | walrus | 9 9 9 9 9 2
+loop | in front of default | two lines | one line | 9 2 9 9 9 9
+loop | in front of default | two lines | or | 9 2 2 9 9 9
+loop | in front of default | two lines | and | 9 9 9 9 9 9
+loop | in front of default | two lines | below | 9 2 9 9 9 9
+loop | in front of default | two lines | not | 2 9 2 9 9 9
+loop | in front of default | two lines | conditional | 9 9 9 9 9 9
+loop | in front of default | two lines | compare | 9 9 9 9 9 9
+loop | in front of default | two lines | call | 9 2 9 9 9 9
+loop | in front of default | two lines | not or | 2 9 9 9 9 9
+loop | in front of default | two lines | walrus | 9 2 2 9 9 9
+try | only | _ | one line | 0 2 0 0 2 2
+try | only | _ | or | 0 2 2 2 2 2
+try | only | _ | and | 0 0 0 0 2 2
+try | only | _ | below | 0 2 0 0 2 2
+try | only | _ | not | 2 0 2 2 0 0
+try | only | _ | conditional | 0 0 0 2 2 2
+try | only | _ | compare | 0 0 0 0 0 TypeError
+try | only | _ | call | 0 2 0 0 2 2
+try | only | _ | not or | 2 0 0 0 0 0
+try | only | _ | walrus | 0 2 2 2 2 2
+try | only | v | one line | 0 2 0 0 2 2
+try | only | v | or | 0 2 2 2 2 2
+try | only | v | and | 0 0 0 0 2 2
+try | only | v | below | 0 2 0 0 2 2
+try | only | v | not | 2 0 2 2 0 0
+try | only | v | conditional | 0 0 0 2 2 2
+try | only | v | compare | 0 0 0 0 0 TypeError
+try | only | v | call | 0 2 0 0 2 2
+try | only | v | not or | 2 0 0 0 0 0
+try | only | v | walrus | 0 2 2 2 2 2
+try | only | 1 | one line | 0 0 0 0 0 0
+try | only | 1 | or | 0 0 2 0 0 0
+try | only | 1 | and | 0 0 0 0 0 0
+try | only | 1 | below | 0 0 0 0 0 0
+try | only | 1 | not | 0 0 2 0 0 0
+try | only | 1 | conditional | 0 0 0 0 0 0
+try | only | 1 | compare | 0 0 0 0 0 0
+try | only | 1 | call | 0 0 0 0 0 0
+try | only | 1 | not or | 0 0 0 0 0 0
+try | only | 1 | walrus | 0 0 2 0 0 0
+try | only | [x] | one line | 0 0 0 0 0 2
+try | only | [x] | or | 0 0 0 0 0 2
+try | only | [x] | and | 0 0 0 0 0 2
+try | only | [x] | below | 0 0 0 0 0 2
+try | only | [x] | not | 0 0 0 0 0 3
+try | only | [x] | conditional | 0 0 0 0 0 2
+try | only | [x] | compare | 0 0 0 0 0 TypeError
+try | only | [x] | call | 0 0 0 0 0 2
+try | only | [x] | not or | 0 0 0 0 0 3
+try | only | [x] | walrus | 0 0 0 0 0 2
+try | only | two lines | one line | 0 2 0 0 0 0
+try | only | two lines | or | 0 2 2 0 0 0
+try | only | two lines | and | 0 0 0 0 0 0
+try | only | two lines | below | 0 2 0 0 0 0
+try | only | two lines | not | 2 0 2 0 0 0
+try | only | two lines | conditional | 0 0 0 0 0 0
+try | only | two lines | compare | 0 0 0 0 0 0
+try | only | two lines | call | 0 2 0 0 0 0
+try | only | two lines | not or | 2 0 0 0 0 0
+try | only | two lines | walrus | 0 2 2 0 0 0
+try | last of two | _ | one line | 0 2 0 0 7 2
+try | last of two | _ | or | 0 2 2 2 7 2
+try | last of two | _ | and | 0 0 0 0 7 2
+try | last of two | _ | below | 0 2 0 0 7 2
+try | last of two | _ | not | 2 0 2 2 7 0
+try | last of two | _ | conditional | 0 0 0 2 7 2
+try | last of two | _ | compare | 0 0 0 0 7 TypeError
+try | last of two | _ | call | 0 2 0 0 7 2
+try | last of two | _ | not or | 2 0 0 0 7 0
+try | last of two | _ | walrus | 0 2 2 2 7 2
+try | last of two | v | one line | 0 2 0 0 7 2
+try | last of two | v | or | 0 2 2 2 7 2
+try | last of two | v | and | 0 0 0 0 7 2
+try | last of two | v | below | 0 2 0 0 7 2
+try | last of two | v | not | 2 0 2 2 7 0
+try | last of two | v | conditional | 0 0 0 2 7 2
+try | last of two | v | compare | 0 0 0 0 7 TypeError
+try | last of two | v | call | 0 2 0 0 7 2
+try | last of two | v | not or | 2 0 0 0 7 0
+try | last of two | v | walrus | 0 2 2 2 7 2
+try | last of two | 1 | one line | 0 0 0 0 7 0
+try | last of two | 1 | or | 0 0 2 0 7 0
+try | last of two | 1 | and | 0 0 0 0 7 0
+try | last of two | 1 | below | 0 0 0 0 7 0
+try | last of two | 1 | not | 0 0 2 0 7 0
+try | last of two | 1 | conditional | 0 0 0 0 7 0
+try | last of two | 1 | compare | 0 0 0 0 7 0
+try | last of two | 1 | call | 0 0 0 0 7 0
+try | last of two | 1 | not or | 0 0 0 0 7 0
+try | last of two | 1 | walrus | 0 0 2 0 7 0
+try | last of two | [x] | one line | 0 0 0 0 7 2
+try | last of two | [x] | or | 0 0 0 0 7 2
+try | last of two | [x] | and | 0 0 0 0 7 2
+try | last of two | [x] | below | 0 0 0 0 7 2
+try | last of two | [x] | not | 0 0 0 0 7 3
+try | last of two | [x] | conditional | 0 0 0 0 7 2
+try | last of two | [x] | compare | 0 0 0 0 7 TypeError
+try | last of two | [x] | call | 0 0 0 0 7 2
+try | last of two | [x] | not or | 0 0 0 0 7 3
+try | last of two | [x] | walrus | 0 0 0 0 7 2
+try | last of two | two lines | one line | 0 2 0 0 7 0
+try | last of two | two lines | or | 0 2 2 0 7 0
+try | last of two | two lines | and | 0 0 0 0 7 0
+try | last of two | two lines | below | 0 2 0 0 7 0
+try | last of two | two lines | not | 2 0 2 0 7 0
+try | last of two | two lines | conditional | 0 0 0 0 7 0
+try | last of two | two lines | compare | 0 0 0 0 7 0
+try | last of two | two lines | call | 0 2 0 0 7 0
+try | last of two | two lines | not or | 2 0 0 0 7 0
+try | last of two | two lines | walrus | 0 2 2 0 7 0
+try | first of two | _ | one line | 0 2 0 0 2 2
+try | first of two | _ | or | 0 2 2 2 2 2
+try | first of two | _ | and | 0 0 0 0 2 2
+try | first of two | _ | below | 0 2 0 0 2 2
+try | first of two | _ | not | 2 0 2 2 7 0
+try | first of two | _ | conditional | 0 0 0 2 2 2
+try | first of two | _ | compare | 0 0 0 0 7 TypeError
+try | first of two | _ | call | 0 2 0 0 2 2
+try | first of two | _ | not or | 2 0 0 0 7 0
+try | first of two | _ | walrus | 0 2 2 2 2 2
+try | first of two | v | one line | 0 2 0 0 2 2
+try | first of two | v | or | 0 2 2 2 2 2
+try | first of two | v | and | 0 0 0 0 2 2
+try | first of two | v | below | 0 2 0 0 2 2
+try | first of two | v | not | 2 0 2 2 7 0
+try | first of two | v | conditional | 0 0 0 2 2 2
+try | first of two | v | compare | 0 0 0 0 7 TypeError
+try | first of two | v | call | 0 2 0 0 2 2
+try | first of two | v | not or | 2 0 0 0 7 0
+try | first of two | v | walrus | 0 2 2 2 2 2
+try | first of two | 1 | one line | 0 0 0 0 7 0
+try | first of two | 1 | or | 0 0 2 0 7 0
+try | first of two | 1 | and | 0 0 0 0 7 0
+try | first of two | 1 | below | 0 0 0 0 7 0
+try | first of two | 1 | not | 0 0 2 0 7 0
+try | first of two | 1 | conditional | 0 0 0 0 7 0
+try | first of two | 1 | compare | 0 0 0 0 7 0
+try | first of two | 1 | call | 0 0 0 0 7 0
+try | first of two | 1 | not or | 0 0 0 0 7 0
+try | first of two | 1 | walrus | 0 0 2 0 7 0
+try | first of two | [x] | one line | 0 0 0 0 7 2
+try | first of two | [x] | or | 0 0 0 0 7 2
+try | first of two | [x] | and | 0 0 0 0 7 2
+try | first of two | [x] | below | 0 0 0 0 7 2
+try | first of two | [x] | not | 0 0 0 0 7 3
+try | first of two | [x] | conditional | 0 0 0 0 7 2
+try | first of two | [x] | compare | 0 0 0 0 7 TypeError
+try | first of two | [x] | call | 0 0 0 0 7 2
+try | first of two | [x] | not or | 0 0 0 0 7 3
+try | first of two | [x] | walrus | 0 0 0 0 7 2
+try | first of two | two lines | one line | 0 2 0 0 7 0
+try | first of two | two lines | or | 0 2 2 0 7 0
+try | first of two | two lines | and | 0 0 0 0 7 0
+try | first of two | two lines | below | 0 2 0 0 7 0
+try | first of two | two lines | not | 2 0 2 0 7 0
+try | first of two | two lines | conditional | 0 0 0 0 7 0
+try | first of two | two lines | compare | 0 0 0 0 7 0
+try | first of two | two lines | call | 0 2 0 0 7 0
+try | first of two | two lines | not or | 2 0 0 0 7 0
+try | first of two | two lines | walrus | 0 2 2 0 7 0
+try | last of three | _ | one line | 0 2 0 0 7 2
+try | last of three | _ | or | 0 2 2 2 7 2
+try | last of three | _ | and | 0 0 0 0 7 2
+try | last of three | _ | below | 0 2 0 0 7 2
+try | last of three | _ | not | 2 0 2 2 7 0
+try | last of three | _ | conditional | 0 0 0 2 7 2
+try | last of three | _ | compare | 0 0 0 0 7 TypeError
+try | last of three | _ | call | 0 2 0 0 7 2
+try | last of three | _ | not or | 2 0 0 0 7 0
+try | last of three | _ | walrus | 0 2 2 2 7 2
+try | last of three | v | one line | 0 2 0 0 7 2
+try | last of three | v | or | 0 2 2 2 7 2
+try | last of three | v | and | 0 0 0 0 7 2
+try | last of three | v | below | 0 2 0 0 7 2
+try | last of three | v | not | 2 0 2 2 7 0
+try | last of three | v | conditional | 0 0 0 2 7 2
+try | last of three | v | compare | 0 0 0 0 7 TypeError
+try | last of three | v | call | 0 2 0 0 7 2
+try | last of three | v | not or | 2 0 0 0 7 0
+try | last of three | v | walrus | 0 2 2 2 7 2
+try | last of three | 1 | one line | 0 0 0 0 7 0
+try | last of three | 1 | or | 0 0 2 0 7 0
+try | last of three | 1 | and | 0 0 0 0 7 0
+try | last of three | 1 | below | 0 0 0 0 7 0
+try | last of three | 1 | not | 0 0 2 0 7 0
+try | last of three | 1 | conditional | 0 0 0 0 7 0
+try | last of three | 1 | compare | 0 0 0 0 7 0
+try | last of three | 1 | call | 0 0 0 0 7 0
+try | last of three | 1 | not or | 0 0 0 0 7 0
+try | last of three | 1 | walrus | 0 0 2 0 7 0
+try | last of three | [x] | one line | 0 0 0 0 7 2
+try | last of three | [x] | or | 0 0 0 0 7 2
+try | last of three | [x] | and | 0 0 0 0 7 2
+try | last of three | [x] | below | 0 0 0 0 7 2
+try | last of three | [x] | not | 0 0 0 0 7 3
+try | last of three | [x] | conditional | 0 0 0 0 7 2
+try | last of three | [x] | compare | 0 0 0 0 7 TypeError
+try | last of three | [x] | call | 0 0 0 0 7 2
+try | last of three | [x] | not or | 0 0 0 0 7 3
+try | last of three | [x] | walrus | 0 0 0 0 7 2
+try | last of three | two lines | one line | 0 2 0 0 7 0
+try | last of three | two lines | or | 0 2 2 0 7 0
+try | last of three | two lines | and | 0 0 0 0 7 0
+try | last of three | two lines | below | 0 2 0 0 7 0
+try | last of three | two lines | not | 2 0 2 0 7 0
+try | last of three | two lines | conditional | 0 0 0 0 7 0
+try | last of three | two lines | compare | 0 0 0 0 7 0
+try | last of three | two lines | call | 0 2 0 0 7 0
+try | last of three | two lines | not or | 2 0 0 0 7 0
+try | last of three | two lines | walrus | 0 2 2 0 7 0
+try | in front of default | _ | one line | 9 2 9 9 2 2
+try | in front of default | _ | or | 9 2 2 2 2 2
+try | in front of default | _ | and | 9 9 9 9 2 2
+try | in front of default | _ | below | 9 2 9 9 2 2
+try | in front of default | _ | not | 2 9 2 2 9 9
+try | in front of default | _ | conditional | 9 9 9 2 2 2
+try | in front of default | _ | compare | 9 9 9 9 9 TypeError
+try | in front of default | _ | call | 9 2 9 9 2 2
+try | in front of default | _ | not or | 2 9 9 9 9 9
+try | in front of default | _ | walrus | 9 2 2 2 2 2
+try | in front of default | v | one line | 9 2 9 9 2 2
+try | in front of default | v | or | 9 2 2 2 2 2
+try | in front of default | v | and | 9 9 9 9 2 2
+try | in front of default | v | below | 9 2 9 9 2 2
+try | in front of default | v | not | 2 9 2 2 9 9
+try | in front of default | v | conditional | 9 9 9 2 2 2
+try | in front of default | v | compare | 9 9 9 9 9 TypeError
+try | in front of default | v | call | 9 2 9 9 2 2
+try | in front of default | v | not or | 2 9 9 9 9 9
+try | in front of default | v | walrus | 9 2 2 2 2 2
+try | in front of default | 1 | one line | 9 9 9 9 9 9
+try | in front of default | 1 | or | 9 9 2 9 9 9
+try | in front of default | 1 | and | 9 9 9 9 9 9
+try | in front of default | 1 | below | 9 9 9 9 9 9
+try | in front of default | 1 | not | 9 9 2 9 9 9
+try | in front of default | 1 | conditional | 9 9 9 9 9 9
+try | in front of default | 1 | compare | 9 9 9 9 9 9
+try | in front of default | 1 | call | 9 9 9 9 9 9
+try | in front of default | 1 | not or | 9 9 9 9 9 9
+try | in front of default | 1 | walrus | 9 9 2 9 9 9
+try | in front of default | [x] | one line | 9 9 9 9 9 2
+try | in front of default | [x] | or | 9 9 9 9 9 2
+try | in front of default | [x] | and | 9 9 9 9 9 2
+try | in front of default | [x] | below | 9 9 9 9 9 2
+try | in front of default | [x] | not | 9 9 9 9 9 9
+try | in front of default | [x] | conditional | 9 9 9 9 9 2
+try | in front of default | [x] | compare | 9 9 9 9 9 TypeError
+try | in front of default | [x] | call | 9 9 9 9 9 2
+try | in front of default | [x] | not or | 9 9 9 9 9 9
+try | in front of default | [x] | walrus | 9 9 9 9 9 2
+try | in front of default | two lines | one line | 9 2 9 9 9 9
+try | in front of default | two lines | or | 9 2 2 9 9 9
+try | in front of default | two lines | and | 9 9 9 9 9 9
+try | in front of default | two lines | below | 9 2 9 9 9 9
+try | in front of default | two lines | not | 2 9 2 9 9 9
+try | in front of default | two lines | conditional | 9 9 9 9 9 9
+try | in front of default | two lines | compare | 9 9 9 9 9 9
+try | in front of default | two lines | call | 9 2 9 9 9 9
+try | in front of default | two lines | not or | 2 9 9 9 9 9
+try | in front of default | two lines | walrus | 9 2 2 9 9 9
+finally | only | _ | one line | None None None None None None
+finally | only | _ | or | None None None None None None
+finally | only | _ | and | None None None None None None
+finally | only | _ | below | None None None None None None
+finally | only | _ | not | None None None None None None
+finally | only | _ | conditional | None None None None None None
+finally | only | _ | compare | None None None None None TypeError
+finally | only | _ | call | None None None None None None
+finally | only | _ | not or | None None None None None None
+finally | only | _ | walrus | None None None None None None
+finally | only | v | one line | None None None None None None
+finally | only | v | or | None None None None None None
+finally | only | v | and | None None None None None None
+finally | only | v | below | None None None None None None
+finally | only | v | not | None None None None None None
+finally | only | v | conditional | None None None None None None
+finally | only | v | compare | None None None None None TypeError
+finally | only | v | call | None None None None None None
+finally | only | v | not or | None None None None None None
+finally | only | v | walrus | None None None None None None
+finally | only | 1 | one line | None None None None None None
+finally | only | 1 | or | None None None None None None
+finally | only | 1 | and | None None None None None None
+finally | only | 1 | below | None None None None None None
+finally | only | 1 | not | None None None None None None
+finally | only | 1 | conditional | None None None None None None
+finally | only | 1 | compare | None None None None None None
+finally | only | 1 | call | None None None None None None
+finally | only | 1 | not or | None None None None None None
+finally | only | 1 | walrus | None None None None None None
+finally | only | [x] | one line | None None None None None None
+finally | only | [x] | or | None None None None None None
+finally | only | [x] | and | None None None None None None
+finally | only | [x] | below | None None None None None None
+finally | only | [x] | not | None None None None None None
+finally | only | [x] | conditional | None None None None None None
+finally | only | [x] | compare | None None None None None TypeError
+finally | only | [x] | call | None None None None None None
+finally | only | [x] | not or | None None None None None None
+finally | only | [x] | walrus | None None None None None None
+finally | only | two lines | one line | None None None None None None
+finally | only | two lines | or | None None None None None None
+finally | only | two lines | and | None None None None None None
+finally | only | two lines | below | None None None None None None
+finally | only | two lines | not | None None None None None None
+finally | only | two lines | conditional | None None None None None None
+finally | only | two lines | compare | None None None None None None
+finally | only | two lines | call | None None None None None None
+finally | only | two lines | not or | None None None None None None
+finally | only | two lines | walrus | None None None None None None
+finally | last of two | _ | one line | None None None None None None
+finally | last of two | _ | or | None None None None None None
+finally | last of two | _ | and | None None None None None None
+finally | last of two | _ | below | None None None None None None
+finally | last of two | _ | not | None None None None None None
+finally | last of two | _ | conditional | None None None None None None
+finally | last of two | _ | compare | None None None None None TypeError
+finally | last of two | _ | call | None None None None None None
+finally | last of two | _ | not or | None None None None None None
+finally | last of two | _ | walrus | None None None None None None
+finally | last of two | v | one line | None None None None None None
+finally | last of two | v | or | None None None None None None
+finally | last of two | v | and | None None None None None None
+finally | last of two | v | below | None None None None None None
+finally | last of two | v | not | None None None None None None
+finally | last of two | v | conditional | None None None None None None
+finally | last of two | v | compare | None None None None None TypeError
+finally | last of two | v | call | None None None None None None
+finally | last of two | v | not or | None None None None None None
+finally | last of two | v | walrus | None None None None None None
+finally | last of two | 1 | one line | None None None None None None
+finally | last of two | 1 | or | None None None None None None
+finally | last of two | 1 | and | None None None None None None
+finally | last of two | 1 | below | None None None None None None
+finally | last of two | 1 | not | None None None None None None
+finally | last of two | 1 | conditional | None None None None None None
+finally | last of two | 1 | compare | None None None None None None
+finally | last of two | 1 | call | None None None None None None
+finally | last of two | 1 | not or | None None None None None None
+finally | last of two | 1 | walrus | None None None None None None
+finally | last of two | [x] | one line | None None None None None None
+finally | last of two | [x] | or | None None None None None None
+finally | last of two | [x] | and | None None None None None None
+finally | last of two | [x] | below | None None None None None None
+finally | last of two | [x] | not | None None None None None None
+finally | last of two | [x] | conditional | None None None None None None
+finally | last of two | [x] | compare | None None None None None TypeError
+finally | last of two | [x] | call | None None None None None None
+finally | last of two | [x] | not or | None None None None None None
+finally | last of two | [x] | walrus | None None None None None None
+finally | last of two | two lines | one line | None None None None None None
+finally | last of two | two lines | or | None None None None None None
+finally | last of two | two lines | and | None None None None None None
+finally | last of two | two lines | below | None None None None None None
+finally | last of two | two lines | not | None None None None None None
+finally | last of two | two lines | conditional | None None None None None None
+finally | last of two | two lines | compare | None None None None None None
+finally | last of two | two lines | call | None None None None None None
+finally | last of two | two lines | not or | None None None None None None
+finally | last of two | two lines | walrus | None None None None None None
+finally | first of two | _ | one line | None None None None None None
+finally | first of two | _ | or | None None None None None None
+finally | first of two | _ | and | None None None None None None
+finally | first of two | _ | below | None None None None None None
+finally | first of two | _ | not | None None None None None None
+finally | first of two | _ | conditional | None None None None None None
+finally | first of two | _ | compare | None None None None None TypeError
+finally | first of two | _ | call | None None None None None None
+finally | first of two | _ | not or | None None None None None None
+finally | first of two | _ | walrus | None None None None None None
+finally | first of two | v | one line | None None None None None None
+finally | first of two | v | or | None None None None None None
+finally | first of two | v | and | None None None None None None
+finally | first of two | v | below | None None None None None None
+finally | first of two | v | not | None None None None None None
+finally | first of two | v | conditional | None None None None None None
+finally | first of two | v | compare | None None None None None TypeError
+finally | first of two | v | call | None None None None None None
+finally | first of two | v | not or | None None None None None None
+finally | first of two | v | walrus | None None None None None None
+finally | first of two | 1 | one line | None None None None None None
+finally | first of two | 1 | or | None None None None None None
+finally | first of two | 1 | and | None None None None None None
+finally | first of two | 1 | below | None None None None None None
+finally | first of two | 1 | not | None None None None None None
+finally | first of two | 1 | conditional | None None None None None None
+finally | first of two | 1 | compare | None None None None None None
+finally | first of two | 1 | call | None None None None None None
+finally | first of two | 1 | not or | None None None None None None
+finally | first of two | 1 | walrus | None None None None None None
+finally | first of two | [x] | one line | None None None None None None
+finally | first of two | [x] | or | None None None None None None
+finally | first of two | [x] | and | None None None None None None
+finally | first of two | [x] | below | None None None None None None
+finally | first of two | [x] | not | None None None None None None
+finally | first of two | [x] | conditional | None None None None None None
+finally | first of two | [x] | compare | None None None None None TypeError
+finally | first of two | [x] | call | None None None None None None
+finally | first of two | [x] | not or | None None None None None None
+finally | first of two | [x] | walrus | None None None None None None
+finally | first of two | two lines | one line | None None None None None None
+finally | first of two | two lines | or | None None None None None None
+finally | first of two | two lines | and | None None None None None None
+finally | first of two | two lines | below | None None None None None None
+finally | first of two | two lines | not | None None None None None None
+finally | first of two | two lines | conditional | None None None None None None
+finally | first of two | two lines | compare | None None None None None None
+finally | first of two | two lines | call | None None None None None None
+finally | first of two | two lines | not or | None None None None None None
+finally | first of two | two lines | walrus | None None None None None None
+finally | last of three | _ | one line | None None None None None None
+finally | last of three | _ | or | None None None None None None
+finally | last of three | _ | and | None None None None None None
+finally | last of three | _ | below | None None None None None None
+finally | last of three | _ | not | None None None None None None
+finally | last of three | _ | conditional | None None None None None None
+finally | last of three | _ | compare | None None None None None TypeError
+finally | last of three | _ | call | None None None None None None
+finally | last of three | _ | not or | None None None None None None
+finally | last of three | _ | walrus | None None None None None None
+finally | last of three | v | one line | None None None None None None
+finally | last of three | v | or | None None None None None None
+finally | last of three | v | and | None None None None None None
+finally | last of three | v | below | None None None None None None
+finally | last of three | v | not | None None None None None None
+finally | last of three | v | conditional | None None None None None None
+finally | last of three | v | compare | None None None None None TypeError
+finally | last of three | v | call | None None None None None None
+finally | last of three | v | not or | None None None None None None
+finally | last of three | v | walrus | None None None None None None
+finally | last of three | 1 | one line | None None None None None None
+finally | last of three | 1 | or | None None None None None None
+finally | last of three | 1 | and | None None None None None None
+finally | last of three | 1 | below | None None None None None None
+finally | last of three | 1 | not | None None None None None None
+finally | last of three | 1 | conditional | None None None None None None
+finally | last of three | 1 | compare | None None None None None None
+finally | last of three | 1 | call | None None None None None None
+finally | last of three | 1 | not or | None None None None None None
+finally | last of three | 1 | walrus | None None None None None None
+finally | last of three | [x] | one line | None None None None None None
+finally | last of three | [x] | or | None None None None None None
+finally | last of three | [x] | and | None None None None None None
+finally | last of three | [x] | below | None None None None None None
+finally | last of three | [x] | not | None None None None None None
+finally | last of three | [x] | conditional | None None None None None None
+finally | last of three | [x] | compare | None None None None None TypeError
+finally | last of three | [x] | call | None None None None None None
+finally | last of three | [x] | not or | None None None None None None
+finally | last of three | [x] | walrus | None None None None None None
+finally | last of three | two lines | one line | None None None None None None
+finally | last of three | two lines | or | None None None None None None
+finally | last of three | two lines | and | None None None None None None
+finally | last of three | two lines | below | None None None None None None
+finally | last of three | two lines | not | None None None None None None
+finally | last of three | two lines | conditional | None None None None None None
+finally | last of three | two lines | compare | None None None None None None
+finally | last of three | two lines | call | None None None None None None
+finally | last of three | two lines | not or | None None None None None None
+finally | last of three | two lines | walrus | None None None None None None
+finally | in front of default | _ | one line | None None None None None None
+finally | in front of default | _ | or | None None None None None None
+finally | in front of default | _ | and | None None None None None None
+finally | in front of default | _ | below | None None None None None None
+finally | in front of default | _ | not | None None None None None None
+finally | in front of default | _ | conditional | None None None None None None
+finally | in front of default | _ | compare | None None None None None TypeError
+finally | in front of default | _ | call | None None None None None None
+finally | in front of default | _ | not or | None None None None None None
+finally | in front of default | _ | walrus | None None None None None None
+finally | in front of default | v | one line | None None None None None None
+finally | in front of default | v | or | None None None None None None
+finally | in front of default | v | and | None None None None None None
+finally | in front of default | v | below | None None None None None None
+finally | in front of default | v | not | None None None None None None
+finally | in front of default | v | conditional | None None None None None None
+finally | in front of default | v | compare | None None None None None TypeError
+finally | in front of default | v | call | None None None None None None
+finally | in front of default | v | not or | None None None None None None
+finally | in front of default | v | walrus | None None None None None None
+finally | in front of default | 1 | one line | None None None None None None
+finally | in front of default | 1 | or | None None None None None None
+finally | in front of default | 1 | and | None None None None None None
+finally | in front of default | 1 | below | None None None None None None
+finally | in front of default | 1 | not | None None None None None None
+finally | in front of default | 1 | conditional | None None None None None None
+finally | in front of default | 1 | compare | None None None None None None
+finally | in front of default | 1 | call | None None None None None None
+finally | in front of default | 1 | not or | None None None None None None
+finally | in front of default | 1 | walrus | None None None None None None
+finally | in front of default | [x] | one line | None None None None None None
+finally | in front of default | [x] | or | None None None None None None
+finally | in front of default | [x] | and | None None None None None None
+finally | in front of default | [x] | below | None None None None None None
+finally | in front of default | [x] | not | None None None None None None
+finally | in front of default | [x] | conditional | None None None None None None
+finally | in front of default | [x] | compare | None None None None None TypeError
+finally | in front of default | [x] | call | None None None None None None
+finally | in front of default | [x] | not or | None None None None None None
+finally | in front of default | [x] | walrus | None None None None None None
+finally | in front of default | two lines | one line | None None None None None None
+finally | in front of default | two lines | or | None None None None None None
+finally | in front of default | two lines | and | None None None None None None
+finally | in front of default | two lines | below | None None None None None None
+finally | in front of default | two lines | not | None None None None None None
+finally | in front of default | two lines | conditional | None None None None None None
+finally | in front of default | two lines | compare | None None None None None None
+finally | in front of default | two lines | call | None None None None None None
+finally | in front of default | two lines | not or | None None None None None None
+finally | in front of default | two lines | walrus | None None None None None None
+with | only | _ | one line | 0 2 0 0 2 2
+with | only | _ | or | 0 2 2 2 2 2
+with | only | _ | and | 0 0 0 0 2 2
+with | only | _ | below | 0 2 0 0 2 2
+with | only | _ | not | 2 0 2 2 0 0
+with | only | _ | conditional | 0 0 0 2 2 2
+with | only | _ | compare | 0 0 0 0 0 TypeError
+with | only | _ | call | 0 2 0 0 2 2
+with | only | _ | not or | 2 0 0 0 0 0
+with | only | _ | walrus | 0 2 2 2 2 2
+with | only | v | one line | 0 2 0 0 2 2
+with | only | v | or | 0 2 2 2 2 2
+with | only | v | and | 0 0 0 0 2 2
+with | only | v | below | 0 2 0 0 2 2
+with | only | v | not | 2 0 2 2 0 0
+with | only | v | conditional | 0 0 0 2 2 2
+with | only | v | compare | 0 0 0 0 0 TypeError
+with | only | v | call | 0 2 0 0 2 2
+with | only | v | not or | 2 0 0 0 0 0
+with | only | v | walrus | 0 2 2 2 2 2
+with | only | 1 | one line | 0 0 0 0 0 0
+with | only | 1 | or | 0 0 2 0 0 0
+with | only | 1 | and | 0 0 0 0 0 0
+with | only | 1 | below | 0 0 0 0 0 0
+with | only | 1 | not | 0 0 2 0 0 0
+with | only | 1 | conditional | 0 0 0 0 0 0
+with | only | 1 | compare | 0 0 0 0 0 0
+with | only | 1 | call | 0 0 0 0 0 0
+with | only | 1 | not or | 0 0 0 0 0 0
+with | only | 1 | walrus | 0 0 2 0 0 0
+with | only | [x] | one line | 0 0 0 0 0 2
+with | only | [x] | or | 0 0 0 0 0 2
+with | only | [x] | and | 0 0 0 0 0 2
+with | only | [x] | below | 0 0 0 0 0 2
+with | only | [x] | not | 0 0 0 0 0 3
+with | only | [x] | conditional | 0 0 0 0 0 2
+with | only | [x] | compare | 0 0 0 0 0 TypeError
+with | only | [x] | call | 0 0 0 0 0 2
+with | only | [x] | not or | 0 0 0 0 0 3
+with | only | [x] | walrus | 0 0 0 0 0 2
+with | only | two lines | one line | 0 2 0 0 0 0
+with | only | two lines | or | 0 2 2 0 0 0
+with | only | two lines | and | 0 0 0 0 0 0
+with | only | two lines | below | 0 2 0 0 0 0
+with | only | two lines | not | 2 0 2 0 0 0
+with | only | two lines | conditional | 0 0 0 0 0 0
+with | only | two lines | compare | 0 0 0 0 0 0
+with | only | two lines | call | 0 2 0 0 0 0
+with | only | two lines | not or | 2 0 0 0 0 0
+with | only | two lines | walrus | 0 2 2 0 0 0
+with | last of two | _ | one line | 0 2 0 0 7 2
+with | last of two | _ | or | 0 2 2 2 7 2
+with | last of two | _ | and | 0 0 0 0 7 2
+with | last of two | _ | below | 0 2 0 0 7 2
+with | last of two | _ | not | 2 0 2 2 7 0
+with | last of two | _ | conditional | 0 0 0 2 7 2
+with | last of two | _ | compare | 0 0 0 0 7 TypeError
+with | last of two | _ | call | 0 2 0 0 7 2
+with | last of two | _ | not or | 2 0 0 0 7 0
+with | last of two | _ | walrus | 0 2 2 2 7 2
+with | last of two | v | one line | 0 2 0 0 7 2
+with | last of two | v | or | 0 2 2 2 7 2
+with | last of two | v | and | 0 0 0 0 7 2
+with | last of two | v | below | 0 2 0 0 7 2
+with | last of two | v | not | 2 0 2 2 7 0
+with | last of two | v | conditional | 0 0 0 2 7 2
+with | last of two | v | compare | 0 0 0 0 7 TypeError
+with | last of two | v | call | 0 2 0 0 7 2
+with | last of two | v | not or | 2 0 0 0 7 0
+with | last of two | v | walrus | 0 2 2 2 7 2
+with | last of two | 1 | one line | 0 0 0 0 7 0
+with | last of two | 1 | or | 0 0 2 0 7 0
+with | last of two | 1 | and | 0 0 0 0 7 0
+with | last of two | 1 | below | 0 0 0 0 7 0
+with | last of two | 1 | not | 0 0 2 0 7 0
+with | last of two | 1 | conditional | 0 0 0 0 7 0
+with | last of two | 1 | compare | 0 0 0 0 7 0
+with | last of two | 1 | call | 0 0 0 0 7 0
+with | last of two | 1 | not or | 0 0 0 0 7 0
+with | last of two | 1 | walrus | 0 0 2 0 7 0
+with | last of two | [x] | one line | 0 0 0 0 7 2
+with | last of two | [x] | or | 0 0 0 0 7 2
+with | last of two | [x] | and | 0 0 0 0 7 2
+with | last of two | [x] | below | 0 0 0 0 7 2
+with | last of two | [x] | not | 0 0 0 0 7 3
+with | last of two | [x] | conditional | 0 0 0 0 7 2
+with | last of two | [x] | compare | 0 0 0 0 7 TypeError
+with | last of two | [x] | call | 0 0 0 0 7 2
+with | last of two | [x] | not or | 0 0 0 0 7 3
+with | last of two | [x] | walrus | 0 0 0 0 7 2
+with | last of two | two lines | one line | 0 2 0 0 7 0
+with | last of two | two lines | or | 0 2 2 0 7 0
+with | last of two | two lines | and | 0 0 0 0 7 0
+with | last of two | two lines | below | 0 2 0 0 7 0
+with | last of two | two lines | not | 2 0 2 0 7 0
+with | last of two | two lines | conditional | 0 0 0 0 7 0
+with | last of two | two lines | compare | 0 0 0 0 7 0
+with | last of two | two lines | call | 0 2 0 0 7 0
+with | last of two | two lines | not or | 2 0 0 0 7 0
+with | last of two | two lines | walrus | 0 2 2 0 7 0
+with | first of two | _ | one line | 0 2 0 0 2 2
+with | first of two | _ | or | 0 2 2 2 2 2
+with | first of two | _ | and | 0 0 0 0 2 2
+with | first of two | _ | below | 0 2 0 0 2 2
+with | first of two | _ | not | 2 0 2 2 7 0
+with | first of two | _ | conditional | 0 0 0 2 2 2
+with | first of two | _ | compare | 0 0 0 0 7 TypeError
+with | first of two | _ | call | 0 2 0 0 2 2
+with | first of two | _ | not or | 2 0 0 0 7 0
+with | first of two | _ | walrus | 0 2 2 2 2 2
+with | first of two | v | one line | 0 2 0 0 2 2
+with | first of two | v | or | 0 2 2 2 2 2
+with | first of two | v | and | 0 0 0 0 2 2
+with | first of two | v | below | 0 2 0 0 2 2
+with | first of two | v | not | 2 0 2 2 7 0
+with | first of two | v | conditional | 0 0 0 2 2 2
+with | first of two | v | compare | 0 0 0 0 7 TypeError
+with | first of two | v | call | 0 2 0 0 2 2
+with | first of two | v | not or | 2 0 0 0 7 0
+with | first of two | v | walrus | 0 2 2 2 2 2
+with | first of two | 1 | one line | 0 0 0 0 7 0
+with | first of two | 1 | or | 0 0 2 0 7 0
+with | first of two | 1 | and | 0 0 0 0 7 0
+with | first of two | 1 | below | 0 0 0 0 7 0
+with | first of two | 1 | not | 0 0 2 0 7 0
+with | first of two | 1 | conditional | 0 0 0 0 7 0
+with | first of two | 1 | compare | 0 0 0 0 7 0
+with | first of two | 1 | call | 0 0 0 0 7 0
+with | first of two | 1 | not or | 0 0 0 0 7 0
+with | first of two | 1 | walrus | 0 0 2 0 7 0
+with | first of two | [x] | one line | 0 0 0 0 7 2
+with | first of two | [x] | or | 0 0 0 0 7 2
+with | first of two | [x] | and | 0 0 0 0 7 2
+with | first of two | [x] | below | 0 0 0 0 7 2
+with | first of two | [x] | not | 0 0 0 0 7 3
+with | first of two | [x] | conditional | 0 0 0 0 7 2
+with | first of two | [x] | compare | 0 0 0 0 7 TypeError
+with | first of two | [x] | call | 0 0 0 0 7 2
+with | first of two | [x] | not or | 0 0 0 0 7 3
+with | first of two | [x] | walrus | 0 0 0 0 7 2
+with | first of two | two lines | one line | 0 2 0 0 7 0
+with | first of two | two lines | or | 0 2 2 0 7 0
+with | first of two | two lines | and | 0 0 0 0 7 0
+with | first of two | two lines | below | 0 2 0 0 7 0
+with | first of two | two lines | not | 2 0 2 0 7 0
+with | first of two | two lines | conditional | 0 0 0 0 7 0
+with | first of two | two lines | compare | 0 0 0 0 7 0
+with | first of two | two lines | call | 0 2 0 0 7 0
+with | first of two | two lines | not or | 2 0 0 0 7 0
+with | first of two | two lines | walrus | 0 2 2 0 7 0
+with | last of three | _ | one line | 0 2 0 0 7 2
+with | last of three | _ | or | 0 2 2 2 7 2
+with | last of three | _ | and | 0 0 0 0 7 2
+with | last of three | _ | below | 0 2 0 0 7 2
+with | last of three | _ | not | 2 0 2 2 7 0
+with | last of three | _ | conditional | 0 0 0 2 7 2
+with | last of three | _ | compare | 0 0 0 0 7 TypeError
+with | last of three | _ | call | 0 2 0 0 7 2
+with | last of three | _ | not or | 2 0 0 0 7 0
+with | last of three | _ | walrus | 0 2 2 2 7 2
+with | last of three | v | one line | 0 2 0 0 7 2
+with | last of three | v | or | 0 2 2 2 7 2
+with | last of three | v | and | 0 0 0 0 7 2
+with | last of three | v | below | 0 2 0 0 7 2
+with | last of three | v | not | 2 0 2 2 7 0
+with | last of three | v | conditional | 0 0 0 2 7 2
+with | last of three | v | compare | 0 0 0 0 7 TypeError
+with | last of three | v | call | 0 2 0 0 7 2
+with | last of three | v | not or | 2 0 0 0 7 0
+with | last of three | v | walrus | 0 2 2 2 7 2
+with | last of three | 1 | one line | 0 0 0 0 7 0
+with | last of three | 1 | or | 0 0 2 0 7 0
+with | last of three | 1 | and | 0 0 0 0 7 0
+with | last of three | 1 | below | 0 0 0 0 7 0
+with | last of three | 1 | not | 0 0 2 0 7 0
+with | last of three | 1 | conditional | 0 0 0 0 7 0
+with | last of three | 1 | compare | 0 0 0 0 7 0
+with | last of three | 1 | call | 0 0 0 0 7 0
+with | last of three | 1 | not or | 0 0 0 0 7 0
+with | last of three | 1 | walrus | 0 0 2 0 7 0
+with | last of three | [x] | one line | 0 0 0 0 7 2
+with | last of three | [x] | or | 0 0 0 0 7 2
+with | last of three | [x] | and | 0 0 0 0 7 2
+with | last of three | [x] | below | 0 0 0 0 7 2
+with | last of three | [x] | not | 0 0 0 0 7 3
+with | last of three | [x] | conditional | 0 0 0 0 7 2
+with | last of three | [x] | compare | 0 0 0 0 7 TypeError
+with | last of three | [x] | call | 0 0 0 0 7 2
+with | last of three | [x] | not or | 0 0 0 0 7 3
+with | last of three | [x] | walrus | 0 0 0 0 7 2
+with | last of three | two lines | one line | 0 2 0 0 7 0
+with | last of three | two lines | or | 0 2 2 0 7 0
+with | last of three | two lines | and | 0 0 0 0 7 0
+with | last of three | two lines | below | 0 2 0 0 7 0
+with | last of three | two lines | not | 2 0 2 0 7 0
+with | last of three | two lines | conditional | 0 0 0 0 7 0
+with | last of three | two lines | compare | 0 0 0 0 7 0
+with | last of three | two lines | call | 0 2 0 0 7 0
+with | last of three | two lines | not or | 2 0 0 0 7 0
+with | last of three | two lines | walrus | 0 2 2 0 7 0
+with | in front of default | _ | one line | 9 2 9 9 2 2
+with | in front of default | _ | or | 9 2 2 2 2 2
+with | in front of default | _ | and | 9 9 9 9 2 2
+with | in front of default | _ | below | 9 2 9 9 2 2
+with | in front of default | _ | not | 2 9 2 2 9 9
+with | in front of default | _ | conditional | 9 9 9 2 2 2
+with | in front of default | _ | compare | 9 9 9 9 9 TypeError
+with | in front of default | _ | call | 9 2 9 9 2 2
+with | in front of default | _ | not or | 2 9 9 9 9 9
+with | in front of default | _ | walrus | 9 2 2 2 2 2
+with | in front of default | v | one line | 9 2 9 9 2 2
+with | in front of default | v | or | 9 2 2 2 2 2
+with | in front of default | v | and | 9 9 9 9 2 2
+with | in front of default | v | below | 9 2 9 9 2 2
+with | in front of default | v | not | 2 9 2 2 9 9
+with | in front of default | v | conditional | 9 9 9 2 2 2
+with | in front of default | v | compare | 9 9 9 9 9 TypeError
+with | in front of default | v | call | 9 2 9 9 2 2
+with | in front of default | v | not or | 2 9 9 9 9 9
+with | in front of default | v | walrus | 9 2 2 2 2 2
+with | in front of default | 1 | one line | 9 9 9 9 9 9
+with | in front of default | 1 | or | 9 9 2 9 9 9
+with | in front of default | 1 | and | 9 9 9 9 9 9
+with | in front of default | 1 | below | 9 9 9 9 9 9
+with | in front of default | 1 | not | 9 9 2 9 9 9
+with | in front of default | 1 | conditional | 9 9 9 9 9 9
+with | in front of default | 1 | compare | 9 9 9 9 9 9
+with | in front of default | 1 | call | 9 9 9 9 9 9
+with | in front of default | 1 | not or | 9 9 9 9 9 9
+with | in front of default | 1 | walrus | 9 9 2 9 9 9
+with | in front of default | [x] | one line | 9 9 9 9 9 2
+with | in front of default | [x] | or | 9 9 9 9 9 2
+with | in front of default | [x] | and | 9 9 9 9 9 2
+with | in front of default | [x] | below | 9 9 9 9 9 2
+with | in front of default | [x] | not | 9 9 9 9 9 9
+with | in front of default | [x] | conditional | 9 9 9 9 9 2
+with | in front of default | [x] | compare | 9 9 9 9 9 TypeError
+with | in front of default | [x] | call | 9 9 9 9 9 2
+with | in front of default | [x] | not or | 9 9 9 9 9 9
+with | in front of default | [x] | walrus | 9 9 9 9 9 2
+with | in front of default | two lines | one line | 9 2 9 9 9 9
+with | in front of default | two lines | or | 9 2 2 9 9 9
+with | in front of default | two lines | and | 9 9 9 9 9 9
+with | in front of default | two lines | below | 9 2 9 9 9 9
+with | in front of default | two lines | not | 2 9 2 9 9 9
+with | in front of default | two lines | conditional | 9 9 9 9 9 9
+with | in front of default | two lines | compare | 9 9 9 9 9 9
+with | in front of default | two lines | call | 9 2 9 9 9 9
+with | in front of default | two lines | not or | 2 9 9 9 9 9
+with | in front of default | two lines | walrus | 9 2 2 9 9 9
+default | only | _ | one line | None None None None None None
+default | only | _ | or | None None None None None None
+default | only | _ | and | None None None None None None
+default | only | _ | below | None None None None None None
+default | only | _ | not | None None None None None None
+default | only | _ | conditional | None None None None None None
+default | only | _ | compare | None None None None None TypeError
+default | only | _ | call | None None None None None None
+default | only | _ | not or | None None None None None None
+default | only | _ | walrus | None None None None None None
+default | only | v | one line | None None None None None None
+default | only | v | or | None None None None None None
+default | only | v | and | None None None None None None
+default | only | v | below | None None None None None None
+default | only | v | not | None None None None None None
+default | only | v | conditional | None None None None None None
+default | only | v | compare | None None None None None TypeError
+default | only | v | call | None None None None None None
+default | only | v | not or | None None None None None None
+default | only | v | walrus | None None None None None None
+default | only | 1 | one line | None None None None None None
+default | only | 1 | or | None None None None None None
+default | only | 1 | and | None None None None None None
+default | only | 1 | below | None None None None None None
+default | only | 1 | not | None None None None None None
+default | only | 1 | conditional | None None None None None None
+default | only | 1 | compare | None None None None None None
+default | only | 1 | call | None None None None None None
+default | only | 1 | not or | None None None None None None
+default | only | 1 | walrus | None None None None None None
+default | only | [x] | one line | None None None None None None
+default | only | [x] | or | None None None None None None
+default | only | [x] | and | None None None None None None
+default | only | [x] | below | None None None None None None
+default | only | [x] | not | None None None None None None
+default | only | [x] | conditional | None None None None None None
+default | only | [x] | compare | None None None None None TypeError
+default | only | [x] | call | None None None None None None
+default | only | [x] | not or | None None None None None None
+default | only | [x] | walrus | None None None None None None
+default | only | two lines | one line | None None None None None None
+default | only | two lines | or | None None None None None None
+default | only | two lines | and | None None None None None None
+default | only | two lines | below | None None None None None None
+default | only | two lines | not | None None None None None None
+default | only | two lines | conditional | None None None None None None
+default | only | two lines | compare | None None None None None None
+default | only | two lines | call | None None None None None None
+default | only | two lines | not or | None None None None None None
+default | only | two lines | walrus | None None None None None None
+default | last of two | _ | one line | None None None None None None
+default | last of two | _ | or | None None None None None None
+default | last of two | _ | and | None None None None None None
+default | last of two | _ | below | None None None None None None
+default | last of two | _ | not | None None None None None None
+default | last of two | _ | conditional | None None None None None None
+default | last of two | _ | compare | None None None None None TypeError
+default | last of two | _ | call | None None None None None None
+default | last of two | _ | not or | None None None None None None
+default | last of two | _ | walrus | None None None None None None
+default | last of two | v | one line | None None None None None None
+default | last of two | v | or | None None None None None None
+default | last of two | v | and | None None None None None None
+default | last of two | v | below | None None None None None None
+default | last of two | v | not | None None None None None None
+default | last of two | v | conditional | None None None None None None
+default | last of two | v | compare | None None None None None TypeError
+default | last of two | v | call | None None None None None None
+default | last of two | v | not or | None None None None None None
+default | last of two | v | walrus | None None None None None None
+default | last of two | 1 | one line | None None None None None None
+default | last of two | 1 | or | None None None None None None
+default | last of two | 1 | and | None None None None None None
+default | last of two | 1 | below | None None None None None None
+default | last of two | 1 | not | None None None None None None
+default | last of two | 1 | conditional | None None None None None None
+default | last of two | 1 | compare | None None None None None None
+default | last of two | 1 | call | None None None None None None
+default | last of two | 1 | not or | None None None None None None
+default | last of two | 1 | walrus | None None None None None None
+default | last of two | [x] | one line | None None None None None None
+default | last of two | [x] | or | None None None None None None
+default | last of two | [x] | and | None None None None None None
+default | last of two | [x] | below | None None None None None None
+default | last of two | [x] | not | None None None None None None
+default | last of two | [x] | conditional | None None None None None None
+default | last of two | [x] | compare | None None None None None TypeError
+default | last of two | [x] | call | None None None None None None
+default | last of two | [x] | not or | None None None None None None
+default | last of two | [x] | walrus | None None None None None None
+default | last of two | two lines | one line | None None None None None None
+default | last of two | two lines | or | None None None None None None
+default | last of two | two lines | and | None None None None None None
+default | last of two | two lines | below | None None None None None None
+default | last of two | two lines | not | None None None None None None
+default | last of two | two lines | conditional | None None None None None None
+default | last of two | two lines | compare | None None None None None None
+default | last of two | two lines | call | None None None None None None
+default | last of two | two lines | not or | None None None None None None
+default | last of two | two lines | walrus | None None None None None None
+default | first of two | _ | one line | None None None None None None
+default | first of two | _ | or | None None None None None None
+default | first of two | _ | and | None None None None None None
+default | first of two | _ | below | None None None None None None
+default | first of two | _ | not | None None None None None None
+default | first of two | _ | conditional | None None None None None None
+default | first of two | _ | compare | None None None None None TypeError
+default | first of two | _ | call | None None None None None None
+default | first of two | _ | not or | None None None None None None
+default | first of two | _ | walrus | None None None None None None
+default | first of two | v | one line | None None None None None None
+default | first of two | v | or | None None None None None None
+default | first of two | v | and | None None None None None None
+default | first of two | v | below | None None None None None None
+default | first of two | v | not | None None None None None None
+default | first of two | v | conditional | None None None None None None
+default | first of two | v | compare | None None None None None TypeError
+default | first of two | v | call | None None None None None None
+default | first of two | v | not or | None None None None None None
+default | first of two | v | walrus | None None None None None None
+default | first of two | 1 | one line | None None None None None None
+default | first of two | 1 | or | None None None None None None
+default | first of two | 1 | and | None None None None None None
+default | first of two | 1 | below | None None None None None None
+default | first of two | 1 | not | None None None None None None
+default | first of two | 1 | conditional | None None None None None None
+default | first of two | 1 | compare | None None None None None None
+default | first of two | 1 | call | None None None None None None
+default | first of two | 1 | not or | None None None None None None
+default | first of two | 1 | walrus | None None None None None None
+default | first of two | [x] | one line | None None None None None None
+default | first of two | [x] | or | None None None None None None
+default | first of two | [x] | and | None None None None None None
+default | first of two | [x] | below | None None None None None None
+default | first of two | [x] | not | None None None None None None
+default | first of two | [x] | conditional | None None None None None None
+default | first of two | [x] | compare | None None None None None TypeError
+default | first of two | [x] | call | None None None None None None
+default | first of two | [x] | not or | None None None None None None
+default | first of two | [x] | walrus | None None None None None None
+default | first of two | two lines | one line | None None None None None None
+default | first of two | two lines | or | None None None None None None
+default | first of two | two lines | and | None None None None None None
+default | first of two | two lines | below | None None None None None None
+default | first of two | two lines | not | None None None None None None
+default | first of two | two lines | conditional | None None None None None None
+default | first of two | two lines | compare | None None None None None None
+default | first of two | two lines | call | None None None None None None
+default | first of two | two lines | not or | None None None None None None
+default | first of two | two lines | walrus | None None None None None None
+default | last of three | _ | one line | None None None None None None
+default | last of three | _ | or | None None None None None None
+default | last of three | _ | and | None None None None None None
+default | last of three | _ | below | None None None None None None
+default | last of three | _ | not | None None None None None None
+default | last of three | _ | conditional | None None None None None None
+default | last of three | _ | compare | None None None None None TypeError
+default | last of three | _ | call | None None None None None None
+default | last of three | _ | not or | None None None None None None
+default | last of three | _ | walrus | None None None None None None
+default | last of three | v | one line | None None None None None None
+default | last of three | v | or | None None None None None None
+default | last of three | v | and | None None None None None None
+default | last of three | v | below | None None None None None None
+default | last of three | v | not | None None None None None None
+default | last of three | v | conditional | None None None None None None
+default | last of three | v | compare | None None None None None TypeError
+default | last of three | v | call | None None None None None None
+default | last of three | v | not or | None None None None None None
+default | last of three | v | walrus | None None None None None None
+default | last of three | 1 | one line | None None None None None None
+default | last of three | 1 | or | None None None None None None
+default | last of three | 1 | and | None None None None None None
+default | last of three | 1 | below | None None None None None None
+default | last of three | 1 | not | None None None None None None
+default | last of three | 1 | conditional | None None None None None None
+default | last of three | 1 | compare | None None None None None None
+default | last of three | 1 | call | None None None None None None
+default | last of three | 1 | not or | None None None None None None
+default | last of three | 1 | walrus | None None None None None None
+default | last of three | [x] | one line | None None None None None None
+default | last of three | [x] | or | None None None None None None
+default | last of three | [x] | and | None None None None None None
+default | last of three | [x] | below | None None None None None None
+default | last of three | [x] | not | None None None None None None
+default | last of three | [x] | conditional | None None None None None None
+default | last of three | [x] | compare | None None None None None TypeError
+default | last of three | [x] | call | None None None None None None
+default | last of three | [x] | not or | None None None None None None
+default | last of three | [x] | walrus | None None None None None None
+default | last of three | two lines | one line | None None None None None None
+default | last of three | two lines | or | None None None None None None
+default | last of three | two lines | and | None None None None None None
+default | last of three | two lines | below | None None None None None None
+default | last of three | two lines | not | None None None None None None
+default | last of three | two lines | conditional | None None None None None None
+default | last of three | two lines | compare | None None None None None None
+default | last of three | two lines | call | None None None None None None
+default | last of three | two lines | not or | None None None None None None
+default | last of three | two lines | walrus | None None None None None None
+default | in front of default | _ | one line | None None None None None None
+default | in front of default | _ | or | None None None None None None
+default | in front of default | _ | and | None None None None None None
+default | in front of default | _ | below | None None None None None None
+default | in front of default | _ | not | None None None None None None
+default | in front of default | _ | conditional | None None None None None None
+default | in front of default | _ | compare | None None None None None TypeError
+default | in front of default | _ | call | None None None None None None
+default | in front of default | _ | not or | None None None None None None
+default | in front of default | _ | walrus | None None None None None None
+default | in front of default | v | one line | None None None None None None
+default | in front of default | v | or | None None None None None None
+default | in front of default | v | and | None None None None None None
+default | in front of default | v | below | None None None None None None
+default | in front of default | v | not | None None None None None None
+default | in front of default | v | conditional | None None None None None None
+default | in front of default | v | compare | None None None None None TypeError
+default | in front of default | v | call | None None None None None None
+default | in front of default | v | not or | None None None None None None
+default | in front of default | v | walrus | None None None None None None
+default | in front of default | 1 | one line | None None None None None None
+default | in front of default | 1 | or | None None None None None None
+default | in front of default | 1 | and | None None None None None None
+default | in front of default | 1 | below | None None None None None None
+default | in front of default | 1 | not | None None None None None None
+default | in front of default | 1 | conditional | None None None None None None
+default | in front of default | 1 | compare | None None None None None None
+default | in front of default | 1 | call | None None None None None None
+default | in front of default | 1 | not or | None None None None None None
+default | in front of default | 1 | walrus | None None None None None None
+default | in front of default | [x] | one line | None None None None None None
+default | in front of default | [x] | or | None None None None None None
+default | in front of default | [x] | and | None None None None None None
+default | in front of default | [x] | below | None None None None None None
+default | in front of default | [x] | not | None None None None None None
+default | in front of default | [x] | conditional | None None None None None None
+default | in front of default | [x] | compare | None None None None None TypeError
+default | in front of default | [x] | call | None None None None None None
+default | in front of default | [x] | not or | None None None None None None
+default | in front of default | [x] | walrus | None None None None None None
+default | in front of default | two lines | one line | None None None None None None
+default | in front of default | two lines | or | None None None None None None
+default | in front of default | two lines | and | None None None None None None
+default | in front of default | two lines | below | None None None None None None
+default | in front of default | two lines | not | None None None None None None
+default | in front of default | two lines | conditional | None None None None None None
+default | in front of default | two lines | compare | None None None None None None
+default | in front of default | two lines | call | None None None None None None
+default | in front of default | two lines | not or | None None None None None None
+default | in front of default | two lines | walrus | None None None None None None
+[]

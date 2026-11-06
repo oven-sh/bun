@@ -619,6 +619,7 @@ impl<'p, 'a> Walker<'p, 'a> {
                 | StmtData::SNamespace(_)
                 | StmtData::SReturn(_)
                 | StmtData::SThrow(_)
+                | StmtData::STsImportEquals(_)
                 | StmtData::STypeScript(_)
                 | StmtData::SEmpty(_)
                 | StmtData::SDebugger(_)
@@ -1210,6 +1211,7 @@ impl<'p, 'a> Walker<'p, 'a> {
             // TypeScript's, and what only a visit makes.
             StmtData::SNamespace(_)
             | StmtData::SEnum(_)
+            | StmtData::STsImportEquals(_)
             | StmtData::SComment(_)
             | StmtData::SEmpty(_)
             | StmtData::STypeScript(_)

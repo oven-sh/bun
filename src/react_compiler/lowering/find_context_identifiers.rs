@@ -369,6 +369,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
                 }
             }
             StmtData::SLazyExport(_)
+            | StmtData::STsImportEquals(_)
             | StmtData::SBreak(_)
             | StmtData::SContinue(_)
             | StmtData::SComment(_)

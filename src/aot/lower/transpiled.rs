@@ -1263,6 +1263,7 @@ impl<'a> Walker<'a> {
             | StmtData::SImport(_)
             | StmtData::SLazyExport(_)
             | StmtData::SNamespace(_)
+            | StmtData::STsImportEquals(_)
             | StmtData::STypeScript(_) => {}
         }
     }

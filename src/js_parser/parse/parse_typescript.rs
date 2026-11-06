@@ -381,6 +381,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_equal_count += 1;
                     }
                 }
+                StmtData::STsImportEquals(_) => import_equal_count += 1,
                 _ => {}
             }
         }
@@ -503,7 +504,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut value = target;
         p.lexer.expect(T::TIdentifier)?;
 
-        if name == b"require" && p.lexer.token == T::TOpenParen {
+        let is_require = name == b"require" && p.lexer.token == T::TOpenParen;
+        if is_require {
             // "import ns = require('x')"
             p.lexer.next()?;
             let path_estr = p.lexer.to_e_string()?;
@@ -562,12 +564,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binding,
             value: Some(value),
         });
-        Ok(p.s(
+        let local = p.s(
             S::Local {
                 kind,
                 decls,
                 is_export: opts.is_export,
                 origin: S::LocalOrigin::TsImportEquals,
+            },
+            loc,
+        );
+        if opts.is_export || is_require {
+            return Ok(local);
+        }
+        p.has_ts_import_equals |= opts.scope.is_module();
+        Ok(p.s(
+            S::TsImportEquals {
+                local: local.data.s_local(),
             },
             loc,
         ))

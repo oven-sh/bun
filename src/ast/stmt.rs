@@ -221,6 +221,7 @@ impl_statement_data! {
         (S::Switch,        SSwitch),
         (S::Throw,         SThrow),
         (S::Try,           STry),
+        (S::TsImportEquals, STsImportEquals),
         (S::While,         SWhile),
         (S::With,          SWith),
     ; inline:
@@ -260,6 +261,7 @@ pub enum Tag {
     SSwitch,
     SThrow,
     STry,
+    STsImportEquals,
     SWhile,
     SWith,
     STypeScript,
@@ -312,6 +314,7 @@ pub enum Data {
     SSwitch(StoreRef<S::Switch>),
     SThrow(StoreRef<S::Throw>),
     STry(StoreRef<S::Try>),
+    STsImportEquals(StoreRef<S::TsImportEquals>),
     SWhile(StoreRef<S::While>),
     SWith(StoreRef<S::With>),
 
@@ -326,7 +329,7 @@ pub enum Data {
 // Every payload variant is either a `StoreRef<T>` (8 bytes, align 4) or a ZST,
 // so `Data` = 1-byte discriminant + 8-byte payload → 12 at align 4. `Stmt` =
 // `Data` (12, align 4) + `Loc` (i32) → 16. `Option<Data>`/`Option<Stmt>`
-// niche-pack via spare discriminant values (33 variants < 256); a
+// niche-pack via spare discriminant values (34 variants < 256); a
 // `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
 const _: () = assert!(core::mem::size_of::<Data>() == 12);
 const _: () = assert!(core::mem::align_of::<Data>() == 4);
@@ -408,6 +411,14 @@ impl Data {
         }
     }
     #[inline]
+    pub fn s_local(&self) -> Option<StoreRef<S::Local>> {
+        if let Data::SLocal(v) = *self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+    #[inline]
     pub fn s_local_mut(&mut self) -> Option<&mut S::Local> {
         if let Data::SLocal(v) = self {
             Some(&mut **v)
@@ -462,6 +473,7 @@ crate::new_store!(
         S::Switch,
         S::Throw,
         S::Try,
+        S::TsImportEquals,
         S::While,
         S::With,
     ],

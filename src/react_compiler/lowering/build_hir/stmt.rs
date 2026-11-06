@@ -1662,6 +1662,8 @@ fn lower_statement(
         }
         // TypeScript/Flow type declarations are type-only, skip them
         Data::STypeScript(_) | Data::SComment(_) | Data::SDirective(_) => {}
+        // Only a module or a namespace body holds one.
+        Data::STsImportEquals(_) => {}
         Data::SNamespace(_) => {
             let loc = convert_loc(stmt_loc);
             builder.record_error(CompilerErrorDetail {

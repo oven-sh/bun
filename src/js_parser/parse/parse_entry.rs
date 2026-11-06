@@ -1123,6 +1123,13 @@ impl<'a> Parser<'a> {
                 .is_some_and(|cache| cache.input_hash.is_some());
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
+            let stmts = if p.has_ts_import_equals {
+                let mut list = bun_alloc::vec_from_iter_in(stmts.iter().copied(), p.arena);
+                list.push(p.s(S::TsImportEquals { local: None }, bun_ast::Loc::EMPTY));
+                list.into_bump_slice_mut()
+            } else {
+                stmts
+            };
             p.append_part(&mut parts, stmts)?;
         } else {
             let mock_hoist_order = if p.options.features.inject_jest_globals || asks_uses_test_api {
@@ -1172,6 +1179,8 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+
+            let mut deferred_ts_import_equals = BumpVec::<(usize, Stmt)>::new_in(arena);
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (i, stmt) in stmts.iter().enumerate() {
@@ -1278,11 +1287,21 @@ impl<'a> Parser<'a> {
                         // Advance the shared-slice cursor past this enum's scopes.
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
+                    js_ast::StmtData::STsImportEquals(alias) => {
+                        if let Some(local) = alias.local {
+                            p.defer_ts_import_equals(&local);
+                            deferred_ts_import_equals.push((parts.len(), *stmt));
+                        }
+                    }
                     _ => {
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
                     }
                 }
+            }
+
+            if !deferred_ts_import_equals.is_empty() {
+                p.append_read_ts_import_equals(&mut parts, &deferred_ts_import_equals)?;
             }
         }
 

@@ -115,6 +115,16 @@ pub struct Namespace {
     pub is_export: bool,
 }
 
+/// An unexported TypeScript `import a = b.c`, before the visit pass.
+///
+/// The visit pass leaves `local` unvisited until it reaches the end of the
+/// statement list that owns the alias. The alias is a `const` if a value
+/// reads `a` by then, and nothing if not (as tsc does).
+pub struct TsImportEquals {
+    /// `const a = b.c`. `None` marks the end of a statement list that owns such aliases.
+    pub local: Option<crate::StoreRef<Local>>,
+}
+
 pub struct Function {
     pub func: G::Fn,
 }
@@ -276,7 +286,8 @@ impl Local {
 pub enum LocalOrigin {
     #[default]
     Normal,
-    /// From TS `import x = ...`; dropped if unused (matches tsc).
+    /// From TS `import x = ...`. An unexported `import a = b.c` that no value
+    /// reads never becomes a local: see `TsImportEquals`.
     TsImportEquals,
     /// From rewritten `exports.x = ...`.
     CommonJsExport,

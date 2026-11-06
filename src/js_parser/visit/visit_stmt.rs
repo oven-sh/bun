@@ -5,14 +5,14 @@ use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::Runtime::ReplaceableExport;
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    StrictModeFeature, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::ast_result::CommonJSExportValue;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
-use bun_collections::VecExt;
+use bun_collections::{HashMap, VecExt};
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -120,6 +120,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StmtData::STry(mut sr) => Self::s_try(p, stmts, stmt, &mut *sr),
             StmtData::SSwitch(mut sr) => Self::s_switch(p, stmts, stmt, &mut *sr),
             StmtData::SNamespace(mut sr) => Self::s_namespace(p, stmts, stmt, &mut *sr),
+            StmtData::STsImportEquals(sr) => {
+                Self::s_ts_import_equals(p, stmts, stmt, &sr, was_after_after_const_local_prefix)
+            }
 
             // Only used by the bundler for lazy export ASTs.
             StmtData::SLazyExport(_) => unreachable!(),
@@ -2517,11 +2520,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
         let child_stmts: &[Stmt] = data.stmts.slice();
+        let mut has_ts_import_equals = false;
         for child_stmt in child_stmts.iter() {
-            if let StmtData::SLocal(local) = child_stmt.data {
-                if local.is_export {
-                    p.mark_exported_decls_inside_namespace(data.arg, local.decls.slice());
+            match child_stmt.data {
+                StmtData::SLocal(local) => {
+                    if local.is_export {
+                        p.mark_exported_decls_inside_namespace(data.arg, local.decls.slice());
+                    }
                 }
+                StmtData::STsImportEquals(_) => has_ts_import_equals = true,
+                _ => {}
             }
         }
 
@@ -2530,6 +2538,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
         let mut prepend_list = stmts_to_list(p.arena, data.stmts);
+        if has_ts_import_equals {
+            prepend_list.push(p.s(S::TsImportEquals { local: None }, stmt.loc));
+        }
 
         let old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
         p.enclosing_namespace_arg_ref = Some(data.arg);
@@ -2552,6 +2563,279 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         Ok(())
     }
+
+    /// tsc emits an unexported `import a = b.c` only if a value reads `a`. A
+    /// reader can follow the alias, so the alias waits unvisited in `stmts`
+    /// for the end of its list.
+    #[cold]
+    fn s_ts_import_equals(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &S::TsImportEquals,
+        was_after_after_const_local_prefix: bool,
+    ) -> Result<(), Error> {
+        // Local statements do not end the const local prefix
+        p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+        let Some(local) = data.local else {
+            return p.visit_read_ts_import_equals(stmts);
+        };
+        p.defer_ts_import_equals(&local);
+        stmts.push(*stmt);
+        Ok(())
+    }
+
+    /// What the visit of `const a = b.c` does that cannot wait for a reader of `a`.
+    #[cold]
+    pub(crate) fn defer_ts_import_equals(&mut self, local: &S::Local) {
+        let (alias, value) = ts_import_equals_decl(local);
+        let root = entity_name_root(value);
+        let js_ast::ExprData::EIdentifier(id) = root.data else {
+            return;
+        };
+        let name = self.load_name_from_ref(id.ref_);
+        if self.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, root.loc),
+                name,
+            )
+            .expect("unreachable");
+        }
+
+        // A reader that follows a constant of the const local prefix gets its value.
+        if !self.cur_scope().is_after_const_local_prefix
+            && let Some(constant) = self.ts_import_equals_const_value(value, root.loc, name)
+        {
+            self.const_values.put(alias, constant).expect("oom");
+        }
+    }
+
+    /// The value the visit gives `b.c` where that is a constant: a member of a
+    /// TypeScript enum, or a `b` that is one itself. Records no use of `b`.
+    fn ts_import_equals_const_value(
+        &mut self,
+        value: Expr,
+        root_loc: bun_ast::Loc,
+        root_name: &'a [u8],
+    ) -> Option<Expr> {
+        let root = self
+            .find_symbol_with_record_usage::<false>(root_loc, root_name)
+            .ok()?
+            .r#ref;
+        if !root.is_valid() {
+            return None;
+        }
+        if !matches!(value.data, js_ast::ExprData::EDot(_))
+            && self.options.features.inlining
+            && let Some(constant) = self.const_values.get(&root)
+        {
+            return Some(*constant);
+        }
+
+        use js_ast::ts::Data as Member;
+        let mut member = match &self.symbols[root.inner_index() as usize].namespace_alias {
+            Some(alias) => match self.ref_to_ts_namespace_member.get(&alias.namespace_ref) {
+                Some(Member::Namespace(namespace)) => {
+                    let members: &js_ast::TSNamespaceMemberMap = namespace;
+                    members.get(alias.alias.slice())?.data
+                }
+                _ => return None,
+            },
+            None => *self.ref_to_ts_namespace_member.get(&root)?,
+        };
+        let mut dots = BumpVec::new_in(self.arena);
+        let mut target = value;
+        while let js_ast::ExprData::EDot(dot) = target.data {
+            dots.push((dot.name.slice(), target.loc));
+            target = dot.target;
+        }
+        let (mut name, mut loc) = (root_name, root_loc);
+        for &(dot_name, dot_loc) in dots.iter().rev() {
+            let Member::Namespace(namespace) = member else {
+                return None;
+            };
+            let members: &js_ast::TSNamespaceMemberMap = &namespace;
+            member = members.get(dot_name)?.data;
+            (name, loc) = (dot_name, dot_loc);
+        }
+        let constant = match member {
+            Member::EnumNumber(number) => Expr {
+                loc,
+                data: js_ast::ExprData::ENumber(E::Number::new(number)),
+            },
+            Member::EnumString(string) => self.new_expr(&*string, loc),
+            _ => return None,
+        };
+        Some(self.wrap_inlined_enum(constant, name))
+    }
+
+    /// Calls `visit` with the index of each alias that a value reads. The visit
+    /// of one alias can be what reads another.
+    fn for_each_read_ts_import_equals(
+        &mut self,
+        aliases: &[js_ast::StoreRef<S::Local>],
+        mut visit: impl FnMut(&mut Self, usize) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let mut index_of: HashMap<Ref, usize> = HashMap::default();
+        if aliases.len() > 1 {
+            for (index, local) in aliases.iter().enumerate() {
+                index_of.insert(ts_import_equals_decl(local).0, index);
+            }
+        }
+        let mut visited = bun_alloc::vec_from_iter_in(aliases.iter().map(|_| false), self.arena);
+        for first in 0..aliases.len() {
+            let mut index = first;
+            loop {
+                let alias = ts_import_equals_decl(&aliases[index]).0;
+                if visited[index]
+                    || self.symbols[alias.inner_index() as usize].use_count_estimate == 0
+                {
+                    break;
+                }
+                visited[index] = true;
+                visit(self, index)?;
+                let root = entity_name_root(ts_import_equals_decl(&aliases[index]).1);
+                let js_ast::ExprData::EIdentifier(id) = root.data else {
+                    break;
+                };
+                let Some(&next) = index_of.get(&id.ref_) else {
+                    break;
+                };
+                index = next;
+            }
+        }
+        Ok(())
+    }
+
+    /// The end of a statement list: visits the aliases of `stmts` that a value reads.
+    fn visit_read_ts_import_equals(&mut self, stmts: &mut StmtList<'a>) -> Result<(), Error> {
+        let arena = self.arena;
+        let mut positions = BumpVec::new_in(arena);
+        let mut aliases = BumpVec::new_in(arena);
+        for (position, stmt) in stmts.iter().enumerate() {
+            if let StmtData::STsImportEquals(alias) = stmt.data
+                && let Some(local) = alias.local
+            {
+                positions.push(position);
+                aliases.push(local);
+            }
+        }
+        let mut read: BumpVec<'a, Option<StmtList<'a>>> =
+            bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
+        self.for_each_read_ts_import_equals(&aliases, |p, index| {
+            let mut local = aliases[index];
+            let mut stmt = Stmt {
+                data: StmtData::SLocal(local),
+                loc: stmts[positions[index]].loc,
+            };
+            let mut visited = StmtList::new_in(arena);
+            Self::s_local(p, &mut visited, &mut stmt, &mut *local, true)?;
+            read[index] = Some(visited);
+            Ok(())
+        })?;
+
+        let all = core::mem::replace(stmts, StmtList::with_capacity_in(stmts.len(), arena));
+        let mut next = 0;
+        for (position, stmt) in all.iter().enumerate() {
+            if positions.get(next) != Some(&position) {
+                stmts.push(*stmt);
+                continue;
+            }
+            match read[next].take() {
+                Some(visited) => stmts.extend_from_slice(&visited),
+                None => self.drop_ts_import_equals(&aliases[next]),
+            }
+            next += 1;
+        }
+        Ok(())
+    }
+
+    /// One Part for each top-level statement: gives each alias that a value
+    /// reads its Part. `deferred` has the index in `parts` where the Part of
+    /// each `S::TsImportEquals` goes.
+    #[cold]
+    pub(crate) fn append_read_ts_import_equals(
+        &mut self,
+        parts: &mut BumpVec<'a, js_ast::Part>,
+        deferred: &[(usize, Stmt)],
+    ) -> Result<(), Error> {
+        let arena = self.arena;
+        let aliases = bun_alloc::vec_from_iter_in(
+            deferred.iter().filter_map(|(_, stmt)| match stmt.data {
+                StmtData::STsImportEquals(alias) => alias.local,
+                _ => None,
+            }),
+            arena,
+        );
+        debug_assert!(aliases.len() == deferred.len());
+        let mut read: BumpVec<'a, Option<js_ast::Part>> =
+            bun_alloc::vec_from_iter_in(aliases.iter().map(|_| None), arena);
+        self.for_each_read_ts_import_equals(&aliases, |p, index| {
+            let stmt = Stmt {
+                data: StmtData::SLocal(aliases[index]),
+                loc: deferred[index].1.loc,
+            };
+            let mut part = BumpVec::new_in(arena);
+            p.append_part(&mut part, arena.alloc_slice_copy(&[stmt]))?;
+            read[index] = part.pop();
+            Ok(())
+        })?;
+
+        let all = core::mem::replace(
+            parts,
+            BumpVec::with_capacity_in(parts.len() + aliases.len(), arena),
+        );
+        let mut next = 0;
+        let mut position = 0;
+        let mut all = all.into_iter();
+        loop {
+            while next < aliases.len() && deferred[next].0 == position {
+                match read[next].take() {
+                    Some(part) => parts.push(part),
+                    None => self.drop_ts_import_equals(&aliases[next]),
+                }
+                next += 1;
+            }
+            let Some(part) = all.next() else {
+                break;
+            };
+            parts.push(part);
+            position += 1;
+        }
+        Ok(())
+    }
+
+    /// An import that only this alias names stays as an import of nothing, and its module still runs.
+    fn drop_ts_import_equals(&mut self, local: &S::Local) {
+        let root = entity_name_root(ts_import_equals_decl(local).1);
+        let js_ast::ExprData::EIdentifier(id) = root.data else {
+            return;
+        };
+        let name = self.load_name_from_ref(id.ref_);
+        if let Ok(found) = self.find_symbol_with_record_usage::<false>(root.loc, name)
+            && found.r#ref.is_valid()
+        {
+            self.ts_use_counts[found.r#ref.inner_index() as usize] += 1;
+        }
+    }
+}
+
+/// `a` and `b.c` of the `const a = b.c` that the parser makes of `import a = b.c`.
+fn ts_import_equals_decl(local: &S::Local) -> (Ref, Expr) {
+    let decl = &local.decls.slice()[0];
+    match (decl.binding.data, decl.value) {
+        (js_ast::b::B::BIdentifier(alias), Some(value)) => (alias.r#ref, value),
+        _ => unreachable!("the parser makes `const a = b.c` of an `import a = b.c`"),
+    }
+}
+
+/// `b` of `b.c.d`.
+fn entity_name_root(mut name: Expr) -> Expr {
+    while let js_ast::ExprData::EDot(dot) = name.data {
+        name = dot.target;
+    }
+    name
 }
 
 enum BareStatementNamespace {

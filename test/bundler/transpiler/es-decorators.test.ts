@@ -1943,6 +1943,22 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a second construction with an undecorated accessor #x throws before an initializer runs again", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let runs = 0;
+        class Base { constructor(o) { return o; } }
+        class Twice extends Base { first = ++runs; accessor #p = 1; }
+        const o = {};
+        new Twice(o);
+        let thrown = "no throw";
+        try { new Twice(o); } catch (e) { thrown = e.constructor.name; }
+        console.log(thrown, runs);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("TypeError 1\n");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("the private field of an undecorated accessor #x has a name that the file does not declare", () => {
       const print = (source: string) => new Bun.Transpiler({ loader: "js" }).transformSync(source);
       expect(print("class A { accessor #x = 1 }")).toContain("#x_accessor_storage = 1;");

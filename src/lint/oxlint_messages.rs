@@ -54,11 +54,12 @@ fn entries_for_name(meta: &Meta) -> [&'static [Message]; 2] {
 }
 
 /// oxlint's version of `message`. `replacements` comes from [`of_rule`].
-pub(crate) fn of(replacements: &[&'static [Message]; 2], message: Message) -> Message {
+pub(crate) fn of(
+    replacements: &[&'static [Message]; 2],
+    message: &'static Message,
+) -> &'static Message {
     let mut all = replacements.iter().flat_map(|it| it.iter());
-    all.find(|it| it.id == message.id)
-        .copied()
-        .unwrap_or(message)
+    all.find(|it| it.id == message.id).unwrap_or(message)
 }
 
 const fn m(id: &'static str, text: &'static str) -> Message {

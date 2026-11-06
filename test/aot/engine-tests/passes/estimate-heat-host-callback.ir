@@ -1,0 +1,78 @@
+# A callback handed to a timer of the host, and what it calls, is not code that runs once and ranks above a function called in a loop at start, which is hot too where the callback's code is less than a fifth of the program
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce [[percentileOfMain]] 1
+# CHECK-NEXT: f1 Hot [[percentile]] [[activations]]
+# CHECK-NEXT: f2 Hot [[percentile]] [[activations]]
+# CHECK-NEXT: f3 Hot [[percentile]] [[activations]]
+# CHECK-NEXT: f4 Hot [[percentileOfRegister]] 10
+# CHECK-NEXT: f5 RunsOnce [[percentileOfOnce]] 1
+# CHECK-NEXT: f6 RunsOnce [[percentileOfOnce]] 1
+# CHECK-NEXT: f7 RunsOnce [[percentileOfOnce]] 1
+# CHECK: hottest: f1 f2 f3 f4 f0 f5 f6 f7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = NewClosure function=f1
+    v3 = Builtin builtin=SetInterval
+    v4 = Integer integer=16
+    v5 = Call v3, -, v2, v4
+    v6 = CallDirect function=f5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = CallDirect v0 function=f4
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+
+function f1 name="tick" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f2
+    Return v0
+}
+
+function f2 name="route" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+
+function f3 name="respond" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+function f4 name="register" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = LogicalNot v1
+    Return v2
+}
+
+function f5 name="tickOnce" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f6
+    Return v0
+}
+
+function f6 name="routeOnce" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f7
+    Return v0
+}
+
+function f7 name="respondOnce" results=[{type=undefined}] {
+  b0():
+    Return
+}

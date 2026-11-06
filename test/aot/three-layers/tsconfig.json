@@ -1,0 +1,1 @@
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "lib": ["esnext", "dom"], "noEmit": true, "strict": true, "allowJs": true, "resolveJsonModule": true, "types": [], "skipLibCheck": true, "allowImportingTsExtensions": true } }

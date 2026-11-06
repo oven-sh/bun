@@ -67,7 +67,7 @@ extern "C" fn Bun__Secrets__scheduleJob(
     options: *mut SecretsJobOptions,
     promise: JSValue,
 ) {
-    let cx = global.js_thread_of_caller_no_frame();
+    let cx = global.js_thread_of_caller();
     crate::Job::<SecretsJob>::schedule(
         &cx,
         SecretsJob {

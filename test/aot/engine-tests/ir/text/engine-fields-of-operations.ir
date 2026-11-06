@@ -1,0 +1,910 @@
+# Every payload field, operand and flag that only the engine has on an operation or terminator of the wire, shown on the first use of each
+# RUN: round-trip
+# CHECK: typesite w0 module=m0 position=1 kind=Assertion
+# CHECK-NEXT: expectedresult x0 type=anything
+# CHECK-NEXT: layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+# CHECK-NEXT: layout L1 kind=Instance name="Derived" module=m0 position=10 constructor=f3 fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}, {key=#"q"@L1 declared={type=anything} flags=[IsPrivate]}] flags=[HasHeritage]
+# CHECK-NEXT: layout L2 kind=Environment module=m0 position=20 fields=[{declared={type=anything}}, {declared={type=anything}}]
+# CHECK-NEXT: layout L3 kind=Instance name="Base" module=m0 position=30 constructor=f4
+# CHECK-NEXT: variable g0 name="a" module=m0 declared={type=anything}
+# CHECK-NEXT: module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+# CHECK-NEXT: module m1 path="/other.js" displayPath="other.js" body=f1
+# CHECK-NEXT: module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+# CHECK-NEXT: modulefailure q0 importer=m0 specifier="./missing"
+# CHECK-NEXT: evalscope e0
+# CHECK-NEXT: evalscope e1 bindings=[{name="x" layout=L2 field=1 operand=0}]
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f2 module=m0 kind=Arrow captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-NEXT: function f3 name="Derived" module=m0 position=10 kind=DerivedConstructor flags=[HasNewTarget] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = GetConstructPrototype v0 layout=L1
+# CHECK-NEXT: v3 = SuperConstruct v1, v0, v1, v1 layout=L1 accessSite=1 callees=[f2, builtin(MathMax), ..]
+# CHECK-NEXT: v4 = SuperConstruct v1, v0 layout=L1
+# CHECK-NEXT: v5 = NewArray contents=anything capacity=v0 allocationSite=2 literalStorage=Profiled staticsOffset=3 [contentsAreProven]
+# CHECK-NEXT: v6 = SuperConstructList v1, v0, v5 layout=L1 accessSite=4 callees=[f2, builtin(MathMax), ..]
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-NEXT: function f4 name="Base" module=m0 position=30 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = GetConstructPrototype v0 layout=L3
+# CHECK-NEXT: v2 = NewObject v1 layout=L3 allocationSite=5 storage=Frame allocation=6 allocationClass=7
+# CHECK-NEXT: v3 = FinishObject v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-NEXT: function f5 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}, {type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = Results v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-NEXT: function f6 module=m0 thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f7 module=m0 thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0 = Undefined
+# CHECK-NEXT: v1 = Null
+# CHECK-NEXT: v2 = Absent
+# CHECK-NEXT: v3 = Boolean boolean=true
+# CHECK-NEXT: v4 = Boolean
+# CHECK-NEXT: v5 = Integer integer=-7
+# CHECK-NEXT: v6 = Integer
+# CHECK-NEXT: v7 = Double number=1.5
+# CHECK-NEXT: v8 = Double
+# CHECK-NEXT: v9 = String string="text"
+# CHECK-NEXT: v10 = BigInt digits="12345678901234567890"
+# CHECK-NEXT: v11 = Builtin builtin=Math
+# CHECK-NEXT: v12 = ModuleBuiltin builtin=ImportMeta module=m0
+# CHECK-NEXT: v13 = Data data=d0 allocationSite=8 encoding=Expanded request=9
+# CHECK-NEXT: v14 = NewClosure v0, v1 function=f2 allocationSite=10 storage=Frame allocation=11 closureForm=Slim [isMadeOnDemand]
+# CHECK-NEXT: v15 = NewClosure function=f6
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-NEXT: function f8 module=m0 captures=[{type=env L2}] thisType={type=anything} parameters=[{type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: env L2, v1: object):
+# CHECK-NEXT: v2 = GetModuleVariable variable=g0
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: v4 = GetEnvironmentField v0 layout=L2 field=1
+# CHECK-NEXT: v5 = GetEnvironmentField v0 layout=L2
+# CHECK-NEXT: PutEnvironmentField v0, v1 layout=L2 field=1
+# CHECK-NEXT: PutEnvironmentField v0, v1 layout=L2
+# CHECK-NEXT: v8 = ScopeHasBinding v1 key="x"
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-NEXT: function f9 module=m0 thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object, v1: anything):
+# CHECK-NEXT: v2 = NewObject v0, v1, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v3 = FinishObject v2
+# CHECK-NEXT: v4 = NewObject -, v1 layout=L0 fields=[1]
+# CHECK-NEXT: v5 = FinishObject v4
+# CHECK-NEXT: v6 = NewObject layout=L0
+# CHECK-NEXT: v7 = FinishObject v6
+# CHECK-NEXT: v8 = NewArray v1, v1 contents=anything holes=[1]
+# CHECK-NEXT: v9 = NewArray contents=number
+# CHECK-NEXT: AppendElement v8, v1
+# CHECK-NEXT: AppendSpread v8, v1
+# CHECK-NEXT: AppendHole v8
+# CHECK-NEXT: v13 = NewRegExp pattern="a+" regExpFlags=[HasIndices, Global, IgnoreCase, Multiline, DotAll, Unicode, Sticky] allocationSite=12 regExpRecord=13 staticsOffset=14
+# CHECK-NEXT: v14 = NewRegExp pattern="[a--b]" regExpFlags=[UnicodeSets]
+# CHECK-NEXT: v15 = NewRegExp pattern="b"
+# CHECK-NEXT: v16 = NewTemplateObject templateStrings=[{cooked="c" raw="c"}, {raw="\\u"}] request=15 staticsOffset=16
+# CHECK-NEXT: v17 = NewRuntimeError runtimeError=ConstantAssignment name="k"
+# CHECK-NEXT: v18 = NewRuntimeError
+# CHECK-NEXT: v19 = NewSuppressedError v1, v1
+# CHECK-NEXT: v20 = NewDictionary
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-NEXT: function f10 module=m0 flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
+# CHECK-NEXT: v4 = CreateUnmappedArguments v1, v3, v2 allocationSite=17
+# CHECK-NEXT: v5 = CreateUnmappedArguments v1, v3
+# CHECK-NEXT: v6 = CreateMappedArguments v0, v1, v3, v2 allocationSite=18
+# CHECK-NEXT: v7 = CreateMappedArguments v0, v1, v3
+# CHECK-NEXT: v8 = GetMappedArgument v6 index=1
+# CHECK-NEXT: v9 = GetMappedArgument v6
+# CHECK-NEXT: SetMappedArgument v6, v2 index=1
+# CHECK-NEXT: SetMappedArgument v6, v2
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-NEXT: function f11 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
+# CHECK-NEXT: v3 = PropGet v0 key="x" accessSite=19 receivers=[L0, L1, ..] siteCache=20 [isFreeName, isForTypeOf]
+# CHECK-NEXT: v4 = PropGet v0 key="y"
+# CHECK-NEXT: PropSet v0, v1 key="x" mode=Sloppy accessSite=21 receivers=[L0, L1, ..] siteCache=22 [isFreeName]
+# CHECK-NEXT: PropSet v0, v1 key=@@iterator
+# CHECK-NEXT: v7 = NewObject layout=L0
+# CHECK-NEXT: PropDefine v7, v1 key="x" accessSite=23 receivers=[L0, L1, ..] siteCache=24
+# CHECK-NEXT: v9 = PropHas v0 key=symbol("d")@m0:5 accessSite=25 receivers=[L0, L1, ..] siteCache=26
+# CHECK-NEXT: v10 = PropDelete v0 key="x" mode=Sloppy accessSite=27 receivers=[L0, L1, ..] siteCache=28 [isFreeName]
+# CHECK-NEXT: v11 = PropDelete v0 key=symbol@m0:9
+# CHECK-NEXT: v12 = ElemGet v0, v2 accessSite=29 receivers=[L0, L1, ..] siteCache=30 [keyIsIntegral]
+# CHECK-NEXT: ElemSet v0, v2, v1 mode=Sloppy accessSite=31 receivers=[L0, L1, ..] siteCache=32 [keyIsIntegral]
+# CHECK-NEXT: ElemSet v0, v2, v1
+# CHECK-NEXT: v15 = ElemHas v0, v2 accessSite=33 receivers=[L0, L1, ..] siteCache=34 [keyIsIntegral]
+# CHECK-NEXT: v16 = ElemDelete v0, v2 mode=Sloppy accessSite=35 receivers=[L0, L1, ..] siteCache=36 [keyIsIntegral]
+# CHECK-NEXT: v17 = ElemDelete v0, v2
+# CHECK-NEXT: ElemDefine v7, v2, v1 accessSite=37 receivers=[L0, L1, ..] siteCache=38
+# CHECK-NEXT: v19 = ToPropertyKey v2
+# CHECK-NEXT: v20 = NewClosure function=f6
+# CHECK-NEXT: DefineGetter v7, v20, v19
+# CHECK-NEXT: DefineGetter v7, v20 key="g"
+# CHECK-NEXT: DefineSetter v7, v20, v19
+# CHECK-NEXT: DefineSetter v7, v20 key="g"
+# CHECK-NEXT: SetFunctionName v20, v19 methodKind=Setter
+# CHECK-NEXT: SetFunctionName v20, v19
+# CHECK-NEXT: SetLiteralPrototype v7, v0
+# CHECK-NEXT: CopyDataProperties v7, v0, v19 excludedKeys=["x", "y"] request=65
+# CHECK-NEXT: CopyDataProperties v7, v0
+# CHECK-NEXT: v30 = FinishObject v7
+# CHECK-NEXT: v31 = GetSuperBase v30 homeKind=ClassPrototype
+# CHECK-NEXT: v32 = GetSuperBase v30
+# CHECK-NEXT: v33 = SuperGet v32, v0, v2 accessSite=39 receivers=[L0, L1, ..] siteCache=40
+# CHECK-NEXT: v34 = SuperGet v32, v0 key="x"
+# CHECK-NEXT: SuperSet v32, v0, v1, v2 mode=Sloppy accessSite=41 receivers=[L0, L1, ..] siteCache=42
+# CHECK-NEXT: SuperSet v32, v0, v1 key="x"
+# CHECK-NEXT: v37 = TryDefineLiveBinding v0, v1, v2, v2, v20
+# CHECK-NEXT: v38 = TryReExportFields v0, v1 function=f2 [reusesDescriptors, keyIsFirstCapture]
+# CHECK-NEXT: v39 = TryReExportFields v0, v1 function=f2
+# CHECK-NEXT: Return v30
+# CHECK-NEXT: }
+# CHECK-NEXT: function f12 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = Add v0, v1 form=Generic
+# CHECK-NEXT: v3 = Sub v0, v1 form=Generic
+# CHECK-NEXT: v4 = Mul v0, v1 form=Generic
+# CHECK-NEXT: v5 = Div v0, v1 form=Generic
+# CHECK-NEXT: v6 = Mod v0, v1 form=Generic
+# CHECK-NEXT: v7 = Pow v0, v1 form=Generic
+# CHECK-NEXT: v8 = BitAnd v0, v1 form=Generic
+# CHECK-NEXT: v9 = BitOr v0, v1 form=Generic
+# CHECK-NEXT: v10 = BitXor v0, v1 form=Generic
+# CHECK-NEXT: v11 = LShift v0, v1 form=Generic
+# CHECK-NEXT: v12 = RShift v0, v1 form=Generic
+# CHECK-NEXT: v13 = URShift v0, v1 form=Generic
+# CHECK-NEXT: v14 = Negate v0 form=Generic
+# CHECK-NEXT: v15 = ToNumeric v0 form=Generic
+# CHECK-NEXT: v16 = Increment v0 form=Generic
+# CHECK-NEXT: v17 = Decrement v0 form=Generic
+# CHECK-NEXT: v18 = BitNot v0 form=Generic
+# CHECK-NEXT: v19 = ToNumber v0 form=Generic
+# CHECK-NEXT: v20 = Less v0, v1 form=Generic
+# CHECK-NEXT: v21 = LessEq v0, v1 form=Generic
+# CHECK-NEXT: v22 = Greater v0, v1 form=Generic
+# CHECK-NEXT: v23 = GreaterEq v0, v1 form=Generic
+# CHECK-NEXT: v24 = Eq v0, v1 form=Generic
+# CHECK-NEXT: v25 = StrictEq v0, v1 form=Generic
+# CHECK-NEXT: v26 = InstanceOf v0, v1
+# CHECK-NEXT: v27 = ToBoolean v0 form=Generic
+# CHECK-NEXT: v28 = LogicalNot v27
+# CHECK-NEXT: v29 = TypeOf v0
+# CHECK-NEXT: v30 = ToString v0 form=Generic
+# CHECK-NEXT: v31 = Strcat v29, v30 [isLikelyKey]
+# CHECK-NEXT: v32 = Strcat
+# CHECK-NEXT: v33 = ToPropertyKey v0
+# CHECK-NEXT: v34 = ToObject v0 message="m"
+# CHECK-NEXT: v35 = ToObject v0
+# CHECK-NEXT: v36 = ToThis v0
+# CHECK-NEXT: Return v31
+# CHECK-NEXT: }
+# CHECK-NEXT: function f13 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = Upcast v0 castType=anything
+# CHECK-NEXT: v3 = NarrowByField v0, v1 key="x"
+# CHECK-NEXT: v4 = Check v0 expectedType=string site=w0 cause=UnknownObject
+# CHECK-NEXT: v5 = Check v0 expectedType=number
+# CHECK-NEXT: v6 = Convert v0 declared={type=L0 site=w0 flags=[IsFromCompiler, IsExpected]} illTypedCause=Assertion
+# CHECK-NEXT: v7 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
+# CHECK-NEXT: v8 = Convert v0 declared={type=anything}
+# CHECK-NEXT: v9 = CheckInitialized v0 name="x"
+# CHECK-NEXT: v10 = RequireObjectCoercible v0 nullishAccess=Iterate name="x"
+# CHECK-NEXT: v11 = RequireObjectCoercible v0
+# CHECK-NEXT: v12 = RequireObject v0 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: v13 = RequireObject v0
+# CHECK-NEXT: v14 = TypeTest v0 testedType=undefined|null
+# CHECK-NEXT: v15 = IsClosureOf v0 function=f6
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-NEXT: function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
+# CHECK-NEXT: v3 = Call v0, v1, v2, v2 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=43 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure, isNeverInlined] @0 tail
+# CHECK-NEXT: v4 = Call v0
+# CHECK-NEXT: v5 = Call v0, -, v2
+# CHECK-NEXT: v6 = Construct v0, v1, v2 calleeName="C" accessSite=44 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure]
+# CHECK-NEXT: v7 = Construct v0
+# CHECK-NEXT: v8 = NewArray v2 contents=anything
+# CHECK-NEXT: v9 = CallList v0, v1, v8 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=45 callees=[f2, builtin(MathMax), ..] @0 tail
+# CHECK-NEXT: v10 = CallList v0, -, v8
+# CHECK-NEXT: v11 = ConstructList v0, v1, v8 calleeName="C" accessSite=46 callees=[f2, builtin(MathMax), ..]
+# CHECK-NEXT: v12 = ConstructList v0, -, v8
+# CHECK-NEXT: v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction, callsOwnFunctionObject] @0 tail
+# CHECK-NEXT: v14 = ResultAt v13 index=1
+# CHECK-NEXT: v15 = ResultAt v13
+# CHECK-NEXT: v16 = CallDirect function=f6
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-NEXT: function f15 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = ToBoolean v0 @3
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2() @3
+# CHECK-NEXT: b1(v3) frequency=Unlikely:
+# CHECK-NEXT: Return v3 @4
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b3(v4: anything):
+# CHECK-NEXT: LoopHint [isVersioned]
+# CHECK-NEXT: v6 = ToBoolean v4
+# CHECK-NEXT: Branch v6 -> taken b3(v4), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f16 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: Switch v0 cases=[-1, 4294967296] -> case b1(| 0), case b2(), otherwise b6()
+# CHECK-NEXT: b1(v2):
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b2():
+# CHECK-NEXT: SwitchString v1 strings=["a", "b"] -> case b3(| 0), case b4(), otherwise b5()
+# CHECK-NEXT: b3(v3):
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Switch v0 -> otherwise b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: SwitchString v1 -> otherwise b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f17 module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v1 = Call v0
+# CHECK-NEXT: Throw v1 @7
+# CHECK-NEXT: b2() role=CatchHandler handler=b3():
+# CHECK-NEXT: v2 = CatchValue
+# CHECK-NEXT: v3 = Call v0, -, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b3() role=DisposalCleanup subject=v0 frequency=Unlikely handler=b4(v0):
+# CHECK-NEXT: v4 = CatchException
+# CHECK-NEXT: v5 = CatchValue
+# CHECK-NEXT: Rethrow v4
+# CHECK-NEXT: b4(v6: anything) role=CleanupHandler:
+# CHECK-NEXT: v7 = CatchException
+# CHECK-NEXT: Rethrow v7
+# CHECK-NEXT: }
+# CHECK-NEXT: function f18 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = ToBoolean v1
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3 = Call v0
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=string site=w0}}, {declared={type=anything}}] requirement=Allowed
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4 = Call v0
+# CHECK-NEXT: ReturnCall v4
+# CHECK-NEXT: }
+# CHECK-NEXT: function f19 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = ResolveHeritage v0
+# CHECK-NEXT: v3 = NewClosure function=f3
+# CHECK-NEXT: v4 = NewClass v3, v0, v2 layout=L1 request=48
+# CHECK-NEXT: v5 = GetClassPrototype v4 layout=L1
+# CHECK-NEXT: v6 = NewClosure function=f6
+# CHECK-NEXT: v7 = ToPropertyKey v1
+# CHECK-NEXT: DefineMethod v4, v6, v7 layout=L1 side=Static methodKind=Setter index=1
+# CHECK-NEXT: DefineMethod v4, v6 layout=L1 key="m"
+# CHECK-NEXT: v10 = FinishClass v4 layout=L1
+# CHECK-NEXT: v11 = NewClosure function=f4
+# CHECK-NEXT: v12 = NewClass v11 layout=L3
+# CHECK-NEXT: v13 = FinishClass v12 layout=L3
+# CHECK-NEXT: v14 = NewClassToken layout=L1
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-NEXT: function f20 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = NewClassToken layout=L1
+# CHECK-NEXT: v3 = PrivateGet v0, v2 layout=L1 field=1 accessSite=49 receivers=[L0, L1, ..] siteCache=50
+# CHECK-NEXT: v4 = PrivateGet v0, v2 layout=L1
+# CHECK-NEXT: PrivateSet v0, v2, v1 layout=L1 field=1 accessSite=51 receivers=[L0, L1, ..] siteCache=52
+# CHECK-NEXT: PrivateSet v0, v2, v1 layout=L1
+# CHECK-NEXT: PrivateDefine v0, v2, v1 layout=L1 field=1 accessSite=53 receivers=[L0, L1, ..] siteCache=54
+# CHECK-NEXT: PrivateDefine v0, v2, v1 layout=L1
+# CHECK-NEXT: v9 = PrivateHas v0, v2 layout=L1 field=1 accessSite=55 receivers=[L0, L1, ..] siteCache=56
+# CHECK-NEXT: v10 = PrivateHas v0, v2 layout=L1
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-NEXT: function f21 module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = IteratorOpen v0 iteratorKind=Async elementCount=2 [isDestructuring, hasRest]
+# CHECK-NEXT: v3 = IteratorOpen v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v4 = IteratorResume v2, v1 iteratorKind=Async resumeMode=Return stepIndex=1 [readsValueWhenDone]
+# CHECK-NEXT: v5 = IteratorResume v3
+# CHECK-NEXT: v6 = ResultAt v5 index=1
+# CHECK-NEXT: IteratorClose v2 iteratorKind=Async completion=Throw
+# CHECK-NEXT: IteratorClose v3
+# CHECK-NEXT: v9 = ForInOpen v0
+# CHECK-NEXT: v10 = ForInStep v9, v0 position=v0
+# CHECK-NEXT: v11 = Await v1 [takesExtraTurn]
+# CHECK-NEXT: v12 = Await v1
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b2() role=IterationCleanup subject=v3:
+# CHECK-NEXT: v13 = CatchException
+# CHECK-NEXT: Rethrow v13
+# CHECK-NEXT: }
+# CHECK-NEXT: function f22 module=m0 flags=[IsGenerator, TakesCallee] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: function, v1: anything):
+# CHECK-NEXT: InitialYield
+# CHECK-NEXT: v3 = Yield v1
+# CHECK-NEXT: v4 = ResultAt v3
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-NEXT: function f23 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = ModuleNamespace module=m1 phase=Defer
+# CHECK-NEXT: v3 = ModuleNamespace module=m1
+# CHECK-NEXT: v4 = ImportModule module=m1 referrer=m0
+# CHECK-NEXT: v5 = RequireModule module=m1 referrer=m0 specifier="./other"
+# CHECK-NEXT: v6 = ResolveModule module=m1 referrer=m0 specifier="./other" [isURL]
+# CHECK-NEXT: v7 = ResolveModule module=m1 referrer=m0 specifier="./other"
+# CHECK-NEXT: v8 = ImportDynamic v0, v1 referrer=m0
+# CHECK-NEXT: v9 = ImportDynamic v0 referrer=m0
+# CHECK-NEXT: v10 = RequireDynamic v0 referrer=m0
+# CHECK-NEXT: v11 = RequireDynamic v0 referrer=m0
+# CHECK-NEXT: v12 = ResolveDynamic v0 referrer=m0 [isURL]
+# CHECK-NEXT: v13 = ResolveDynamic v0 referrer=m0
+# CHECK-NEXT: v14 = ThrowModuleFailure failure=q0
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-NEXT: function f24 module=m0 flags=[HasThis, HasNewTarget] captures=[{type=env L2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: env L2, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4 = DirectEval v3, v1, v2, v0 evalScope=e1 request=57
+# CHECK-NEXT: v5 = DirectEval v3, v1 evalScope=e0
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-NEXT: function f25 module=m2 role=Library thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
+# CHECK-NEXT: v3 = IsConstructor v0
+# CHECK-NEXT: v4 = ToLength v1
+# CHECK-NEXT: v5 = ArraySpeciesCreate v4, v0
+# CHECK-NEXT: v6 = GetByValWithThis v0, v1, v2
+# CHECK-NEXT: v7 = GetOwnProperty v0 key=@"internal"
+# CHECK-NEXT: v8 = ResumeGenerator v0, v1 resumeMode=Return
+# CHECK-NEXT: v9 = ResumeGenerator v0, v1
+# CHECK-NEXT: v10 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator
+# CHECK-NEXT: v11 = StepGenerator v0, v1
+# CHECK-NEXT: v12 = IsGeneratorSuspendedAtStart v0
+# CHECK-NEXT: v13 = IsUnmodifiedGenerator v0
+# CHECK-NEXT: v14 = CreateIteratorResult v1, v3 allocationSite=58
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v15 = ThrowNewError errorKind=TypeError message="bad"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v16 = ThrowNewError message="plain"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-NEXT: function f26 module=m2 role=Library thisType={type=anything} parameters=[{type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: v1 = RequireBuiltinModule runtimeModule=BunSqlite
+# CHECK-NEXT: v2 = NativeBinding builtin=NativeBindgenTimerBindTsMonotonicNowMs
+# CHECK-NEXT: v3 = LinkTimeConstant constant=3
+# CHECK-NEXT: v4 = LinkTimeConstant
+# CHECK-NEXT: v5 = HasJSType v0 first=4 last=2
+# CHECK-NEXT: v6 = HasJSType v0
+# CHECK-NEXT: v7 = GetInternalField v0 index=1
+# CHECK-NEXT: v8 = GetInternalField v0
+# CHECK-NEXT: v9 = PutInternalField v0, v0 index=1
+# CHECK-NEXT: v10 = PutInternalField v0, v0
+# CHECK-NEXT: v11 = StepArrayIterator v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f27 module=m2 role=Library thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = NewPromise allocationSite=59
+# CHECK-NEXT: v2 = CreatePromise v0 allocationSite=60
+# CHECK-NEXT: ResolvePromise v1, v0
+# CHECK-NEXT: RejectPromise v2, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f28 module=m2 role=Library thisType={type=anything} parameters=[{type=Array}, {type=i32}, {type=anything}, {type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array, v1: i32, v2: anything, v3: number):
+# CHECK-NEXT: v4 = IsPristineArray v2
+# CHECK-NEXT: v5 = ArrayStorageKind v0
+# CHECK-NEXT: v6 = HasContiguousIndex v0, v1
+# CHECK-NEXT: v7 = GetContiguousIndex v0, v1
+# CHECK-NEXT: v8 = GetDoubleIndex v0, v1
+# CHECK-NEXT: PutContiguousIndex v0, v1, v2
+# CHECK-NEXT: PutDoubleIndex v0, v1, v3
+# CHECK-NEXT: v11 = NewContiguousArray v1 allocationSite=61
+# CHECK-NEXT: v12 = NewDoubleArray v1 allocationSite=62
+# CHECK-NEXT: v13 = NewArrayLike v1, v0 allocationSite=63 arrayStorage=Int32
+# CHECK-NEXT: v14 = NewArrayLike v1
+# CHECK-NEXT: v15 = NewArrayWithCapacity v1, v0 allocationSite=64 arrayStorage=Int32
+# CHECK-NEXT: v16 = NewArrayWithCapacity v1
+# CHECK-NEXT: v17 = TryPutByValDirect v0, v1, v2 arrayStorage=Int32
+# CHECK-NEXT: v18 = TryPutIndex v0, v1, v2
+# CHECK-NEXT: v19 = TryPutDoubleIndex v0, v1, v3
+# CHECK-NEXT: GrowNewArray v11, v1
+# CHECK-NEXT: v21 = TruncateNewArray v11, v1
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: }
+# CHECK-NEXT: function f29 module=m2 role=Library thisType={type=anything} parameters=[{type=Map}, {type=Set}, {type=i32}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Map, v1: Set, v2: i32):
+# CHECK-NEXT: v3 = CollectionTable v0
+# CHECK-NEXT: v4 = MapNext v0, v3, v2
+# CHECK-NEXT: v5 = CollectionTable v1
+# CHECK-NEXT: v6 = SetNext v1, v5, v2
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Null
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+
+typesite w0 module=m0 position=1 kind=Assertion
+expectedresult x0 type=anything
+layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 kind=Instance name="Derived" module=m0 position=10 constructor=f3 fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}, {key=#"q"@L1 declared={type=anything} flags=[IsPrivate]}] flags=[HasHeritage]
+layout L2 kind=Environment module=m0 position=20 fields=[{declared={type=anything}}, {declared={type=anything}}]
+layout L3 kind=Instance name="Base" module=m0 position=30 constructor=f4
+variable g0 name="a" module=m0 declared={type=anything}
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/other.js" displayPath="other.js" body=f1
+module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+modulefailure q0 importer=m0 specifier="./missing"
+evalscope e0
+evalscope e1 bindings=[{name="x" layout=L2 field=1 operand=0}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 module=m0 kind=Arrow captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="Derived" module=m0 position=10 kind=DerivedConstructor flags=[HasNewTarget] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = SuperConstruct v1, v0, v1, v1 layout=L1 accessSite=1 callees=[f2, builtin(MathMax), ..]
+    v4 = SuperConstruct v1, v0 layout=L1
+    v5 = NewArray contents=anything capacity=v0 allocationSite=2 literalStorage=Profiled staticsOffset=3 [contentsAreProven]
+    v6 = SuperConstructList v1, v0, v5 layout=L1 accessSite=4 callees=[f2, builtin(MathMax), ..]
+    Return v3
+}
+function f4 name="Base" module=m0 position=30 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3 allocationSite=5 storage=Frame allocation=6 allocationClass=7
+    v3 = FinishObject v2
+    Return v3
+}
+function f5 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}, {type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Results v0, v1
+    Return v2
+}
+function f6 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Null
+    v2 = Absent
+    v3 = Boolean boolean=true
+    v4 = Boolean
+    v5 = Integer integer=-7
+    v6 = Integer
+    v7 = Double number=1.5
+    v8 = Double
+    v9 = String string="text"
+    v10 = BigInt digits="12345678901234567890"
+    v11 = Builtin builtin=Math
+    v12 = ModuleBuiltin builtin=ImportMeta module=m0
+    v13 = Data data=d0 allocationSite=8 encoding=Expanded request=9
+    v14 = NewClosure v0, v1 function=f2 allocationSite=10 storage=Frame allocation=11 closureForm=Slim [isMadeOnDemand]
+    v15 = NewClosure function=f6
+    Return v14
+}
+function f8 module=m0 captures=[{type=env L2}] thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: env L2, v1: object):
+    v2 = GetModuleVariable variable=g0
+    PutModuleVariable v1 variable=g0
+    v4 = GetEnvironmentField v0 layout=L2 field=1
+    v5 = GetEnvironmentField v0 layout=L2
+    PutEnvironmentField v0, v1 layout=L2 field=1
+    PutEnvironmentField v0, v1 layout=L2
+    v8 = ScopeHasBinding v1 key="x"
+    Return v8
+}
+function f9 module=m0 thisType={type=anything} parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = NewObject v0, v1, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewObject -, v1 layout=L0 fields=[1]
+    v5 = FinishObject v4
+    v6 = NewObject layout=L0
+    v7 = FinishObject v6
+    v8 = NewArray v1, v1 contents=anything holes=[1]
+    v9 = NewArray contents=number
+    AppendElement v8, v1
+    AppendSpread v8, v1
+    AppendHole v8
+    v13 = NewRegExp pattern="a+" regExpFlags=[HasIndices, Global, IgnoreCase, Multiline, DotAll, Unicode, Sticky] allocationSite=12 regExpRecord=13 staticsOffset=14
+    v14 = NewRegExp pattern="[a--b]" regExpFlags=[UnicodeSets]
+    v15 = NewRegExp pattern="b"
+    v16 = NewTemplateObject templateStrings=[{cooked="c" raw="c"}, {raw="\\u"}] request=15 staticsOffset=16
+    v17 = NewRuntimeError runtimeError=ConstantAssignment name="k"
+    v18 = NewRuntimeError
+    v19 = NewSuppressedError v1, v1
+    v20 = NewDictionary
+    Return v3
+}
+function f10 module=m0 flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
+    v4 = CreateUnmappedArguments v1, v3, v2 allocationSite=17
+    v5 = CreateUnmappedArguments v1, v3
+    v6 = CreateMappedArguments v0, v1, v3, v2 allocationSite=18
+    v7 = CreateMappedArguments v0, v1, v3
+    v8 = GetMappedArgument v6 index=1
+    v9 = GetMappedArgument v6
+    SetMappedArgument v6, v2 index=1
+    SetMappedArgument v6, v2
+    Return v4
+}
+function f11 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="x" accessSite=19 receivers=[L0, L1, ..] siteCache=20 [isFreeName, isForTypeOf]
+    v4 = PropGet v0 key="y"
+    PropSet v0, v1 key="x" mode=Sloppy accessSite=21 receivers=[L0, L1, ..] siteCache=22 [isFreeName]
+    PropSet v0, v1 key=@@iterator
+    v7 = NewObject layout=L0
+    PropDefine v7, v1 key="x" accessSite=23 receivers=[L0, L1, ..] siteCache=24
+    v9 = PropHas v0 key=symbol("d")@m0:5 accessSite=25 receivers=[L0, L1, ..] siteCache=26
+    v10 = PropDelete v0 key="x" mode=Sloppy accessSite=27 receivers=[L0, L1, ..] siteCache=28 [isFreeName]
+    v11 = PropDelete v0 key=symbol@m0:9
+    v12 = ElemGet v0, v2 accessSite=29 receivers=[L0, L1, ..] siteCache=30 [keyIsIntegral]
+    ElemSet v0, v2, v1 mode=Sloppy accessSite=31 receivers=[L0, L1, ..] siteCache=32 [keyIsIntegral]
+    ElemSet v0, v2, v1
+    v15 = ElemHas v0, v2 accessSite=33 receivers=[L0, L1, ..] siteCache=34 [keyIsIntegral]
+    v16 = ElemDelete v0, v2 mode=Sloppy accessSite=35 receivers=[L0, L1, ..] siteCache=36 [keyIsIntegral]
+    v17 = ElemDelete v0, v2
+    ElemDefine v7, v2, v1 accessSite=37 receivers=[L0, L1, ..] siteCache=38
+    v19 = ToPropertyKey v2
+    v20 = NewClosure function=f6
+    DefineGetter v7, v20, v19
+    DefineGetter v7, v20 key="g"
+    DefineSetter v7, v20, v19
+    DefineSetter v7, v20 key="g"
+    SetFunctionName v20, v19 methodKind=Setter
+    SetFunctionName v20, v19
+    SetLiteralPrototype v7, v0
+    CopyDataProperties v7, v0, v19 excludedKeys=["x", "y"] request=65
+    CopyDataProperties v7, v0
+    v30 = FinishObject v7
+    v31 = GetSuperBase v30 homeKind=ClassPrototype
+    v32 = GetSuperBase v30
+    v33 = SuperGet v32, v0, v2 accessSite=39 receivers=[L0, L1, ..] siteCache=40
+    v34 = SuperGet v32, v0 key="x"
+    SuperSet v32, v0, v1, v2 mode=Sloppy accessSite=41 receivers=[L0, L1, ..] siteCache=42
+    SuperSet v32, v0, v1 key="x"
+    v37 = TryDefineLiveBinding v0, v1, v2, v2, v20
+    v38 = TryReExportFields v0, v1 function=f2 [reusesDescriptors, keyIsFirstCapture]
+    v39 = TryReExportFields v0, v1 function=f2
+    Return v30
+}
+function f12 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1 form=Generic
+    v3 = Sub v0, v1 form=Generic
+    v4 = Mul v0, v1 form=Generic
+    v5 = Div v0, v1 form=Generic
+    v6 = Mod v0, v1 form=Generic
+    v7 = Pow v0, v1 form=Generic
+    v8 = BitAnd v0, v1 form=Generic
+    v9 = BitOr v0, v1 form=Generic
+    v10 = BitXor v0, v1 form=Generic
+    v11 = LShift v0, v1 form=Generic
+    v12 = RShift v0, v1 form=Generic
+    v13 = URShift v0, v1 form=Generic
+    v14 = Negate v0 form=Generic
+    v15 = ToNumeric v0 form=Generic
+    v16 = Increment v0 form=Generic
+    v17 = Decrement v0 form=Generic
+    v18 = BitNot v0 form=Generic
+    v19 = ToNumber v0 form=Generic
+    v20 = Less v0, v1 form=Generic
+    v21 = LessEq v0, v1 form=Generic
+    v22 = Greater v0, v1 form=Generic
+    v23 = GreaterEq v0, v1 form=Generic
+    v24 = Eq v0, v1 form=Generic
+    v25 = StrictEq v0, v1 form=Generic
+    v26 = InstanceOf v0, v1
+    v27 = ToBoolean v0 form=Generic
+    v28 = LogicalNot v27
+    v29 = TypeOf v0
+    v30 = ToString v0 form=Generic
+    v31 = Strcat v29, v30 [isLikelyKey]
+    v32 = Strcat
+    v33 = ToPropertyKey v0
+    v34 = ToObject v0 message="m"
+    v35 = ToObject v0
+    v36 = ToThis v0
+    Return v31
+}
+function f13 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Upcast v0 castType=anything
+    v3 = NarrowByField v0, v1 key="x"
+    v4 = Check v0 expectedType=string site=w0 cause=UnknownObject
+    v5 = Check v0 expectedType=number
+    v6 = Convert v0 declared={type=L0 site=w0 flags=[IsFromCompiler, IsExpected]} illTypedCause=Assertion
+    v7 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
+    v8 = Convert v0 declared={type=anything}
+    v9 = CheckInitialized v0 name="x"
+    v10 = RequireObjectCoercible v0 nullishAccess=Iterate name="x"
+    v11 = RequireObjectCoercible v0
+    v12 = RequireObject v0 runtimeError=IteratorResultNotObject
+    v13 = RequireObject v0
+    v14 = TypeTest v0 testedType=undefined|null
+    v15 = IsClosureOf v0 function=f6
+    Return v14
+}
+function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1, v2, v2 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=43 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure, isNeverInlined] @0 tail
+    v4 = Call v0
+    v5 = Call v0, -, v2
+    v6 = Construct v0, v1, v2 calleeName="C" accessSite=44 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure]
+    v7 = Construct v0
+    v8 = NewArray v2 contents=anything
+    v9 = CallList v0, v1, v8 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=45 callees=[f2, builtin(MathMax), ..] @0 tail
+    v10 = CallList v0, -, v8
+    v11 = ConstructList v0, v1, v8 calleeName="C" accessSite=46 callees=[f2, builtin(MathMax), ..]
+    v12 = ConstructList v0, -, v8
+    v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction, callsOwnFunctionObject] @0 tail
+    v14 = ResultAt v13 index=1
+    v15 = ResultAt v13
+    v16 = CallDirect function=f6
+    Return v14
+}
+function f15 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0 @3
+    Branch v2 -> taken b1(| 0), notTaken b2() @3
+  b1(v3) frequency=Unlikely:
+    Return v3 @4
+  b2():
+    Jump -> next b3(v1)
+  b3(v4: anything):
+    LoopHint [isVersioned]
+    v6 = ToBoolean v4
+    Branch v6 -> taken b3(v4), notTaken b4()
+  b4():
+    Return
+}
+function f16 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Switch v0 cases=[-1, 4294967296] -> case b1(| 0), case b2(), otherwise b6()
+  b1(v2):
+    Return v2
+  b2():
+    SwitchString v1 strings=["a", "b"] -> case b3(| 0), case b4(), otherwise b5()
+  b3(v3):
+    Return v3
+  b4():
+    Return
+  b5():
+    Unreachable
+  b6():
+    Switch v0 -> otherwise b7()
+  b7():
+    SwitchString v1 -> otherwise b8()
+  b8():
+    Return
+}
+function f17 module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Call v0
+    Throw v1 @7
+  b2() role=CatchHandler handler=b3():
+    v2 = CatchValue
+    v3 = Call v0, -, v2
+    Return v3
+  b3() role=DisposalCleanup subject=v0 frequency=Unlikely handler=b4(v0):
+    v4 = CatchException
+    v5 = CatchValue
+    Rethrow v4
+  b4(v6: anything) role=CleanupHandler:
+    v7 = CatchException
+    Rethrow v7
+}
+function f18 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Call v0
+    ReturnCall v3 casts=[{declared={type=string site=w0}}, {declared={type=anything}}] requirement=Allowed
+  b2():
+    v4 = Call v0
+    ReturnCall v4
+}
+function f19 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ResolveHeritage v0
+    v3 = NewClosure function=f3
+    v4 = NewClass v3, v0, v2 layout=L1 request=48
+    v5 = GetClassPrototype v4 layout=L1
+    v6 = NewClosure function=f6
+    v7 = ToPropertyKey v1
+    DefineMethod v4, v6, v7 layout=L1 side=Static methodKind=Setter index=1
+    DefineMethod v4, v6 layout=L1 key="m"
+    v10 = FinishClass v4 layout=L1
+    v11 = NewClosure function=f4
+    v12 = NewClass v11 layout=L3
+    v13 = FinishClass v12 layout=L3
+    v14 = NewClassToken layout=L1
+    Return v10
+}
+function f20 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClassToken layout=L1
+    v3 = PrivateGet v0, v2 layout=L1 field=1 accessSite=49 receivers=[L0, L1, ..] siteCache=50
+    v4 = PrivateGet v0, v2 layout=L1
+    PrivateSet v0, v2, v1 layout=L1 field=1 accessSite=51 receivers=[L0, L1, ..] siteCache=52
+    PrivateSet v0, v2, v1 layout=L1
+    PrivateDefine v0, v2, v1 layout=L1 field=1 accessSite=53 receivers=[L0, L1, ..] siteCache=54
+    PrivateDefine v0, v2, v1 layout=L1
+    v9 = PrivateHas v0, v2 layout=L1 field=1 accessSite=55 receivers=[L0, L1, ..] siteCache=56
+    v10 = PrivateHas v0, v2 layout=L1
+    Return v9
+}
+function f21 module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = IteratorOpen v0 iteratorKind=Async elementCount=2 [isDestructuring, hasRest]
+    v3 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v4 = IteratorResume v2, v1 iteratorKind=Async resumeMode=Return stepIndex=1 [readsValueWhenDone]
+    v5 = IteratorResume v3
+    v6 = ResultAt v5 index=1
+    IteratorClose v2 iteratorKind=Async completion=Throw
+    IteratorClose v3
+    v9 = ForInOpen v0
+    v10 = ForInStep v9, v0 position=v0
+    v11 = Await v1 [takesExtraTurn]
+    v12 = Await v1
+    Return v11
+  b2() role=IterationCleanup subject=v3:
+    v13 = CatchException
+    Rethrow v13
+}
+function f22 module=m0 flags=[IsGenerator, TakesCallee] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    InitialYield
+    v3 = Yield v1
+    v4 = ResultAt v3
+    Return v4
+}
+function f23 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ModuleNamespace module=m1 phase=Defer
+    v3 = ModuleNamespace module=m1
+    v4 = ImportModule module=m1 referrer=m0
+    v5 = RequireModule module=m1 referrer=m0 specifier="./other"
+    v6 = ResolveModule module=m1 referrer=m0 specifier="./other" [isURL]
+    v7 = ResolveModule module=m1 referrer=m0 specifier="./other"
+    v8 = ImportDynamic v0, v1 referrer=m0
+    v9 = ImportDynamic v0 referrer=m0
+    v10 = RequireDynamic v0 referrer=m0
+    v11 = RequireDynamic v0 referrer=m0
+    v12 = ResolveDynamic v0 referrer=m0 [isURL]
+    v13 = ResolveDynamic v0 referrer=m0
+    v14 = ThrowModuleFailure failure=q0
+    Unreachable
+}
+function f24 module=m0 flags=[HasThis, HasNewTarget] captures=[{type=env L2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L2, v1: anything, v2: anything, v3: anything):
+    v4 = DirectEval v3, v1, v2, v0 evalScope=e1 request=57
+    v5 = DirectEval v3, v1 evalScope=e0
+    Return v4
+}
+function f25 module=m2 role=Library thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = IsConstructor v0
+    v4 = ToLength v1
+    v5 = ArraySpeciesCreate v4, v0
+    v6 = GetByValWithThis v0, v1, v2
+    v7 = GetOwnProperty v0 key=@"internal"
+    v8 = ResumeGenerator v0, v1 resumeMode=Return
+    v9 = ResumeGenerator v0, v1
+    v10 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator
+    v11 = StepGenerator v0, v1
+    v12 = IsGeneratorSuspendedAtStart v0
+    v13 = IsUnmodifiedGenerator v0
+    v14 = CreateIteratorResult v1, v3 allocationSite=58
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v15 = ThrowNewError errorKind=TypeError message="bad"
+    Unreachable
+  b2():
+    v16 = ThrowNewError message="plain"
+    Unreachable
+}
+function f26 module=m2 role=Library thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = RequireBuiltinModule runtimeModule=BunSqlite
+    v2 = NativeBinding builtin=NativeBindgenTimerBindTsMonotonicNowMs
+    v3 = LinkTimeConstant constant=3
+    v4 = LinkTimeConstant
+    v5 = HasJSType v0 first=4 last=2
+    v6 = HasJSType v0
+    v7 = GetInternalField v0 index=1
+    v8 = GetInternalField v0
+    v9 = PutInternalField v0, v0 index=1
+    v10 = PutInternalField v0, v0
+    v11 = StepArrayIterator v0
+    Return v1
+}
+function f27 module=m2 role=Library thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewPromise allocationSite=59
+    v2 = CreatePromise v0 allocationSite=60
+    ResolvePromise v1, v0
+    RejectPromise v2, v0
+    Return v1
+}
+function f28 module=m2 role=Library thisType={type=anything} parameters=[{type=Array}, {type=i32}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: anything, v3: number):
+    v4 = IsPristineArray v2
+    v5 = ArrayStorageKind v0
+    v6 = HasContiguousIndex v0, v1
+    v7 = GetContiguousIndex v0, v1
+    v8 = GetDoubleIndex v0, v1
+    PutContiguousIndex v0, v1, v2
+    PutDoubleIndex v0, v1, v3
+    v11 = NewContiguousArray v1 allocationSite=61
+    v12 = NewDoubleArray v1 allocationSite=62
+    v13 = NewArrayLike v1, v0 allocationSite=63 arrayStorage=Int32
+    v14 = NewArrayLike v1
+    v15 = NewArrayWithCapacity v1, v0 allocationSite=64 arrayStorage=Int32
+    v16 = NewArrayWithCapacity v1
+    v17 = TryPutByValDirect v0, v1, v2 arrayStorage=Int32
+    v18 = TryPutIndex v0, v1, v2
+    v19 = TryPutDoubleIndex v0, v1, v3
+    GrowNewArray v11, v1
+    v21 = TruncateNewArray v11, v1
+    Return v21
+}
+function f29 module=m2 role=Library thisType={type=anything} parameters=[{type=Map}, {type=Set}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: i32):
+    v3 = CollectionTable v0
+    v4 = MapNext v0, v3, v2
+    v5 = CollectionTable v1
+    v6 = SetNext v1, v5, v2
+    Return
+}
+data d0 root=Null
+entry module=m0

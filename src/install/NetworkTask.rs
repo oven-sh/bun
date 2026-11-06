@@ -33,7 +33,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
     strings::StringOrTinyString::init_append_if_needed(
         bytes,
-        &mut FilenameStoreAppender(FileSystem::instance().filename_store()),
+        &mut FilenameStoreAppender(FileSystem::get().filename_store()),
     )
     .expect("unreachable")
 }
@@ -65,14 +65,15 @@ pub struct NetworkTask {
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
-    // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
-    // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
+    // ParentRef constructed via `from_raw_mut` so `as_mut_ptr` retains write
+    // provenance for `notify` (`wake_raw`) and `reset_streaming_for_retry`
+    // (`TarballStream::init`).
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     pub(crate) callback: Callback,
     pub(crate) next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
-    /// to a worker running libarchive. `None` when streaming extraction is
+    /// to a worker that extracts them. `None` when streaming extraction is
     /// disabled or this task is not a tarball download.
     pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
@@ -168,22 +169,6 @@ impl NetworkTask {
         // populated via `MaybeUninit::new(AsyncHTTP::init(..))` (or the
         // `ptr::write(real, ..)` in `notify`).
         unsafe { self.unsafe_http_client.assume_init_mut() }
-    }
-
-    /// BACKREF accessor — single `unsafe` deref for the set-once
-    /// `package_manager` `ParentRef` so `for_manifest`/`for_tarball` call
-    /// sites are safe. Lifetime is decoupled from `&self` (the manager is the
-    /// process singleton that owns this task and outlives it).
-    ///
-    /// # Safety (encapsulated)
-    /// `package_manager` is constructed via `ParentRef::from_raw_mut` (write
-    /// provenance) in `write_init`; the `for_*` builders run on the
-    /// single-threaded main setup path, so no overlapping `&mut
-    /// PackageManager` exists for the returned borrow.
-    #[inline]
-    fn pm_mut<'a>(&self) -> &'a mut PackageManager {
-        // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
-        unsafe { self.package_manager.assume_mut() }
     }
 
     // Signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
@@ -325,7 +310,7 @@ impl NetworkTask {
         }
 
         // Stash this callback's body bytes into our own accumulation buffer
-        // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
+        // before `without_borrowed_body` drops `result.body`. Covers the
         // non-streaming manifest path and the tarball fall-through above.
         if result.metadata.is_some() {
             // First callback of a fresh attempt on the non-streaming path —
@@ -361,14 +346,12 @@ impl NetworkTask {
         }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
-        // cross-thread push below. `detach_lifetime` erases the callback-scoped
-        // `'_` to `'static` and clears `body` to `&[]`; the body bytes were
-        // stashed into `(*this).response_buffer` above.
+        // cross-thread push below.
         unsafe {
             // Preserve metadata captured on an earlier streaming callback; the
             // final `result` won't have it.
             let saved_metadata = (*this).response.metadata.take();
-            (*this).response = result.detach_lifetime();
+            (*this).response = result.without_borrowed_body();
             if (*this).response.metadata.is_none() {
                 (*this).response.metadata = saved_metadata;
             }
@@ -553,7 +536,7 @@ impl NetworkTask {
         is_optional: bool,
         needs_extended: bool,
     ) -> Result<AsyncHTTP<'static>, ForManifestError> {
-        let pm = self.pm_mut();
+        let pm = self.package_manager;
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.
         let log = pm.log_mut();
@@ -590,8 +573,8 @@ impl NetworkTask {
             // The join would read bytes that are not UTF-8 as U+FFFD, which is another name.
             let tmp = if strings::is_valid_utf8(encoded_name) {
                 bun_url::join(
-                    &bun_core::String::borrow_utf8(base),
-                    &bun_core::String::borrow_utf8(encoded_name),
+                    &bun_core::StringView::borrow_utf8(base),
+                    &bun_core::StringView::borrow_utf8(encoded_name),
                 )
             } else {
                 bun_core::String::DEAD
@@ -657,7 +640,7 @@ impl NetworkTask {
         let mut last_modified: &[u8] = b"";
         let mut etag: &[u8] = b"";
         if let Some(manifest) = loaded_manifest {
-            if (needs_extended && manifest.pkg.has_extended_manifest) || !needs_extended {
+            if (needs_extended && manifest.pkg.has_extended_manifest()) || !needs_extended {
                 last_modified = manifest.pkg.last_modified.slice(&manifest.string_buf);
                 etag = manifest.pkg.etag.slice(&manifest.string_buf);
             }
@@ -837,7 +820,7 @@ impl NetworkTask {
         scope: &npm::registry::Scope,
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
-        let pm = self.pm_mut();
+        let pm = self.package_manager;
 
         let tarball_url = tarball_.url.slice();
         let built_from_registry_url = tarball_url.is_empty();
@@ -949,10 +932,10 @@ impl NetworkTask {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on
-            // `thread_pool`; the drain task calls into libarchive until it
-            // reports ARCHIVE_RETRY (out of input), then returns so the
+            // `thread_pool`; the drain task runs the decoder until it is
+            // out of input, then returns so the
             // worker can be reused for other install work. The next chunk
-            // reschedules it and libarchive — whose state lives on the heap
+            // reschedules it and the decoder — whose state lives on the heap
             // — resumes exactly where it stopped.
             //
             // The stream itself is created by the caller (see
@@ -1035,14 +1018,11 @@ impl NetworkTask {
         } else if !self.streaming_extract_task.is_null() {
             let manager = self.package_manager.as_mut_ptr();
             let this: *mut NetworkTask = self;
-            // SAFETY: `init` returns a fresh heap allocation owned here.
-            self.tarball_stream = Some(unsafe {
-                bun_core::heap::take(TarballStream::init(
-                    self.streaming_extract_task,
-                    this,
-                    manager,
-                ))
-            });
+            self.tarball_stream = Some(TarballStream::init(
+                self.streaming_extract_task,
+                this,
+                manager,
+            ));
         }
         self.response = HTTPClientResult::default();
     }
@@ -1079,8 +1059,8 @@ impl NetworkTask {
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
             // SAFETY: `package_manager` is the live owner of this task; write
-            // provenance is required for `for_manifest`/`for_tarball`'s
-            // `assume_mut`, so callers pass `*mut` (not `*const`).
+            // provenance is required for the `as_mut_ptr()` in `notify` and
+            // `reset_streaming_for_retry`, so callers pass `*mut` (not `*const`).
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             // Struct-default fields.

@@ -14,9 +14,9 @@ pub struct MaxDependencies {
     ignore_type_imports: bool,
 }
 
-const EXCEEDED: Message = Message::new("", "Maximum number of dependencies ({{max}}) exceeded.");
-const MAX_DEPENDENCIES: Message =
-    Message::new("", "File has too many dependencies ({{module_count}}). Maximum allowed is {{max}}.");
+const EXCEEDED: &Message = &Message::new("", "Maximum number of dependencies ({{max}}) exceeded.");
+const MAX_DEPENDENCIES: &Message =
+    &Message::new("", "File has too many dependencies ({{module_count}}). Maximum allowed is {{max}}.");
 
 const SYSTEMS: Systems = Systems { esmodule: true, commonjs: true, amd: false };
 

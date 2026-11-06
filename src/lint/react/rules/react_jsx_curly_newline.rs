@@ -15,10 +15,10 @@ enum Newlines {
     Forbid,
 }
 
-const EXPECTED_BEFORE: Message = Message::new("expectedBefore", "Expected newline before '}'.");
-const EXPECTED_AFTER: Message = Message::new("expectedAfter", "Expected newline after '{'.");
-const UNEXPECTED_BEFORE: Message = Message::new("unexpectedBefore", "Unexpected newline before '}'.");
-const UNEXPECTED_AFTER: Message = Message::new("unexpectedAfter", "Unexpected newline after '{'.");
+const EXPECTED_BEFORE: &Message = &Message::new("expectedBefore", "Expected newline before '}'.");
+const EXPECTED_AFTER: &Message = &Message::new("expectedAfter", "Expected newline after '{'.");
+const UNEXPECTED_BEFORE: &Message = &Message::new("unexpectedBefore", "Unexpected newline before '}'.");
+const UNEXPECTED_AFTER: &Message = &Message::new("unexpectedAfter", "Unexpected newline after '{'.");
 
 impl Rule for JsxCurlyNewline {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-curly-newline", Kind::Layout).fixable(Fixable::Whitespace);

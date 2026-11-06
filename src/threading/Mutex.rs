@@ -282,9 +282,6 @@ pub struct DarwinImpl {
 // `UnsafeCell` only exists to hand the FFI a mutable pointer from `&self`.
 #[cfg(target_vendor = "apple")]
 unsafe impl Sync for DarwinImpl {}
-// SAFETY: see `Sync` above.
-#[cfg(target_vendor = "apple")]
-unsafe impl Send for DarwinImpl {}
 
 #[cfg(target_vendor = "apple")]
 #[repr(C)]
@@ -432,9 +429,8 @@ impl FutexImpl {
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
-    // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
-    unsafe { (*ptr).lock() }
+extern "C" fn Bun__lock(lock: &ReleaseImpl) {
+    lock.lock()
 }
 
 // These have to be a size known to C.

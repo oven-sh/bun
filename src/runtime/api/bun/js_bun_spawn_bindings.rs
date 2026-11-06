@@ -1743,12 +1743,10 @@ fn spawn_maybe_sync(
 
     let Some(sync_loop) = &sync_loop else {
         if !subprocess.has_exited() {
-            // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
-            // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+            // SAFETY: jsc_vm_ptr points to the live thread VM.
             // `subprocess_ptr` is live and heap-pinned.
             unsafe {
-                (*jsc_vm_ptr)
-                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()));
+                (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process.as_non_null());
                 if let Some(context) = (*jsc_vm_ptr).as_graph_context(cx.context()) {
                     bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context);
                 }
@@ -1792,11 +1790,8 @@ fn spawn_maybe_sync(
     }
 
     if !subprocess.has_exited() {
-        // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
-        // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-        unsafe {
-            (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
-        };
+        // SAFETY: jsc_vm_ptr points to the live thread VM.
+        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process.as_non_null()) };
     }
 
     let mut did_timeout = false;

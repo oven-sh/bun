@@ -33,10 +33,10 @@ enum Context {
     Prop,
 }
 
-const MISSING_PARENS: Message = Message::new("missingParens", "Missing parentheses around multilines JSX");
-const EXTRA_PARENS: Message = Message::new("extraParens", "Expected no parentheses around multilines JSX");
-const PARENS_ON_NEW_LINES: Message =
-    Message::new("parensOnNewLines", "Parentheses around JSX should be on separate lines");
+const MISSING_PARENS: &Message = &Message::new("missingParens", "Missing parentheses around multilines JSX");
+const EXTRA_PARENS: &Message = &Message::new("extraParens", "Expected no parentheses around multilines JSX");
+const PARENS_ON_NEW_LINES: &Message =
+    &Message::new("parensOnNewLines", "Parentheses around JSX should be on separate lines");
 
 impl Rule for JsxWrapMultilines {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-wrap-multilines", Kind::None).fixable(Fixable::Code);

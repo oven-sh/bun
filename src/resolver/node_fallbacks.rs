@@ -1,6 +1,7 @@
 use crate::fs;
 use crate::package_json::{PackageJSON, SideEffects};
 use bun_options_types::bundle_enums::ModuleType;
+use bun_zstd as _;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
@@ -184,8 +185,9 @@ fn init_modules() {
     }
 }
 
-#[inline]
+#[inline(never)]
 pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+    bun_removable_features::removable_definition!(Bundler, map);
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
     unsafe { (*MAP.get()).as_ref().unwrap() }

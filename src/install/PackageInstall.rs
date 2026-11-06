@@ -803,17 +803,16 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    /// # Safety
-    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
-    /// being handed to the thread pool; the worker reclaims it in its callback.
-    pub(crate) unsafe fn push(&self, task: *mut TaskType)
+    /// Hands `task` to the thread pool; the worker reclaims the `Box` in its callback.
+    pub(crate) fn push(&self, task: Box<TaskType>)
     where
-        TaskType: IntrusiveWorkTask,
+        TaskType: IntrusiveWorkTask + Send + 'static,
     {
         self.wait_group.add_one();
-        // SAFETY: caller contract; projecting through `task` keeps the allocation's provenance.
-        self.thread_pool
-            .schedule(Batch::from(unsafe { TaskType::field_of(task) }));
+        // SAFETY: `into_raw` yields a live allocation, and projecting through it keeps its provenance.
+        self.thread_pool.schedule(Batch::from(unsafe {
+            TaskType::field_of(bun_core::heap::into_raw(task))
+        }));
     }
 
     pub(crate) fn wait(&self) {
@@ -889,7 +888,7 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
+    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> Box<Self> {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -899,7 +898,7 @@ impl HardLinkWindowsInstallTask {
         remaining[..dest.len()].copy_from_slice(dest);
         remaining[dest.len()] = 0;
 
-        bun_core::heap::into_raw(Box::new(Self {
+        Box::new(Self {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
@@ -908,33 +907,27 @@ impl HardLinkWindowsInstallTask {
                 node: ThreadPoolNode::default(),
             },
             err: None,
-        }))
+        })
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: `task` is the `task` field pointer `NewTaskQueue::push` scheduled.
-        let self_: *mut Self = unsafe { Self::from_task_ptr(task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
-        // SAFETY: self_ is valid until we reclaim the Box below.
-        if let Some(err) = unsafe { (*self_).run() } {
-            // SAFETY: as above.
-            unsafe { (*self_).err = Some(err) };
-            // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
-            let boxed = unsafe { bun_core::heap::take(self_) };
+        // SAFETY: `task` is the `task` field of the `Box` that `NewTaskQueue::push` handed over,
+        // and the pool runs each scheduled task once.
+        let mut this = unsafe { bun_core::heap::take(Self::from_task_ptr(task)) };
+        if let Some(err) = this.run() {
+            this.err = Some(err);
             // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box here (leaking it would also leak the inner
+            // simply drops its Box (leaking it would also leak the inner
             // `Box<[u16]>` per failed file).
             let mut slot = queue.errored_task.lock();
             if slot.is_none() {
-                *slot = Some(boxed);
+                *slot = Some(this);
             }
-            return;
         }
-        // SAFETY: self_ was heap-allocated in init().
-        unsafe { drop(bun_core::heap::take(self_)) };
     }
 
     fn run(&mut self) -> Option<crate::Error> {
@@ -1311,12 +1304,12 @@ impl<'a> PackageInstall<'a> {
         is_linked_folder(&src, &dest)
     }
 
-    fn get_installed_package_json_source(
+    fn read_installed_package_json<'m>(
         &mut self,
         root_node_modules_dir: &Dir,
-        mutable: &mut MutableString,
+        mutable: &'m mut MutableString,
         until_eof: bool,
-    ) -> Option<bun_ast::Source> {
+    ) -> Option<&'m [u8]> {
         let mut total: usize = 0;
         mutable.reset();
         mutable.expand_to_capacity();
@@ -1346,10 +1339,7 @@ impl<'a> PackageInstall<'a> {
             }
         }
 
-        Some(bun_ast::Source::init_path_string(
-            package_json_path.as_bytes(),
-            &mutable.list[0..total],
-        ))
+        Some(&mutable.list[0..total])
     }
 
     fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
@@ -1374,12 +1364,12 @@ impl<'a> PackageInstall<'a> {
         // Don't keep it open while we're parsing the JSON.
         // The longer the file stays open, the more likely it causes issues for
         // other processes on Windows.
-        let Some(source) =
-            self.get_installed_package_json_source(root_node_modules_dir, mutable, until_eof)
+        let Some(contents) =
+            self.read_installed_package_json(root_node_modules_dir, mutable, until_eof)
         else {
             return Some(false);
         };
-        let source = &source;
+        let source = &bun_ast::Source::init_path_string("package.json", contents);
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
         let minimum = br#"{"name":"","version":""}"#.len()
@@ -1962,15 +1952,11 @@ impl PackageFiles<'_> {
                     head2[src_len] = 0;
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
-                    // SAFETY: `init` returns a fresh Box-allocated task; ownership
-                    // transfers to the thread pool, reclaimed in `run_from_thread_pool`.
-                    unsafe {
-                        queue.push(HardLinkWindowsInstallTask::init(
-                            src.as_slice(),
-                            dest.as_slice(),
-                            entry.basename.as_slice(),
-                        ));
-                    }
+                    queue.push(HardLinkWindowsInstallTask::init(
+                        src.as_slice(),
+                        dest.as_slice(),
+                        entry.basename.as_slice(),
+                    ));
                 }
             }
 
@@ -2161,7 +2147,7 @@ impl<'a> PackageInstall<'a> {
         // Deleting a large tree takes a while. Now that it has a random name, another thread can
         // delete it.
         let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-            bun_fs::FileSystem::instance().top_level_dir(),
+            bun_fs::FileSystem::get().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
         );
         let task = bun_core::heap::into_raw(Box::new(UninstallTask {

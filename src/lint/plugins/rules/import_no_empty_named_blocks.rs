@@ -7,10 +7,10 @@ use std::cell::OnceCell;
 /// Forbid empty named import blocks.
 pub struct NoEmptyNamedBlocks;
 
-const UNEXPECTED: Message = Message::new("", "Unexpected empty named import block");
-const REMOVE_IMPORT: Message = Message::new("", "Remove unused import");
-const REMOVE_BLOCK: Message = Message::new("", "Remove empty import block");
-const NO_EMPTY_NAMED_BLOCKS: Message = Message::new("", "Unexpected empty named `import` block.");
+const UNEXPECTED: &Message = &Message::new("", "Unexpected empty named import block");
+const REMOVE_IMPORT: &Message = &Message::new("", "Remove unused import");
+const REMOVE_BLOCK: &Message = &Message::new("", "Remove empty import block");
+const NO_EMPTY_NAMED_BLOCKS: &Message = &Message::new("", "Unexpected empty named `import` block.");
 
 impl Rule for NoEmptyNamedBlocks {
     const META: Meta = Meta::plugin(Plugin::Import, "no-empty-named-blocks", Kind::Suggestion)

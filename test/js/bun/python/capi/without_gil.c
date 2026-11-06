@@ -110,6 +110,14 @@ long sizes_around(PyObject *list, void (*callback)(void))
     return before * 10 + (long)PyList_Size(list) + 1;
 }
 
+/* C gets an object with a reference, and gives the reference back. */
+int call_and_give_back(PyObject *(*callback)(void))
+{
+    PyObject *result = callback();
+    Py_XDECREF(result);
+    return result != NULL;
+}
+
 /* The same, for when the interpreter that had the API has ended. */
 static PyObject *held;
 void hold(PyObject *object) { held = Py_NewRef(object); }

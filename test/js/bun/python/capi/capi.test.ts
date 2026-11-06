@@ -101,7 +101,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     "Python: Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was: the object is held for ever\n";
   const refusedToTake =
     "Python: Py_INCREF was called by a thread that does not hold the GIL; the count stays as it was, " +
-    "and from now on no count falls: whatever C owns is held for ever\n";
+    "and from now on whatever C owns is held for ever\n";
   const refusedWithoutGIL =
     "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n";
   const notThisOne = "the C API serves the first Python interpreter of a process, and that is not this one";
@@ -145,10 +145,10 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   );
 
   test.concurrent(
-    "Py_INCREF in a thread without the GIL is refused, and from then on no count falls",
+    "Py_INCREF in a thread without the GIL is refused, and from then on nothing is let go of, while the counts fall as ever",
     async () => {
       expect(await run("here/without_gil.py", "without_gil", {}, "takes")).toEqual({
-        stdout: "(True, True)\n0\nTrue\n(True, False)\n",
+        stdout: "(True, True)\n0\nTrue\n(True, False)\n[0, 3, 0, 0]\n[(0, 0), (1, 1)] [(7,)]\n",
         stderr: refusedToTake,
         exitCode: 0,
       });
@@ -188,9 +188,12 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     "1, 'CDLL', 'PyDLL']";
   const refusedToAnother = (what: string, consequence: string) =>
     `Python: ${what} called for an interpreter that the C API does not serve (it serves the first of the process); ` +
-    `${consequence}, and nothing changes for the interpreter that it serves\n`;
+    `${consequence}\n`;
   // The constructor of loaded.c calls functions; the reference that it takes is to an exception, and nobody counts those.
-  const refusedToEnter = refusedToAnother("a function of the C API was", "it fails");
+  const refusedToEnter = refusedToAnother(
+    "a function of the C API was",
+    "it fails, and nothing changes for the interpreter that it serves",
+  );
   const refusedBoth = refusedToEnter + refusedToAnother("Py_INCREF or Py_DECREF was", "the count stays as it was");
   // What the scripts have such an interpreter do, and what whoever comes next on that thread finds.
   const whatIsRefusedToAnother = (who: string, next: string) =>
@@ -353,7 +356,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     async () => {
       expect(await runInTwo("ffi_in_worker.mjs", "a list of main's")).toEqual({
         stdout: `main: holds a list (True, True)\nworker: ${refusedEverything(1)}\nmain: (True, False)\n`,
-        stderr: refusedToTake + refusedWithoutGIL,
+        stderr: refusedToTake + refusedToGiveBack + refusedWithoutGIL,
         exitCode: 0,
       });
     },
@@ -386,9 +389,15 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
           "later: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n" +
           "C owns: [1]\nmain calls it: Thing\nC owns: [1]\nthe realm calls it: Thing\nC owns: [1]\n" +
           "the realm calls it, inside C that the realm runs: Thing\nC owns: [1]\n" +
+          "C that main runs calls it: C got an object\nC owns: [1]\n" +
+          "C that the realm runs calls it: C got an object\nC owns: [2]\n" +
+          "C that the realm runs calls it: C got an object\nC owns: [3]\n" +
+          "a worker calls it: ValueError: PyObject is NULL\nC owns: [3]\n" +
           "what C owns is alive, and is: True the one that C owns\n",
         // (The C that the realm runs asks for the length of a list.)
-        stderr: refusedToEnter,
+        stderr:
+          refusedBoth +
+          "ctypes: a callback was called on a thread that was not started by Python; the call is ignored\n",
         exitCode: 0,
       });
     },

@@ -225,7 +225,14 @@ def make_callback(libraries):
 
 
 def call_by_address(address):
-    return type(CFUNCTYPE(py_object)(int(address))()).__name__
+    return attempt(lambda: type(CFUNCTYPE(py_object)(int(address))()).__name__)
+
+
+# C of a library calls it, and gives the reference back itself.
+def c_calls_by_address(libraries, with_gil, address):
+    lib = (ctypes.PyDLL if with_gil else ctypes.CDLL)(f"{libraries}/libwithout_gil.so")
+    lib.call_and_give_back.argtypes = [c_void_p]
+    return "C got an object" if lib.call_and_give_back(int(address)) else "C got NULL"
 
 
 def owned_of_thing(libraries):

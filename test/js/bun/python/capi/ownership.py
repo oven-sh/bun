@@ -165,6 +165,8 @@ hashes = []
 changed = tuple_changed_after_a_look(LOOKS(lambda t: hashes.append((hash(t), t == (4,)))), 4, 5)
 print(changed, hashes == [(hash((4,)), True)])
 print(attempt(set_item, changed, 0, 99), changed)
+# To take a reference and give it back is not to keep it.
+print(tuple_changed_after_a_look(LOOKS(lambda t: _ctypes.Py_DECREF(_ctypes.Py_INCREF(t)) and None), 4, 5))
 # What C has given away it fills no longer, though it owns one reference again.
 for give in (make_tuple_and_keep_it, lambda item: put_tuple_into_list_and_keep_it(item)[0], lambda item: put_tuple_into_tuple_and_keep_it(item)[0]):
     given = give(4)

@@ -165,6 +165,12 @@ const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
   b.functionsConvertedUnderNamesOnly,
 ];
 
+// An event answers what it was dispatched on as its target, whoever dispatched it: native code dispatches on what has a listener.
+const keptAsTargetOfEvents = (eventTarget: b.TableType) =>
+  eventTarget === receiver
+    ? b.storedIn(b.nativeCell(targetsOfEventsCell))
+    : b.createdIn(eventTarget, b.nativeCell(targetsOfEventsCell));
+
 const listenerRegistration = (eventTarget: b.TableType) =>
   ({
     args: { type: b.string.loose, listener: b.object.nullable, options: b.any.optional },
@@ -172,7 +178,7 @@ const listenerRegistration = (eventTarget: b.TableType) =>
     throws: true,
     runsOnlyOperandCode: true,
     uses: {
-      this: [b.retained],
+      this: [b.retained, keptAsTargetOfEvents(eventTarget)],
       type: b.inspected,
       listener: [
         b.retained,
@@ -257,12 +263,7 @@ const eventDispatch = (eventTarget: b.TableType) =>
     capability: "js",
     throws: true,
     uses: {
-      this: [
-        b.retained,
-        eventTarget === receiver
-          ? b.storedIn(b.nativeCell(targetsOfEventsCell))
-          : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
-      ],
+      this: [b.retained, keptAsTargetOfEvents(eventTarget)],
       event: [b.retained],
     },
     reads: externalState,

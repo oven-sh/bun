@@ -56,6 +56,20 @@ fn exposes_members(id: BuiltinId) -> bool {
     }
 }
 
+const EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT: [&[u8]; 3] =
+    [b"error", b"message", b"messageerror"];
+
+fn hands_out_global_object(id: BuiltinId) -> bool {
+    table::ENTRIES_THAT_HAND_OUT_THE_GLOBAL_OBJECT.contains(&table::canonical_id(id))
+}
+
+fn adds_listener(id: BuiltinId) -> bool {
+    matches!(
+        table::canonical_id(id),
+        BuiltinId::AddEventListener | BuiltinId::EventTargetPrototypeAddEventListener
+    )
+}
+
 fn makes_require(id: BuiltinId) -> bool {
     table::canonical_id(id) == BuiltinId::NodeModuleCreateRequire
 }
@@ -456,6 +470,13 @@ impl Resolver<'_, '_> {
             self.output.called_without_other_code.push(id);
         } else if makes_value {
             self.output.mentioned.push(id);
+        }
+        if self.input.dialect == SourceDialect::Program
+            && hands_out_global_object(id)
+            && !self.listens_for_event_that_program_alone_dispatches(expr, id)
+        {
+            self.mention(BuiltinId::GlobalThis);
+            self.expose(BuiltinId::GlobalThis);
         }
         if is_module_cache(id) {
             self.note_use_of_module_cache(expr);
@@ -907,6 +928,27 @@ impl Resolver<'_, '_> {
             && lists
                 .iter()
                 .all(|listed| self.writes_other_text(operands, listed))
+    }
+
+    fn listens_for_event_that_program_alone_dispatches(
+        &self,
+        function: ExprId,
+        id: BuiltinId,
+    ) -> bool {
+        let MentionUse::Called(call) = self.classify_use(function) else {
+            return false;
+        };
+        let ExprKind::Call(operands) = self.input.hir[call].kind else {
+            return false;
+        };
+        let hir = self.input.hir;
+        let kind_of_event = hir.ids(hir[operands].args).next();
+        let text = kind_of_event.and_then(|operand| self.constant_text(operand));
+        adds_listener(id)
+            && text.is_some_and(|text| {
+                let text = self.input.atoms.bytes(text);
+                !EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT.contains(&text)
+            })
     }
 
     fn is_import_site(&self, call: ExprId) -> bool {

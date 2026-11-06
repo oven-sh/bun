@@ -1058,6 +1058,48 @@ fn alias_read_as_jsx_factory_is_exposed() {
 }
 
 #[test]
+fn what_hands_out_the_global_object_exposes_it() {
+    const HANDS_IT_OUT: &[&str] = &[
+        "dispatchEvent(e);",
+        "const send = dispatchEvent;",
+        "Reflect.apply(dispatchEvent, undefined, [e]);",
+        "addEventListener(\"message\", f);",
+        "addEventListener(\"messageerror\", f);",
+        "addEventListener(\"error\", f);",
+        "addEventListener(kind, f);",
+        "addEventListener(...operands);",
+        "const add = addEventListener;",
+        "addEventListener.call(undefined, \"ping\", f);",
+        "onmessage = f;",
+        "onerror = f;",
+        "EventTarget.prototype.dispatchEvent.call(undefined, e);",
+        "const add = EventTarget.prototype.addEventListener;",
+    ];
+    const KEEPS_IT: &[&str] = &[
+        "addEventListener(\"ping\", f);",
+        "const kind = \"ping\"; addEventListener(kind, f);",
+        "removeEventListener(\"ping\", f);",
+        "new EventTarget().dispatchEvent(e);",
+        "const own = new EventTarget(); own.addEventListener(\"ping\", f);",
+        "new Event(\"ping\").target;",
+        "new AbortController().signal.onabort = f;",
+    ];
+    for source in HANDS_IT_OUT {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+        with_case(RUNTIME, source, |case| {
+            assert!(!case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+    }
+    for source in KEEPS_IT {
+        with_case(PROGRAM, source, |case| {
+            assert!(!case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+    }
+}
+
+#[test]
 fn decorator_metadata_type_is_exposed() {
     let setup = Setup {
         emits_decorator_metadata: true,

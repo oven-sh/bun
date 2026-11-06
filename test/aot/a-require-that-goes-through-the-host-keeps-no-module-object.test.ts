@@ -77,7 +77,9 @@ for (const [name, mention] of Object.entries(shapes)) {
     async () => {
       using dir = tempDir("aot-require-keeps-no-module-object", files(mention));
       const seenWith = async (...flags: string[]) => {
-        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+        // How long 25,000 calls take is not asked here. Where a stack trace is kept at every exception scope the compiled run took 4 to 7 s, and a test has 5.
+        const command = [bunExe(), "test", "--timeout=100000", ...flags];
+        const { stdout, stderr, exitCode } = await run(command, String(dir), bunEnv);
         return {
           lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
           failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),

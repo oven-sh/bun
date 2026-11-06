@@ -1,62 +1,53 @@
-import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
+// `this` is the native `$Node.BundlerPlugin` (JSBundlerPlugin.h).
 type AnyFunction = (...args: any[]) => any;
 
-/**
- * @see `JSBundlerPlugin.h`
- */
-interface BundlerPlugin {
-  onLoad: Map<string, [RegExp, OnLoadCallback][]>;
-  onResolve: Map<string, [RegExp, OnResolveCallback][]>;
-  onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
-  /** Binding to `JSBundlerPlugin__onLoadAsync` */
-  onLoadAsync(
-    internalID,
-    sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
-    loaderKey: number | null,
-  ): void;
-  /** Binding to `JSBundlerPlugin__onResolveAsync` */
-  onResolveAsync(internalID, a, b, c): void;
-  /** Binding to `JSBundlerPlugin__addError` */
-  addError(internalID: number, error: any, which: number): void;
-  addFilter(filter, namespace, number): void;
-  generateDeferPromise(id: number): Promise<void>;
-  promises: Array<Promise<any>> | undefined;
-
-  onBeforeParse: (filter: RegExp, namespace: string, addon: unknown, symbol: string, external?: unknown) => void;
-  $napiDlopenHandle: number;
+interface PluginConstraints {
+  filter: RegExp;
+  namespace?: string;
 }
-
-// Extra types
-type Setup = BunPlugin["setup"];
-type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
-interface BuildConfigExt extends BuildConfig {
-  // we support esbuild-style 'entryPoints' capitalization
-  entryPoints?: string[];
-  // plugins is guaranteed to not be null
-  plugins: BunPlugin[];
+interface MinifyObj {
+  identifiers?: boolean;
+  whitespace?: boolean;
+  syntax?: boolean;
 }
-interface PluginBuilderExt extends PluginBuilder {
+interface NapiModule {
+  $napiDlopenHandle?: number;
+}
+interface OnBeforeParseOptions {
+  napiModule: NapiModule;
+  symbol: string;
+  external?: unknown;
+}
+interface PluginBuilderExt {
+  config: $Node.BundlerPlugin.Config;
+  onStart(callback: () => void | Promise<void>): PluginBuilderExt;
+  onEnd(callback: $Node.BundlerPlugin.OnEndCallback): PluginBuilderExt;
+  onLoad(constraints: PluginConstraints, callback: $Node.BundlerPlugin.OnLoadCallback): PluginBuilderExt;
+  onResolve(constraints: PluginConstraints, callback: $Node.BundlerPlugin.OnResolveCallback): PluginBuilderExt;
+  onBeforeParse(constraints: PluginConstraints, options: OnBeforeParseOptions): PluginBuilderExt;
+  module: AnyFunction;
+  addPreload: AnyFunction;
   resolve: AnyFunction;
-  onEnd: AnyFunction;
   onDispose: AnyFunction;
   // we partially support initialOptions. it's read-only and a subset of
   // all options mapped to their esbuild names
-  initialOptions: any;
+  initialOptions: object;
   // we set this to an empty object
-  esbuild: any;
+  esbuild: object;
 }
 
 /**
- * Used by Bun.serve() to resolve and load plugins.
+ * Used by Bun.serve() to resolve and load plugins: a module name from bunfig.toml, or a plugin object
+ * from the `bake.config.ts` of `bun bake`.
  */
 export function loadAndResolvePluginsForServe(
-  this: BundlerPlugin,
-  plugins: string[],
+  this: $Node.BundlerPlugin,
+  plugins: Array<string | $Node.BundlerPlugin.Plugin>,
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
 ) {
   // Same config as created in HTMLBundle.init
-  let config: BuildConfigExt = {
+  let config: $Node.BundlerPlugin.Config = {
     experimentalCss: true,
     experimentalHtml: true,
     target: "browser",
@@ -73,30 +64,37 @@ export function loadAndResolvePluginsForServe(
 
   let bundlerPlugin = this;
   let promiseResult = (async (
-    plugins: string[],
+    plugins: Array<string | $Node.BundlerPlugin.Plugin>,
     bunfig_folder: string,
     runSetupFn: typeof runSetupFunction,
-    bundlerPlugin: BundlerPlugin,
+    bundlerPlugin: $Node.BundlerPlugin,
   ) => {
-    let onstart_promises_array: Array<Promise<any>> | undefined = undefined;
+    let onstart_promises_array: Promise<unknown>[] | undefined = undefined;
     for (let i = 0; i < plugins.length; i++) {
-      let pluginModuleResolved = await Bun.resolve(plugins[i], bunfig_folder);
+      const entry = plugins[i];
+      let pluginModule: $Node.BundlerPlugin.Plugin;
+      if (typeof entry === "string") {
+        let pluginModuleResolved = await Bun.resolve(entry, bunfig_folder);
 
-      let pluginModuleRaw = await import(pluginModuleResolved);
-      if (!pluginModuleRaw || !pluginModuleRaw.default) {
-        throw new TypeError(`Expected "${plugins[i]}" to be a module which default exports a bundler plugin.`);
+        let pluginModuleRaw = CAN_LOAD_CODE_AT_RUN_TIME ? await import(pluginModuleResolved) : undefined;
+        if (!pluginModuleRaw || !pluginModuleRaw.default) {
+          throw new TypeError(`Expected "${entry}" to be a module which default exports a bundler plugin.`);
+        }
+        pluginModule = pluginModuleRaw.default;
+        if (!pluginModule) throw new InvalidBundlerPluginError(entry, "default export is missing");
+        if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(entry, "name is missing");
+        if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(entry, "setup() is missing");
+      } else {
+        // `bun bake` checked the name and setup() of each plugin in `bake.config.ts`.
+        pluginModule = entry;
       }
-      let pluginModule = pluginModuleRaw.default;
-      if (!pluginModule) throw new InvalidBundlerPluginError(plugins[i], "default export is missing");
-      if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(plugins[i], "name is missing");
-      if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(plugins[i], "setup() is missing");
       onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
         pluginModule.setup,
         config,
         onstart_promises_array,
         i === plugins.length - 1,
         false,
-      ]);
+      ] satisfies Parameters<typeof runSetupFunction>);
     }
     if (onstart_promises_array !== undefined) {
       await Promise.all(onstart_promises_array);
@@ -107,12 +105,12 @@ export function loadAndResolvePluginsForServe(
 }
 
 export function runOnEndCallbacks(
-  this: BundlerPlugin,
-  promise: Promise<Bun.BuildOutput>,
-  buildResult: Bun.BuildOutput,
-  buildRejection: AggregateError | undefined,
+  this: $Node.BundlerPlugin,
+  promise: Promise<object>,
+  buildResult: object,
+  buildRejection: unknown,
 ): Promise<void> | void {
-  const callbacks = this.onEndCallbacks;
+  const callbacks = this.$onEndCallbacks;
   if (!callbacks) return;
   const promises: PromiseLike<unknown>[] = [];
 
@@ -155,13 +153,15 @@ export function runOnEndCallbacks(
  * The `promises` parameter remains undefined if no `onStart()` callbacks are defined.
  */
 export function runSetupFunction(
-  this: BundlerPlugin,
-  setup: Setup,
-  config: BuildConfigExt,
-  promises: Array<Promise<any>> | undefined,
+  this: $Node.BundlerPlugin,
+  setup: $Node.BundlerPlugin.Setup,
+  config: $Node.BundlerPlugin.Config,
+  promises: Promise<unknown>[] | undefined,
   is_last: boolean,
   isBake: boolean,
-): Promise<Promise<any>[]> | Promise<any>[] | undefined {
+): Promise<Promise<unknown>[] | undefined> | Promise<unknown>[] | undefined {
+  type OnLoadCallback = $Node.BundlerPlugin.OnLoadCallback;
+  type OnResolveCallback = $Node.BundlerPlugin.OnResolveCallback;
   this.promises = promises;
   var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback][]>();
   var onResolvePlugins = new Map<string, [filter: RegExp, OnResolveCallback][]>();
@@ -170,7 +170,13 @@ export function runSetupFunction(
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
   >();
 
-  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
+  function validate(
+    filterObject: PluginConstraints,
+    callback: (AnyFunction | object) & NapiModule,
+    map: Map<string, unknown[][]>,
+    symbol: string | undefined,
+    external: unknown,
+  ) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
@@ -225,27 +231,31 @@ export function runSetupFunction(
     }
   }
 
-  function onLoad(this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
+  function onLoad(this: PluginBuilderExt, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilderExt {
     validate(filterObject, callback, onLoadPlugins, undefined, undefined);
     return this;
   }
 
-  function onResolve(this: PluginBuilder, filterObject: PluginConstraints, callback): PluginBuilder {
+  function onResolve(
+    this: PluginBuilderExt,
+    filterObject: PluginConstraints,
+    callback: OnResolveCallback,
+  ): PluginBuilderExt {
     validate(filterObject, callback, onResolvePlugins, undefined, undefined);
     return this;
   }
 
   function onBeforeParse(
-    this: PluginBuilder,
+    this: PluginBuilderExt,
     filterObject: PluginConstraints,
-    { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
-  ): PluginBuilder {
+    { napiModule, external, symbol }: OnBeforeParseOptions,
+  ): PluginBuilderExt {
     validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
     return this;
   }
 
   const self = this;
-  function onStart(this: PluginBuilder, callback): PluginBuilder {
+  function onStart(this: PluginBuilderExt, callback: () => void | Promise<void>): PluginBuilderExt {
     if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
@@ -268,12 +278,12 @@ export function runSetupFunction(
     return this;
   }
 
-  function onEnd(this: PluginBuilder, callback: Function): PluginBuilder {
+  function onEnd(this: PluginBuilderExt, callback: $Node.BundlerPlugin.OnEndCallback): PluginBuilderExt {
     if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
 
-    if (!self.onEndCallbacks) self.onEndCallbacks = [];
+    if (!self.$onEndCallbacks) self.$onEndCallbacks = [];
 
-    $arrayPush(self.onEndCallbacks, callback);
+    $arrayPush(self.$onEndCallbacks, callback);
 
     return this;
   }
@@ -345,13 +355,19 @@ export function runSetupFunction(
 
   var setupResult = setup({
     config: config,
-    onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
+    onDispose: () => {
+      throw new TypeError(
+        "On-dispose callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771",
+      );
+    },
     onEnd,
     onLoad,
     onResolve,
     onBeforeParse,
     onStart,
-    resolve: notImplementedIssueFn(2771, "build.resolve()"),
+    resolve: () => {
+      throw new TypeError("build.resolve() is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+    },
     module: () => {
       throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
     },
@@ -397,21 +413,35 @@ export function runSetupFunction(
   return processSetupResult();
 }
 
-export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespace, importer, internalID, kindId) {
+export function runOnResolvePlugins(
+  this: $Node.BundlerPlugin,
+  specifier: string,
+  inputNamespace: string,
+  importer: string,
+  internalID: number,
+  kindId: number,
+) {
   // Must be kept in sync with ImportRecord.label
   const kind = $ImportKindIdToLabel[kindId];
 
-  var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
+  var promiseResult: Promise<null> | null | undefined = (async (
+    inputPath: string,
+    inputNamespace: string,
+    importer: string,
+    kind: string,
+  ) => {
     var { onResolve, onLoad } = this;
-    var results = onResolve.$get(inputNamespace);
+    var results = onResolve!.$get(inputNamespace);
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
     }
 
     for (let [filter, callback] of results) {
+      // test() on a /g or /y filter starts at lastIndex, which the previous path's match may have advanced.
+      if (filter.global || filter.sticky) filter.lastIndex = 0;
       if (filter.test(inputPath)) {
-        var result = callback({
+        var result: ReturnType<$Node.BundlerPlugin.OnResolveCallback> = callback({
           path: inputPath,
           importer,
           namespace: inputNamespace,
@@ -491,32 +521,40 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     promiseResult.then(
       () => {},
       e => {
-        this.addError(internalID, e, 0);
+        this.addError(internalID, e);
       },
     );
   }
 }
 
 export function runOnLoadPlugins(
-  this: BundlerPlugin,
-  internalID,
-  path,
-  namespace,
-  defaultLoaderId,
+  this: $Node.BundlerPlugin,
+  internalID: number,
+  path: string,
+  namespace: string,
+  defaultLoaderId: number,
   isServerSide: boolean,
 ) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
   const generateDefer = () => this.generateDeferPromise(internalID);
-  var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
-    var results = this.onLoad.$get(namespace);
+  var promiseResult: Promise<null> | null | undefined = (async (
+    internalID: number,
+    path: string,
+    namespace: string,
+    isServerSide: boolean,
+    defaultLoader: string,
+    generateDefer: () => Promise<void>,
+  ) => {
+    var results = this.onLoad!.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);
       return null;
     }
 
     for (let [filter, callback] of results) {
+      if (filter.global || filter.sticky) filter.lastIndex = 0;
       if (filter.test(path)) {
         var result = callback({
           path,
@@ -583,7 +621,7 @@ export function runOnLoadPlugins(
     promiseResult.then(
       () => {},
       e => {
-        this.addError(internalID, e, 1);
+        this.addError(internalID, e);
       },
     );
   }

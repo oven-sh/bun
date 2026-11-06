@@ -69,19 +69,27 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     if (ptr == nullptr)
         return;
 
-    ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
+    EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
+
+static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
 
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
+    if (!bytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[likely]]
+        return tryConvertValidUTF8ToString(bytes);
+
     // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
     // (it sizes an intermediate Vector<char16_t> by byte count).
-    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
-        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-
-    const char* data = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
+    if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
         return {};
+    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
+}
+
+// `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.
+static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes)
+{
+    const char* data = reinterpret_cast<const char*>(bytes.data());
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
@@ -103,7 +111,7 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
-static const WTF::String toString(ZigString str)
+static const WTF::String toString(EncodedSlice str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -133,7 +141,7 @@ static const WTF::String toString(ZigString str)
         }
 
         return !isTaggedUTF16Ptr(str.ptr)
-            ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
+            ? WTF::String(WTF::ExternalStringImpl::create({ byteCast<Latin1Character>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
@@ -143,12 +151,12 @@ static const WTF::String toString(ZigString str)
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({ byteCast<Latin1Character>(untag(str.ptr)), str.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-static const WTF::String toString(ZigString str, StringPointer ptr)
+static const WTF::String toStringCopy(EncodedSlice str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
@@ -171,40 +179,12 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
-        : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
-}
-
-static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
-{
-    if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
-        return WTF::String();
-    }
-    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
-        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (ptr.len > maxLength) [[unlikely]] {
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(&untag(str.ptr)[ptr.off]), ptr.len);
-            if (utf16Length > maxLength) {
-                return {};
-            }
-        }
-        return convertUTF8ToString(std::span { &untag(str.ptr)[ptr.off], ptr.len });
-    }
-
-    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (ptr.len > Bun__stringSyntheticAllocationLimit || ptr.len > WTF::String::MaxLength) [[unlikely]] {
-        return {};
-    }
-
-    return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
+        ? WTF::String(WTF::StringImpl::create(std::span { byteCast<Latin1Character>(&untag(str.ptr)[ptr.off]), ptr.len }))
         : WTF::String(WTF::StringImpl::create(
               std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-static const WTF::String toStringCopy(ZigString str)
+static const WTF::String toStringCopy(EncodedSlice str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -239,7 +219,7 @@ static const WTF::String toStringCopy(ZigString str)
     }
 }
 
-static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
+static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return;
@@ -262,20 +242,15 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
         return;
     }
 
-    builder.append({ untag(str.ptr), str.len });
+    builder.append({ byteCast<Latin1Character>(untag(str.ptr)), str.len });
 }
 
-static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global)
-{
-    return JSC::jsOwnedString(global->vm(), toString(str));
-}
-
-static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
+static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));
 }
 
-static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
+static const EncodedSlice EncodedSliceEmpty = EncodedSlice { (unsigned char*)"", 0 };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
@@ -283,86 +258,32 @@ static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
-static ZigString toZigString(WTF::StringImpl& str)
-{
-    return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
-              str.length() };
-}
-
-// Overload for `StringImpl*` so callers like `toZigString(string.impl())` resolve here
+// Overload for `StringImpl*` so callers like `toEncodedSlice(string.impl())` resolve here
 // instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
 // with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
-static ZigString toZigString(const WTF::StringImpl* str)
+static EncodedSlice toEncodedSlice(const WTF::StringImpl* str)
 {
     return (!str || str->isEmpty())
-        ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+        ? EncodedSliceEmpty
+        : EncodedSlice { str->is8Bit() ? byteCast<uint8_t>(str->span8().data()) : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
-static ZigString toZigString(WTF::StringView& str)
+static EncodedSlice toEncodedSlice(const WTF::StringView& str)
 {
     return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        ? EncodedSliceEmpty
+        : EncodedSlice { str.is8Bit() ? byteCast<uint8_t>(str.span8().data()) : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
-static ZigString toZigString(const WTF::StringView& str)
-{
-    return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
-              str.length() };
-}
-
-static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
-{
-    if (str.isSubstring()) {
-        return toZigString(str.view(global));
-    }
-
-    return toZigString(str.value(global));
-}
-
-static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
-{
-    if (str->isSubstring()) {
-        return toZigString(str->view(global));
-    }
-    return toZigString(str->value(global));
-}
-
-static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
+static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
-        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
+        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err)));
 }
 
-static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
-{
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto* str = val.toString(global);
-
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        scope.release();
-        return ZigStringEmpty;
-    }
-
-    auto view = str->view(global);
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        scope.release();
-        return ZigStringEmpty;
-    }
-
-    return toZigString(view);
-}
-
-static const WTF::String toStringStatic(ZigString str)
+static const WTF::String toStringStatic(EncodedSlice str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -380,48 +301,10 @@ static const WTF::String toStringStatic(ZigString str)
     // and asserts a trailing NUL) over-reads. Intern via a length-bounded span
     // instead — same atom-table caching, no NUL dependency.
     auto* untagged = untag(str.ptr);
-    return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
+    return WTF::String(AtomStringImpl::add(std::span { byteCast<Latin1Character>(untagged), str.len }));
 }
 
-static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
-{
-    WTF::String message = toString(*str);
-    if (message.isNull() && str->len > 0) [[unlikely]] {
-        // pending exception while creating an error.
-        return {};
-    }
-
-    JSC::JSObject* result = JSC::createError(globalObject, message);
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
+static const JSC::Identifier toIdentifier(EncodedSlice str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return global->vm().propertyNames->emptyIdentifier;

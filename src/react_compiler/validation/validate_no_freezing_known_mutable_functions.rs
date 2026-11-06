@@ -5,14 +5,12 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
 };
 use crate::hir::environment::Environment;
-use crate::hir::visitors::{each_instruction_value_operand, each_terminal_operand};
+use crate::hir::visitors::{operands, terminal_operands};
 use crate::hir::{
     AliasingEffect, Effect, HirFunction, Identifier, IdentifierId, IdentifierName,
     InstructionValue, Place, Type,
@@ -42,7 +40,6 @@ pub(crate) fn validate_no_freezing_known_mutable_functions(
         &env.identifiers,
         &env.types,
         &env.functions,
-        env,
     );
     for diagnostic in diagnostics {
         env.record_diagnostic(diagnostic);
@@ -54,7 +51,6 @@ fn check_no_freezing_known_mutable_functions(
     identifiers: &[Identifier],
     types: &[Type],
     functions: &[HirFunction],
-    env: &Environment,
 ) -> Vec<CompilerDiagnostic> {
     // Maps an identifier to the mutation effect that makes it "known mutable"
     let mut context_mutation_effects: IdMap<IdentifierId, MutationInfo> = IdMap::new();
@@ -87,11 +83,7 @@ fn check_no_freezing_known_mutable_functions(
                 InstructionValue::FunctionExpression { lowered_func, .. } => {
                     let inner_function = &functions[lowered_func.func.0 as usize];
                     if let Some(ref aliasing_effects) = inner_function.aliasing_effects {
-                        let context_ids: HashSet<IdentifierId> = inner_function
-                            .context
-                            .iter()
-                            .map(|place| place.identifier)
-                            .collect();
+                        let mut context_ids: Option<IdBitSet<IdentifierId>> = None;
 
                         'effects: for effect in aliasing_effects {
                             match effect {
@@ -105,7 +97,13 @@ fn check_no_freezing_known_mutable_functions(
                                             instr.lvalue.identifier,
                                             known_mutation.clone(),
                                         );
-                                    } else if context_ids.contains(&value.identifier)
+                                    } else if context_ids
+                                        .get_or_insert_with(|| {
+                                            (inner_function.context.iter())
+                                                .map(|place| place.identifier)
+                                                .collect()
+                                        })
+                                        .contains(value.identifier)
                                         && !is_ref_or_ref_like_mutable_type(
                                             value.identifier,
                                             identifiers,
@@ -143,11 +141,13 @@ fn check_no_freezing_known_mutable_functions(
                     }
                 }
 
+                _ if context_mutation_effects.is_empty() => {}
+
                 _ => {
                     // For all other instruction kinds, check operands for freeze violations
-                    for operand in each_instruction_value_operand(&instr.value, env) {
+                    for operand in operands(&instr.value, functions) {
                         check_operand_for_freeze_violation(
-                            &operand,
+                            operand,
                             &context_mutation_effects,
                             identifiers,
                             &mut diagnostics,
@@ -158,9 +158,12 @@ fn check_no_freezing_known_mutable_functions(
         }
 
         // Also check terminal operands
-        for operand in each_terminal_operand(&block.terminal) {
+        if context_mutation_effects.is_empty() {
+            continue;
+        }
+        for operand in terminal_operands(&block.terminal) {
             check_operand_for_freeze_violation(
-                &operand,
+                operand,
                 &context_mutation_effects,
                 identifiers,
                 &mut diagnostics,

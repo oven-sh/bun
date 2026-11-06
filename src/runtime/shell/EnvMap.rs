@@ -2,7 +2,7 @@ use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter
 
 use crate::shell::EnvStr;
 
-pub struct EnvMap {
+pub(crate) struct EnvMap {
     map: EnvMapInner,
 }
 
@@ -97,7 +97,7 @@ impl EnvMap {
     }
 
     /// NOTE: Make sure you deref the string when done!
-    pub fn get(&self, key: EnvStr) -> Option<EnvStr> {
+    pub(crate) fn get(&self, key: EnvStr) -> Option<EnvStr> {
         let val = *self.map.get(&key)?;
         val.ref_();
         Some(val)

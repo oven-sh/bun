@@ -95,6 +95,7 @@ private:
 };
 
 JSC::JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createNodeWorkerConstructor(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

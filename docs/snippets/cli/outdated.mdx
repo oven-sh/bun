@@ -14,6 +14,14 @@ bun outdated <filter>
   Set a specific cwd
 </ParamField>
 
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
+</ParamField>
+
 <ParamField path="-h, --help" type="boolean">
   Print this help menu
 </ParamField>
@@ -98,12 +106,24 @@ bun outdated <filter>
   Same as <code>--ca</code>, but as a file path to the certificate
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <ParamField path="--registry" type="string">
   Use a specific registry by default, overriding <code>.npmrc</code>, <code>bunfig.toml</code> and environment variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
-  Maximum number of concurrent network requests (default 48)
+<ParamField path="--network-concurrency" type="number" default="64">
+  Maximum number of concurrent network requests (default 64)
 </ParamField>
 
 ### Caching
@@ -119,7 +139,7 @@ bun outdated <filter>
 ### Execution Behavior
 
 <ParamField path="--dry-run" type="boolean">
-  Perform a dry run without making changes
+  Has no effect. <code>bun outdated</code> is read-only
 </ParamField>
 
 <ParamField path="-f, --force" type="boolean">

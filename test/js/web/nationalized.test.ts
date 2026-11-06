@@ -18,7 +18,7 @@ describe("abort-controller", () => {
   });
 
   test("ESM", async () => {
-    const AbortControllerPolyfill = await import("abort-controller");
+    const AbortControllerPolyfill = await import("abort-controller" as string);
     // @ts-ignore
     expect(AbortControllerPolyfill.AbortController).toBe(AbortController);
     // @ts-ignore

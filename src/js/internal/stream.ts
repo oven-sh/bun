@@ -10,7 +10,6 @@ const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/s
 const { pipeline } = require("internal/streams/pipeline");
 const { destroyer } = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
-const promises = require("internal/stream.promises");
 const utils = require("internal/streams/utils");
 const { isArrayBufferView, isUint8Array } = require("node:util/types");
 const Stream = require("internal/streams/legacy").Stream;
@@ -25,13 +24,13 @@ Stream.Readable = require("internal/streams/readable");
 const streamKeys = ObjectKeys(streamReturningOperators);
 for (let i = 0; i < streamKeys.length; i++) {
   const key = streamKeys[i];
-  const op = streamReturningOperators[key];
-  function fn(...args) {
+  const op: (this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown> = streamReturningOperators[key];
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     return Stream.Readable.from(op.$apply(this, args));
-  }
+  };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
   ObjectDefineProperty(Stream.Readable.prototype, key, {
@@ -45,13 +44,13 @@ for (let i = 0; i < streamKeys.length; i++) {
 const promiseKeys = ObjectKeys(promiseReturningOperators);
 for (let i = 0; i < promiseKeys.length; i++) {
   const key = promiseKeys[i];
-  const op = promiseReturningOperators[key];
-  function fn(...args) {
+  const op: (this: $Node.Readable, ...args: any[]) => Promise<unknown> = promiseReturningOperators[key];
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     return Promise.$resolve().then(() => op.$apply(this, args));
-  }
+  };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
   ObjectDefineProperty(Stream.Readable.prototype, key, {
@@ -81,7 +80,7 @@ ObjectDefineProperty(Stream, "promises", {
   configurable: true,
   enumerable: true,
   get() {
-    return promises;
+    return require("internal/stream.promises");
   },
 });
 
@@ -89,7 +88,7 @@ ObjectDefineProperty(pipeline, customPromisify, {
   __proto__: null,
   enumerable: true,
   get() {
-    return promises.pipeline;
+    return require("internal/stream.promises").pipeline;
   },
 });
 
@@ -97,7 +96,7 @@ ObjectDefineProperty(eos, customPromisify, {
   __proto__: null,
   enumerable: true,
   get() {
-    return promises.finished;
+    return require("internal/stream.promises").finished;
   },
 });
 

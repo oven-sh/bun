@@ -45,6 +45,25 @@ struct TopicTreeBigMessage {
 
 template <bool, bool, typename> struct WebSocket;
 
+using IdleTimeoutComponents = std::pair<unsigned short, unsigned short>;
+
+constexpr IdleTimeoutComponents idleTimeoutComponentsFor(unsigned short idleTimeout, bool sendPingsAutomatically) {
+    unsigned short margin = 4;
+    /* 4, 8 or 16 seconds margin based on idleTimeout */
+    while ((int) idleTimeout - margin * 2 >= margin * 2 && margin < 16) {
+        margin = (unsigned short) (margin << 1);
+    }
+    return {
+        (unsigned short) (idleTimeout && sendPingsAutomatically ? idleTimeout - margin : idleTimeout), /* reduce normal idleTimeout if it is extended by ping-timeout */
+        margin /* ping-timeout - also used for end() timeout */
+    };
+}
+static_assert(idleTimeoutComponentsFor(0, true) == IdleTimeoutComponents{0, 4});
+static_assert(idleTimeoutComponentsFor(0, false) == IdleTimeoutComponents{0, 4});
+static_assert(idleTimeoutComponentsFor(8, true) == IdleTimeoutComponents{4, 4});
+static_assert(idleTimeoutComponentsFor(120, true) == IdleTimeoutComponents{104, 16});
+static_assert(idleTimeoutComponentsFor(120, false) == IdleTimeoutComponents{120, 16});
+
 /* todo: this looks identical to WebSocketBehavior, why not just std::move that entire thing in? */
 
 template <bool SSL, typename USERDATA>
@@ -59,7 +78,6 @@ public:
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *)> openHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, std::string_view, OpCode)> messageHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *)> drainHandler = nullptr;
-    MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, std::string_view, int, int)> subscriptionHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, int, std::string_view)> closeHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, std::string_view)> pingHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, std::string_view)> pongHandler = nullptr;
@@ -77,20 +95,18 @@ public:
     bool sendPingsAutomatically;
     unsigned short maxLifetime;
 
+    /* Server sockets of the `ws` package. end() only sends the close frame. The close handler runs when the peer's
+     * close frame arrives or the connection closes, and gets -WebSocketFailureKind as its code on a protocol error. */
+    bool wsPackage = false;
+    bool autoPong = true;
+    bool skipUTF8Validation = false;
+
     /* These are calculated on creation */
-    std::pair<unsigned short, unsigned short> idleTimeoutComponents;
+    IdleTimeoutComponents idleTimeoutComponents;
 
     /* This is run once on start-up */
     void calculateIdleTimeoutComponents(unsigned short idleTimeout) {
-        unsigned short margin = 4;
-        /* 4, 8 or 16 seconds margin based on idleTimeout */
-        while ((int) idleTimeout - margin * 2 >= margin * 2 && margin < 16) {
-            margin = (unsigned short) (margin << 1);
-        }
-        idleTimeoutComponents = {
-            idleTimeout - (sendPingsAutomatically ? margin : 0), /* reduce normal idleTimeout if it is extended by ping-timeout */
-            margin /* ping-timeout - also used for end() timeout */
-        };
+        idleTimeoutComponents = wsPackage ? IdleTimeoutComponents{0, 0} : idleTimeoutComponentsFor(idleTimeout, sendPingsAutomatically);
     }
 
     ~WebSocketContextData() {

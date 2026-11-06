@@ -14,7 +14,6 @@ public:
     WEBCORE_EXPORT virtual void contextDestroyed();
 
     ScriptExecutionContext* scriptExecutionContext() const { return m_context.get(); }
-    RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
 
 protected:
     WEBCORE_EXPORT explicit ContextDestructionObserver(ScriptExecutionContext*);

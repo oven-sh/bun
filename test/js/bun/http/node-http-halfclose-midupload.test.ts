@@ -26,7 +26,7 @@ async function runTeardownStages(bind: string | undefined, url: (port: number) =
     stage("request-received");
     socket = req.socket;
     res.writeHead(200, { "Connection": "close" });
-    res.socket.end();
+    res.socket!.end();
     stage("socket-ended");
     res.on("error", writeResult.reject);
     req.socket.on("close", () => {

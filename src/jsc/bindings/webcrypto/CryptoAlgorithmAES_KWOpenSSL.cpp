@@ -42,7 +42,9 @@ static std::optional<Vector<uint8_t>> cryptWrapKey(const Vector<uint8_t>& key, c
     if (!aesKey.setKey(key, AES_ENCRYPT))
         return std::nullopt;
 
-    Vector<uint8_t> cipherText(data.size() + 8);
+    Vector<uint8_t> cipherText;
+    if (!tryAllocateOutputBuffer(cipherText, data.size() + 8)) [[unlikely]]
+        return std::nullopt;
     if (AES_wrap_key(aesKey.key(), nullptr, cipherText.begin(), data.begin(), data.size()) < 0)
         return std::nullopt;
 
@@ -58,7 +60,9 @@ static std::optional<Vector<uint8_t>> cryptUnwrapKey(const Vector<uint8_t>& key,
     if (!aesKey.setKey(key, AES_DECRYPT))
         return std::nullopt;
 
-    Vector<uint8_t> plainText(data.size() - 8);
+    Vector<uint8_t> plainText;
+    if (!tryAllocateOutputBuffer(plainText, data.size() - 8)) [[unlikely]]
+        return std::nullopt;
     if (AES_unwrap_key(aesKey.key(), nullptr, plainText.begin(), data.begin(), data.size()) < 0)
         return std::nullopt;
 

@@ -25,12 +25,15 @@
 
 #include "config.h"
 #include "JSDOMGuardedObject.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
 
 DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guarded)
-    : ActiveDOMCallback(globalObject.scriptExecutionContext())
+    // The context of the script that is asking: a `Bun.ModuleGraph`'s, when its script is (what is
+    // guarded is then released, never settled, once that graph is disposed).
+    : ActiveDOMCallback(defaultGlobalObject(&globalObject)->currentScriptExecutionContext())
     , m_guarded(&guarded)
     , m_globalObject(&globalObject)
 {
@@ -40,18 +43,6 @@ DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guar
     } else
         globalObject.guardedObjects(NoLockingNecessary).add(this);
     globalObject.vm().writeBarrier(&globalObject, &guarded);
-}
-
-DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guarded, DoNotRegisterWithGlobalObjectTag)
-    : ActiveDOMCallback(globalObject.scriptExecutionContext())
-    , m_guarded(&guarded)
-    , m_globalObject(&globalObject)
-{
-    // Intentionally not added to globalObject.guardedObjects(): the JS
-    // wrapper that owns this object is responsible for keeping the guarded
-    // cell alive via its visitChildren. Rooting it from the global object
-    // would create a GC-root cycle when the guarded object transitively
-    // references its own wrapper (e.g. TransformStream -> WritableStream).
 }
 
 DOMGuardedObject::~DOMGuardedObject()

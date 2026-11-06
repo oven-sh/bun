@@ -3,8 +3,10 @@
 // JSWebView::createAndSend (JSWebView.cpp).
 
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "JSWebView.h"
 #include "ZigGlobalObject.h"
+#include "ScriptExecutionContext.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/InternalFunction.h>
@@ -41,7 +43,7 @@ public:
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -92,12 +94,14 @@ JSC_DEFINE_HOST_FUNCTION(callWebView, (JSGlobalObject * globalObject, CallFrame*
 // ESRCH, discarded).
 JSC_DEFINE_HOST_FUNCTION(jsWebViewConstructorCloseAll, (JSGlobalObject*, CallFrame*))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewConstructorCloseAll);
     Bun__WebView__closeAllForTermination();
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, constructWebView);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -341,6 +345,11 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     }
 
     if (backend == WebViewBackend::Chrome) {
+        // The CDP transport is one per process and belongs to the global that spawned it.
+        if (!zigGlobalObject->scriptExecutionContext()->isMainThread()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE,
+                "Bun.WebView with backend \"chrome\" is only available on the main thread"_s);
+        }
         Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
             persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,
@@ -353,7 +362,11 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
-        if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
+        // No user code ever holds this promise; handled, so a rejection
+        // (close mid-load, crash) cannot surface as unhandledRejection.
+        if (!initialUrl.isEmpty()) {
+            if (auto* p = view->navigate(globalObject, initialUrl)) p->markAsHandled();
+        }
         return JSValue::encode(view);
     }
 
@@ -372,12 +385,12 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
     // Navigate promise lands in m_pendingNavigate; the user's first await
     // (including the next navigate()) serializes behind it. If it rejects
-    // (bad URL), the next op's checkSlot sees the slot cleared and proceeds;
-    // the rejection is unobserved unless the user explicitly awaits the
-    // first navigate via view.onNavigated or a second navigate that picks
-    // up the pending state. Same semantics as `view.navigate(url)` right
-    // after construction — just one line shorter.
-    if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
+    // (bad URL), the next op's checkSlot sees the slot cleared and proceeds.
+    // No user code ever holds this promise; handled, so a rejection cannot
+    // surface as unhandledRejection.
+    if (!initialUrl.isEmpty()) {
+        if (auto* p = view->navigate(globalObject, initialUrl)) p->markAsHandled();
+    }
     return JSValue::encode(view);
 #endif
 }

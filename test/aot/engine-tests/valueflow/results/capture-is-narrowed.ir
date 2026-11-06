@@ -1,0 +1,65 @@
+# A capture holds what the operations that make a closure of the function put there, so it gets the type of all that the reached ones among them pass: integers by range, other primitives by kind, constant strings and functions by name.
+# What an unreached function would capture does not count. A capture that the unknown object reaches keeps its type.
+# A type that was only expected is proven where all that arrives lies inside it, and stays expected where something else arrives
+# RUN: valueflow-apply
+# CHECK: function f1 name="reader" {{*}}captures=[{type=1|"a"}, {type=f3}]
+# CHECK-NEXT: b0(v0: 1|"a", v1: f3):
+# CHECK: = Call {{*}}callees=[f3]
+# CHECK: function f2 name="readerOfInput" {{*}}captures=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: function f5 name="counter" {{*}}captures=[{type=1}]
+# CHECK-NEXT: b0(v0: 1):
+# CHECK: function f6 name="mislabeled" {{*}}captures=[{type=number flags=[IsExpected]}]
+# CHECK-NEXT: b0(v0: anything ~ number):
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f3
+    v2 = NewClosure v0, v1 function=f1
+    v3 = Call v2
+    v4 = String string="a"
+    v5 = NewClosure v4, v1 function=f1
+    v6 = Call v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = NewClosure v8 function=f2
+    v10 = Call v9
+    v11 = NewClosure function=f4
+    v12 = NewClosure v0 function=f5
+    v13 = Call v12
+    v14 = NewClosure v4 function=f6
+    v15 = Call v14
+    Return
+}
+function f1 name="reader" kind=Arrow captures=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1
+    Return v0
+}
+function f2 name="readerOfInput" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="helper" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="unreached" results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewClosure function=f3
+    v2 = NewClosure v0, v1 function=f1
+    Return v2
+}
+function f5 name="counter" kind=Arrow captures=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+function f6 name="mislabeled" kind=Arrow captures=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}

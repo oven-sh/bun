@@ -7,7 +7,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import tls from "node:tls";
-// @ts-expect-error - debug-only export
+// debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { isASAN, isDebug, rss, tls as tlsCerts } from "harness";
 
@@ -65,17 +65,17 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
 
 test("createSecureContext owns its native SSL_CTX exclusively (fresh wrapper too)", () => {
   const a = tls.createSecureContext({ cert: tlsCerts.cert });
-  const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" });
+  const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" } as tls.SecureContextOptions);
   // The user-facing constructor owns its SSL_CTX exclusively so addCACert on
   // one context can never affect another; only the internal connect/listen
   // paths memoise by config digest.
   expect(a.context).not.toBe(b.context);
   // The wrapper is fresh too, so per-call fields don't leak across callers.
   expect(a).not.toBe(b);
-  expect(b.servername).toBe("other.example");
-  expect(a.servername).toBeUndefined();
+  expect((b as any).servername).toBe("other.example");
+  expect((a as any).servername).toBeUndefined();
   // Different SSL_CTX-relevant config → different native handle.
-  const c = tls.createSecureContext({ cert: tlsCerts.cert, rejectUnauthorized: false });
+  const c = tls.createSecureContext({ cert: tlsCerts.cert, rejectUnauthorized: false } as tls.SecureContextOptions);
   expect(c.context).not.toBe(a.context);
 });
 
@@ -102,7 +102,7 @@ test("defaultClientSslCtx attaches bundled roots (verify error proves store was 
     hostname: "127.0.0.1",
     tls: true, // ← no ca/cert: this is the defaultClientSslCtx path
     socket: {
-      handshake(_s, _ok, err) {
+      handshake(_s, _ok, err: NodeJS.ErrnoException | null) {
         resolve(
           err?.code === "DEPTH_ZERO_SELF_SIGNED_CERT" ? 18 : err?.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ? 21 : -1,
         );
@@ -121,7 +121,7 @@ test("defaultClientSslCtx attaches bundled roots (verify error proves store was 
 
 async function connectOnce(port: number) {
   await new Promise<void>((resolve, reject) => {
-    const sock = tls.connect({ port, host: "127.0.0.1", ca: tlsCerts.ca, rejectUnauthorized: false }, () => {
+    const sock = tls.connect({ port, host: "127.0.0.1", ca: (tlsCerts as any).ca, rejectUnauthorized: false }, () => {
       sock.destroy();
     });
     // Resolve on full close, not on secureConnect: TLS destroy() sends

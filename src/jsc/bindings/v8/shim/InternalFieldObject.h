@@ -14,17 +14,17 @@ public:
 
     DECLARE_INFO;
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<InternalFieldObject*>(cell)->~InternalFieldObject();
+    }
+
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<InternalFieldObject, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForInternalFieldObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForInternalFieldObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForInternalFieldObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForInternalFieldObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<InternalFieldObject, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForInternalFieldObject, m_subspaceForInternalFieldObject));
     }
 
     // never changes size

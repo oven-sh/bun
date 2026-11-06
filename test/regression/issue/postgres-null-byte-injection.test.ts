@@ -104,10 +104,7 @@ test("postgres connection rejects null bytes in password", async () => {
   expect(serverReceivedData).toBe(false);
 });
 
-test("postgres connection does not use truncated path with null bytes", async () => {
-  // The JS layer's fs.existsSync() rejects paths containing null bytes,
-  // so the path is dropped before reaching the native layer. Verify that a
-  // path with null bytes doesn't silently connect via a truncated path.
+test("postgres connection rejects null bytes in path", async () => {
   let serverReceivedData = false;
 
   const server = net.createServer(socket => {
@@ -130,16 +127,12 @@ test("postgres connection does not use truncated path with null bytes", async ()
       connectionTimeout: 2,
     });
 
-    await sql`SELECT 1`;
-  } catch {
-    // Expected to fail
+    expect(await sql`SELECT 1`.catch(err => err.message)).toContain("path must not contain null bytes");
   } finally {
     server.close();
   }
 
-  // The path had null bytes so it should have been dropped by the JS layer,
-  // falling back to TCP where it hits our mock server (not a truncated Unix socket).
-  expect(serverReceivedData).toBe(true);
+  expect(serverReceivedData).toBe(false);
 });
 
 test("postgres connection works with normal parameters (no null bytes)", async () => {

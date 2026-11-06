@@ -1,23 +1,33 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "JSNodeHTTPServerSocket.h"
 #include "JSSocketAddressDTO.h"
+#include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
 #include <cmath>
 
-extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" void us_socket_resume(us_socket_t*);
-extern "C" void us_socket_pause(us_socket_t*);
+extern "C" void us_socket_shutdown(us_socket_t*);
+extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
+
+// ondata / ondrain / onclose continue the Bun.ModuleGraph whose script set them (nothing, outside a
+// graph: the socket's events arrive in nobody's async context, as in node). Reading one back gives
+// the function that was set.
+static JSValue storedCallback(JSObject* stored)
+{
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(stored))
+        return wrapper->callback.get();
+    return stored;
+}
 
 // Declare custom getters/setters and host functions
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose);
@@ -29,13 +39,18 @@ JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReset);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStart);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseWhenDrained);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseIfIdle);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -45,6 +60,11 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterServername);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasQueuedTunnelReads);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosedWithUnsentData);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterCloseError);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent);
 
 JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
@@ -65,24 +85,34 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterRemoteAddress, noOpSetter } },
     { "localAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterLocalAddress, noOpSetter } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
+    { "reset"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReset, 0 } },
     { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketWrite, 2 } },
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketEnd, 0 } },
     { "upgradeToTunnel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketUpgradeToTunnel, 0 } },
+    { "readStop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStop, 0 } },
+    { "readStart"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStart, 0 } },
     { "setResponseTrailers"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetResponseTrailers, 1 } },
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
     { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
+    { "closeWhenDrained"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseWhenDrained, 0 } },
+    { "closeIfIdle"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseIfIdle, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
     { "peerCertVerified"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerCertVerified, noOpSetter } },
+    { "hasQueuedTunnelReads"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterHasQueuedTunnelReads, noOpSetter } },
+    { "closedWithUnsentData"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosedWithUnsentData, noOpSetter } },
+    { "closeError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterCloseError, noOpSetter } },
+    { "peerEnded"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerEnded, noOpSetter } },
+    { "finSent"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterFinSent, noOpSetter } },
 };
 
 void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    reifyStaticProperties(vm, info(), JSNodeHTTPServerSocketPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), JSNodeHTTPServerSocketPrototypeTableValues, *this);
     this->structure()->setMayBePrototype(true);
 }
 
@@ -101,15 +131,43 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose, (JSC::JSGlobalObje
     return JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReset, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    if (!thisObject->isClosed()) {
+        thisObject->reset();
+    }
+    return JSValue::encode(JSC::jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    // upgradeToTunnel(afterBody): with a truthy argument the switch happens only
+    // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
     // once the request body has been fully parsed (Upgrade requests with a body).
-    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject));
+    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(1)));
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue())) [[likely]] {
+        thisObject->readStop();
+    }
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStart, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue())) [[likely]] {
+        thisObject->readStart();
+    }
     return JSValue::encode(JSC::jsUndefined());
 }
 
@@ -172,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
     }
-    auto* response = dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(0));
+    auto* response = dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(0));
     if (!response) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
     }
@@ -192,6 +250,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing, (JSC::JSGlob
     return JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseWhenDrained, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (thisObject) [[likely]] {
+        thisObject->closeWhenDrained();
+    }
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseIfIdle, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    return JSValue::encode(JSC::jsBoolean(thisObject && thisObject->closeIfIdle()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
@@ -202,7 +275,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsNumber(0));
     }
 
-    return us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    thisObject->flushResponseBytesAhead();
+    const bool hold = thisObject->hasUnsentResponseBytes();
+    auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, hold, thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    // JS parks the write callback on false only when it has an ondrain (_write in _http_server.ts).
+    if (hold && thisObject->functionToCallOnDrain && JSValue::decode(result).isFalse()) {
+        thisObject->heldWriteAwaitsDrain = true;
+    }
+    thisObject->updateTunnelIdle();
+    return result;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -216,27 +297,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
-    // The response's buffered body must reach the kernel before the FIN; uWS
-    // performs the shutdown after its send buffer drains.
-    if (thisObject->shutdownAfterResponseDrains()) {
+    // end(true) is Node's destroySoon() after a finished response: uWS waits for the body parse and the flush, then closes behind the FIN.
+    bool destroySoon = callFrame->argument(0).isTrue();
+    if (thisObject->shutdownAfterResponseDrains(destroySoon)) {
         return JSValue::encode(JSC::jsUndefined());
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
+    if (destroySoon) {
+        // One flush for raw socket.write() bytes; the close drops the rest, as destroy() did.
+        if (bufferedSize == 0) {
+            us_socket_shutdown(thisObject->socket);
+        } else {
+            us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, thisObject->hasUnsentResponseBytes(), thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        }
+        thisObject->close();
+        return JSValue::encode(JSC::jsUndefined());
+    }
     if (bufferedSize == 0) {
-        // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-        // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
-        // re-add), without which macOS 26 does not deliver the peer's close.
-        if (thisObject->socket && !thisObject->upgraded) {
-            us_socket_pause(thisObject->socket);
-        }
-        auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        // Undo the pause above after the shutdown so the unread body drains
-        // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
-        // SHUT_WR) is not deleted by a W -> R|W -> R step.
-        if (thisObject->socket && !thisObject->upgraded) {
-            us_socket_resume(thisObject->socket);
-        }
-        return result;
+        return thisObject->halfClose(globalObject);
     }
     return JSValue::encode(JSC::jsUndefined());
 }
@@ -280,6 +358,26 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError, (JSC::J
     return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String::fromLatin1(code)));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasQueuedTunnelReads, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    // The peer's FIN is a queued chunk of length 0. Once JS has it, the Duplex isn't readable and nobody asks.
+    return JSValue::encode(JSC::jsBoolean(thisObject->queuedTunnelBytes > 0 || thisObject->tunnelReadEnded));
+}
+
+// undefined until the connection has closed.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosedWithUnsentData, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject || !thisObject->closedWithUnsentData) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(*thisObject->closedWithUnsentData));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
@@ -287,6 +385,35 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified, (JSC::JSG
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsBoolean(thisObject->isPeerCertificateVerified()));
+}
+
+// The error of the read that closed the connection (`read ECONNRESET` for a peer RST), or undefined.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterCloseError, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject || !thisObject->closeReadError) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return Bun__socketReadErrorFromCloseCode(globalObject, thisObject->closeReadError);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(thisObject->peer_ended));
+}
+
+// The FIN of socket.end() has left. It waits for bytes that are still queued.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(thisObject->ended && !thisObject->isClosed() && us_socket_is_shut_down(thisObject->socket)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -398,7 +525,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose, (JSC::JSGlobalObje
     }
 
     if (thisObject->functionToCallOnClose) {
-        return JSValue::encode(thisObject->functionToCallOnClose.get());
+        return JSValue::encode(storedCallback(thisObject->functionToCallOnClose.get()));
     }
 
     return JSValue::encode(JSC::jsUndefined());
@@ -412,7 +539,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnDrain, (JSC::JSGlobalObje
     }
 
     if (thisObject->functionToCallOnDrain) {
-        return JSValue::encode(thisObject->functionToCallOnDrain.get());
+        return JSValue::encode(storedCallback(thisObject->functionToCallOnDrain.get()));
     }
 
     return JSValue::encode(JSC::jsUndefined());
@@ -438,7 +565,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnDrain.set(vm, thisObject, value.getObject());
+    thisObject->functionToCallOnDrain.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -450,7 +577,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData, (JSC::JSGlobalObjec
     }
 
     if (thisObject->functionToCallOnData) {
-        return JSValue::encode(thisObject->functionToCallOnData.get());
+        return JSValue::encode(storedCallback(thisObject->functionToCallOnData.get()));
     }
 
     return JSValue::encode(JSC::jsUndefined());
@@ -476,7 +603,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData, (JSC::JSGlobalObjec
         return false;
     }
 
-    thisObject->functionToCallOnData.set(vm, thisObject, value.getObject());
+    thisObject->functionToCallOnData.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -500,7 +627,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnClose.set(vm, thisObject, value.getObject());
+    thisObject->functionToCallOnClose.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -519,7 +646,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSC::JSGloba
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten()));
+    // Like Node's bytesWritten, this counts bytes still buffered as well as bytes already sent.
+    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten() + thisObject->streamBuffer.bufferedSize()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
@@ -528,11 +656,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObj
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    if (!thisObject->currentResponseObject) {
+    auto* response = thisObject->currentResponse();
+    if (!response) {
         return JSValue::encode(JSC::jsNull());
     }
 
-    return JSValue::encode(thisObject->currentResponseObject.get());
+    return JSValue::encode(response);
 }
 
 } // namespace Bun

@@ -44,7 +44,7 @@ test("formData uploads roundtrip, with a call to .body", async () => {
     async fetch(req) {
       req.body;
 
-      return new Response(await req.formData());
+      return new Response((await req.formData()) as FormData);
     },
   });
 
@@ -108,7 +108,7 @@ test("formData uploads roundtrip, without a call to .body", async () => {
     port: 0,
     development: false,
     async fetch(req) {
-      return new Response(await req.formData());
+      return new Response((await req.formData()) as FormData);
     },
   });
 
@@ -234,8 +234,11 @@ test("missing file throws the expected error", async () => {
         proxy: "http://localhost:3000",
       });
       expect(Bun.peek.status(resp)).toBe("rejected");
-      expect(async () => await resp).toThrow("no such file or directory");
+      expect(resp).rejects.toThrow("no such file or directory");
     }
   });
+  // The rejection tracker keeps each promise alive until the end of the tick
+  // (a microtask is not enough), so yield one before forcing the collection.
+  await Bun.sleep(0);
   Bun.gc(true);
 });

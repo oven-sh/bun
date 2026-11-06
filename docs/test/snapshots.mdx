@@ -296,7 +296,9 @@ Inline snapshots don't record which runner wrote them, so Bun accepts a match in
 
 With `--update-snapshots`, Bun removes entries that no test uses anymore from a file in Jest's or Vitest's format. It keeps entries for tests that were skipped, filtered out or failed. A file in Bun's format keeps only the entries of tests that ran.
 
-Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
+Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. For an element of React 18 or older, they also left out an only child that was not a string, an element or an array: `<td>{1}</td>` was `<td />`. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
+
+A `<td />` entry of such an element records no child. It also passes when the only child is a number, `true`, an object or a function, until `--update-snapshots` stores that child. If that child throws when Bun prints it, the matcher throws, as it does for a prop.
 
 ## Best Practices
 

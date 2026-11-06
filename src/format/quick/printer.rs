@@ -624,7 +624,7 @@ impl Quick {
                         if rem < 0 {
                             // It stands for a group. What is measured here is what follows something on its line, up to the first place where
                             // the line can end, and there may be one in the group: in a tag of JSX, which does not start a line wherever
-                            // it does in the source. (Behind everything else that is read there is a line, or all lines are taken out.)
+                            // it does in the source. (In front of everything else that is read there is a line, or all lines are taken out.)
                             if mode == BREAK && self.t.at(self.d.at(pc + 1)) == 60 {
                                 self.printer.has_wrong_guess = true;
                             }

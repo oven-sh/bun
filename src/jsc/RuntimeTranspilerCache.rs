@@ -85,8 +85,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: A `var` or `let` pattern with no initializer is a syntax error, and so is a `using`
-/// with no initializer in the head of a `for (;;)`. Older entries can hold the output of such a file.
+/// Version 52: A `var` or `let` pattern with no initializer is a syntax error. So is a `using` with none in a `for (;;)` head.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

@@ -4761,8 +4761,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `var [a];` and `for (let { a }; ; ) {}` are syntax errors. A TypeScript `declare` and the
-    /// binding of a for-in or for-of head have no initializer.
+    /// `var [a];` and `for (let { a }; ; ) {}` are syntax errors.
     #[cold]
     #[inline(never)]
     pub(crate) fn require_pattern_initializer(

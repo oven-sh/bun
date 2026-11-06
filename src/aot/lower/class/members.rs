@@ -41,16 +41,38 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut values = MemberValues::default();
         let mut next_method_index = 0;
         for member in runtime_members(hir, head.class) {
+            self.define_private_method(head, is_standard, member);
+        }
+        for member in runtime_members(hir, head.class) {
             let modifiers = hir[member].modifiers;
             if is_standard && has_decorators(hir, modifiers) {
                 let decorators = self.emit_decorator_array(modifiers);
                 values.decorators.push((member, decorators));
             }
             if let Some(name) = self.lower_member_name(head, member, &mut values) {
-                define_member(self, head, plan, member, name, &mut next_method_index);
+                define_member(self, head, member, name, &mut next_method_index);
             }
         }
         values
+    }
+
+    fn define_private_method(&mut self, head: ClassHead, is_standard: bool, member: MemberId) {
+        let hir = self.file.hir;
+        let node = hir[member];
+        let PropKey::Private(name) = hir.runtime_member_key(member) else {
+            return;
+        };
+        let is_method = matches!(
+            hir.runtime_member_kind(member),
+            MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+        );
+        if !is_method || (is_standard && has_decorators(hir, node.modifiers)) {
+            return;
+        }
+        let key = layouts::private_key(self.file, head.layout, name);
+        self.set_position(node.name_pos);
+        let closure = self.lower_method(node.func, PropertyName::Constant(key), head.value);
+        self.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
     }
 
     fn lower_member_name(
@@ -190,7 +212,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 fn define_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     head: ClassHead,
-    plan: &ClassPlan,
     member: MemberId,
     name: PropertyName,
     next_method_index: &mut u32,
@@ -223,13 +244,8 @@ fn define_member(
             }
         }
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-            let is_standard = plan.transform == ClassTransform::Standard;
             if !is_private {
                 lowering.define_method(head, member, name, next_method_index);
-            } else if !(is_standard && has_decorators(hir, node.modifiers)) {
-                lowering.set_position(node.name_pos);
-                let closure = lowering.lower_method(node.func, name, head.value);
-                lowering.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
             }
         }
         MemberKind::Constructor

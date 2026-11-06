@@ -524,7 +524,9 @@ The call sites that `Error.prepareStackTrace` gets are the same: `getFunction()`
 
 ## Error messages
 
-The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
+The class of an error, its line and its stack trace are the same, except for the frames of some built-ins. The functions of `Math`, `regexp.exec()`, `regexp.test()` and `array.pop()`, among others, are compiled into the function that calls them and have no frame of their own. When `Math.max(value)` calls `value.valueOf()`, a trace taken there has your function right below `valueOf`, where `bun run` has a frame for `max`.
+
+Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
 
 A function of Bun or of a `node:` module has no text: `http.IncomingMessage.toString()` is `function IncomingMessage() { [native code] }`, where `bun run` prints its source.
 
@@ -588,6 +590,7 @@ Few programs notice these.
 | `Object.keys({ get a() {}, set a(v) {}, b: 1, get a() {} })`, or of such a class  | `b`, `a`                                                                     | `a`, `b`, as the language says                   |
 | A function declared in a later `case`, called while an earlier `case` runs        | A `ReferenceError`                                                           | It is called, as the language says               |
 | `typeof Later` above a `class Later {}` that stands behind a `return`             | `"undefined"`: the transpiler drops the class                                | A `ReferenceError`, as the language says         |
+| `typeof w` after `class C { [eval("var w = 1")]() {} }`, outside strict mode      | `"number"`: the text runs as the code around the class does                  | `"undefined"`: a class is strict code            |
 
 `Bun.$` is compiled into an executable if your code can reach it: it writes `Bun.$`, reads `Bun[name]`, hands `Bun` on as a value, or reads `globalThis` under a key that is put together while it runs. Asking only whether the name is there, as in `"$" in Bun` or `Object.hasOwn(Bun, "$")`, answers `true` and keeps nothing. Text that the compiler never saw, such as a string handed to `eval`, can still ask for the shell in a program that doesn't use it. Reading `Bun.$` then throws `Bun.$ was not compiled into this executable`. Write `Bun.$` once anywhere in your program to keep it.
 

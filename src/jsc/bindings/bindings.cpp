@@ -2493,6 +2493,74 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
 /**
  * @brief `Bun.deepMatch(a, b)`
  */
+#if ENABLE(AOT)
+// What the loop of Bun__deepMatch does with a property. A private field has no name to record.
+template<bool enableAsymmetricMatchers>
+static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining, JSValue prop, JSValue subsetProp)
+{
+    JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
+    JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
+
+    if constexpr (enableAsymmetricMatchers) {
+        if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
+            case AsymmetricMatcherResult::FAIL:
+                return false;
+            case AsymmetricMatcherResult::PASS:
+                return true;
+            case AsymmetricMatcherResult::NOT_MATCHER:
+                break;
+            }
+        } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
+            case AsymmetricMatcherResult::FAIL:
+                return false;
+            case AsymmetricMatcherResult::PASS:
+                return true;
+            case AsymmetricMatcherResult::NOT_MATCHER:
+                break;
+            }
+        } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
+            if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
+                if (!*matched)
+                    return false;
+                return true;
+            }
+        }
+    }
+
+    if (subsetProp.isObject() and prop.isObject()) {
+        if (enableAsymmetricMatchers && isMatchingObjectContaining) {
+            Vector<std::pair<JSValue, JSValue>, 16> stack;
+            MarkedArgumentBuffer gcBuffer;
+            auto eql = Bun__deepEquals<false, true, false>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!eql) return false;
+        } else {
+            state.gcBuffer.append(prop);
+            state.gcBuffer.append(subsetProp);
+            if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) return true;
+            bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!matched) return false;
+        }
+    } else {
+        if constexpr (enableAsymmetricMatchers) {
+            if (hasEqualityTesters(globalObject)) [[unlikely]] {
+                if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
+                    if (!*verdict) return false;
+                    return true;
+                }
+            }
+        }
+        auto same = JSC::sameValue(globalObject, prop, subsetProp);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!same) return false;
+    }
+    return true;
+}
+#endif
+
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
@@ -2570,7 +2638,16 @@ bool Bun__deepMatch(
         }
     }
 
-    auto matchesProperty = [&](const Identifier* property, JSValue prop, JSValue subsetProp) ALWAYS_INLINE_LAMBDA -> bool {
+    for (const auto& property : subsetProps) {
+        JSValue prop = obj->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (prop.isEmpty()) {
+            return false;
+        }
+
+        JSValue subsetProp = subsetObj->get(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, false);
+
         JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
         JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
 
@@ -2580,9 +2657,9 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (property) state.recordIfAsked(obj, subsetObj, *property, subsetProp, jsUndefined());
+                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
                     // continue to next subset prop
-                    return true;
+                    continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
                 }
@@ -2592,7 +2669,7 @@ bool Bun__deepMatch(
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     // continue to next subset prop
-                    return true;
+                    continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
                 }
@@ -2600,7 +2677,7 @@ bool Bun__deepMatch(
                 if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
                     if (!*matched)
                         return false;
-                    return true;
+                    continue;
                 }
             }
         }
@@ -2618,9 +2695,9 @@ bool Bun__deepMatch(
             } else {
                 state.gcBuffer.append(prop);
                 state.gcBuffer.append(subsetProp);
-                if (property) state.recordIfAsked(obj, subsetObj, *property, prop, subsetProp);
+                state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
                 // This (value, pattern) pair already matched, or is still being compared (a cycle).
-                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) return true;
+                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
                 bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
@@ -2630,7 +2707,7 @@ bool Bun__deepMatch(
                 if (hasEqualityTesters(globalObject)) [[unlikely]] {
                     if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
                         if (!*verdict) return false;
-                        return true;
+                        continue;
                     }
                 }
             }
@@ -2638,29 +2715,13 @@ bool Bun__deepMatch(
             RETURN_IF_EXCEPTION(throwScope, false);
             if (!same) return false;
         }
-        return true;
-    };
-
-    for (const auto& property : subsetProps) {
-        JSValue prop = obj->getIfPropertyExists(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (prop.isEmpty()) {
-            return false;
-        }
-
-        JSValue subsetProp = subsetObj->get(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, false);
-
-        bool matched = matchesProperty(&property, prop, subsetProp);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (!matched) return false;
     }
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
     if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
         bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
-            return matchesProperty(nullptr, prop, subsetProp);
+            return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });
         RETURN_IF_EXCEPTION(throwScope, false);
         if (!matched) return false;

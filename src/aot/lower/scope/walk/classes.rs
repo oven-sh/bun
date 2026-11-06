@@ -150,6 +150,24 @@ impl Walker<'_, '_> {
         let hir = self.hir;
         let scope = self.bound.class_scope[class.idx()];
         let has_token = has_slot(slots, ClassSlot::ClassToken);
+        let is_made_first = |member: MemberId| {
+            let node = hir[member];
+            let is_method = matches!(
+                hir.runtime_member_kind(member),
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+            );
+            is_method
+                && !node.flags.contains(Flags::AMBIENT)
+                && !class::has_decorators(hir, node.modifiers)
+                && has_slot(slots, ClassSlot::PrivateMethod(member))
+        };
+        for member in hir[class].members.iter() {
+            if is_made_first(member) {
+                self.visit_function(hir[member].func, context.function);
+                let slot = ClassSlot::PrivateMethod(member);
+                self.push_task(slot_initialization(scope, slot), context);
+            }
+        }
         for member in hir[class].members.iter() {
             let node = hir[member];
             let key = hir.runtime_member_key(member);
@@ -166,10 +184,8 @@ impl Walker<'_, '_> {
             let is_decorated = class::has_decorators(hir, node.modifiers);
             match hir.runtime_member_kind(member) {
                 MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                    self.visit_function(node.func, context.function);
-                    let slot = ClassSlot::PrivateMethod(member);
-                    if !is_decorated && has_slot(slots, slot) {
-                        self.push_task(slot_initialization(scope, slot), context);
+                    if !is_made_first(member) {
+                        self.visit_function(node.func, context.function);
                     }
                 }
                 MemberKind::Property => {

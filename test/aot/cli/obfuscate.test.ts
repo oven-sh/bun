@@ -348,11 +348,16 @@ outermostCaller(process.argv.length);
     "a file edited while the build runs ends the build: the map would show code that the executable does not run",
     () =>
       slot(async () => {
-        using dir = tempDir("aot-obfuscate-edited", program);
+        const whatAPipeHolds = 65_536;
+        using dir = tempDir("aot-obfuscate-edited", {
+          ...program,
+          "app.ts": `import "./ballast";\n${program["app.ts"]}`,
+          "ballast.ts": `console.log(${JSON.stringify(Buffer.alloc(4 * whatAPipeHolds, "ballast ").toString())}.length);\n`,
+        });
         const folder = String(dir);
         const pipe = join(folder, "pipe");
         expect(Bun.spawnSync(["mkfifo", pipe]).exitCode).toBe(0);
-        // The front end is through with the files when it writes the program, and it waits there until somebody reads.
+        // The front end is through with the files when it writes the program. That is more than a pipe holds, so it waits there until somebody reads.
         const opened = open(pipe, "r");
         const build = spawned(
           [bunExe(), "compile", "app.ts", "--outfile", "app", buildFlags.obfuscate, "--aot-out=pipe"],
@@ -367,7 +372,7 @@ outermostCaller(process.argv.length);
           const edited = program["concealed-module.ts"].replace("too deep", "too high");
           expect(edited.length).toBe(program["concealed-module.ts"].length);
           writeFileSync(join(folder, "concealed-module.ts"), edited);
-          await written.readFile();
+          expect((await written.readFile()).length).toBeGreaterThan(whatAPipeHolds);
         } finally {
           await written.close();
         }

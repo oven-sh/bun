@@ -5,7 +5,7 @@
 // CHECK: = NewClosure [[environment]], [[token]] function=
 // CHECK: [[method]] = NewClosure function=
 // CHECK: PutEnvironmentField [[environment]], [[method]] layout=[[layout]]
-// CHECK-LABEL: function {{*}}name="n"
+// CHECK-LABEL: function {{*}}name="#n"
 // CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType
 // CHECK: [[closure]] = GetEnvironmentField {{*}}layout=[[layout]]
 // CHECK-NOT: CheckInitialized
@@ -13,9 +13,12 @@
 
 export function f() {
   return class {
-    n() {
+    #n() {
       return this.#m();
     }
     #m() {}
+    n() {
+      return this.#n();
+    }
   };
 }

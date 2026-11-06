@@ -105,6 +105,9 @@ const enum NodeHTTPHeaderState {
 const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
 const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
 const kHandle: typeof http.kHandle = http.kHandle;
+// Opens the birth of a response over a handle. ServerResponse alone is handed it: kHandle is shown to a request class of the program's, as the other text shows it, and lies among the own keys of every response.
+// A literal: a call of Symbol while this file loads is one that a program can count.
+const kResponseMadeOverHandle = { __proto__: null } as $Node.ServerResponseOptions;
 const kOnReadParsed: typeof http.kOnReadParsed = http.kOnReadParsed;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
 const kHasQueuedReads: typeof http.kHasQueuedReads = http.kHasQueuedReads;
@@ -1321,7 +1324,7 @@ Server.prototype[kRealListen] = function (
       if (makesResponseWithoutOptions) {
         http_res = new ResponseClass(
           http_req,
-          kHandle,
+          kResponseMadeOverHandle,
           handle,
           socket,
           socket.writableHighWaterMark ?? getDefaultHighWaterMark(),
@@ -1755,7 +1758,7 @@ function onNodeHTTPRequest(
 
   const res: $Node.ServerResponse = new ServerResponse(
     req,
-    kHandle,
+    kResponseMadeOverHandle,
     handle,
     socket,
     writableMark,
@@ -3292,7 +3295,7 @@ const {
 function ServerResponse(
   this: $Node.ServerResponse,
   req: $Node.IncomingMessage,
-  options?: $Node.ServerResponseOptions | typeof kHandle,
+  options?: $Node.ServerResponseOptions,
   nativeHandle?: $Node.NodeHTTPResponse,
   nativeSocket?: $Node.HttpServerSocket,
   nativeHighWaterMark?: number,
@@ -3300,7 +3303,7 @@ function ServerResponse(
   nativeKeepAliveTimeout?: number,
   nativeHasBody?: boolean,
 ): void {
-  if (options === kHandle) {
+  if (options === kResponseMadeOverHandle) {
     const events: $Node.HttpResponseEvents = { __proto__: null, finish: emitResponseFinish };
     const capturesRejections = EventEmitterPrototype[kCapture];
     const exchange = makeExchange(this, nativeSocket!, events, req._readableState);
@@ -3372,7 +3375,12 @@ function ServerResponse(
   if (new.target !== ServerResponse) {
     ("unlikely");
     if (!(this instanceof ServerResponse)) return new ServerResponse(req, options) as any;
-    return initializeStoreByStore(this, req, options);
+    // A call on a response that exists lays its fields anew. What the server keeps of the dispatch is not among them, and stays.
+    const kept = this.$exchange;
+    if (kept !== undefined) spillStateReachedThrough(this);
+    initializeStoreByStore(this, req, options);
+    if (kept !== undefined) this.$exchange = kept;
+    return;
   }
   const exchange = makeExchange(this, null, noResponseEvents, null);
   exchange.flags = ExchangeFlags.has_pending_callbacks;

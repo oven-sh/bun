@@ -79,8 +79,24 @@ fn later_method_copies_private_method() {
 }
 
 #[test]
-fn earlier_method_reads_private_method_from_environment() {
+fn method_in_front_of_private_method_copies_it() {
     let source = "export function f() { class C { n() { return this.#m(); } #m() {} } return C; }";
+    analyze_source("main.mjs", source, |probe| {
+        let [caller, private_method] = probe.functions(FnKind::Method)[..] else {
+            panic!("the class has two methods");
+        };
+        let method_slot = ClassSlot::PrivateMethod(member_of(probe, private_method));
+        let expected = [
+            Capture::Value(probe.class_slot(0, ClassSlot::ClassToken)),
+            Capture::Value(probe.class_slot(0, method_slot)),
+        ];
+        assert_eq!(probe.captures(caller), expected);
+    });
+}
+
+#[test]
+fn earlier_private_method_reads_later_one_from_environment() {
+    let source = "export function f() { class C { #n() { return this.#m(); } #m() {} } return C; }";
     analyze_source("main.mjs", source, |probe| {
         let [caller, private_method] = probe.functions(FnKind::Method)[..] else {
             panic!("the class has two methods");

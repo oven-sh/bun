@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/what-require-resolve-answers-does-not-hang-on-the-working-directory.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-path-made-by-one-climb-out-of-the-root-is-for-the-files-in-the-root.test.ts": {
     "default": 60000,
     "asan": 240000

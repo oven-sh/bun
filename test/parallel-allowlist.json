@@ -1525,6 +1525,7 @@
     "aot/a-spread-of-an-instance-lays-undefined-or-null-under-a-name-that-the-literal-writes-behind-it.test.ts",
     "aot/a-build-that-succeeds-says-nothing-of-its-own-faults.test.ts",
     "aot/a-path-made-by-one-climb-out-of-the-root-is-for-the-files-in-the-root.test.ts",
-    "aot/a-path-that-climbs-above-all-that-an-executable-holds-names-nothing.test.ts"
+    "aot/a-path-that-climbs-above-all-that-an-executable-holds-names-nothing.test.ts",
+    "aot/what-require-resolve-answers-does-not-hang-on-the-working-directory.test.ts"
   ]
 }

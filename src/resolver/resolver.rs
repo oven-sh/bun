@@ -1195,11 +1195,16 @@ impl<'a> Resolver<'a> {
     /// `bun run` looks for a relative name beside the importer, and no folder on disk is known to stand for that of a file of the executable.
     /// With `--aot-allow-code-from-disk` the build has written down where its root lay.
     pub fn looks_in_executable_alone(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        self.custom_dir_paths.is_none()
+            && self.looks_in_executable_alone_from(source_dir, import_path)
+    }
+
+    /// The same for one folder, be it the importer's or one that `require.resolve(name, { paths })` was given.
+    fn looks_in_executable_alone_from(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
         let graph = self.standalone_module_graph;
         let program = graph.and_then(|graph| graph.compiled_program());
         program.is_some_and(|program| {
             !program.allows_code_from_disk
-                && self.custom_dir_paths.is_none()
                 && ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 && crate::compiled_program::is_relative_specifier(import_path)
                 && !program.leaves_outside(source_dir, import_path)
@@ -1230,13 +1235,13 @@ impl<'a> Resolver<'a> {
     }
 
     /// Where the disk is asked for what is looked for from `folder`. A folder of the executable stands for one on disk, as it does for a module that imports.
-    fn folder_on_disk_of_given_folder(&self, folder: &[u8]) -> Vec<u8> {
+    fn folder_on_disk_of_given_folder<'f>(&self, folder: &'f [u8]) -> std::borrow::Cow<'f, [u8]> {
         let graph = (self.standalone_module_graph).filter(|graph| {
             graph.compiled_program().is_some()
                 && ::bun_options_types::standalone_path::is_bun_standalone_file_path(folder)
         });
         let Some(graph) = graph else {
-            return folder.to_vec();
+            return std::borrow::Cow::Borrowed(folder);
         };
         let root_on_disk = graph.root_on_disk();
         let base = root_on_disk
@@ -1244,7 +1249,7 @@ impl<'a> Resolver<'a> {
             .unwrap_or_else(|| Fs::FileSystem::get().top_level_dir());
         // The deepest comes first. The root directory has no folder below the root.
         let folders = graph.directories_of_importer(folder, base);
-        folders.into_iter().next().unwrap_or_else(|| base.to_vec())
+        std::borrow::Cow::Owned(folders.into_iter().next().unwrap_or_else(|| base.to_vec()))
     }
 
     fn result_of_module_in_executable(
@@ -2213,12 +2218,15 @@ impl<'a> Resolver<'a> {
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     // From each folder in its turn: the disk, as in an executable built without --aot, then what the executable holds there.
-                    let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
-                    match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                    // Where no folder on disk is known to stand for a folder of the executable, the disk is not asked: the working directory is none.
+                    if !self.looks_in_executable_alone_from(custom_utf8.slice(), import_path) {
+                        let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
+                        match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
+                            ResultUnion::Success(res) => return ResultUnion::Success(res),
+                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                            ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                            ResultUnion::NotFound => {}
+                        }
                     }
                     if let Some(answer) = self.look_in_executable_from_given_folder(
                         custom_utf8.slice(),
@@ -2354,19 +2362,28 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    // From each folder in its turn: the disk, as in an executable built without --aot, then what the executable holds there.
-                    let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
+                    // From each folder in its turn. From a folder on disk: the disk, as in an executable built without --aot, then what the executable
+                    // holds there. From a folder of the executable: the executable first, as for a file of it that imports.
+                    let given = custom_utf8.slice();
+                    let is_of_executable =
+                        ::bun_options_types::standalone_path::is_bun_standalone_file_path(given);
+                    if is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
+                    }
+                    let on_disk = self.folder_on_disk_of_given_folder(given);
                     match self.check_package_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
                     }
-                    if let Some(answer) = self.look_in_executable_from_given_folder(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                    ) {
+                    if !is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
                         return answer;
                     }
                 }

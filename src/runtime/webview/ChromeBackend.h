@@ -226,7 +226,7 @@ private:
 // TargetCreateTarget + TargetAttachToTarget + PageEnable form an internal
 // chain kicked off by the first navigate() on a view. Their responses
 // don't settle a user promise; the last one (PageEnable) sends the actual
-// Page.navigate and the promise resolves on Page.loadEventFired.
+// Page.navigate and the promise resolves on the commit that ends it.
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
     TargetCreateTarget,
@@ -235,13 +235,15 @@ enum class Method : uint8_t {
     // User-facing ops — responses settle (or errors reject) a slot.
     PageNavigate,
     PageReload,
-    // Chained from Page.loadEventFired: Runtime.evaluate("document.title")
+    // Chained from the commit that ends a navigation: Runtime.evaluate("document.title")
     // → set m_title, settle Navigate. Makes `await navigate(); view.title`
     // work like WKWebView (which packs title in NavDone).
     PageTitle,
+    // The same fetch after a load the view did not ask for: sets m_title, settles nothing.
+    PageTitleRefresh,
     // goBack/goForward chain: getNavigationHistory → navigateToHistoryEntry.
     // The first picks entries[currentIndex + delta].id; the second navigates.
-    // Page.loadEventFired settles, same as navigate/reload.
+    // The commit settles, same as navigate/reload.
     PageGetNavigationHistory,
     PageNavigateToHistoryEntry,
     PageCaptureScreenshot,
@@ -469,6 +471,12 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
+    void onFrameNavigated(JSWebView*, std::span<const char> params);
+    void onNavigatedWithinDocument(JSWebView*, std::span<const char> params);
+    void onLoadEventFired(JSWebView*);
+    void onFrameStoppedLoading(JSWebView*, std::span<const char> params);
+    // Fetches document.title into m_title. A PageTitle reply also settles the Navigate slot.
+    void sendTitleFetch(JSWebView*, Method);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);

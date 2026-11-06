@@ -10295,7 +10295,9 @@ declare module "bun" {
 
     /**
      * Fired when a navigation completes successfully. The callback runs
-     * before the corresponding `navigate()` promise resolves.
+     * before the corresponding `navigate()` promise resolves. A
+     * same-document navigation by the page (`history.pushState()`, a
+     * `#fragment` change) also updates `view.url` and fires it.
      */
     onNavigated: ((url: string, title: string) => void) | null;
     /**
@@ -10306,7 +10308,10 @@ declare module "bun" {
 
     /**
      * Navigate to a URL. Resolves when the main frame's load completes
-     * (WKNavigationDelegate `didFinishNavigation`).
+     * (WKNavigationDelegate `didFinishNavigation`). A URL that only changes
+     * the `#fragment` of the current page has no load: it resolves once the
+     * new URL is current, unless the browser loads the document again for it
+     * (Chrome does for a frameset page).
      *
      * @example
      * ```ts

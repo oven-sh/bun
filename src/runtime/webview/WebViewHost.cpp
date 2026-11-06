@@ -4,6 +4,7 @@
 
 #include "WebViewHost.h"
 #include "ipc_protocol.h"
+#include <wtf/URL.h>
 
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -244,6 +245,8 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
         return;
     }
     m_navPending = true;
+    m_navProvisional = false;
+    m_navTargetUrl = WTF::URL(WTF::URL(), urlString);
     m_webview.loadRequest(objc::NSURLRequest::fromURL(nsurl));
 }
 
@@ -696,16 +699,31 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
 // Sending the event first means both are in the same onData batch, processed
 // in order, callback fires before the promise microtask runs.
 
-void WebViewHost::onNavigationFinished()
+// NavEvent for every commit; its trailing byte says whether the navigate() in the slot ends here, and NavDone follows then.
+void WebViewHost::reportNavigation(bool endsNavigation)
 {
-    // NavEvent is unsolicited — fires for back()/forward()/reload() too,
-    // which Ack immediately and don't set m_navPending. The parent updates
-    // url/title and runs onNavigated from NavEvent; NavDone only resolves
-    // the navigate() promise.
     auto payload = pack2(url(), title());
+    payload.append(static_cast<uint8_t>(endsNavigation));
     hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
-    if (!std::exchange(m_navPending, false)) return;
-    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+    if (!endsNavigation) return;
+    m_navPending = false;
+    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size() - 1));
+}
+
+void WebViewHost::onNavigationFinished() { reportNavigation(m_navPending); }
+
+void WebViewHost::onProvisionalNavigationStarted() { m_navProvisional = true; }
+
+// Ends the pending navigate() only when the commit is a same-document change of its target and no document load started for it (loadRequest: is async, so the old document can change its fragment before didStartProvisionalNavigation:). SessionStatePush/Replace are the page's own.
+void WebViewHost::onSameDocumentNavigation(long type)
+{
+    constexpr long anchorNavigation = 0;
+    constexpr long sessionStatePop = 3;
+    if (type == anchorNavigation) return;
+    // The same test WebKit makes for a fragment navigation, both URLs through its parser.
+    bool ownNavigation = type == sessionStatePop && m_navPending && !m_navProvisional
+        && WTF::equalIgnoringFragmentIdentifier(WTF::URL(WTF::URL(), url()), m_navTargetUrl);
+    reportNavigation(ownNavigation);
 }
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)

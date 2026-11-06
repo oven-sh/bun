@@ -1,0 +1,65 @@
+------------------
+{ printWidth: 80 }
+------------------
+test.concurrent.each`
+  a    | b
+  ${1} | ${11}
+`("x", () => {});
+it.failing.each`
+  a    | b
+  ${1} | ${11}
+`("x", () => {});
+test.concurrent.only.each`
+  a    | b
+  ${1} | ${11}
+`("x", () => {});
+test[each]`
+  a | b
+  ${1} | ${11}
+`("x", () => {});
+test.only[each]`
+  a | b
+  ${1} | ${11}
+`("x", () => {});
+test[only].each`
+  a | b
+  ${1} | ${11}
+`("x", () => {});
+it.each`
+  a    | b
+  ${1} | ${2}
+`("x", f);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+test.concurrent.each`
+  a    | b
+  ${1} | ${11}
+`("x", () => {});
+it.failing.each`
+  a    | b
+  ${1} | ${11}
+`("x", () => {});
+test.concurrent.only.each`
+  a    | b
+  ${1} | ${11}
+`("x", () => {});
+test[each]`
+  a | b
+  ${1} | ${11}
+`("x", () => {});
+test.only[each]`
+  a | b
+  ${1} | ${11}
+`("x", () => {});
+test[only].each`
+  a | b
+  ${1} | ${11}
+`("x", () => {});
+it.each`
+  a    | b
+  ${1} | ${2}
+`("x", f);
+
+===================== End =====================

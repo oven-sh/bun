@@ -34,10 +34,14 @@ fn may_have_embedded_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// Prettier's `isJestEachTemplateLiteral`, plus `printJestEachTemplateLiteral`'s check that the table has a header.
-fn is_jest_each_template_literal<'a>(e: Expr<'a>, template: Template<'a>) -> bool {
+fn is_jest_each_template_literal<'a>(
+    e: Expr<'a>,
+    template: Template<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     matches!(e.parent(), Node::Expr(parent)
         if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
-            if call.template() == Some(e) && is_test_each_pattern(call.callee())))
+            if call.template() == Some(e) && is_test_each_pattern(call.callee(), f)))
         && !template.raw(0).trim_ascii().is_empty()
 }
 
@@ -48,7 +52,7 @@ pub(crate) fn write_template_literal<'a>(
     template: Template<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if is_jest_each_template_literal(e, template) {
+    if is_jest_each_template_literal(e, template, f) {
         return EachTemplateTable::from_template(template, f).fmt(f);
     }
     let context = f.context().tailwind_context();
@@ -500,10 +504,20 @@ impl EachTemplateTable {
         let mut table = EachTemplateTable::default();
 
         let header = template.raw(0);
-        let header = header.strip_suffix(b"|").unwrap_or(header);
+        // `` a | b |${1} ``: for Prettier the header has a third cell with nothing in it.
+        let is_oxfmt = f.options().flavor.is_oxfmt();
+        let header = match is_oxfmt {
+            true => header.strip_suffix(b"|").unwrap_or(header),
+            false => header,
+        };
         for column in bun_core::strings::split(header, b"|") {
+            let mut text = Vec::new();
+            match is_oxfmt {
+                true => text.extend_from_slice(column.trim_ascii()),
+                false => bun_core::strings::push_crlf_as_lf(&mut text, column.trim_ascii()),
+            }
             table.entry(EachTemplateElement::Column(EachTemplateColumn::new(
-                column.trim_ascii().to_vec(),
+                text,
                 false,
                 f.options().flavor,
             )));

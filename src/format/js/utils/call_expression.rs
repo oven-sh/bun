@@ -328,8 +328,51 @@ fn contains_a_test_pattern(e: Expr<'_>) -> bool {
     }
 }
 
-/// `` describe.each`table` ``, `` test.only.each`table` ``, ..
-pub(crate) fn is_test_each_pattern(e: Expr<'_>) -> bool {
+/// The object and the name of `a.b` and of `a[b]`, which is a `MemberExpression` with an `Identifier` too.
+fn object_and_name_of_member(e: Expr<'_>) -> Option<(Expr<'_>, &[u8])> {
+    match (e.as_ast_nodes(), e.kind()) {
+        (AstNodes::StaticMemberExpression(_), ExprKind::Dot { obj, name, .. }) => {
+            Some((obj, name.bytes()))
+        }
+        (AstNodes::ComputedMemberExpression(_), ExprKind::Index { obj, index, .. })
+            if index.tag() == ExprTag::Ident =>
+        {
+            Some((obj, index.text()))
+        }
+        _ => None,
+    }
+}
+
+/// Prettier's `isJestEachTemplateLiteral`, for the tag: `` describe.each`table` ``, `` xit.only.each`table` ``.
+pub(crate) fn is_test_each_pattern<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if recognizes_vitest_and_deno_test_callees(f) {
+        return is_oxfmt_test_each_pattern(e);
+    }
+    let Some((object, b"each")) = object_and_name_of_member(e) else {
+        return false;
+    };
+    let function = match object_and_name_of_member(object) {
+        Some((function, b"only" | b"skip")) => function,
+        Some(_) => return false,
+        None => object,
+    };
+    function.tag() == ExprTag::Ident
+        && matches!(
+            function.text(),
+            b"describe"
+                | b"fdescribe"
+                | b"xdescribe"
+                | b"it"
+                | b"fit"
+                | b"xit"
+                | b"test"
+                | b"ftest"
+                | b"xtest"
+        )
+}
+
+/// `` test.concurrent.each`table` ``, `` it.failing.each`table` `` are tables for oxfmt too.
+fn is_oxfmt_test_each_pattern(e: Expr<'_>) -> bool {
     let Some(mut names) = callee_name_iterator(e) else {
         return false;
     };

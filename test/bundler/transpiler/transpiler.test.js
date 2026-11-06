@@ -2263,6 +2263,10 @@ class Test extends Bar {
         ).toBe("var M;\n((M) => {})(M ||= {});\n");
       });
 
+      it("leaves no object of a namespace that holds nothing else", () => {
+        expect(print(`namespace M { import T = N.T; import V = N.v; }\nemit(typeof M);`)).toBe("emit(typeof M);\n");
+      });
+
       it("leaves `export import` and `import a = require()`", () => {
         expect(print(`namespace M { export import V = N.v; import fs = require("fs"); }`)).toBe(
           'var M;\n((M) => {\n  M.V = N.v;\n  const fs = require("fs");\n})(M ||= {});\n',

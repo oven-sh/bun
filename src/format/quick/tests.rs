@@ -80,6 +80,16 @@ fn a_run_that_is_ended_finds_no_room_on_the_stack() {
 }
 
 #[test]
+fn a_stack_of_the_layout_that_cannot_grow_ends_the_run() {
+    let mut scratch = Quick::new();
+    scratch.start_run();
+    assert!(scratch.grow_stack().is_ok());
+    scratch.printer.st = vec![0; LARGEST as usize];
+    assert!(scratch.grow_stack().is_err());
+    assert_eq!(scratch.why(), why::TOO_LARGE);
+}
+
+#[test]
 fn a_text_that_is_too_long_is_refused() {
     let line = b"a;\n";
     let fits = line.repeat(LONGEST_FILE / line.len());

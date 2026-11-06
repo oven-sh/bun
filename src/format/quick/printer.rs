@@ -302,8 +302,13 @@ impl Quick {
         Ok(())
     }
 
-    pub(crate) fn grow_stack(&mut self) {
-        self.make_room(|q| &mut q.printer.st, self.printer.st.len() as i32 + 1);
+    /// (Whoever finds the stack full comes back with the same command until there is room.)
+    pub(crate) fn grow_stack(&mut self) -> R<()> {
+        let used = self.printer.st.len() as i32;
+        if !grow(&mut self.printer.st, used, used + 1, 0) {
+            return Err(self.stop(why::TOO_LARGE));
+        }
+        Ok(())
     }
 
     #[cold]
@@ -1632,7 +1637,7 @@ impl Quick {
         let mut remeasure = self.printer.x_remeasure;
         let mut waiting = self.printer.x_waiting;
         if sp >= self.printer.st.len() as i32 - 16 {
-            self.grow_stack();
+            self.grow_stack()?;
         }
         let w = self.d.at(pc);
         's0: {

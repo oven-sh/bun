@@ -1837,8 +1837,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       expect(exitCode).toBe(0);
     });
 
-    // Three tests have three entries. A run leaves two of the tests out, or one does not get to its snapshot.
-    // Then a run without the flag follows in which test "two" prints another value. It fails if the entry of "two" is still there.
+    // A run leaves tests out of three that have an entry each. The next run, in which "two" prints another value, fails if the entry of "two" is still there.
     describe.each(formats)("%s: the entries of the tests that a run leaves out stay", format => {
       const form = (one: string, two: string, three: string, beforeOne = "", beforeTwo = "") => `
         ${one}("one", () => { ${beforeOne}expect("v1").toMatchSnapshot(); });

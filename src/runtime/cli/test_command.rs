@@ -5558,7 +5558,7 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
-                if !reporter.jest.snapshots.remove_obsolete(buntest) {
+                if reporter.jest.snapshots.remove_obsolete(buntest).is_err() {
                     reporter.jest.current_file.print_if_needed();
                     let top_level_dir = FileSystem::instance().top_level_dir();
                     pretty_error!(

@@ -93,6 +93,15 @@ struct Entry {
     stays: bool,
 }
 
+/// How far the tests of a file ran, for `remove_obsolete`.
+#[derive(PartialEq, Eq)]
+enum Ran {
+    ToTheEnd,
+    NotAll,
+    /// A `describe()` callback threw, so the tests after the throw are not registered.
+    NotAllRegistered,
+}
+
 /// What the flush writes.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Pending {
@@ -573,23 +582,22 @@ impl Snapshots {
     }
 
     /// With `--update-snapshots`, drops the entries no test asked for. The entries of a test that did not run to the end stay.
-    /// Returns false if the file doesn't parse and this run can't tell what to replace it with.
-    #[must_use]
-    pub(crate) fn remove_obsolete(&mut self, buntest: &BunTest) -> bool {
-        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return true };
+    pub(crate) fn remove_obsolete(&mut self, buntest: &BunTest) -> Result<(), Error> {
+        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return Ok(()) };
         if !self.update_snapshots || (!file.unparsed && self.values.values().iter().all(|entry| entry.checked)) {
-            return true;
+            return Ok(());
         }
         let mut done: Vec<*const ExecutionEntry> = Vec::new();
         let mut scopes_of_unfinished_hooks: Vec<&DescribeScope> = Vec::new();
         for sequence in &buntest.execution.sequences {
             // SAFETY: `buntest` owns the entries of its sequences.
-            let Some(test) = sequence.test_entry.map(|entry| unsafe { entry.as_ref() }) else {
-                // A `beforeAll` or `afterAll` hook.
-                // SAFETY: as above.
-                let hook = sequence.first_entry.map(|entry| unsafe { entry.as_ref() });
+            let (test, first) = unsafe {
+                (sequence.test_entry.map(|entry| entry.as_ref()), sequence.first_entry.map(|entry| entry.as_ref()))
+            };
+            let Some(test) = test else {
+                let scope_of_all_hook = first.and_then(|hook| hook.base.parent);
                 if sequence.result != TestResult::Pass
-                    && let Some(scope) = hook.and_then(|hook| hook.base.parent)
+                    && let Some(scope) = scope_of_all_hook
                 {
                     // SAFETY: `buntest` owns the scope of each of its hooks.
                     scopes_of_unfinished_hooks.push(unsafe { &*scope });
@@ -611,19 +619,14 @@ impl Snapshots {
         // An older Bun wrote its own keys into the files of the other two.
         let formats = [file.format, Format::Bun];
         let formats = &formats[..if file.may_hold_entries_of_bun && file.format != Format::Bun { 2 } else { 1 }];
-        let all_ran_to_the_end =
-            Self::keep_entries_of_tests(&mut self.values, formats, root, &done, &scopes_of_unfinished_hooks);
+        let ran = Self::keep_entries_of_tests(&mut self.values, formats, root, &done, &scopes_of_unfinished_hooks);
         let kept_all = file.keeps_all;
-        file.keeps_all |= match all_ran_to_the_end {
-            // A `describe()` callback that threw did not register the tests after the throw.
-            None => true,
-            // Only a run of every test has all the entries that replace a file nobody can read.
-            Some(all) => file.unparsed && !all,
-        };
+        // Only a run of every test to its end has all the entries that replace a file nobody can read.
+        file.keeps_all |= ran == Ran::NotAllRegistered || (file.unparsed && ran != Ran::ToTheEnd);
         if file.unparsed {
             let replaces = !file.keeps_all && !self.values.is_empty();
             file.pending = if replaces { Pending::WholeFile } else { Pending::Nothing };
-            return kept_all || !file.keeps_all;
+            return if file.keeps_all && !kept_all { Err(Error::ParseError) } else { Ok(()) };
         }
         if !file.keeps_all {
             let before = self.values.len();
@@ -632,18 +635,17 @@ impl Snapshots {
                 file.pending = Pending::WholeFile;
             }
         }
-        true
+        Ok(())
     }
 
     /// Sets `stays` on the entries of every test under `root` that isn't in `done`, and on the entries of the hooks around it.
-    /// Returns whether every test is in `done`, or `None` if a scope under `root` failed to register its tests.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
         formats: &[Format],
         root: &DescribeScope,
         done: &[*const ExecutionEntry],
         scopes_of_unfinished_hooks: &[&DescribeScope],
-    ) -> Option<bool> {
+    ) -> Ran {
         let mut done = done.to_vec();
         index_sort::sort_slice_unstable_by(&mut done, |a, b| a.cmp(b));
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
@@ -668,7 +670,7 @@ impl Snapshots {
         let mut scopes = vec![root];
         while let Some(scope) = scopes.pop() {
             if scope.failed {
-                return None;
+                return Ran::NotAllRegistered;
             }
             for entry in &scope.entries {
                 match entry {
@@ -706,7 +708,7 @@ impl Snapshots {
             // Not `=`: see `File::keeps_all`.
             values.values_mut()[i].stays |= is_of_a_test;
         }
-        Some(names.is_empty())
+        if names.is_empty() { Ran::ToTheEnd } else { Ran::NotAll }
     }
 
     #[cold]

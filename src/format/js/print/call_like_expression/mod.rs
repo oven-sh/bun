@@ -192,11 +192,31 @@ impl<'a> Format<'a> for FormatArgumentsOnOneLine<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, "(");
         f.join_with(space()).entries_with_trailing_separator(
-            self.0.iter(),
+            self.0.iter().map(FormatArgumentOnOneLine),
             ",",
             TrailingSeparator::Omit,
         );
         write!(f, ")");
+    }
+}
+
+struct FormatArgumentOnOneLine<'a>(Expr<'a>);
+
+impl Spanned for FormatArgumentOnOneLine<'_> {
+    fn span(&self) -> Span {
+        self.0.span()
+    }
+}
+
+impl<'a> Format<'a> for FormatArgumentOnOneLine<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        // An arrow function is a group for Prettier, so the line breaks of its body are printed in a group that breaks.
+        // Printed in flat mode, as in a chain of calls on one line, they would have what follows measured again:
+        // `a = b.c(d).e(() => {⏎  f;⏎}, [g, h])`, whose array stays as it is however wide.
+        match self.0.arrow_function().is_some() && !f.options().flavor.is_oxfmt() {
+            true => write!(f, group(&self.0)),
+            false => write!(f, self.0),
+        }
     }
 }
 

@@ -70,14 +70,14 @@ try: these('for in with', (4, 3), (5, 3), (6, 3))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('for in with', (4, 3), (5, 3), (6, 3))")
 # `match`: from the line of a `case`, or of a part of its pattern, to that of another, with the subject on the stack; to the line of `case _:`, where nothing is; to the first line of the
 # body of a case that is not the last, of which what drops the subject is.
-try: these('match', (2, 5), (2, 8), (3, 5), (3, 8), (4, 6), (4, 8), (6, 4), (6, 8), (7, 5), (7, 8), (10, 5), (10, 8))
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('match', (2, 5), (2, 8), (3, 5), (3, 8), (4, 6), (4, 8), (6, 4)...")
+try: these('match', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (10, 5))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('match', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (10, 5))")
 try: these('match no default', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (8, 5))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('match no default', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (8,...")
 try: these('match capture', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (8, 5))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('match capture', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (8, 5))")
-try: these('match guard', (2, 5), (2, 8), (3, 5), (3, 8), (4, 6), (4, 8), (6, 4), (6, 8), (8, 5), (9, 5), (9, 8), (10, 5), (10, 8))
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('match guard', (2, 5), (2, 8), (3, 5), (3, 8), (4, 6), (4, 8), ...")
+try: these('match guard', (2, 5), (3, 5), (4, 6), (6, 4), (8, 5), (9, 5), (10, 5))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('match guard', (2, 5), (3, 5), (4, 6), (6, 4), (8, 5), (9, 5), ...")
 # To the last line of a handler in front of a `finally`: something that does nothing is left of that line behind the handler.
 try: these('try raise except finally', (2, 6), (3, 6), (4, 6), (8, 6), (9, 6))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('try raise except finally', (2, 6), (3, 6), (4, 6), (8, 6), (9,...")

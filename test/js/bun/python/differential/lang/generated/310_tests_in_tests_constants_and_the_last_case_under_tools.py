@@ -76,8 +76,6 @@ try:
                     print(name, '|', args, '|', ' '.join(T))
             if 'J' in kinds:
                 for target in range(3, body.count('\n') + 3):
-                    # (To the line of `case _:` a frame can go from anywhere in CPython. Not here.)
-                    if body.split('\n')[target - 2].strip() == 'case _:': continue
                     del T[:]; done = []
                     def jump(frame, event, arg):
                         if frame.f_code.co_filename != 'p': return None

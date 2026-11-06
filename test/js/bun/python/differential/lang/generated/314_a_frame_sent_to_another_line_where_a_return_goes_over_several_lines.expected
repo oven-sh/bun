@@ -1,6 +1,6 @@
 status: 0
-script: 5886b5121d4a45ce
-source: 9446bf6771072b7f
+script: a11a15e066a78a6c
+source: 26a24cc5fe184ab5
 ---
 a call | 2 (1) to 1 | 2 >1 2 3 5 4 7 8 => 1
 a call | 2 (1) to 2 | 2 >2 3 5 4 7 8 => 1
@@ -1342,6 +1342,7 @@ a loop in the try | 5 (1) to 1 | 2 3 4 6 5 >1 2 3 4 6 5 8 => 1
 a loop in the try | 5 (1) to 2 | 2 3 4 6 5 >2 3 4 6 5 8 => 1
 a loop in the try | 5 (1) to 3 | 2 3 4 6 5 >3 4 6 5 8 => 1
 a loop in the try | 5 (1) to 5 | 2 3 4 6 5 >5 8 => 1
+a loop in the try | 5 (1) to 6 | 2 3 4 6 5 >6 5 8 => 1
 a loop in the try | 5 (1) to 9 | 2 3 4 6 5 >9 => None
 a loop in the try | 5 (1) to 10 | 2 3 4 6 5 (line 10 comes after the current code block) 8 => 1
 a loop in the try | 5 (2) to 1 | 2 3 4 6 5 8 => 1

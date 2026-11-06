@@ -49,10 +49,10 @@ these('with in for', (5, 4))
 these('for in with', (4, 3), (5, 3), (6, 3))
 # `match`: from the line of a `case`, or of a part of its pattern, to that of another, with the subject on the stack; to the line of `case _:`, where nothing is; to the first line of the
 # body of a case that is not the last, of which what drops the subject is.
-these('match', (2, 5), (2, 8), (3, 5), (3, 8), (4, 6), (4, 8), (6, 4), (6, 8), (7, 5), (7, 8), (10, 5), (10, 8))
+these('match', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (10, 5))
 these('match no default', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (8, 5))
 these('match capture', (2, 5), (3, 5), (4, 6), (6, 4), (7, 5), (8, 5))
-these('match guard', (2, 5), (2, 8), (3, 5), (3, 8), (4, 6), (4, 8), (6, 4), (6, 8), (8, 5), (9, 5), (9, 8), (10, 5), (10, 8))
+these('match guard', (2, 5), (3, 5), (4, 6), (6, 4), (8, 5), (9, 5), (10, 5))
 # To the last line of a handler in front of a `finally`: something that does nothing is left of that line behind the handler.
 these('try raise except finally', (2, 6), (3, 6), (4, 6), (8, 6), (9, 6))
 # Into or out of a `finally` clause, or to the line of a `return` that has its value: an exception, an iterator or what a `with` holds stands for the value that waits, or the other way round.

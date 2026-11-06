@@ -15,11 +15,6 @@ except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> 
 try:
     def c(v): return v
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def c(v): return v')
-try:
-    class AM:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: class AM:')
 try: PROGRAMS = {
     'continue, with': 'for i in (1, 2):\n    with M():\n        y = 2\n        if i == 1:\n            continue\n        z = 3\nw = 4',
     'continue, with as': 'for i in (1, 2):\n    with M() as m:\n        y = 2\n        if i == 1:\n            continue\n        z = 3\nw = 4',
@@ -118,8 +113,8 @@ except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> 
 try:
     def rows():
         for name, body in PROGRAMS.items():
-            ns = {'E': E, 'M': M, 'AM': AM, 'c': c}
-            exec(compile(('async ' if 'async' in body else '') + 'def f():\n' + indent(body) + '\n', 'p', 'exec'), ns)
+            ns = {'E': E, 'M': M, 'c': c}
+            exec(compile('def f():\n' + indent(body) + '\n', 'p', 'exec'), ns)
             count = body.count('\n') + 2
             for source in range(2, count + 1):
                 for nth in TIMES:

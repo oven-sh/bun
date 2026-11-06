@@ -63,10 +63,6 @@ try: these('in a with', (7, 3))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('in a with', (7, 3))")
 try: these('a with in the clause', (7, 6))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('a with in the clause', (7, 6))")
-# `match`: from the line of a `case`, or of a part of its pattern, to that of another, with the subject on the stack; to the line of `case _:`, where nothing is; to the first line of the
-# body of a case that is not the last, of which what drops the subject is.
-try: these('a match in the clause', (6, 9), (7, 9), (8, 9))
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('a match in the clause', (6, 9), (7, 9), (8, 9))")
 # To the last line of a handler in front of a `finally`: something that does nothing is left of that line behind the handler.
 try: these('with handlers', (2, 6), (3, 6), (4, 6), (8, 6))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('with handlers', (2, 6), (3, 6), (4, 6), (8, 6))")

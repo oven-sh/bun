@@ -67,8 +67,8 @@ except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> 
 # Into or out of a `finally` clause, or to the line of a `return` that has its value: an exception, an iterator or what a `with` holds stands for the value that waits, or the other way round.
 try: these('a with in the try', (5, 7), (5, 8), (6, 7), (6, 8))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('a with in the try', (5, 7), (5, 8), (6, 7), (6, 8))")
-try: these('a loop in the try', (5, 6), (5, 7), (5, 8), (6, 7), (6, 8))
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('a loop in the try', (5, 6), (5, 7), (5, 8), (6, 7), (6, 8))")
+try: these('a loop in the try', (5, 7), (5, 8), (6, 7), (6, 8))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('a loop in the try', (5, 7), (5, 8), (6, 7), (6, 8))")
 try: these('in a handler', (5, 7), (5, 9), (5, 10))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: these('in a handler', (5, 7), (5, 9), (5, 10))")
 try: these('a return in a handler', (5, 6), (5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9))

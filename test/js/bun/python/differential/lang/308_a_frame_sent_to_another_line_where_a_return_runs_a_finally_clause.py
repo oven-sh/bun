@@ -46,9 +46,6 @@ these('in a loop, break in the clause', (7, 3), (8, 3))
 # To the line of a `with` from its body: to the call of __exit__, at the end of the body or on the way of a `return`.
 these('in a with', (7, 3))
 these('a with in the clause', (7, 6))
-# `match`: from the line of a `case`, or of a part of its pattern, to that of another, with the subject on the stack; to the line of `case _:`, where nothing is; to the first line of the
-# body of a case that is not the last, of which what drops the subject is.
-these('a match in the clause', (6, 9), (7, 9), (8, 9))
 # To the last line of a handler in front of a `finally`: something that does nothing is left of that line behind the handler.
 these('with handlers', (2, 6), (3, 6), (4, 6), (8, 6))
 # Into or out of a `finally` clause, or to the line of a `return` that has its value: an exception, an iterator or what a `with` holds stands for the value that waits, or the other way round.

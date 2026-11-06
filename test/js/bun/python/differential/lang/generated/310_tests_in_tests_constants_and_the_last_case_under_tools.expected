@@ -1,6 +1,6 @@
 status: 0
-script: 684e175d8a8697a6
-source: 9010a895d63026c5
+script: 55c4279879c273e8
+source: 7eb5610c51822df4
 ---
 -- the jump behind the first arm of a test that is a conditional expression, in front of something short
 if ((c(a) or b) if c(1) else c(0)): return 3 | (0, 0) | C1 L2 R2 => None
@@ -1080,31 +1080,38 @@ match 1: /     case 0: x = 5 /     case 1: /         for i in (1,): pass / x = 7
 z = 0 / match a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L6 L7 R7 => None
 z = 0 / match a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L6 L7 R7 => None
 z = 0 / match a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 R5 => None
+z = 0 / match a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 L7 R7 => None
 z = 0 / match a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 R7 => None
 z = 0 / match f"": /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L6 L7 R7 => None
 z = 0 / match f"": /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L6 L7 R7 => None
 z = 0 / match f"": /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 R5 => None
+z = 0 / match f"": /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 L7 R7 => None
 z = 0 / match f"": /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 R7 => None
 z = 0 / match t"x{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L6 L7 R7 => None
 z = 0 / match t"x{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L6 L7 R7 => None
 z = 0 / match t"x{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 R5 => None
+z = 0 / match t"x{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 L7 R7 => None
 z = 0 / match t"x{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 R7 => None
 z = 0 / match f"{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L6 L7 R7 => None
 z = 0 / match f"{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L6 L7 R7 => None
 z = 0 / match f"{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 R5 => None
+z = 0 / match f"{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 L7 R7 => None
 z = 0 / match f"{a}": /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 R7 => None
 z = 0 / match 1: /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L6 L7 R7 => None
 z = 0 / match 1: /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L6 L7 R7 => None
 z = 0 / match 1: /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 R5 => None
+z = 0 / match 1: /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 L7 R7 => None
 z = 0 / match 1: /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 R7 => None
 z = 0 / match (a, /     b): /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L3 L5 L7 L8 R8 => None
 z = 0 / match (a, /     b): /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L3 L5 L7 L8 R8 => None
 z = 0 / match (a, /     b): /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 (incompatible stacks) L3 L4 L3 L5 L7 L8 R8 => None
 z = 0 / match (a, /     b): /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 R6 => None
+z = 0 / match (a, /     b): /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 L8 R8 => None
 z = 0 / match (a, /     b): /     case 0: /         x = 1 /     case _: /         x = 2 | to 8 | C1 L2 R8 => None
 z = 0 / match -a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 3 | C1 L2 L4 L6 L7 R7 => None
 z = 0 / match -a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 4 | C1 L2 (incompatible stacks) L3 L4 L6 L7 R7 => None
 z = 0 / match -a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 5 | C1 L2 R5 => None
+z = 0 / match -a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 6 | C1 L2 L7 R7 => None
 z = 0 / match -a: /     case 0: /         x = 1 /     case _: /         x = 2 | to 7 | C1 L2 R7 => None
 -- the line of a match statement, as a trace function hears of it
 z = 0 / match a: /     case 0: /         x = 1 /     case _: /         x = 2 | (0, 0) | C1 L2 L3 L4 L5 R5 => None

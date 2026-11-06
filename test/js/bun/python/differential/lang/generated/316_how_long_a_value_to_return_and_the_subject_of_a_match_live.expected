@@ -1,6 +1,6 @@
 status: 0
-script: cc27d6a5e5f4991d
-source: f521735add7b8179
+script: 5abf70fd14bddeeb
+source: 132b7dd5fa606266
 ---
 name [name='clause', body='try:\n    return make()\nfinally:\n    p()'] => clause
 | seen [name='clause', body='try:\n    return make()\nfinally:\n    p()'] => [True]
@@ -32,6 +32,21 @@ r [name='clause with a loop', body='try:\n    return make()\nfinally:\n    for i
 name [name='clause with a try', body='try:\n    return make()\nfinally:\n    try:\n        p()\n        raise KeyError\n    except KeyError:\n        p()\n    return 1'] => clause with a try
 | seen [name='clause with a try', body='try:\n    return make()\nfinally:\n    try:\n        p()\n        raise KeyError\n    except KeyError:\n        p()\n    return 1'] => [True, True]
 r [name='clause with a try', body='try:\n    return make()\nfinally:\n    try:\n        p()\n        raise KeyError\n    except KeyError:\n        p()\n    return 1'] => int
+name [name='break through an outer clause', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            p()\n            break\n    finally:\n        p()\np()'] => break through an outer clause
+| seen [name='break through an outer clause', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            p()\n            break\n    finally:\n        p()\np()'] => [True, False, False]
+r [name='break through an outer clause', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            p()\n            break\n    finally:\n        p()\np()'] => NoneType
+name [name='continue through an outer clause', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            p()\n            continue\n    finally:\n        p()\np()'] => continue through an outer clause
+| seen [name='continue through an outer clause', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            p()\n            continue\n    finally:\n        p()\np()'] => [True, False, True, False, False]
+r [name='continue through an outer clause', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            p()\n            continue\n    finally:\n        p()\np()'] => NoneType
+name [name='break through an outer clause, the loop last', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            break\n    finally:\n        p()'] => break through an outer clause, the loop last
+| seen [name='break through an outer clause, the loop last', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            break\n    finally:\n        p()'] => [False]
+r [name='break through an outer clause, the loop last', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            break\n    finally:\n        p()'] => NoneType
+name [name='gen: break through an outer clause that yields', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            break\n    finally:\n        yield p()\n        p()\np()'] => gen: break through an outer clause that yields
+| seen [name='gen: break through an outer clause that yields', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            break\n    finally:\n        yield p()\n        p()\np()'] => [False, ('suspended', False), False, False]
+r [name='gen: break through an outer clause that yields', body='for i in (1, 2):\n    try:\n        try:\n            return make()\n        finally:\n            break\n    finally:\n        yield p()\n        p()\np()'] => NoneType
+name [name='return through an outer clause', body='try:\n    try:\n        return make()\n    finally:\n        p()\n        return 1\nfinally:\n    p()'] => return through an outer clause
+| seen [name='return through an outer clause', body='try:\n    try:\n        return make()\n    finally:\n        p()\n        return 1\nfinally:\n    p()'] => [True, False]
+r [name='return through an outer clause', body='try:\n    try:\n        return make()\n    finally:\n        p()\n        return 1\nfinally:\n    p()'] => int
 name [name='with', body='with C():\n    return make()'] => with
 | seen [name='with', body='with C():\n    return make()'] => [('exit', True)]
 r [name='with', body='with C():\n    return make()'] => C

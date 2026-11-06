@@ -1,6 +1,6 @@
 status: 0
-script: d23132491d43d61c
-source: 03e9b2aed9416874
+script: 9d5720a660300702
+source: 19083d5896965749
 ---
 return a variable | 2 (1) to 1 | 2 >1 2 3 4 6 => 1
 return a variable | 2 (1) to 2 | 2 >2 3 4 6 => 1
@@ -1465,6 +1465,7 @@ a match in the clause | 6 (1) to 5 | 2 3 4 6 >5 7 8 => 1
 a match in the clause | 6 (1) to 6 | 2 3 4 6 >6 7 8 => 1
 a match in the clause | 6 (1) to 7 | 2 3 4 6 (incompatible stacks) 7 8 => 1
 a match in the clause | 6 (1) to 8 | 2 3 4 6 >8 => 1
+a match in the clause | 6 (1) to 9 | 2 3 4 6 >9 10 => 1
 a match in the clause | 6 (1) to 10 | 2 3 4 6 >10 => 1
 a match in the clause | 6 (1) to 11 | 2 3 4 6 (line 11 comes after the current code block) 7 8 => 1
 a match in the clause | 7 (1) to 1 | 2 3 4 6 7 >1 2 3 4 6 7 8 => 1
@@ -1475,6 +1476,7 @@ a match in the clause | 7 (1) to 5 | 2 3 4 6 7 >5 7 8 => 1
 a match in the clause | 7 (1) to 6 | 2 3 4 6 7 >6 7 8 => 1
 a match in the clause | 7 (1) to 7 | 2 3 4 6 7 >7 8 => 1
 a match in the clause | 7 (1) to 8 | 2 3 4 6 7 >8 => 1
+a match in the clause | 7 (1) to 9 | 2 3 4 6 7 >9 10 => 1
 a match in the clause | 7 (1) to 10 | 2 3 4 6 7 >10 => 1
 a match in the clause | 7 (1) to 11 | 2 3 4 6 7 (line 11 comes after the current code block) 8 => 1
 a match in the clause | 8 (1) to 1 | 2 3 4 6 7 8 >1 2 3 4 6 7 8 => 1
@@ -1485,6 +1487,7 @@ a match in the clause | 8 (1) to 5 | 2 3 4 6 7 8 >5 7 8 => 1
 a match in the clause | 8 (1) to 6 | 2 3 4 6 7 8 >6 7 8 => 1
 a match in the clause | 8 (1) to 7 | 2 3 4 6 7 8 (incompatible stacks) => 1
 a match in the clause | 8 (1) to 8 | 2 3 4 6 7 8 >8 => 1
+a match in the clause | 8 (1) to 9 | 2 3 4 6 7 8 >9 10 => 1
 a match in the clause | 8 (1) to 10 | 2 3 4 6 7 8 >10 => 1
 a match in the clause | 8 (1) to 11 | 2 3 4 6 7 8 (line 11 comes after the current code block) => 1
 a match in the clause | 9 (1) to 1 | 2 3 4 6 7 8 => 1

@@ -7,9 +7,6 @@ class M:
     def __enter__(self): return self
     def __exit__(self, *a): return False
 def c(v): return v
-class AM:
-    async def __aenter__(self): return self
-    async def __aexit__(self, *a): return False
 PROGRAMS = {
     'break, with': 'for i in (1, 2):\n    with M():\n        y = 2\n        if i == 1:\n            break\n        z = 3\nw = 4',
     'break, handler': 'for i in (1, 2):\n    try:\n        raise E\n    except E:\n        y = 2\n        if i == 1:\n            break\n        z = 3\nw = 4',
@@ -73,8 +70,8 @@ def run(f, code, source, nth, target, collects):
 # frames): that must not tell. (The rows that are not as in CPython run as well.)
 def rows():
     for name, body in PROGRAMS.items():
-        ns = {'E': E, 'M': M, 'AM': AM, 'c': c}
-        exec(compile(('async ' if 'async' in body else '') + 'def f():\n' + indent(body) + '\n', 'p', 'exec'), ns)
+        ns = {'E': E, 'M': M, 'c': c}
+        exec(compile('def f():\n' + indent(body) + '\n', 'p', 'exec'), ns)
         count = body.count('\n') + 2
         for source in range(2, count + 1):
             for nth in TIMES:

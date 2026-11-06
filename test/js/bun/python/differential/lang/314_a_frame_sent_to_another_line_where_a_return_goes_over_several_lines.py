@@ -44,7 +44,7 @@ these('a with in the try', (4, 2, 4), (4, 2, 5), (4, 2, 6), (4, 2, 7), (4, 2, 8)
 these('no finally, a with', (3, 2, 3), (3, 2, 4), (3, 2, 5))
 # Into or out of a `finally` clause, or to the line of a `return` that has its value: an exception, an iterator or what a `with` holds stands for the value that waits, or the other way round.
 these('a with in the try', (5, 7), (5, 8), (6, 7), (6, 8))
-these('a loop in the try', (5, 6), (5, 7), (5, 8), (6, 7), (6, 8))
+these('a loop in the try', (5, 7), (5, 8), (6, 7), (6, 8))
 these('in a handler', (5, 7), (5, 9), (5, 10))
 these('a return in a handler', (5, 6), (5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9))
 these('a named handler', (5, 6), (5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9))

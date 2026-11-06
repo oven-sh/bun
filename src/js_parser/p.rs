@@ -4751,31 +4751,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `var [a];` and `for (let { a }; ; ) {}` are syntax errors.
     #[cold]
     #[inline(never)]
-    pub(crate) fn require_pattern_initializer(
-        &mut self,
-        kind: js_ast::symbol::Kind,
-        opts: &ParseStatementOptions,
-        binding: &Binding,
-    ) {
-        let is_pattern = matches!(
-            binding.data,
-            js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_)
-        );
-        // `require_initializers` reports "const" and "using".
-        if !is_pattern
-            || kind == js_ast::symbol::Kind::Constant
-            || opts.is_typescript_declare
-            || (opts.is_for_loop_init
-                && (self.lexer.token == js_lexer::T::TIn
-                    || self.lexer.is_contextual_keyword(b"of")))
-        {
-            return;
+    pub(crate) fn require_pattern_initializers(&mut self, decls: &[G::Decl]) {
+        for decl in decls {
+            if decl.value.is_none()
+                && matches!(
+                    decl.binding.data,
+                    js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_)
+                )
+            {
+                self.log().add_error(
+                    Some(self.source),
+                    decl.binding.loc,
+                    b"Missing initializer in destructuring declaration",
+                );
+            }
         }
-        self.log().add_error(
-            Some(self.source),
-            binding.loc,
-            b"Missing initializer in destructuring declaration",
-        );
     }
 
     // Generate a TypeScript namespace object for this namespace's scope. If this

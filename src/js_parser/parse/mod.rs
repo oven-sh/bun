@@ -1297,6 +1297,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<G::DeclList, Error> {
         let p = self;
         let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
+        let mut has_pattern_without_initializer = false;
 
         loop {
             // Forbid "let let" and "const let" but not "var let"
@@ -1336,8 +1337,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
                 value = Some(p.parse_expr(Level::Comma)?);
-            } else if !matches!(local.data, B::B::BIdentifier(_)) {
-                p.require_pattern_initializer(kind, opts, &local);
+            } else if !matches!(local.data, B::B::BIdentifier(_))
+                && kind != js_ast::symbol::Kind::Constant
+            {
+                // `require_initializers` reports "const" and "using".
+                has_pattern_without_initializer = true;
             }
 
             decls.push(G::Decl {
@@ -1349,6 +1353,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
             p.lexer.next()?;
+        }
+
+        if has_pattern_without_initializer && !opts.is_typescript_declare {
+            // `allow_in` is false only in the head of a `for`.
+            let is_for_in_or_of_head =
+                !p.allow_in && (p.lexer.token == T::TIn || p.lexer.is_contextual_keyword(b"of"));
+            if !is_for_in_or_of_head {
+                p.require_pattern_initializers(&decls);
+            }
         }
 
         Ok(G::DeclList::from_arena_slice(&decls))

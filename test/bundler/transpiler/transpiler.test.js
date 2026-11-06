@@ -3991,22 +3991,43 @@ console.log(resolve.length)
           "function f() { for (var { a }; c; ) {} }",
           // A function body and a class body in the head are not the head.
           "for (var f = function () { var [a]\nof }; ;) break;",
+          "for (var f = () => { let { a }\nof }; ;) break;",
+          "for (var o = { m() { var [a]\nof } }; ;) break;",
           "for (var x = class { static { var [a]\nof } }; ;) break;",
         ];
         expect(errorsOfEach(sources)).toEqual(eachHas(sources, [missingInitializer]));
 
-        // A second declarator is not a for-in or for-of head, so the pattern in front of it needs its initializer too.
-        expect(errorsOf("for (let { a }, b of z) ;")).toEqual([
-          missingInitializer,
-          "for-of loops must have a single declaration",
-        ]);
-        expect(errorsOf("for (var { a }, b in z) ;")).toEqual([
-          missingInitializer,
-          "for-in loops must have a single declaration",
-        ]);
-
         const usingSources = ["for (using x; c; ) {}", "async function f() { for (await using x; c; ) {} }"];
         expect(errorsOfEach(usingSources)).toEqual(eachHas(usingSources, ['The declaration "x" must be initialized']));
+      });
+
+      it("a for-in or for-of head with more than one declarator keeps its one error", () => {
+        // A list is judged where it ends. These end at `in` or `of`, so each is the head of such a loop.
+        const forOf = [
+          "for (let { a }, b of z) ;",
+          "for (var [a], [b] of z) ;",
+          "for (var { a }, { b }, { c }, d of z) ;",
+          "for (var { a } = {}, [b] of z) ;",
+          "async function f() { for await (let [a], b of z) ; }",
+        ];
+        expect(errorsOfEach(forOf)).toEqual(eachHas(forOf, ["for-of loops must have a single declaration"]));
+        const forIn = ["for (var { a }, b in z) ;", "for (let [a], { b } in z) ;"];
+        expect(errorsOfEach(forIn)).toEqual(eachHas(forIn, ["for-in loops must have a single declaration"]));
+        expect(errorsOf("for (var { a }: any, b of z) ;", "ts")).toEqual([
+          "for-of loops must have a single declaration",
+        ]);
+      });
+
+      it("other errors in the same declaration list", () => {
+        // A type under the "js" loader: `=` does not follow the pattern.
+        expect(errorsOf("let [a]: T = b;")).toEqual([missingInitializer, 'Expected ";" but found ":"']);
+        // Only `in` and `of` make a list the head of a loop. A `=` can follow an arrow function with a block body.
+        expect(errorsOf("var [a], f = () => {} = 1;")).toEqual([missingInitializer, 'Expected ";" but found "="']);
+        // The list is judged where it ends, so an error that the parser logs inside the list comes first.
+        expect(errorsOf("let [a], let;")).toEqual(['Cannot use "let" as an identifier here', missingInitializer]);
+        expect(errorsOf("var [a], 1;")).toEqual(['Expected identifier but found "1"', missingInitializer]);
+        // An error that stops the parser inside the list is the only one.
+        expect(errorsOf("var [a], b = 1 +;")).toEqual(["Unexpected ;"]);
       });
 
       it("`for (using of xs)` stores to a variable named `using`", () => {
@@ -4038,6 +4059,18 @@ console.log(resolve.length)
           column: error?.position?.column,
           lineText: error?.position?.lineText,
         }).toEqual({ message: missingInitializer, line: 2, column: 10, lineText: "for (var { a }; c; ) {}" });
+
+        // Each pattern of one list is reported, in the order of the source.
+        let errors;
+        try {
+          transpiler.transformSync("for (var x, { a }, y = 1, [b]; c; ) {}", "js");
+        } catch (e) {
+          errors = e.errors?.map(error => [error.message, error.position?.column]);
+        }
+        expect(errors).toEqual([
+          [missingInitializer, 13],
+          [missingInitializer, 27],
+        ]);
       });
 
       it("a binding that does not parse gets no second error", () => {
@@ -4057,6 +4090,8 @@ console.log(resolve.length)
           "namespace N { export var { a }; }",
           "namespace N { var { a }; }",
           "for (var { a }: any; c; ) {}",
+          // The text of a declaration file gets no exception, as `export const x: T;` gets none.
+          "export let { a, b }: T;",
         ];
         expect(errorsOfEach(sources, "ts")).toEqual(eachHas(sources, [missingInitializer]));
       });
@@ -4075,7 +4110,14 @@ console.log(resolve.length)
         expectPrintedNoTrim("for await (var { a } of []) {}", "for await ({ a } of []) {}\nvar a;\n");
         expectPrintedNoTrim("for (using x = f(); c; ) {}", "for (using x = f();c; ) {}\n");
 
-        const accepted = ["for (var i; c; ) {}", "for (let i; c; ) {}", "for (using x of xs) {}"];
+        const accepted = [
+          "for (var i; c; ) {}",
+          "for (let i; c; ) {}",
+          "for (using x of xs) {}",
+          // The head of a for-in or for-of loop in a function body that is in the head of a `for (;;)`.
+          "for (var f = function () { for (var [a] of xs) {} }; ;) break;",
+          "for (var f = () => { for (let { a } in xs) {} }; ;) break;",
+        ];
         expect(errorsOfEach(accepted)).toEqual(eachHas(accepted, []));
       });
 

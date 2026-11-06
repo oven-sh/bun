@@ -557,10 +557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TVar => {
                     is_var = true;
                     p.lexer.next()?;
-                    let mut stmt_opts = ParseStatementOptions {
-                        is_for_loop_init: true,
-                        ..Default::default()
-                    };
+                    let mut stmt_opts = ParseStatementOptions::default();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
                     decls_ptr = bun_ast::StoreSlice::new(decls.slice());

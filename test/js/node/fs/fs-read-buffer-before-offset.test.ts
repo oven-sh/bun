@@ -222,8 +222,8 @@ describe("fs.read() and fs.fstat() with a callback that is not a function", () =
     }));
 });
 
-// Node's order in fs.read(): fd, then buffer, then the callback, then offset, length and position.
-describe("fs.read() with a callback that is not a function and one more invalid argument", () => {
+// Node's order in fs.read(): fd, then options, then buffer, then the callback, then offset, length and position.
+describe("fs.read() checks its arguments in Node's order", () => {
   const buffer = Buffer.alloc(4);
   const notFunction = invalidCallback("type number (5)");
   let fd: number;
@@ -252,6 +252,14 @@ describe("fs.read() with a callback that is not a function and one more invalid 
     };
   }
 
+  function invalidOptions(received: string) {
+    return {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "options" argument must be of type object. Received ${received}`,
+    };
+  }
+
   test("the fd error comes first", () => {
     const range = ">= 0 && <= 2147483647";
     assert.throws(() => read(-1, buffer, 0, 4, 0, 5), fdOutOfRange(range, "-1"));
@@ -272,6 +280,22 @@ describe("fs.read() with a callback that is not a function and one more invalid 
 
   test("-0 is a valid fd", () => {
     assert.throws(() => read(-0, buffer, 0, 4, 0, 5), notFunction);
+  });
+
+  test("the fd error comes before the options error", () => {
+    const range = ">= 0 && <= 2147483647";
+    const neverCalled = () => assert.fail("the callback must not run");
+    assert.throws(() => read(-1, buffer, "x", neverCalled), fdOutOfRange(range, "-1"));
+    assert.throws(() => read(1.5, buffer, [], neverCalled), fdOutOfRange("an integer", "1.5"));
+    assert.throws(() => read("x", buffer, 5, neverCalled), invalidFd("type string ('x')"));
+    assert.throws(() => read(-1, 5, neverCalled), fdOutOfRange(range, "-1"));
+    assert.throws(() => read(-1, buffer, 0, 5), fdOutOfRange(range, "-1"));
+    assert.throws(() => read(-1, "x", 5), fdOutOfRange(range, "-1"));
+  });
+
+  test("the options error comes before the callback error", () => {
+    assert.throws(() => read(fd, buffer, 0, 5), invalidOptions("type number (0)"));
+    assert.throws(() => read(fd, "x", 5), invalidOptions("type string ('x')"));
   });
 
   test("the buffer error comes before the callback error", () => {

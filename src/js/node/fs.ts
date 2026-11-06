@@ -291,6 +291,8 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       if (params !== undefined) {
         // validateObject(params, 'options', kValidateObjectAllowNullable);
         if (typeof params !== "object" || $isArray(params)) {
+          // Node checks fd before options.
+          validateInteger(fd, "fd", 0, 2147483647);
           throw $ERR_INVALID_ARG_TYPE("options", "object", params);
         }
       }

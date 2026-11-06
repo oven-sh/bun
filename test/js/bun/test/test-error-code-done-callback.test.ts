@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 import path from "path";
 
 test("done(error) ends a test that returns a promise that never settles", async () => {
@@ -14,7 +14,7 @@ test("done(error) ends a test that returns a promise that never settles", async 
     `,
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "test"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
   expect(stderr).toContain("error: reported");
   expect(stderr).not.toContain("timed out");
   expect(stderr.match(/^\((pass|fail)\) \w+/gm)).toEqual(["(fail) ends", "(pass) next"]);
@@ -59,7 +59,20 @@ test("verify we print error messages passed to done callbacks", () => {
   `);
   expect(stderrStr).toMatchInlineSnapshot(`
     "
-    test/js/bun/test/test-error-done-callback-fixture.ts:
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:
+    (fail) error done callback (sync)
+    (fail) error done callback (async with await)
+    (fail) error done callback (async with Bun.sleep)
+    (fail) error done callback (async)
+    (fail) error done callback (async, setTimeout)
+    (fail) error done callback (async, setImmediate)
+    (fail) error done callback (async, nextTick)
+    (fail) error done callback (async, setTimeout, Promise.resolve)
+    (fail) error done callback (async, setImmediate, Promise.resolve)
+
+    9 tests failed:
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:27 > error done callback (sync)
     22 |   105,
     23 |   115,
     24 | );
@@ -69,7 +82,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(sync)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:27:12)
-    (fail) error done callback (sync)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:32 > error done callback (async with await)
     27 |   done(new Error(msg + "(sync)"));
     28 | });
     29 |
@@ -79,7 +93,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async with await)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:32:12)
-    (fail) error done callback (async with await)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:37 > error done callback (async with Bun.sleep)
     32 |   done(new Error(msg + "(async with await)"));
     33 | });
     34 |
@@ -89,7 +104,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async with Bun.sleep)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:12)
-    (fail) error done callback (async with Bun.sleep)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:42 > error done callback (async)
     37 |   done(new Error(msg + "(async with Bun.sleep)"));
     38 | });
     39 |
@@ -99,7 +115,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    (fail) error done callback (async)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:48 > error done callback (async, setTimeout)
     43 |   });
     44 | });
     45 |
@@ -109,7 +126,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, setTimeout)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:48:14)
-    (fail) error done callback (async, setTimeout)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:54 > error done callback (async, setImmediate)
     49 |   }, 0);
     50 | });
     51 |
@@ -119,7 +137,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, setImmediate)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:14)
-    (fail) error done callback (async, setImmediate)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:60 > error done callback (async, nextTick)
     55 |   });
     56 | });
     57 |
@@ -129,7 +148,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, nextTick)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
-    (fail) error done callback (async, nextTick)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:67 > error done callback (async, setTimeout, Promise.resolve)
     62 | });
     63 |
     64 | test("error done callback (async, setTimeout, Promise.resolve)", done => {
@@ -139,7 +159,8 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, setTimeout, Promise.resolve)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:67:16)
-    (fail) error done callback (async, setTimeout, Promise.resolve)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:75 > error done callback (async, setImmediate, Promise.resolve)
     70 | });
     71 |
     72 | test("error done callback (async, setImmediate, Promise.resolve)", done => {
@@ -149,7 +170,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, setImmediate, Promise.resolve)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:75:16)
-    (fail) error done callback (async, setImmediate, Promise.resolve)
 
     0 pass
     9 fail
@@ -176,7 +196,7 @@ test("an error passed to the done callback of a concurrent test fails that test"
     stdout: "ignore",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
   expect({
     lines: stderr.match(/^(\((pass|fail)\) [a-z >]+[a-z]|error: .*|# Unhandled.*)/gm)?.sort(),
     exitCode,

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 
 test("--rerun-each should run tests exactly N times", async () => {
   using dir = tempDir("test-rerun-each", {
@@ -256,7 +256,9 @@ test("a retry rolls back only its own attempt's toMatchSnapshot() counters", asy
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const results = (stdout + stderr).match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
+  const results = flattenNestedTestOutput(stdout + stderr)
+    .match(/^\((pass|fail)\) [\w ]+/gm)
+    ?.map(line => line.trimEnd());
   expect(results?.toSorted()).toEqual(["(pass) beside it", "(pass) retries", "(pass) same name", "(pass) same name"]);
   expect(exitCode).toBe(0);
 });

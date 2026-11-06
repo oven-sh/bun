@@ -14,7 +14,7 @@ description:
 By default, `bun test` outputs results to the console in a human-readable format:
 
 ```sh terminal icon="terminal"
-test/package-json-lint.test.ts:
+✓ test/package-json-lint.test.ts:
 ✓ test/package.json [0.88ms]
 ✓ test/js/third_party/grpc-js/package.json [0.18ms]
 ✓ test/js/third_party/svelte/package.json [0.21ms]
@@ -29,7 +29,7 @@ Ran 4 tests across 1 file. [8.00ms]
 When a terminal doesn't support colors, the output avoids non-ASCII characters:
 
 ```sh terminal icon="terminal"
-test/package-json-lint.test.ts:
+(pass) test/package-json-lint.test.ts:
 (pass) test/package.json [0.48ms]
 (pass) test/js/third_party/grpc-js/package.json [0.10ms]
 (pass) test/js/third_party/svelte/package.json [0.04ms]
@@ -39,6 +39,40 @@ test/package-json-lint.test.ts:
  0 fail
  4 expect() calls
 Ran 4 tests across 1 file. [9.00ms]
+```
+
+Each file's results are buffered and printed as one block when the file finishes. Tests inside a `describe` block are nested beneath it, and each `describe` and file header shows the worst result beneath it. Failure details are collected and printed together at the end of the run, each headed by the test's file, line and full name:
+
+```sh terminal icon="terminal"
+✗ test/math.test.ts:
+✗ math
+  ✗ arithmetic
+    ✓ add [0.28ms]
+    ✗ subtract [0.86ms]
+  ✓ is a module [0.08ms]
+✓ top-level test [0.04ms]
+
+1 test failed:
+
+✗ test/math.test.ts:6 > math > arithmetic > subtract
+1 | import { describe, expect, test } from "bun:test";
+2 | describe("math", () => {
+3 |   describe("arithmetic", () => {
+4 |     test("add", () => expect(1 + 1).toBe(2));
+5 |     test("subtract", () => {
+6 |       expect(2 - 1).toBe(2);
+                        ^
+error: expect(received).toBe(expected)
+
+Expected: 2
+Received: 1
+
+      at <anonymous> (test/math.test.ts:6:21)
+
+ 3 pass
+ 1 fail
+ 2 expect() calls
+Ran 4 tests across 1 file. [47.00ms]
 ```
 
 ### Dots Reporter

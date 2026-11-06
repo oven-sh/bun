@@ -560,19 +560,16 @@ test("--parallel prints per-test lines under their file's header", async () => {
   const lines = stderr.split("\n");
   let header = "";
   for (const ln of lines) {
-    if (ln.endsWith(".test.js:")) header = ln;
+    if (ln.endsWith(".test.js:")) header = ln.replace(/^\(\w+\) /, "");
     else if (ln.includes("alpha-")) expect(header).toBe("a.test.js:");
     else if (ln.includes("bravo-")) expect(header).toBe("b.test.js:");
   }
   expect(exitCode).toBe(0);
 });
 
-test("--parallel streams test results in realtime, not buffered per-file", async () => {
-  // Each file: one fast test then one slow test. With 2 workers running
-  // concurrently the first two results should arrive long before both files
-  // would finish (which is gated on the 600ms slow test). Per-file buffering
-  // would withhold output until ~600ms; per-test streaming surfaces the fast
-  // results within the worker spawn + first-tick latency.
+test("--parallel buffers each file's results until the file finishes", async () => {
+  // Each file: one fast test then one slow test. A file's block is printed
+  // whole when it finishes, so the fast result arrives with the slow one.
   using dir = tempDir("parallel-realtime", {
     "a.test.js": `import {test,expect} from "bun:test";
        test("a-fast",()=>expect(1).toBe(1));
@@ -605,9 +602,8 @@ test("--parallel streams test results in realtime, not buffered per-file", async
   expect(stdout).toContain("PARALLEL");
   expect(firstFastAt).toBeGreaterThan(0);
   expect(firstSlowAt).toBeGreaterThan(0);
-  // The slow result cannot arrive before ~600ms, so this proves the fast
-  // result was not held back waiting for it.
-  expect(firstFastAt).toBeLessThan(firstSlowAt - 300);
+  // The slow result cannot arrive before ~600ms; the fast one waited for it.
+  expect(firstFastAt).toBeGreaterThan(firstSlowAt - 300);
   expect(exitCode).toBe(0);
 });
 
@@ -632,7 +628,7 @@ test("--parallel aggregates failure summary across workers", async () => {
   expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("24 pass");
   expect(stderr).toContain("1 fail");
-  // The repeat-at-end section reprints the failure line (so it appears twice).
+  // The end-of-run failure report names the test again (so it appears twice).
   const occurrences = stderr.split("uniquefail").length - 1;
   expect(occurrences).toBeGreaterThanOrEqual(2);
   expect(exitCode).toBe(1);
@@ -926,7 +922,8 @@ test("--parallel prints what a file printed under that file's name", async () =>
   const misplaced: string[] = [];
   for (const line of stderr.split("\n")) {
     const printed = line.match(/^(?:error: thrown|logged|warned) in (f\d+)$/);
-    file = line.match(/^(f\d+)\.test\.js:$/)?.[1] ?? file;
+    // A bare header for what the file printed; a failure's diagnostic is batched under `(fail) file:line > name`.
+    file = line.match(/^(?:\(fail\) )?(f\d+)\.test\.js(?::| ?:\d+ > .*)$/)?.[1] ?? file;
     if (!printed) continue;
     count++;
     if (printed[1] !== file) misplaced.push(`"${line}" under ${file}`);

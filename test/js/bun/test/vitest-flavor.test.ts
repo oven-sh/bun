@@ -1,7 +1,7 @@
 // `test`, `describe` and the hooks behave like Vitest's when imported from "vitest", and like Jest's otherwise.
 // Expected outputs were taken from Vitest 5.0.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, tempDir, flattenNestedTestOutput } from "harness";
 import { readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,7 +25,11 @@ async function runTests(
     timeout: killedAfterMs,
     killSignal: "SIGKILL",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   const results = stderr
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))
@@ -632,7 +636,7 @@ describe.concurrent("test context", () => {
       stdout: "ignore",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
     const written = await Bun.file(`${dir}/__snapshots__/a.test.js.snap`).text();
     expect(written.split("\n").filter(line => line.startsWith("exports["))).toEqual([
       'exports[`first 1`] = `"one"`;',
@@ -1383,7 +1387,7 @@ describe.concurrent("hooks", () => {
         "(fail) all > (unnamed)",
         "(pass) retries > test (attempt 2)",
       ],
-      errors: ["error: teardown 3", "error: teardown 2", "error: teardown of beforeAll", "error: again"],
+      errors: ["error: again", "error: teardown 3", "error: teardown 2", "error: teardown of beforeAll"],
       exitCode: 1,
     });
   });
@@ -3141,7 +3145,11 @@ describe.concurrent("exports", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(flattenNestedTestOutput),
+      proc.exited,
+    ]);
     expect(stderr).toContain("(pass) test");
     expect(stdout).toContain("the project's assert\n");
     expect(exitCode).toBe(0);
@@ -4646,8 +4654,8 @@ describe.concurrent("test.extend()", () => {
         "(pass) retry > test (attempt 2)",
       ],
       errors: [
-        `error: The test-scoped fixture "perTest" cannot be used in beforeAll(), afterAll() or aroundAll(). Give it { scope: "file" }, or use beforeEach(), afterEach() or aroundEach()`,
         "error: again",
+        `error: The test-scoped fixture "perTest" cannot be used in beforeAll(), afterAll() or aroundAll(). Give it { scope: "file" }, or use beforeEach(), afterEach() or aroundEach()`,
       ],
       exitCode: 1,
     });
@@ -5311,7 +5319,11 @@ describe.concurrent("resolution", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(flattenNestedTestOutput),
+      proc.exited,
+    ]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "vitest @jest/globals vitest vitest\ntrue true\nfalse false\n",
       stderr: "",
@@ -5335,7 +5347,11 @@ describe.concurrent("resolution", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(flattenNestedTestOutput),
+      proc.exited,
+    ]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout:
         "MODULE_NOT_FOUND vitest\nERR_MODULE_NOT_FOUND vitest\nMODULE_NOT_FOUND @jest/globals\nERR_MODULE_NOT_FOUND @jest/globals\n",

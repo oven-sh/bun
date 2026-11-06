@@ -1,5 +1,16 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  Heap,
+  isASAN,
+  isDebug,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+  flattenNestedTestOutput,
+} from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -2939,7 +2950,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
   const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
   const results = (stderr: string) => [
     ...new Set(
-      stderr
+      flattenNestedTestOutput(stderr)
         .split("\n")
         .filter(line => /^\((pass|fail)\)/.test(line))
         .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
@@ -3039,14 +3050,16 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       "c.test.ts": `import { test } from "bun:test"; test("c", () => {});`,
     });
     const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts", "./c.test.ts"]);
-    const lines = stderr.split("\n").filter(line => /^(error: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+    const lines = flattenNestedTestOutput(stderr)
+      .split("\n")
+      .filter(line => /^(error: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
     expect(
       lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
       stderr,
     ).toEqual([
       "a.test.ts:",
-      "(pass) a",
       "error: the trap refuses",
+      "(pass) a",
       "b.test.ts:",
       "(pass) b",
       "c.test.ts:",

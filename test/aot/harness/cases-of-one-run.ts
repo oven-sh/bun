@@ -1,6 +1,6 @@
 // The cases of a test file as the test files of one project, which is run once for each way of running it.
 import { afterAll } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { run } from "./run";
 
 export type CaseOfRun = {
@@ -39,7 +39,8 @@ export function casesOfOneRun(name: string, shared: Record<string, string> = {})
       if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
       const cases = new Map<string, CaseOfRun>();
       const of = (id: string) => cases.getOrInsertComputed(id, () => ({ result: undefined, printed: "" }));
-      for (const [, result, id] of stderr.matchAll(/^\((pass|fail)\) (c\d+)(?: \[.*\])?$/gm)) of(id).result = result;
+      for (const [, result, id] of flattenNestedTestOutput(stderr).matchAll(/^\((pass|fail)\) (c\d+)(?: \[.*\])?$/gm))
+        of(id).result = result;
       let last: CaseOfRun | undefined;
       for (const line of stdout.split("\n")) {
         const [, id, text] = line.match(/^(c\d+)\| ?(.*)$/) ?? [];

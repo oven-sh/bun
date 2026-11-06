@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 
 // Like jsdom and happy-dom, markup comes from prototype getters and own properties reach the whole document.
 const impl = Symbol("impl");
@@ -1061,7 +1061,10 @@ test("assertions on nodes that reference a large object graph fail with a short 
   const lines = Bun.stripANSI(stderr).split("\n");
   expect({
     size: stdout.length + stderr.length < 10_000 ? "short" : stdout.length + stderr.length,
-    results: lines.filter(line => /^\((pass|fail)\)/.test(line)).map(line => line.replace(/ \[.*/, "")),
+    results: flattenNestedTestOutput(Bun.stripANSI(stderr))
+      .split("\n")
+      .filter(line => /^\((pass|fail)\)/.test(line))
+      .map(line => line.replace(/ \[.*/, "")),
     nodes: lines.filter(line => line.includes("<p") || line.includes("class=")),
   }).toEqual({
     size: "short",

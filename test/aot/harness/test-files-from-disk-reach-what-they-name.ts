@@ -1,6 +1,6 @@
 // For ../test-files-from-disk-reach-what-they-name*.test.ts: the project of most cases, and how they run it.
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput } from "harness";
 import { run } from "./run";
 
 export const sources = {
@@ -35,7 +35,9 @@ export async function runTests(directory: string, env: Record<string, string>, .
     ...bunEnv,
     ...env,
   });
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
+  const results = [...flattenNestedTestOutput(stderr).matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(
+    match => `${match[1]} ${match[2]}`,
+  );
   return { results: results.sort(), exitCode, stderr };
 }
 

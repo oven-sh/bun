@@ -1,5 +1,5 @@
 // What the files test/aot/test-run-in-parts*.test.ts all use.
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput } from "harness";
 import { run } from "./run";
 
 export const passing = (name: string, seen = "lib") => `import { test, expect } from "bun:test";
@@ -31,7 +31,7 @@ export async function runTests(directory: string, words: string | undefined, ...
     directory,
     envOf(words),
   );
-  const results = [...stderr.matchAll(/^\((pass|fail|skip)\) (.*?)(?: \[.*\])?$/gm)].map(
+  const results = [...flattenNestedTestOutput(stderr).matchAll(/^\((pass|fail|skip)\) (.*?)(?: \[.*\])?$/gm)].map(
     match => `${match[1]} ${match[2]}`,
   );
   const count = (word: string) => stderr.match(new RegExp(`^ *(\\d+) ${word}$`, "m"))?.[1];

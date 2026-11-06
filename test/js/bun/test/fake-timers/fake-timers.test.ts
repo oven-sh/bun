@@ -2,7 +2,7 @@ import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -1776,7 +1776,7 @@ test("performance can be read for the first time while the clock is at 0", async
 
 describe.concurrent("the end of a test file", () => {
   const passed = (stderr: string) =>
-    stderr
+    flattenNestedTestOutput(stderr)
       .split("\n")
       .filter(line => /^\((pass|fail)\)/.test(line))
       .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
@@ -1881,9 +1881,10 @@ describe.concurrent("the end of a test file", () => {
     expect({ lines: lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), exitCode }, stderr).toEqual({
       lines: [
         "a.test.ts:",
-        "(pass) replaces a fake by a getter",
         "error: useFakeTimers() and useRealTimers() can't be called from the getter of a global they replace.",
-        "b.test.ts:",
+        "(pass) a.test.ts:",
+        "(pass) replaces a fake by a getter",
+        "(pass) b.test.ts:",
         "(pass) nothing is faked",
       ],
       exitCode: 1,

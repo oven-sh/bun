@@ -10,9 +10,10 @@ pub(crate) enum Kind {
     Ready,
     /// u32 file_idx
     FileStart,
-    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim);
-    /// then, only when the worker runs with `--reporter`, the structured
-    /// result (`runner::encode_test_case`): u32 status, u32 assertions,
+    /// u32 file_idx, str formatted_line (ANSI included); then, only when the
+    /// worker runs with `--reporter` or the line belongs in the file's buffered
+    /// block, the structured result (`runner::encode_test_case`), whose status
+    /// and scopes place the line in the block: u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
@@ -22,7 +23,7 @@ pub(crate) enum Kind {
     /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
     /// then str: `runner::first_loads`
     FileDone,
-    /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
+    /// 2 × str: skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
     /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left,
@@ -41,6 +42,10 @@ pub(crate) enum Kind {
     /// 5 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), and 1 where it could not
     /// write an inline one; sent at exit by a worker that runs compiled code
     Snapshots,
+    /// u32 file_idx, str entry: a failure's `(fail) file:line > scope > name`
+    /// header plus diagnostic (ANSI included), appended to the coordinator's
+    /// end-of-run report
+    FailureDiagnostic,
 }
 
 impl TryFrom<u8> for Kind {
@@ -58,6 +63,7 @@ impl TryFrom<u8> for Kind {
             7 => Kind::CoverageFile,
             8 => Kind::RefusedChange,
             9 => Kind::Snapshots,
+            10 => Kind::FailureDiagnostic,
             _ => return Err(()),
         })
     }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { join } from "node:path";
 
 test("--retry retries failed tests", async () => {
@@ -390,7 +390,7 @@ test("leftover work from an earlier attempt doesn't end or fail the retry", asyn
     "floating: the second attempt ran to its end",
   ]);
   expect(
-    stderr
+    flattenNestedTestOutput(stderr)
       .split("\n")
       .filter(line => /^\((pass|fail)\)|^# Unhandled error/.test(line))
       .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),

@@ -15,7 +15,7 @@ test("23865", async () => {
   expect(exitCode).not.toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun test <version> (<revision>)"`);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "23865.fixture.ts:
+    "(fail) 23865.fixture.ts:
     (fail) abc
       ^ this test timed out after 50ms.
 

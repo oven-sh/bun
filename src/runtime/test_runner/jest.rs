@@ -38,6 +38,8 @@ pub(crate) struct CurrentFile {
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
     has_printed_filename: bool,
+    /// The buffered block owes this file its `path:` header.
+    header_pending: bool,
 }
 
 impl CurrentFile {
@@ -50,24 +52,54 @@ impl CurrentFile {
         is_worker: bool,
         reporters: &ReportersConfig,
     ) {
+        // Assigning into the Box<[u8]> fields drops the previous values.
+        self.title = Box::<[u8]>::from(title);
+        self.prefix = Box::<[u8]>::from(prefix);
+        self.repeat_info.count = repeat_count;
+        self.repeat_info.index = repeat_index;
+        self.header_pending = false;
         if is_worker {
             // Coordinator owns the terminal and prints its own per-test file
-            // context; the worker should not emit a header to stderr.
+            // context; the worker should not emit a header to stderr. The title
+            // is still kept for failure-report headers.
             self.has_printed_filename = true;
             return;
         }
-        if reporters.dots || reporters.only_failures {
-            // Assigning into the Box<[u8]> fields below drops the previous values.
-            self.title = Box::<[u8]>::from(title);
-            self.prefix = Box::<[u8]>::from(prefix);
-            self.repeat_info.count = repeat_count;
-            self.repeat_info.index = repeat_index;
+        if reporters.dots {
             self.has_printed_filename = false;
             return;
         }
+        // The header waits for the block so it can carry the file's aggregate
+        // glyph. Output streamed before then (console, errors between tests)
+        // gets a bare header first via `print_if_needed`.
+        self.has_printed_filename = false;
+        self.header_pending = true;
+    }
 
+    pub(crate) fn title(&self) -> &[u8] {
+        &self.title
+    }
+
+    pub(crate) fn header_pending(&self) -> bool {
+        self.header_pending
+    }
+
+    pub(crate) fn clear_header_pending(&mut self) {
+        self.header_pending = false;
+    }
+
+    /// `<glyph> path:` for the buffered block; `glyph` may be empty.
+    pub(crate) fn write_pending_header(&mut self, glyph: &[u8], out: &mut Vec<u8>) {
+        self.header_pending = false;
+        // An empty block keeps the bare header already printed.
+        if glyph.is_empty() && self.has_printed_filename {
+            return;
+        }
+        // A bare header already opened the GitHub Actions group.
+        let prefix: &[u8] = if self.has_printed_filename { b"" } else { &self.prefix };
         self.has_printed_filename = true;
-        Self::print(title, prefix, repeat_count, repeat_index);
+        let run = (self.repeat_info.count > 1).then_some(self.repeat_info.index + 1);
+        crate::cli::test_command::write_file_header(glyph, prefix, &self.title, run, out);
     }
 
     #[optimize(size)]

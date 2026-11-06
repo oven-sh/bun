@@ -674,9 +674,32 @@ impl BunTestRoot {
         if let Some(active) = &self.active_file {
             // SAFETY: single-threaded; no other `&mut BunTest` is live during
             // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
-            active.get().reporter = None;
+            let active = active.get();
+            if let Some(reporter) = active.reporter {
+                // Safety net for paths that skip the per-file flush.
+                // SAFETY: reporter outlives every BunTest; no other borrow live.
+                unsafe { (*reporter.as_ptr()).flush_file_block() };
+            }
+            active.reporter = None;
         }
         self.active_file = None; // drops the Rc (deinit)
+    }
+
+    /// See `test_command::flush_reporter_on_exit`.
+    pub(crate) fn flush_reporter_on_exit(&self) {
+        let Some(active_file) = &self.active_file else {
+            return;
+        };
+        // Raw-ptr field read for the same reason as `on_before_print`.
+        // SAFETY: single-threaded; `active_file` keeps the cell alive.
+        let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
+        if let Some(reporter) = reporter {
+            // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+            unsafe {
+                (*reporter.as_ptr()).flush_file_block();
+                (*reporter.as_ptr()).render_failure_report();
+            }
+        }
     }
 
     pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
@@ -1602,30 +1625,41 @@ impl BunTest {
         };
 
         let mut unhandled_failure: Option<crate::cli::test_command::TestFailure> = None;
+        let mut capture: Option<NonNull<crate::cli::test_command::CommandLineReporter>> = None;
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
-            let reporter = unsafe { &mut *reporter.as_ptr() };
-            if !reporter.jest.test_options.reporters.junit {
-                core::ptr::null_mut()
-            } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
+            let junit = unsafe { (*reporter.as_ptr()).jest.test_options.reporters.junit };
+            if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
                 match self
                     .execution
                     .get_current_and_valid_execution_sequence(user_data)
                 {
                     // Points into `execution.sequences`, a boxed slice that lives until the file is done.
-                    Some((sequence, _)) => (&raw mut sequence.failure).cast(),
+                    Some((sequence, _)) => {
+                        // A test's diagnostics are batched until it completes.
+                        capture = Some(reporter);
+                        match junit {
+                            true => (&raw mut sequence.failure).cast(),
+                            false => core::ptr::null_mut(),
+                        }
+                    }
                     None => core::ptr::null_mut(),
                 }
-            } else {
+            } else if junit {
                 core::ptr::from_mut(&mut unhandled_failure).cast()
+            } else {
+                core::ptr::null_mut()
             }
         };
 
-        self.bun_test_root.on_before_print();
+        // A captured diagnostic is printed later, under its own header.
+        if capture.is_none() {
+            self.bun_test_root.on_before_print();
+        }
         if matches!(
             handle_status,
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
@@ -1644,12 +1678,19 @@ impl BunTest {
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if !failure_ctx.is_null() {
+        if let Some(reporter) = capture {
+            // SAFETY: as above; no other borrow of the reporter is live across the print.
+            unsafe { &mut *reporter.as_ptr() }.begin_diagnostic_capture(vm, failure_ctx.cast());
+        } else if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception =
                 Some(crate::cli::test_command::TestFailure::record_cb);
             vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
         print_error(vm, global_this, exception, None);
+        if let Some(reporter) = capture {
+            // SAFETY: as above.
+            unsafe { &mut *reporter.as_ptr() }.end_diagnostic_capture(vm);
+        }
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();

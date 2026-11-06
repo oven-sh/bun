@@ -20,16 +20,16 @@ bun test --parallel        # one worker per CPU core
 bun test --parallel=4      # exactly 4 workers
 ```
 
-The main `bun test` process becomes a coordinator. It discovers test files as usual, then starts worker processes and hands each one file at a time. Results stream back as each test finishes, so the output looks the same as a serial run. The coordinator prints each file's results together under its filename, and never interleaves `console.log` output from a test with another file's.
+The main `bun test` process becomes a coordinator. It discovers test files as usual, then starts worker processes and hands each one file at a time. Each file's results are buffered and printed as one block when the file finishes, so the output looks the same as a serial run and never interleaves one file's results with another's. Failure details are printed together at the end of the run.
 
 ```txt
 bun test v1.4.0 8x PARALLEL
 
-src/router.test.ts:
+✓ src/router.test.ts:
 ✓ matches static routes [0.31ms]
 ✓ matches params [0.12ms]
 
-src/db.test.ts:
+✓ src/db.test.ts:
 ✓ migrates up [41.02ms]
 ✓ migrates down [38.60ms]
 ...

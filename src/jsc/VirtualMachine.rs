@@ -360,6 +360,10 @@ pub struct VirtualMachine {
     /// `run_error_handler`.
     pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException<'_>)>,
     pub on_print_error_zig_exception_ctx: *mut c_void,
+    /// When set, `print_exception` renders here instead of buffered stderr.
+    /// Installed by `bun test` around `run_error_handler` to batch a failing
+    /// test's diagnostics for the end-of-run report.
+    pub error_writer_override: Option<NonNull<bun_core::io::Writer>>,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.

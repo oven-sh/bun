@@ -34,20 +34,64 @@ test("describe/test", async () => {
         at <anonymous> (file:NN:NN)
     -------------------------------
 
-    76 | 
-    77 | describe("actual tests", () => {
-    78 |   test("more functions called after delayed done", done => {
-    79 |     process.nextTick(() => {
-    80 |       done();
-    81 |       throw "uh oh";
-                     ^
-    error: uh oh
+    AssertionError: expected 1 assertion, but test ended with 0 assertions
+
+    # Unhandled error between tests
+    -------------------------------
+    159 | 
+    160 | // === timing edge case ===
+    161 | test.failing("more functions called after delayed done", done => {
+    162 |   process.nextTick(() => {
+    163 |     done();
+    164 |     expect(true).toBe(false);
+                           ^
+    error: expect(received).toBe(expected)
+
+    Expected: false
+    Received: true
         at <anonymous> (file:NN:NN)
-    (fail) actual tests > more functions called after delayed done
-    (pass) actual tests > another test
-    (pass) concurrent describe 1 > item 1
-    (pass) concurrent describe 1 > item 2
-    (pass) concurrent describe 1 > snapshot in concurrent group
+    -------------------------------
+
+
+    # Unhandled error between tests
+    -------------------------------
+    167 | test("another test", async () => {});
+    168 | 
+    169 | // === an error of an earlier test is not the failure that test.failing expects ===
+    170 | test("misattributed error", () => {
+    171 |   setTimeout(() => {
+    172 |     expect(true).toBe(false);
+                           ^
+    error: expect(received).toBe(expected)
+
+    Expected: false
+    Received: true
+        at <anonymous> (file:NN:NN)
+    -------------------------------
+
+
+    # Unhandled error between tests
+    -------------------------------
+    264 |     done("uh oh!");
+    265 |   });
+    266 | });
+    267 | 
+    268 | test.failing("microtasks and rejections are drained after the test callback is executed", () => {
+    269 |   Promise.reject(new Error("uh oh!"));
+                               ^
+    error: uh oh!
+        at <anonymous> (file:NN:NN)
+    -------------------------------
+
+
+    (fail) test/js/bun/test/bun_test.fixture.ts:
+    (fail) actual tests
+      (fail) more functions called after delayed done
+      (pass) another test
+    (pass) concurrent describe 1
+      (pass) item 1
+      (pass) item 2
+      (pass) snapshot in concurrent group
     (pass) LINE 66
     (skip) LINE 67
     (fail) LINE 68
@@ -68,99 +112,38 @@ test("describe/test", async () => {
     (pass) addition 1 + 2 = 3
     (pass) addition 2 + 3 = 5
     (pass) addition 3 + 4 = 7
-    AssertionError: expected 1 assertion, but test ended with 0 assertions
     (fail) expect.assertions
     (pass) expect.assertions not yet supported in concurrent tests
     (pass) expect.assertions not yet supported in concurrent tests
     (pass) expect.assertions works
     (fail) expect.assertions combined with timeout
       ^ this test timed out after 1ms.
-
-    # Unhandled error between tests
-    -------------------------------
-    159 | 
-    160 | // === timing edge case ===
-    161 | test.failing("more functions called after delayed done", done => {
-    162 |   process.nextTick(() => {
-    163 |     done();
-    164 |     expect(true).toBe(false);
-                           ^
-    error: expect(received).toBe(expected)
-
-    Expected: false
-    Received: true
-        at <anonymous> (file:NN:NN)
-    -------------------------------
-
     (fail) more functions called after delayed done
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (pass) another test
     (pass) misattributed error
-
-    # Unhandled error between tests
-    -------------------------------
-    167 | test("another test", async () => {});
-    168 | 
-    169 | // === an error of an earlier test is not the failure that test.failing expects ===
-    170 | test("misattributed error", () => {
-    171 |   setTimeout(() => {
-    172 |     expect(true).toBe(false);
-                           ^
-    error: expect(received).toBe(expected)
-
-    Expected: false
-    Received: true
-        at <anonymous> (file:NN:NN)
-    -------------------------------
-
     (fail) does not pass because of the misattributed error
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-    (pass) hooks > test1
-    (pass) hooks > test2
-    (pass) done parameter > instant done
-    (pass) done parameter > delayed done
-    (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
-    (pass) done parameter > done combined with promise > done combined with promise, done resolves first
-    224 |   });
-    225 |   describe("done combined with promise", () => {
-    226 |     let completion = 0;
-    227 |     beforeEach(() => (completion = 0));
-    228 |     afterEach(() => {
-    229 |       if (completion != 2) throw "completion is not 2";
-                                           ^
-    error: completion is not 2
-        at <anonymous> (file:NN:NN)
-    (fail) done parameter > done combined with promise > fails when completion is not incremented
-    error: test error
-    test error
-    error: promise error
-    promise error
-    (fail) done parameter > done combined with promise error conditions > both error and done resolves first
-    error: done error
-    done error
-    (fail) done parameter > done combined with promise error conditions > done errors only
-    error: promise error
-    promise error
-    (fail) done parameter > done combined with promise error conditions > promise errors only
-    (pass) done parameter > second call of done callback ignores triggers error
-
-    # Unhandled error between tests
-    -------------------------------
-    264 |     done("uh oh!");
-    265 |   });
-    266 | });
-    267 | 
-    268 | test.failing("microtasks and rejections are drained after the test callback is executed", () => {
-    269 |   Promise.reject(new Error("uh oh!"));
-                               ^
-    error: uh oh!
-        at <anonymous> (file:NN:NN)
-    -------------------------------
-
+    (pass) hooks
+      (pass) test1
+      (pass) test2
+    (fail) done parameter
+      (pass) instant done
+      (pass) delayed done
+      (fail) done combined with promise
+        (pass) done combined with promise, promise resolves first
+        (pass) done combined with promise, done resolves first
+        (fail) fails when completion is not incremented
+      (fail) done combined with promise error conditions
+        (fail) both error and done resolves first
+        (fail) done errors only
+        (fail) promise errors only
+      (pass) second call of done callback ignores triggers error
     (fail) microtasks and rejections are drained after the test callback is executed
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-    (pass) after inside test > the test 1
-    (pass) after inside test > the test 2
+    (pass) after inside test
+      (pass) the test 1
+      (pass) the test 2
     (pass) beforeEach inside test fails
 
     2 tests skipped:
@@ -172,28 +155,43 @@ test("describe/test", async () => {
     (todo) LINE 69
     (todo) failing todo passes
 
-
     13 tests failed:
-    (fail) actual tests > more functions called after delayed done
-    (fail) LINE 68
-      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-    (fail) this test times out
-      ^ this test timed out after 1ms.
-    (fail) this test times out with done
-      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
-    (fail) expect.assertions
-    (fail) expect.assertions combined with timeout
-      ^ this test timed out after 1ms.
-    (fail) more functions called after delayed done
-      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-    (fail) does not pass because of the misattributed error
-      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-    (fail) done parameter > done combined with promise > fails when completion is not incremented
-    (fail) done parameter > done combined with promise error conditions > both error and done resolves first
-    (fail) done parameter > done combined with promise error conditions > done errors only
-    (fail) done parameter > done combined with promise error conditions > promise errors only
-    (fail) microtasks and rejections are drained after the test callback is executed
-      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+
+    (fail) test/js/bun/test/bun_test.fixture.ts:81 > actual tests > more functions called after delayed done
+    76 | 
+    77 | describe("actual tests", () => {
+    78 |   test("more functions called after delayed done", done => {
+    79 |     process.nextTick(() => {
+    80 |       done();
+    81 |       throw "uh oh";
+                     ^
+    error: uh oh
+        at <anonymous> (file:NN:NN)
+
+    (fail) test/js/bun/test/bun_test.fixture.ts:229 > done parameter > done combined with promise > fails when completion is not incremented
+    224 |   });
+    225 |   describe("done combined with promise", () => {
+    226 |     let completion = 0;
+    227 |     beforeEach(() => (completion = 0));
+    228 |     afterEach(() => {
+    229 |       if (completion != 2) throw "completion is not 2";
+                                           ^
+    error: completion is not 2
+        at <anonymous> (file:NN:NN)
+
+    (fail) test/js/bun/test/bun_test.fixture.ts > done parameter > done combined with promise error conditions > both error and done resolves first
+    error: test error
+    test error
+    error: promise error
+    promise error
+
+    (fail) test/js/bun/test/bun_test.fixture.ts > done parameter > done combined with promise error conditions > done errors only
+    error: done error
+    done error
+
+    (fail) test/js/bun/test/bun_test.fixture.ts > done parameter > done combined with promise error conditions > promise errors only
+    error: promise error
+    promise error
 
      29 pass
      2 skip

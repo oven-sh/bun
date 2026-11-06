@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
@@ -24,8 +24,10 @@ const files = {
   "d-fine.test.ts": `export {}; function double(n: number): number { return n * 2; } test("another fine test", () => { expect(double(2)).toBe(4); });`,
 };
 
-const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const ran = (said: string) => [...said.matchAll(/^\((?:pass|fail)\) .*$/gm)].map(match => match[0]);
+const passed = (said: string) =>
+  [...flattenNestedTestOutput(said).matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
+const ran = (said: string) =>
+  [...flattenNestedTestOutput(said).matchAll(/^\((?:pass|fail)\) .*$/gm)].map(match => match[0]);
 /** `error: TS2322: ..` and under it `    at <path>:<line>:<column>` */
 const reported = (kind: "error" | "warn", said: string) =>
   [...said.matchAll(new RegExp(`^${kind}: (TS\\d+): .*\\n +at .*[\\\\/]([^\\\\/\\n]+)$`, "gm"))]

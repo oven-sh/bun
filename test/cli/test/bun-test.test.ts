@@ -1,6 +1,17 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  normalizeBunSnapshot,
+  flattenNestedTestOutput,
+  isLinux,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
@@ -874,9 +885,9 @@ describe("bun test", () => {
         expectExitCode: 1,
       });
       expect(stderr.split("\n").filter(line => line.startsWith("::group::"))).toEqual([
-        "::group::rerun.test.ts: (run #1)",
-        "::group::rerun.test.ts: (run #2)",
-        "::group::rerun.test.ts: (run #3)",
+        "::group::(fail) rerun.test.ts: (run #1)",
+        "::group::(fail) rerun.test.ts: (run #2)",
+        "::group::(fail) rerun.test.ts: (run #3)",
       ]);
     });
   });
@@ -1218,8 +1229,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("fs module > has $method");
-        expect(stderr).toContain("path module > has $method");
+        expect(stderr).toContain("fs module\n  (pass) has $method");
+        expect(stderr).toContain("path module\n  (pass) has $method");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1464,7 +1475,7 @@ describe("bun test", () => {
     });
     expect(
       stderr
-        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .replaceAll(/bun-test-(.*?)\.test\.ts/g, "bun-test-*.test.ts")
         .trim()
         .replace(/\[[\d.]+m?s\]/, "[xx ms]"),
     ).toMatchInlineSnapshot(`
@@ -1586,14 +1597,18 @@ describe("bun test", () => {
     });
     expect(
       stderr
-        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .replaceAll(/bun-test-(.*?)\.test\.ts/g, "bun-test-*.test.ts")
         .replace(/ \[[\d.]+m?s\]/g, "") // Remove all timings
         .replace(/Ran \d+ tests across \d+ files?\.\s*$/, "Ran 2 tests across 1 file.") // Normalize test counts
         .trim(),
     ).toMatchInlineSnapshot(`
       "bun-test-*.test.ts:
-      (pass) group 1 > should match filter
-      (pass) group 2 > another test that should match filter
+
+      (pass) bun-test-*.test.ts:
+      (pass) group 1
+        (pass) should match filter
+      (pass) group 2
+        (pass) another test that should match filter
 
        2 pass
        5 filtered out
@@ -1954,6 +1969,200 @@ describe("bun test", () => {
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
     });
+  });
+});
+
+describe("nested describe output", () => {
+  const fixture = `
+    import { describe, expect, it } from "bun:test";
+    describe("group one", () => {
+      describe("sub A", () => {
+        it("zero", () => { expect(0).toBe(0); });
+        it("one", () => { expect(1).toBe(1); });
+      });
+      it("four", () => { expect(4).toBe(4); });
+    });
+    describe("group two", () => {
+      it("five", () => { expect(5).toBe(5); });
+      it.skip("six", () => {});
+      it.todo("seven");
+    });
+    it("top level", () => {});
+  `;
+
+  async function run(files: Record<string, string>, args: string[], dirName: string) {
+    using dir = tempDir(dirName, files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+  }
+
+  test("each file is one block: describe headers carry their aggregate status, tests indented beneath", async () => {
+    const { stderr, exitCode } = await run({ "a.test.ts": fixture }, ["a.test.ts"], "nested-output");
+
+    expect(stderr).toMatchInlineSnapshot(`
+      "(pass) a.test.ts:
+      (pass) group one
+        (pass) sub A
+          (pass) zero
+          (pass) one
+        (pass) four
+      (pass) group two
+        (pass) five
+        (skip) six
+        (todo) seven
+      (pass) top level
+
+       5 pass
+       1 skip
+       1 todo
+       0 fail
+       4 expect() calls
+      Ran 7 tests across 1 file."
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("unnamed describe scopes do not consume an indent level", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, it } from "bun:test";
+          describe("", () => { it("no scope", () => {}); });
+          describe("outer", () => {
+            describe("", () => { it("skips a level", () => {}); });
+          });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-unnamed",
+    );
+
+    expect(stderr).toMatchInlineSnapshot(`
+      "(pass) a.test.ts:
+      (pass) no scope
+      (pass) outer
+        (pass) skips a level
+
+       2 pass
+       0 fail
+      Ran 2 tests across 1 file."
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--only-failures prints headers only for the failures", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, expect, it } from "bun:test";
+          describe("passing group", () => { it("fine", () => {}); });
+          describe("failing group", () => {
+            describe("inner", () => { it("boom", () => { expect(1).toBe(2); }); });
+          });
+        `,
+      },
+      ["a.test.ts", "--only-failures"],
+      "nested-output-only-failures",
+    );
+
+    expect(stderr).toContain("(fail) a.test.ts:\n(fail) failing group\n  (fail) inner\n    (fail) boom");
+    expect(stderr).not.toContain("(pass) passing group");
+    expect(exitCode).toBe(1);
+  });
+
+  test("each file is one contiguous block under --parallel", async () => {
+    const { stderr, exitCode } = await run(
+      { "a.test.ts": fixture, "b.test.ts": fixture },
+      ["--parallel=2", "a.test.ts", "b.test.ts"],
+      "nested-output-parallel",
+    );
+
+    const block = stderr.slice(stderr.indexOf("(pass) group one"), stderr.indexOf("(pass) top level"));
+    for (const file of ["a.test.ts", "b.test.ts"]) {
+      expect(stderr).toContain(`(pass) ${file}:\n${block}(pass) top level`);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  const failing = (name: string) => `
+    import { describe, expect, it } from "bun:test";
+    describe("tracker", () => {
+      it("ok", () => {});
+      it("routes", () => { expect("${name}").toBe("x"); });
+    });
+  `;
+
+  test.each([[[]], [["--parallel=2"]]])(
+    "failure diagnostics are batched at the end, each under a header naming its file and test %j",
+    async args => {
+      const { stderr, exitCode } = await run(
+        { "a.test.ts": failing("from a"), "b.test.ts": failing("from b") },
+        [...args, "a.test.ts", "b.test.ts"],
+        "nested-output-report",
+      );
+
+      const report = stderr.slice(stderr.indexOf("2 tests failed:"));
+      // Nothing about either failure prints before its file's block is done.
+      expect(stderr.indexOf("from a")).toBeGreaterThan(stderr.indexOf("2 tests failed:"));
+      for (const file of ["a", "b"]) {
+        expect(stderr).toContain(`(fail) ${file}.test.ts:\n(fail) tracker\n  (pass) ok\n  (fail) routes`);
+        const at = report.indexOf(`(fail) ${file}.test.ts:5 > tracker > routes\n`);
+        expect(at).toBeGreaterThan(-1);
+        expect(report.slice(at).split("(fail) ")[1]).toContain(`Received: "from ${file}"`);
+      }
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("process.exit() in a test still prints the file's block and the batched failures", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, expect, it } from "bun:test";
+          describe("d", () => {
+            it("fails", () => { expect(1).toBe(2); });
+            it("exits", () => { process.exit(3); });
+          });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-exit",
+    );
+
+    expect(stderr).toContain("(fail) a.test.ts:\n(fail) d\n  (fail) fails");
+    expect(stderr).toContain("(fail) a.test.ts:4 > d > fails\n");
+    expect(exitCode).toBe(3);
+  });
+
+  test("the end-of-run recap keeps the flat scope path", async () => {
+    const passing = Array.from({ length: 21 }, (_, i) => `it("t${i}", () => {});`).join("\n");
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, it } from "bun:test";
+          describe("outer", () => {
+            describe("inner", () => {
+              ${passing}
+              it.skip("skipped", () => {});
+              it.todo("pending");
+            });
+          });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-recap",
+    );
+
+    expect(stderr).toContain("(skip) outer > inner > skipped");
+    expect(stderr).toContain("(todo) outer > inner > pending");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -3169,7 +3378,12 @@ describe.concurrent("a test file that can never finish running", () => {
       `,
     });
     const neverSettled = ['error: A test or hook with no timeout never settled in "a.test.ts"', nothingLeft];
-    expect({ results: stderr.match(/^\((pass|fail)\) \w+/gm), errors, counts, exitCode }).toEqual({
+    expect({
+      results: flattenNestedTestOutput(stderr).match(/^\((pass|fail)\) \w+/gm),
+      errors,
+      counts,
+      exitCode,
+    }).toEqual({
       results: ["(fail) first", "(fail) second", "(pass) third"],
       errors: [...neverSettled, ...neverSettled],
       counts: [" 1 pass", " 2 fail"],
@@ -3268,7 +3482,10 @@ describe.concurrent("the runner sleeps while it waits", () => {
 });
 
 describe.concurrent("the next test doesn't start inside the call that ended the previous test", () => {
-  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
+  const results = (stderr: string) =>
+    flattenNestedTestOutput(stderr)
+      .match(/^\((pass|fail)\) [\w ]+/gm)
+      ?.map(line => line.trimEnd());
 
   test.each(
     Object.entries({
@@ -3378,7 +3595,10 @@ describe.concurrent("the next test doesn't start inside the call that ended the 
 });
 
 describe.concurrent("an error that arrives while a test file loads", () => {
-  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
+  const results = (stderr: string) =>
+    flattenNestedTestOutput(stderr)
+      .match(/^\((pass|fail)\) [\w >]+/gm)
+      ?.map(line => line.trimEnd());
   // Loading resumes one event-loop turn after the error.
   const file = (error: string) => `
     import { describe, test } from "bun:test";
@@ -3522,7 +3742,6 @@ describe.concurrent("a test file that fails to load", () => {
     const { stderr, exitCode } = await runFiles(
       {
         "missing.test.ts": files["missing.test.ts"],
-        // The list is only printed after more than 20 passes.
         "many.test.ts": `
           import { test } from "bun:test";
           for (let i = 0; i < 21; i++) test("passes " + i, () => {});
@@ -3530,10 +3749,8 @@ describe.concurrent("a test file that fails to load", () => {
       },
       ...args,
     );
-    expect(stderr.slice(stderr.indexOf("tests failed:")).split(/\r?\n/).slice(0, 2)).toEqual([
-      "tests failed:",
-      "(fail) missing.test.ts",
-    ]);
+    const report = stderr.slice(stderr.indexOf("test failed:")).split(/\r?\n/);
+    expect(report.filter(Boolean).slice(0, 2)).toEqual(["test failed:", "(fail) missing.test.ts"]);
     expect(exitCode).toBe(1);
   });
 });
@@ -3570,7 +3787,9 @@ describe.concurrent("an error whose message getter throws", () => {
     });
     expect({
       stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")),
-      results: stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd()),
+      results: flattenNestedTestOutput(stderr)
+        .match(/^\((pass|fail)\) [\w ]+/gm)
+        ?.map(line => line.trimEnd()),
       exitCode,
     }).toEqual({
       stdout: ["attempt 1,afterEach,attempt 2,afterEach,fails,afterEach,passes"],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 
 const NUMBERS = [
   [1, 1, 2],
@@ -75,7 +75,7 @@ describe.concurrent("titles", () => {
       stdout: "ignore",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
     const titles = stderr
       .split("\n")
       .filter(line => line.startsWith("(pass) "))
@@ -398,7 +398,7 @@ describe.concurrent("titles", () => {
       stdout: "ignore",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
     expect({
       titles: stderr
         .split("\n")
@@ -436,7 +436,7 @@ describe.concurrent("titles", () => {
       stdout: "ignore",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
     expect({ passed: stderr.split("\n").filter(line => line.startsWith("(pass) ")).length, exitCode }).toEqual({
       passed: 1,
       exitCode: 0,

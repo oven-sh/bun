@@ -398,20 +398,108 @@ describe.concurrent("--update-snapshots", () => {
     expect(result).toMatchObject({ snapshot: snap(entries), exitCode: 0 });
   });
 
-  test("--rerun-each keeps the entries of a skipped test that an imported module has", async () => {
-    const entries = snap({ "shared 1": `"s"`, "ran 1": `"r"` });
+  const unreadable =
+    header + '\n<<<<<<< ours\nexports[`b 1`] = `"ours"`;\n=======\nexports[`b 1`] = `"theirs"`;\n>>>>>>> theirs\n';
+
+  // Only the first run of a.test.ts in the process registers "shared": after it, shared.ts is in the module cache.
+  const both = snap({ "shared 1": `"s"`, "ran 1": `"r"` });
+  const ofB = snap({ "b 1": `"b"` });
+  test.each([
+    ["a.test.ts runs twice", `expect("r").toMatchSnapshot();`, both, ["./a.test.ts"], { "a.test.ts.snap": both }, 0],
+    [
+      "only the second run of a.test.ts takes a snapshot",
+      `if (globalThis.runs === 2) expect("r").toMatchSnapshot();`,
+      both,
+      ["./a.test.ts"],
+      { "a.test.ts.snap": both },
+      0,
+    ],
+    [
+      "a.test.ts runs again after another test file",
+      `expect("r").toMatchSnapshot();`,
+      both,
+      ["./a.test.ts", "./b.test.ts", "./a.test.ts"],
+      { "a.test.ts.snap": both, "b.test.ts.snap": ofB },
+      0,
+    ],
+    [
+      "a.test.ts runs again after another test file and its snapshot file does not parse",
+      `expect("r").toMatchSnapshot();`,
+      unreadable,
+      ["./a.test.ts", "./b.test.ts", "./a.test.ts"],
+      { "a.test.ts.snap": unreadable, "b.test.ts.snap": ofB },
+      1,
+    ],
+  ])(
+    "--rerun-each keeps the entries of a skipped test that an imported module has when %s",
+    async (_, ran, before, files, after, exitCode) => {
+      const result = await update(
+        {
+          "shared.ts": `import { expect, test } from "bun:test";
+            test.skip("shared", () => { expect("s").toMatchSnapshot(); });`,
+          "a.test.ts": `import "./shared";
+            import { expect, test } from "bun:test";
+            globalThis.runs = (globalThis.runs ?? 0) + 1;
+            test("ran", () => { ${ran} });`,
+          "b.test.ts": `import { expect, test } from "bun:test";
+            test("b", () => { expect("b").toMatchSnapshot(); });`,
+          "__snapshots__/a.test.ts.snap": before,
+        },
+        "--rerun-each=2",
+        ...files,
+      );
+      expect({ snapshots: result.snapshots, exitCode: result.exitCode }).toEqual({ snapshots: after, exitCode });
+    },
+  );
+
+  // The second "./a.test.ts" registers no test: a.test.ts is in the module cache. The hook of the preload file runs there.
+  test("keeps the entries of a test file that runs again when a preload hook takes a snapshot there", async () => {
+    const entries = snap({ "skipped 1": `"s"`, "(unnamed) 1": `"hook"` });
     const result = await update(
       {
-        "shared.ts": `import { expect, test } from "bun:test";
-          test.skip("shared", () => { expect("s").toMatchSnapshot(); });`,
-        "a.test.ts": `import "./shared";
-          import { expect, test } from "bun:test";
-          test("ran", () => { expect("r").toMatchSnapshot(); });`,
+        "preload.ts": `import { afterAll, expect } from "bun:test";
+          afterAll(() => { expect("hook").toMatchSnapshot(); });`,
+        "a.test.ts": `import { expect, test } from "bun:test";
+          test("ran", () => {});
+          test.skip("skipped", () => { expect("s").toMatchSnapshot(); });`,
         "__snapshots__/a.test.ts.snap": entries,
       },
-      "--rerun-each=2",
+      "--preload",
+      "./preload.ts",
+      "./a.test.ts",
+      "./a.test.ts",
     );
-    expect(result).toMatchObject({ snapshots: { "a.test.ts.snap": entries }, exitCode: 0 });
+    expect({ snapshots: result.snapshots, exitCode: result.exitCode }).toEqual({
+      snapshots: { "a.test.ts.snap": entries },
+      exitCode: 0,
+    });
+  });
+
+  // With --isolate the second "./a.test.ts" has a module cache of its own, so it registers every test again.
+  test("--isolate removes an unused entry when the test file runs again and its test passes", async () => {
+    const result = await update(
+      {
+        "a.test.ts": `import { expect, test } from "bun:test";
+          import { existsSync, writeFileSync } from "fs";
+          test("x", () => {
+            const isFirstRun = !existsSync("ran");
+            writeFileSync("ran", "");
+            if (isFirstRun) throw new Error("first run");
+            expect("x").toMatchSnapshot();
+          });`,
+        "b.test.ts": `import { expect, test } from "bun:test";
+          test("b", () => { expect("b").toMatchSnapshot(); });`,
+        "__snapshots__/a.test.ts.snap": snap({ "x 1": `"x"`, "x 2": `"unused"` }),
+      },
+      "--isolate",
+      "./a.test.ts",
+      "./b.test.ts",
+      "./a.test.ts",
+    );
+    expect({ snapshots: result.snapshots, exitCode: result.exitCode }).toEqual({
+      snapshots: { "a.test.ts.snap": snap({ "x 1": `"x"` }), "b.test.ts.snap": ofB },
+      exitCode: 1,
+    });
   });
 
   test("writes a new file in the order in which the tests run", async () => {
@@ -431,9 +519,6 @@ describe.concurrent("--update-snapshots", () => {
     );
     expect(result).toMatchObject({ snapshot: snap({ "a 1": `"a"`, "b 1": `"new"` }), exitCode: 0 });
   });
-
-  const unreadable =
-    header + '\n<<<<<<< ours\nexports[`b 1`] = `"ours"`;\n=======\nexports[`b 1`] = `"theirs"`;\n>>>>>>> theirs\n';
 
   // A todo with no body takes no snapshot, so the run has every entry without it.
   test("replaces a file that does not parse when test.only leaves out only a todo with no body", async () => {
@@ -470,6 +555,54 @@ describe.concurrent("--update-snapshots", () => {
     });
     // The snapshot of "a" is not in the file, so it does not count as added.
     expect(result.stderr).toContain("\n 1 snapshots, 1 expect() calls\n");
+  });
+
+  // No test has this error, and the run exits 1 for it. So the report has it as a failed test case of the test file.
+  test.each([[[]], [["--parallel=2"]]])("--reporter=junit has each file that does not parse (%j)", async args => {
+    const tests = `import { expect, test } from "bun:test";
+      test("a", () => { expect("a").toMatchSnapshot(); });
+      test.skip("b", () => { expect("b").toMatchSnapshot(); });`;
+    using dir = tempDir("update-snapshots-junit", {
+      "a.test.ts": tests,
+      "b.test.ts": tests,
+      "__snapshots__/a.test.ts.snap": unreadable,
+      "__snapshots__/b.test.ts.snap": unreadable,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--update-snapshots", "--reporter=junit", "--reporter-outfile=junit.xml", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await proc.exited;
+    const report = fs.readFileSync(join(String(dir), "junit.xml"), "utf8");
+    const failure =
+      /<testcase name="\(unhandled error\)"[^>]* file="([^"]*)"[^>]*>\s*<failure type="([^"]*)" message="([^"]*)"/g;
+    expect({ failures: Array.from(report.matchAll(failure), match => match.slice(1)).sort(), exitCode }).toEqual({
+      failures: ["a.test.ts", "b.test.ts"].map(name => [
+        name,
+        "Error",
+        `--update-snapshots left &quot;${join("__snapshots__", name + ".snap")}&quot; as it is: the file doesn&apos;t parse`,
+      ]),
+      exitCode: 1,
+    });
+    expect(report).toMatch(/<testsuites [^>]*\bfailures="2"/);
+  });
+
+  // The snapshot of the hook is not written, so it is in no count of the summary.
+  test("leaves a file that does not parse when a hook takes the only snapshot, and the summary has no line for it", async () => {
+    const result = await updateOne(
+      `afterAll(() => { expect("hook").toMatchSnapshot(); });
+       test("a", () => {});
+       test.skip("b", () => { expect("b").toMatchSnapshot(); });`,
+      unreadable,
+    );
+    expect(result).toMatchObject({
+      snapshot: unreadable,
+      stderr: expect.stringContaining("\n 1 pass\n 1 skip\n 0 fail\n 1 error\nRan 2 tests across 1 file. "),
+      exitCode: 1,
+    });
   });
 
   // No test asks the file for an entry, so the run has nothing to put in its place. The second file is not Bun's.

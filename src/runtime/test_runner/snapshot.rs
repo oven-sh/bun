@@ -148,6 +148,8 @@ pub(crate) struct Snapshots {
     values: StringArrayHashMap<Entry>,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
+    /// The test file that runs now ran before with the same module cache, so it can register fewer tests than it has.
+    pub(crate) runs_again: bool,
     inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
@@ -171,6 +173,7 @@ impl Snapshots {
             values: StringArrayHashMap::new(),
             counts: StringHashMap::new(),
             _current_file: None,
+            runs_again: false,
             inline_snapshots_to_write: IndexMap::new(),
             last_error_snapshot_name: None,
         }
@@ -418,7 +421,7 @@ impl Snapshots {
             pending: Pending::Nothing,
             loaded_len: contents.len(),
             unparsed,
-            keeps_all: false,
+            keeps_all: self.runs_again,
             may_hold_entries_of_bun,
         });
         Ok(format)

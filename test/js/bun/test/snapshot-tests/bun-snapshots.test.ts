@@ -166,15 +166,16 @@ describe("a snapshot file that bun test can't write", () => {
   });
 
   // No test changes the file here. The run removes entries from it after the tests of the file.
+  const twoWithUnused = {
+    "a.test.js": matches,
+    "b.test.js": matches,
+    "__snapshots__/a.test.js.snap": withUnused,
+    "__snapshots__/b.test.js.snap": withUnused,
+  };
   test.serial.each([[[]], [["--parallel=2"]]])(
     "--update-snapshots reports each file whose unused entries it can't remove (%j)",
     async args => {
-      using fixture = readOnly({
-        "a.test.js": matches,
-        "b.test.js": matches,
-        "__snapshots__/a.test.js.snap": withUnused,
-        "__snapshots__/b.test.js.snap": withUnused,
-      });
+      using fixture = readOnly(twoWithUnused);
       const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots", ...args);
       expect(stderr).toMatch(/^E(ACCES|PERM): /m);
       for (const name of ["a.test.js", "b.test.js"]) {
@@ -182,6 +183,27 @@ describe("a snapshot file that bun test can't write", () => {
       }
       expect(stderr).toContain(" 2 pass\n 0 fail\n 2 errors\n");
       expect([fixture.read("a.test.js"), fixture.read("b.test.js")]).toEqual([withUnused, withUnused]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // No test has this error, so the report has it as a failed test case of the test file.
+  test.serial.each([[[]], [["--parallel=2"]]])(
+    "--reporter=junit has each file whose unused entries --update-snapshots can't remove (%j)",
+    async args => {
+      using fixture = readOnly(twoWithUnused);
+      const reporter = ["--reporter=junit", "--reporter-outfile=junit.xml"];
+      const { exitCode } = await run(fixture.dir, "--update-snapshots", ...reporter, ...args);
+      const report = readFileSync(join(fixture.dir, "junit.xml"), "utf8");
+      const failure =
+        /<testcase name="\(unhandled error\)"[^>]* file="([^"]*)"[^>]*>\s*<failure type="([^"]*)" message="([^"]*)"/g;
+      expect(Array.from(report.matchAll(failure), match => match.slice(1)).sort()).toEqual(
+        ["a.test.js", "b.test.js"].map(name => [
+          name,
+          expect.stringMatching(/^E(ACCES|PERM)$/),
+          `Failed to remove the entries that no test uses from ${quoted(name).replaceAll('"', "&quot;")}`,
+        ]),
+      );
       expect(exitCode).toBe(1);
     },
   );

@@ -5012,7 +5012,10 @@ impl TestCommand {
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
-                if reporter.jest.snapshots.total > 0 {
+                let snapshots = &reporter.jest.snapshots;
+                // A snapshot that `--update-snapshots` did not write is in none of the three counts.
+                let has_counts = snapshots.passed + snapshots.failed + snapshots.added > 0;
+                if snapshots.total > 0 && (print_expect_calls || has_counts) {
                     let passed = reporter.jest.snapshots.passed;
                     let failed = reporter.jest.snapshots.failed;
                     let added = reporter.jest.snapshots.added;
@@ -5346,10 +5349,8 @@ impl TestCommand {
             FileSystem::get().top_level_dir(),
             file_path,
         ));
-        let file_id = jest::Jest::runner()
-            .unwrap()
-            .get_or_put_file(file_path)
-            .file_id;
+        let file = jest::Jest::runner().unwrap().get_or_put_file(file_path);
+        let file_id = file.file_id;
 
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
@@ -5382,6 +5383,9 @@ impl TestCommand {
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
                 reporter.jest.snapshots.reset_counts();
             }
+            // Only `--isolate` gives a test file that runs again a module cache of its own, and not for a repeat of `--rerun-each`.
+            reporter.jest.snapshots.runs_again =
+                repeat_index > 0 || (file.found_existing && !vm.test_isolation_enabled);
 
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
@@ -5565,22 +5569,39 @@ impl TestCommand {
                 {
                     reporter.jest.current_file.print_if_needed();
                     let top_level_dir = FileSystem::instance().top_level_dir();
-                    match left {
-                        LeftAsItIs::DoesNotParse(path) => pretty_error!(
-                            "<r><red>error<r>: --update-snapshots left {} as it is: the file doesn't parse\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. A test that is skipped, filtered out, test.failing or a todo with a body does not.\n<blue>note<r><d>:<r> Fix the snapshot file, or delete it and run --update-snapshots again.\n",
-                            bun_fmt::quote(resolve_path::relative(top_level_dir, &path))
-                        ),
-                        LeftAsItIs::NotWritable(err) => Output::err(
-                            &err,
-                            "Failed to remove the entries that no test uses from {}",
-                            (bun_fmt::quote(resolve_path::relative(
-                                top_level_dir,
-                                &err.path,
-                            )),),
-                        ),
-                    }
+                    let failure = match left {
+                        LeftAsItIs::DoesNotParse(path) => {
+                            let message = format!(
+                                "--update-snapshots left {} as it is: the file doesn't parse",
+                                bun_fmt::quote(resolve_path::relative(top_level_dir, &path))
+                            );
+                            pretty_error!(
+                                "<r><red>error<r>: {}\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. A test that is skipped, filtered out, test.failing or a todo with a body does not.\n<blue>note<r><d>:<r> Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+                                message
+                            );
+                            TestFailure {
+                                message: message.into_bytes(),
+                                ..Default::default()
+                            }
+                        }
+                        LeftAsItIs::NotWritable(err) => {
+                            let message = format!(
+                                "Failed to remove the entries that no test uses from {}",
+                                bun_fmt::quote(resolve_path::relative(top_level_dir, &err.path))
+                            );
+                            Output::err(&err, "{}", (&message,));
+                            TestFailure {
+                                name: err.name().to_vec(),
+                                message: message.into_bytes(),
+                                ..Default::default()
+                            }
+                        }
+                    };
                     Output::flush();
                     reporter.jest.unhandled_errors_between_tests += 1;
+                    if reporter.jest.test_options.reporters.junit {
+                        reporter.record_unhandled_error(buntest.file_id, failure);
+                    }
                 }
                 drop(buntest_strong);
             }

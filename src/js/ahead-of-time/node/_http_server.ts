@@ -10,10 +10,6 @@ const StreamPrototype = Stream.prototype;
 function PlainStream() {}
 $toClass(PlainStream, "PlainStream", Stream);
 const plainStream: any = new PlainStream();
-const DuplexPrototype = require("internal/streams/duplex").prototype;
-const ReadablePrototype = require("internal/streams/readable").prototype;
-const duplexResume = DuplexPrototype.resume;
-const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
 const { queueTick1, queueTick2, ticksAreUnhooked, ring } = require("internal/process/next_tick_queue");
 const kFlowing = 1 << 24;
@@ -150,6 +146,11 @@ const HEADER_SPILLED = 1 << 6;
 const HEADER_MAP_IS_MISSING = 1 << 7;
 const HEADER_UNUSUAL = HEADER_DATE | HEADER_CONNECTION | HEADER_KEEP_ALIVE | HEADER_TRANSFER_ENCODING | HEADER_SPILLED;
 const { FakeSocket } = require("internal/http/FakeSocket");
+// Loaded here, where the other text's FakeSocket loads Duplex: a test that replaced built-in functions sees the same calls.
+const DuplexPrototype = require("internal/streams/duplex").prototype;
+const ReadablePrototype = require("internal/streams/readable").prototype;
+const duplexResume = DuplexPrototype.resume;
+const duplexRemoveListener = DuplexPrototype.removeListener;
 const NumberIsNaN = Number.isNaN;
 
 const { IncomingMessage } = require("node:_http_incoming");

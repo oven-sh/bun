@@ -4226,6 +4226,46 @@ describe("bundler", () => {
     },
   });
 
+  // Early errors of the language in every mode. A bundle that contains one does not load.
+  itBundled("edgecase/SecondClassConstructorIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        export class A {
+          constructor() {}
+          constructor() {}
+        }
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ["Classes cannot contain more than one constructor"],
+    },
+  });
+  itBundled("edgecase/LabelThatRepeatsAnEnclosingLabelIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        outer: {
+          outer: console.log(1);
+        }
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Duplicate label "outer"'],
+    },
+  });
+  itBundled("edgecase/LabelThatRepeatsAnEnclosingLabelIsAnErrorWithoutBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        outer: for (;;) {
+          outer: for (;;) break outer;
+        }
+      `,
+    },
+    bundling: false,
+    bundleErrors: {
+      "/entry.js": ['Duplicate label "outer"'],
+    },
+  });
+
   // Without code splitting, each entry point gets its own output file, even when
   // entry points import each other. Each file runs its modules in the order that
   // its own entry point imports them, so it prints what the unbundled entry prints.

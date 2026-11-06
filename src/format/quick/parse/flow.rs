@@ -1123,10 +1123,11 @@ impl Quick {
             } else {
                 0
             };
-            // (of three names, the long way breaks the line before a `.` and drops `<>`; to it, `a.b<>` has no type arguments)
-            if (self.n.at(id) & 0xff) == k::QualifiedName
-                && ((self.n.at(self.n.at(id + 4)) & 0xff) == k::QualifiedName
-                    || (type_arguments != 0 && self.n.at(self.n.at(type_arguments + 4)) == 0))
+            // (of three names, the long way breaks the line before a `.`; behind the superclass of a declared class it drops `<>`, and to
+            // it `a.b<>` has no type arguments)
+            if (type_arguments != 0 && self.n.at(self.n.at(type_arguments + 4)) == 0)
+                || ((self.n.at(id) & 0xff) == k::QualifiedName
+                    && (self.n.at(self.n.at(id + 4)) & 0xff) == k::QualifiedName)
             {
                 return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
@@ -1151,6 +1152,10 @@ impl Quick {
         self.expect(tk::ParenR)?;
         self.expect(tk::Arrow)?;
         let return_type = self.flow_parse_return_type_of_function_type()?;
+        // (`hook () => A => B`: the long way does not break the parameters of what is returned)
+        if kind == k::HookTypeAnnotation && (self.n.at(return_type) & 0xff) == k::FunctionType {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
+        }
         return Ok(self.function_node(
             kind,
             start,
@@ -1465,6 +1470,7 @@ impl Quick {
 
     pub(crate) fn flow_parse_type_parameter(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
+        let comments = self.lexer.c_count;
         let mut flags: i32 = 0;
         if self.lexer.tok == tk::Const {
             self.not_in_babel()?;
@@ -1502,6 +1508,10 @@ impl Quick {
         }
         if variance != 0 || self.lexer.tok != tk::Name || self.lexer.tok_kw == kw::Enum {
             self.parse_flow.has_odd_type_parameter = true;
+        }
+        // between what stands in front of the name and the name: there is no node on either side
+        if self.lexer.c_count != comments {
+            return Err(self.rare(rare::COMMENT));
         }
         let name = self.parse_ident_name()?;
         let mut bound: i32 = 0;
@@ -1675,7 +1685,11 @@ impl Quick {
             impl_ = self.flow_parse_type_fresh()?;
         }
         // (the long way breaks the line before a `.`)
-        if self.is_reference_with_dots(supertype) || self.is_reference_with_dots(impl_) {
+        if self.is_reference_with_dots(supertype)
+            || self.is_reference_with_dots(impl_)
+            || self.is_reference_with_dots(lower)
+            || self.is_reference_with_dots(upper)
+        {
             return Err(self.rare(rare::UNLIKE_PRETTIER));
         }
         self.semicolon()?;

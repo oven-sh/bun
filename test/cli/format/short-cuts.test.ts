@@ -6907,6 +6907,15 @@ describe("programs that are read as written", () => {
         "x;\na < keyof \nb > (c);\ny;\n",
         "(...a?) => 1;\n",
         "(a, ...b ? ,) => 1\n",
+        // no type arguments, a comment in front of the name of a type parameter, the comment of a cast
+        "declare class A extends D<> {}\n",
+        "type A<in /* c */ T> = T;\n",
+        "type A<out /* c */ T> = T;\n",
+        "function f<const /* keep me */ T>(a: T) {}\n",
+        "opaque type A super T.U.V;\n",
+        "type A = hook () => T => X;\n",
+        "[].reduce(() => {\n  [];\n}, ([]: Array<>\n));\n",
+        "const a =\n  /** @type {X} */\n  (b);\n",
       ],
       [[], ["--print-width=10"]],
     ));

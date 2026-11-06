@@ -5253,11 +5253,15 @@ impl Quick {
         let start = self.lexer.tok_start;
         let is_operand = self.parse.is_operand;
         self.parse.is_operand = false;
-        let keep_parens = (self.parse.typed == 0 || self.mode.is_babel_flow)
+        let keep_parens = self.parse.typed != TYPED_TS
             && self.lexer.c_count > self.lexer.c_base
             && self.lexer.c.at((self.lexer.c_count - 1) * C_STRIDE + C_END) > self.lexer.prev_end
             && self.lexer.c.at((self.lexer.c_count - 1) * C_STRIDE + C_END) <= start
             && self.is_type_cast_comment(self.lexer.c_count - 1);
+        // (Flow's own parser has no node for the parentheses, so Prettier drops them; the long way keeps some)
+        if keep_parens && self.parse.typed == TYPED_FLOW && !self.mode.is_babel_flow {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
+        }
         self.next()?;
         let saved_no_in = self.parse.no_in;
         let saved_typed_item = self.parse.saw_typed_item;

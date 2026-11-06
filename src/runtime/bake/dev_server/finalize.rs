@@ -392,11 +392,20 @@ fn finalize_bundle_inner(
                 format_args!("Failed to generate CSS for this file ({})", err.name()),
             );
         }
-        if log.errors > 0 {
+        // A CSS module with a `composes` that cannot be followed fails the same way.
+        let failure = if log.errors > 0 {
+            Some(&log)
+        } else {
+            result
+                .css_module_errors
+                .iter()
+                .find_map(|(failed, log)| (*failed == index).then_some(log))
+        };
+        if let Some(log) = failure {
             let entry_key = entry_source.path.key_for_incremental_graph();
             dev.client_graph.insert_failure(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),
-                &log,
+                log,
             )?;
             let file_index = dev
                 .client_graph

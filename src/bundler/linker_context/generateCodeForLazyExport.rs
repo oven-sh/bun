@@ -58,11 +58,17 @@ pub(crate) fn populate_css_module_lazy_export(
                 // `BundledAst.css` SoA column.
                 all_css_asts: &'a [crate::bundled_ast::CssCol],
                 all_sources: &'a [Source<'a>],
+                all_loaders: &'a [bun_ast::Loader],
             }
 
             impl ComposesGraph for Graph<'_> {
                 fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet> {
                     self.all_css_asts[idx as usize].as_deref()
+                }
+
+                fn stylesheet_failed(&self, idx: IndexInt) -> bool {
+                    self.all_loaders[idx as usize].is_css()
+                        && self.all_css_asts[idx as usize].is_none()
                 }
 
                 fn source(&self, idx: IndexInt) -> &Source<'_> {
@@ -82,6 +88,7 @@ pub(crate) fn populate_css_module_lazy_export(
                 all_import_records: this.graph.ast.items_import_records(),
                 all_css_asts,
                 all_sources,
+                all_loaders: this.parse_graph().input_files.items_loader(),
             };
             let mut visitor = ComposesVisitor::new(&graph);
             let arena = this.arena();

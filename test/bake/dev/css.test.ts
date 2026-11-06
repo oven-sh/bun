@@ -1284,6 +1284,86 @@ devTest("css module with a composes of an unknown name is a build error", {
     await c.expectMessage("title:1");
   },
 });
+devTest("css module that composes from a stylesheet with a syntax error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "base.module.css": `
+      .base {
+        font-weight: 700;
+      }}
+    `,
+    "button.module.css": `
+      .btn {
+        composes: base from "./base.module.css";
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      console.log("btn:" + styles.btn.split(" ").length);
+    `,
+  },
+  async test(dev) {
+    // Only the stylesheet with the syntax error reports one.
+    await using c = await dev.client("/", {
+      errors: ["base.module.css:3:3: error: Unexpected end of input"],
+    });
+    // Fixing it bundles the file that composes from it again.
+    await c.expectReload(async () => {
+      await dev.write(
+        "base.module.css",
+        `
+          .base {
+            font-weight: 700;
+          }
+        `,
+      );
+    });
+    await c.expectMessage("btn:2");
+  },
+});
+devTest("css module with a composes error that the other file fixes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "base.module.css": `
+      #base {
+        font-weight: 700;
+      }
+    `,
+    "button.module.css": `
+      .btn {
+        composes: base from "./base.module.css";
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      console.log("btn:" + styles.btn.split(" ").length);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        'button.module.css:2:11: error: The composes property cannot be used with "base", because it is not a single class name.',
+      ],
+    });
+    await c.expectReload(async () => {
+      await dev.write(
+        "base.module.css",
+        `
+          .base {
+            font-weight: 700;
+          }
+        `,
+      );
+    });
+    await c.expectMessage("btn:2");
+  },
+});
 devTest("css module in a link tag with an initial syntax error gets recovered", {
   files: {
     "index.html": emptyHtmlFile({

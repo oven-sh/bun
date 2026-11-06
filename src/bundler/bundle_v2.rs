@@ -5956,24 +5956,13 @@ pub mod bv2_impl {
             .map_err(|_| AllocError)?;
 
             // This pipeline skips `generate_code_for_lazy_export`, so fill the class-name maps here.
+            let mut css_module_errors: Vec<(Index, bun_ast::Log)> = Vec::new();
             for source_index in &css_module_stubs {
                 let mut log = bun_ast::Log::init();
                 self.linker
                     .populate_css_module_lazy_export(source_index.get(), &mut log)?;
                 if log.has_errors() {
-                    // Treat a `composes` that cannot be followed like an invalid import.
-                    dev_server
-                        .handle_parse_task_failure(
-                            crate::Error::InvalidCssImport,
-                            bake::Graph::Client,
-                            self.graph.input_files.items_source()[source_index.get() as usize]
-                                .path
-                                .text,
-                            &raw const log,
-                            self,
-                        )
-                        .map_err(|_| AllocError)?;
-                    let _ = start.css_entry_points.swap_remove(source_index);
+                    css_module_errors.push((*source_index, log));
                 }
             }
 
@@ -6068,15 +6057,14 @@ pub mod bv2_impl {
                     .map_err(|_| AllocError)?;
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
             }
-            // A CSS module that failed above has no chunk. Its class-name module would clear the failure.
-            if css_module_stubs
-                .iter()
-                .any(|stub| !start.css_entry_points.contains(stub))
-            {
-                let failed = |source_index: u32| {
-                    let index = Index::init(source_index);
-                    css_module_stubs.contains(&index) && !start.css_entry_points.contains(&index)
-                };
+            // The class-name module of a CSS module that failed above would clear the failure.
+            let failed = |source_index: u32| {
+                let index = Index::init(source_index);
+                css_module_stubs.contains(&index)
+                    && (!start.css_entry_points.contains(&index)
+                        || css_module_errors.iter().any(|(failed, _)| *failed == index))
+            };
+            if css_module_stubs.iter().any(|stub| failed(stub.get())) {
                 let chunk::Content::Javascript(js) = &mut chunks[0].content else {
                     unreachable!()
                 };
@@ -6146,6 +6134,7 @@ pub mod bv2_impl {
                         chunks,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                         html_files,
+                        css_module_errors,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -8324,6 +8313,8 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk<'a>],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
+        /// Client CSS modules with a `composes` that cannot be followed. Each fails like a chunk that did not print.
+        pub css_module_errors: Vec<(Index, bun_ast::Log)>,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

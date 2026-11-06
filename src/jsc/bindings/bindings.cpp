@@ -6024,9 +6024,27 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
-template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
+using ForEachPropertyCallback = void (*)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol);
+
+enum class ForEachPropertyMode : uint8_t {
+    Enumerable,
+    // An own accessor is passed as what its getter returns, or as the accessor itself if the getter throws.
+    CallingOwnGetters,
+    // A non-enumerable property goes to `iterHidden`, in its place among the others. `%o` and `showHidden` ask for it.
+    WithHidden,
+};
+
+// The cell of an own accessor or lazy value of native code, if it has one. Out of line: its temporaries are in no frame of a walk of enumerable properties.
+static NEVER_INLINE bool ownCustomPropertyCell(JSC::VM& vm, JSC::JSObject* object, const JSC::Identifier& property, JSC::JSValue& cell)
 {
+    cell = object->getDirect(vm, property);
+    return !!cell;
+}
+
+template<bool nonIndexedOnly>
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, ForEachPropertyCallback iter, ForEachPropertyMode mode, ForEachPropertyCallback iterHidden = nullptr)
+{
+    const bool callOwnGetters = mode == ForEachPropertyMode::CallingOwnGetters;
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6142,7 +6160,7 @@ restart:
 
             JSC::JSValue propertyValue = JSValue();
             if (objectToUse == object) {
-                if (attributes & PropertyAttribute::DontEnum)
+                if ((attributes & PropertyAttribute::DontEnum) && mode != ForEachPropertyMode::WithHidden)
                     return;
                 propertyValue = ownValue();
                 if (!propertyValue)
@@ -6187,8 +6205,9 @@ restart:
             if (!propertyValue)
                 continue;
 
-            if (callOwnGetters) {
-                if (objectToUse == object && propertyValue.isGetterSetter()) {
+            auto deliver = iter;
+            if (mode != ForEachPropertyMode::Enumerable) {
+                if (callOwnGetters && objectToUse == object && propertyValue.isGetterSetter()) {
                     JSC::JSValue accessor = propertyValue;
                     propertyValue = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
                     if (scope.exception()) [[unlikely]] {
@@ -6196,6 +6215,8 @@ restart:
                             return;
                         propertyValue = accessor;
                     }
+                } else if (mode == ForEachPropertyMode::WithHidden && (snapshotted.attributes & PropertyAttribute::DontEnum)) {
+                    deliver = iterHidden;
                 }
             }
 
@@ -6207,7 +6228,7 @@ restart:
             if (isPrivate && (!JSC::Options::showPrivateScriptsInStackTraces() || vm.hasCompiledCode()))
                 continue;
 
-            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
+            deliver(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             // Propagate exceptions from callbacks.
             RETURN_IF_EXCEPTION(scope, );
         }
@@ -6254,6 +6275,7 @@ restart:
                     continue;
 
                 if constexpr (nonIndexedOnly) {
+                    // Node lists `[length]` for showHidden. The formatter prints the length of an array in no mode.
                     if (property == propertyNames->length) {
                         continue;
                     }
@@ -6268,15 +6290,20 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
+                        || property == propertyNames->toStringTagSymbol || (iterating != object && property == propertyNames->__esModule))
                         continue;
                 }
 
                 if (!visitedProperties.add(property.impl()).isNewEntry)
                     continue;
 
-                if (iterating == object && (slot.attributes() & PropertyAttribute::DontEnum))
-                    continue;
+                auto deliver = iter;
+                if (slot.attributes() & PropertyAttribute::DontEnum) {
+                    if (mode == ForEachPropertyMode::WithHidden)
+                        deliver = iterHidden;
+                    else if (iterating == object)
+                        continue;
+                }
 
                 EncodedSlice key = toEncodedSlice(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
 
@@ -6293,7 +6320,9 @@ restart:
                     } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
-                        propertyValue = slot.getValue(globalObject, property);
+                        // Only WithHidden passes an own one. To read it can create what it names: `console._stdout` opens the stream. Its cell is passed, which prints as an accessor.
+                        if (iterating != object || !ownCustomPropertyCell(vm, object, property, propertyValue))
+                            propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isValue()) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
@@ -6332,7 +6361,7 @@ restart:
                 if (isPrivate && (!JSC::Options::showPrivateScriptsInStackTraces() || vm.hasCompiledCode()))
                     continue;
 
-                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
+                deliver(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
 
                 // Propagate exceptions from callbacks.
                 RETURN_IF_EXCEPTION(scope, void());
@@ -6360,17 +6389,27 @@ restart:
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, false);
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, ForEachPropertyMode::Enumerable);
 }
 
 extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, false);
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, ForEachPropertyMode::Enumerable);
 }
 
 extern "C" void JSC__JSValue__forEachPropertyCallingOwnGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, true);
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, ForEachPropertyMode::CallingOwnGetters);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyWithHidden(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, ForEachPropertyCallback iter, ForEachPropertyCallback iterHidden)
+{
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, ForEachPropertyMode::WithHidden, iterHidden);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyNonIndexedWithHidden(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, ForEachPropertyCallback iter, ForEachPropertyCallback iterHidden)
+{
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, ForEachPropertyMode::WithHidden, iterHidden);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)

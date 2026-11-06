@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import util from "node:util";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -3790,6 +3791,48 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("inspect() should exist", () => {
         expect(Buffer.prototype.inspect).toBeInstanceOf(Function);
         expect(new Buffer("123").inspect()).toBe(Bun.inspect(new Buffer("123")));
+      });
+
+      it("inspect() lists the non-enumerable keys of its extra values for showHidden", () => {
+        const buf = Buffer.from("ab");
+        buf.prop = Object.defineProperty({ shown: 1 }, "hidden", { value: 2, enumerable: false });
+        Object.defineProperty(buf, "hiddenProp", { value: 7, enumerable: false });
+        const listed = "<Buffer 61 62, prop: { shown: 1, [hidden]: 2 }, hiddenProp: 7>";
+        const plain = "<Buffer 61 62, prop: { shown: 1 }>";
+        expect({
+          utilInspect: util.inspect(buf, { showHidden: true }),
+          utilFormat: util.format("%o", buf),
+          inspect: buf.inspect(2, { showHidden: true }),
+          utilInspectPlain: util.inspect(buf),
+          utilFormatPlain: util.format("%O", buf),
+          inspectPlain: buf.inspect(2, { showHidden: false }),
+        }).toEqual({
+          utilInspect: listed,
+          utilFormat: listed,
+          inspect: listed,
+          utilInspectPlain: plain,
+          utilFormatPlain: plain,
+          inspectPlain: plain,
+        });
+      });
+
+      it("inspect() prints a Buffer that one of its own values leads back to as [Circular]", () => {
+        const inItself = Buffer.from("a");
+        Object.defineProperty(inItself, "self", { value: inItself, enumerable: false });
+        const inAValue = Buffer.from("b");
+        inAValue.holder = { back: inAValue };
+        const twice = Buffer.from("c");
+        twice.first = Object.assign(Buffer.from("d"), { x: 1 });
+        twice.second = twice.first;
+        expect({
+          inItself: util.inspect(inItself, { showHidden: true }),
+          inAValue: util.inspect(inAValue),
+          twice: util.inspect(twice),
+        }).toEqual({
+          inItself: "<Buffer 61, self: [Circular]>",
+          inAValue: "<Buffer 62, holder: { back: [Circular] }>",
+          twice: "<Buffer 63, first: <Buffer 64, x: 1>, second: <Buffer 64, x: 1>>",
+        });
       });
 
       it("read alias", () => {

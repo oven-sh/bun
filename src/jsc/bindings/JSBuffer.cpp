@@ -50,6 +50,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include <wtf/SetForScope.h>
 #include <wtf/URL.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
@@ -97,8 +98,7 @@ extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
-// export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
-extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSC::JSValue value);
+extern "C" BunString Bun__inspect_singleline_show_hidden(Zig::GlobalObject* globalObject, JSC::JSValue value, bool showHidden);
 
 using namespace JSC;
 using namespace WebCore;
@@ -1913,6 +1913,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalOb
     return JSC::JSValue::encode(jsNumber(index));
 }
 
+// The Buffers whose extra values are being printed on this thread, innermost first. Each value is printed by a formatter of its own, which knows none of them.
+struct BufferBeingInspected {
+    JSArrayBufferView* buffer;
+    const BufferBeingInspected* outer;
+};
+static thread_local const BufferBeingInspected* s_bufferBeingInspected = nullptr;
+
 static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1947,11 +1954,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
 
     // Inspect special properties as well, if possible.
     if (ctx.toBoolean(globalObject)) {
-        auto showHidden = ctx.get(globalObject, Identifier::fromString(vm, "showHidden"_s));
+        auto showHiddenValue = ctx.get(globalObject, Identifier::fromString(vm, "showHidden"_s));
         RETURN_IF_EXCEPTION(scope, {});
         JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
-        auto filter = showHidden.toBoolean(globalObject) ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
+        const bool showHidden = showHiddenValue.toBoolean(globalObject);
+        auto filter = showHidden ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
 
         if (castedThis->hasNonReifiedStaticProperties()) [[unlikely]] {
             castedThis->reifyAllStaticProperties(globalObject);
@@ -1961,6 +1969,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (array.size() > 0) {
+            for (auto* outer = s_bufferBeingInspected; outer; outer = outer->outer) {
+                if (outer->buffer == castedThis)
+                    return JSValue::encode(jsNontrivialString(vm, "[Circular]"_s));
+            }
+            const BufferBeingInspected inspected { castedThis, s_bufferBeingInspected };
+            SetForScope innermost(s_bufferBeingInspected, &inspected);
+
             any = true;
             if (data.size() > 0) {
                 result.append(',');
@@ -1973,7 +1988,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 result.append(": "_s);
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto inspected = Bun__inspect_singleline(globalObject, value).transferToWTFString();
+                auto inspected = Bun__inspect_singleline_show_hidden(globalObject, value, showHidden).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);
                 i++;

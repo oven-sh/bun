@@ -40,14 +40,21 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
+// Mirrors `CustomInspectFlags` in src/jsc/ConsoleObject.rs.
+enum class CustomInspectFlag : uint8_t {
+    Colors = 1 << 0,
+    ShowHidden = 1 << 2,
+};
+
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedFunctionValue,
     JSC::EncodedJSValue encodedThisValue,
     unsigned depth,
     unsigned max_depth,
-    bool colors)
+    uint8_t rawFlags)
 {
+    auto flags = OptionSet<CustomInspectFlag>::fromRaw(rawFlags);
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
     auto& vm = JSC::getVM(globalObject);
@@ -57,10 +64,13 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
     if (WebCore::isInspectFunctionOfBuffer(functionToCall)) {
-        // Of its operands it reads `showHidden` of the second.
-        arguments.append(constructEmptyObject(globalObject));
+        // Of its operands it reads `showHidden` of the second, which has no prototype: only the formatter turns it on.
+        JSObject* options = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        if (flags.contains(CustomInspectFlag::ShowHidden)) [[unlikely]]
+            options->putDirect(vm, Identifier::fromString(vm, "showHidden"_s), jsBoolean(true));
+        arguments.append(options);
     } else {
-        JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
+        JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, flags.contains(CustomInspectFlag::Colors));
         RETURN_IF_EXCEPTION(scope, {});
         JSFunction* inspectFn = globalObject->utilInspectFunction();
         RETURN_IF_EXCEPTION(scope, {});

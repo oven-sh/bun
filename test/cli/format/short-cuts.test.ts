@@ -4332,6 +4332,8 @@ describe("JavaScript that is deep, long or full of comments", () => {
     // whether TypeScript without a name is tried with JSX first
     ["a.vue", '<script lang="ts">\nx = \'', "</b>", "';\n</script>\n", 5000],
     ["a.vue", '<script lang="ts">\n// ', "<a/> ", "\n</script>\n", 4000],
+    // what follows a `<<` on its line
+    ["a.ts", "x = [", "1 << 2, ", "];\n", 4000],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {

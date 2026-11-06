@@ -51,6 +51,9 @@ pub(crate) struct ParseTypescript {
     /// What ts_type_arguments_may_end() has found: between these two places there is no `>` behind which type arguments could have ended.
     pub(crate) no_end_from: i32,
     pub(crate) no_end_to: i32,
+    /// From the one to the other there is no `;` and no `>` in front of a `(`: what has been looked through behind a `<<`.
+    pub(crate) no_call_from: i32,
+    pub(crate) no_call_to: i32,
 }
 impl ParseTypescript {
     pub(crate) fn new() -> Self {
@@ -69,6 +72,8 @@ impl ParseTypescript {
             open_type_lists: 0,
             no_end_from: 0,
             no_end_to: 0,
+            no_call_from: 0,
+            no_call_to: 0,
         }
     }
 }
@@ -97,6 +102,8 @@ impl Quick {
         self.parse_typescript.open_type_lists = 0;
         self.parse_typescript.no_end_from = 0;
         self.parse_typescript.no_end_to = 0;
+        self.parse_typescript.no_call_from = 0;
+        self.parse_typescript.no_call_to = 0;
         self.flow_reset_context();
     }
 
@@ -2822,8 +2829,16 @@ impl Quick {
                 }
                 self.restore(saved);
                 // `a << b.c > (d)`: the same, with more that is missed
-                let mut p = self.lexer.tok_end;
+                let from = self.lexer.tok_end;
                 let is_one_token = self.lexer.tok == tk::Shl;
+                // (a line can have many of them)
+                let is_known = self.parse_typescript.no_call_from <= from
+                    && from <= self.parse_typescript.no_call_to;
+                let mut p = if is_known {
+                    self.parse_typescript.no_call_to
+                } else {
+                    from
+                };
                 loop {
                     let c = self.t.at(p);
                     if c == 0 || (c == 10 && is_one_token) || c == 59 {
@@ -2834,6 +2849,10 @@ impl Quick {
                     }
                     p += 1;
                 }
+                if !is_known {
+                    self.parse_typescript.no_call_from = from;
+                }
+                self.parse_typescript.no_call_to = p;
             }
         } else {
             self.unmark(m);

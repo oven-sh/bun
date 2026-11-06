@@ -275,11 +275,12 @@ bool JSAbortControllerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown
     return false;
 }
 
-void JSAbortControllerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSAbortControllerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsAbortController = static_cast<JSAbortController*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsAbortController->wrapped(), jsAbortController);
+    return FinalizeResult::KeepImpl;
 }
 
 void JSAbortController::finishCreation(VM& vm)

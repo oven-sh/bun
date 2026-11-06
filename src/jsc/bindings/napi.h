@@ -731,7 +731,7 @@ namespace Napi {
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     // Equivalent to v8impl::Ownership::kUserland
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 
     static NapiRefWeakHandleOwner& weakValueHandleOwner()
     {
@@ -743,7 +743,7 @@ public:
 class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     // Equivalent to v8impl::Ownership::kRuntime
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 
     static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
     {

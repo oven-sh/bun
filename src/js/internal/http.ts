@@ -645,12 +645,12 @@ export {
   queueEndCallback,
   redactInvalidProxyUrl,
   rethrowUncaught,
-  settleFlush,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
   setServerMaxHeadersCount,
+  settleFlush,
   tlsSymbol,
   utcDate,
 };

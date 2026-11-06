@@ -564,7 +564,7 @@ fn break_selector(
         }
         let (end, has_parens) = end_of_part(&flat, p);
         if from > 0 {
-            page.break_line(out, level + 1);
+            page.break_line(out, level + 1)?;
             column = (level + 1) * page.tab_width;
         }
         let is_last = end >= flat.len();
@@ -735,11 +735,8 @@ pub(super) fn read(
         p = skip(css, next + 1, BLANK);
         if !page.is_line_break(&css[next + 1..p], level) {
             out.extend_from_slice(&css[segment..next + 1]);
-            page.break_line(out, level);
+            page.break_line(out, level)?;
             segment = p;
-            if crate::is_too_long(out.len()) {
-                return None;
-            }
         }
     }
 }

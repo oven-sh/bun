@@ -1343,6 +1343,7 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     ["--print-width=100000"],
     ["--tab-width=0"],
     ["--tab-width=5000", "--print-width=20000"],
+    ["--tab-width=4294967295"],
     ["--use-tabs", "--tab-width=3"],
     ["--single-quote", "--trailing-comma=none"],
     ["--end-of-line=crlf"],
@@ -1375,6 +1376,13 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     const [short, long] = await Promise.all([run([]), run(["--no-short-cuts"])]);
     expect(short).toEqual(long);
   });
+
+  test.each(["a{b:c}\n", "a{b:c d,e f}\n", "a{b{}}\n"])(
+    "an indentation that is too long for a string is not written: %j",
+    async text => {
+      expect(await memoryInMegabytes("a.css", text, ["--tab-width=4294967295"])).toBeLessThan(2000);
+    },
+  );
 });
 
 /** Formats `files` with `options`, with and without short cuts, and returns what differs. */

@@ -71,11 +71,16 @@ impl Page {
             if indentation.len() == self.indentation_len(level) && indentation.iter().all(|it| *it == fill))
     }
 
-    /// Appends a line break and the indentation of `level` blocks.
-    pub(super) fn break_line(&self, out: &mut Vec<u8>, level: usize) {
+    /// Appends a line break and the indentation of `level` blocks. `None`, and nothing is appended, if the text is longer
+    /// with them than anything that's printed.
+    pub(super) fn break_line(&self, out: &mut Vec<u8>, level: usize) -> Option<()> {
+        let len = (out.len() + 1).saturating_add(self.indentation_len(level));
+        if crate::is_too_long(len) {
+            return None;
+        }
         out.push(b'\n');
-        let fill = if self.use_tabs { b'\t' } else { b' ' };
-        out.resize(out.len() + self.indentation_len(level), fill);
+        out.resize(len, if self.use_tabs { b'\t' } else { b' ' });
+        Some(())
     }
 }
 
@@ -162,12 +167,10 @@ impl Layout<'_> {
         self.out.push(byte);
     }
 
-    /// `None` once the text is longer than anything that's printed.
     fn break_line(&mut self, level: usize) -> Option<()> {
         self.is_at_start = false;
         self.has_line_breaks = true;
-        self.page.break_line(self.out, level);
-        (!crate::is_too_long(self.out.len())).then_some(())
+        self.page.break_line(self.out, level)
     }
 
     fn comment(&mut self, record: usize) {

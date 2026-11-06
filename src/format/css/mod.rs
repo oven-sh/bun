@@ -264,7 +264,17 @@ enum Way {
 
 /// What `quick` knows is what Prettier prints.
 fn takes_short_cuts(options: &FormatOptions) -> bool {
-    !options.no_short_cuts && !options.flavor.is_oxfmt() && options.tailwind.is_none()
+    // The printer makes the indentation of each line that could start in a statement, and fails if that's too long for a
+    // string, whether or not a line starts there. With a narrower indentation, a style sheet that's nested deeply enough
+    // for that is too long as a whole: `n` blocks in each other are indented by `n * n / 2` levels.
+    let level = match options.indent_style.is_tab() {
+        true => 1,
+        false => options.indent_width.value() as usize,
+    };
+    !options.no_short_cuts
+        && !options.flavor.is_oxfmt()
+        && options.tailwind.is_none()
+        && !crate::is_too_long(level << 16)
 }
 
 /// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`.

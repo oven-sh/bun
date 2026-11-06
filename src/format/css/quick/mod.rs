@@ -751,7 +751,10 @@ impl<'a> Parser<'a> {
         if has_empty_line {
             extra.push(b'\n');
         }
-        quick.page.break_line(extra, level);
+        if quick.page.break_line(extra, level).is_none() {
+            extra.truncate(mark);
+            (slot.joins, slot.can_run) = (false, false);
+        }
         slot.start = extra.len();
         slot
     }
@@ -847,7 +850,9 @@ impl<'a> Parser<'a> {
         match page.is_line_break(&self.css[gap.start..gap.end], level) {
             true => (self.texts.extra).extend_from_slice(&self.css[gap.start..at + 1]),
             false => {
-                page.break_line(&mut self.texts.extra, level);
+                if page.break_line(&mut self.texts.extra, level).is_none() {
+                    return Ok(());
+                }
                 self.texts.extra.push(b'}');
             }
         }

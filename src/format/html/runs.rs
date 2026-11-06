@@ -3253,7 +3253,12 @@ impl<'a> Scanner<'_, 'a> {
             let mut rest = text;
             while let Some(at) = bun_core::strings::index_of(rest, b"<script") {
                 rest = &rest[at + 7..];
-                let tag = &rest[..bun_core::strings::index_of_char_usize(rest, b'>').unwrap_or(0)];
+                let Some(end) = bun_core::strings::index_of_char_usize(rest, b'>') else {
+                    return false;
+                };
+                // Another one that starts before `end` ends there too, and has no more in it.
+                let tag;
+                (tag, rest) = rest.split_at(end);
                 if bun_core::strings::contains(tag, b"lang=\"ts\"")
                     || bun_core::strings::contains(tag, b"lang=\"typescript\"")
                 {

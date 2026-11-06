@@ -3395,6 +3395,13 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
     expect(short).toEqual(long);
   });
 
+  // 1 in a release build, and 60 when each `<script` looked for the `>` behind all of them.
+  test("whether the code is TypeScript is found out in one pass", async () => {
+    const count = isDebug || isASAN ? 16_000 : 64_000;
+    const text = `<template>\n  <div :a="b  +  c"></div>\n  <!-- ${"<script ".repeat(count)} -->\n</template>\n`;
+    expect(await slowdownByShortCuts("a.vue", text)).toBeLessThan(6);
+  });
+
   test("code in a file that is read from the bytes is formatted", async () => {
     const { short, long } = await bothWays(
       {

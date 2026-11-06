@@ -31,6 +31,12 @@ const thrownByImport = specifier =>
     error => error,
   );
 
+function enumerated(object) {
+  const keys = [];
+  for (const key in object) keys.push(key);
+  return keys;
+}
+
 describe("the error of a failed require()", () => {
   test("has own stack, message, code and requireStack", () => {
     const error = thrownByRequire();
@@ -52,11 +58,16 @@ describe("the error of a failed require()", () => {
     );
   });
 
-  test("is spread and copied with code and requireStack", () => {
+  test("is enumerated, spread and copied with code and requireStack", () => {
     const error = thrownByRequire();
     const own = { code: "MODULE_NOT_FOUND", requireStack: [file] };
+    assert.deepStrictEqual(enumerated(error), ["code", "requireStack"]);
     assert.deepStrictEqual({ ...error }, own);
     assert.deepStrictEqual(Object.assign({}, error), own);
+    // pino copies an error in this way, and serializes the copy.
+    const copy = {};
+    for (const key in error) copy[key] = error[key];
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(copy)), own);
   });
 
   test("takes what Rollup and Vite assign", () => {
@@ -104,12 +115,14 @@ describe("the error of a failed import()", () => {
     const error = await thrownByImport("package-that-does-not-exist");
     assert.ok(error instanceof Error);
     assert.deepStrictEqual(Object.getOwnPropertyDescriptor(error, "code"), data("ERR_MODULE_NOT_FOUND"));
+    assert.deepStrictEqual(enumerated(error), ["code"]);
     assert.strictEqual(error.message, `Cannot find package 'package-that-does-not-exist' imported from ${file}`);
   });
 
   test("of a node: builtin has the code ERR_UNKNOWN_BUILTIN_MODULE", async () => {
     const error = await thrownByImport("node:does-not-exist");
     assert.deepStrictEqual(Object.getOwnPropertyDescriptor(error, "code"), data("ERR_UNKNOWN_BUILTIN_MODULE"));
+    assert.deepStrictEqual(enumerated(error), ["code"]);
   });
 });
 

@@ -488,6 +488,10 @@ describe("own properties of a thrown ResolveMessage", () => {
       expect({ ...error }).toEqual(own);
       expect(Object.assign({}, error)).toEqual(own);
       expect(Object.entries(error)).toEqual(Object.entries(own));
+      // pino copies an error in this way, and serializes the copy.
+      const copy: Record<string, unknown> = {};
+      for (const key in error) copy[key] = error[key];
+      expect(JSON.parse(JSON.stringify(copy))).toEqual(own);
       expect(JSON.stringify(error)).toBe(
         JSON.stringify({
           name: "ResolveMessage",
@@ -517,6 +521,15 @@ describe("own properties of a thrown ResolveMessage", () => {
         code: "PLUGIN_ERROR",
       });
     });
+  });
+
+  it.each<[string, () => unknown, string[]]>([
+    ["require()", () => require(missing.file), ["code", "requireStack"]],
+    ["import()", () => import(missing.package), ["code"]],
+  ])("for...in over what %s throws gives the keys that Node.js gives", async (_, load, keys) => {
+    const enumerated: string[] = [];
+    for (const key in await thrownBy(load)) enumerated.push(key);
+    expect(enumerated).toEqual(keys);
   });
 
   it("util.inspect() prints the code", async () => {
@@ -560,6 +573,7 @@ describe("own properties of a thrown ResolveMessage", () => {
         ...Object.getOwnPropertyDescriptor(Error.prototype, "name"),
         value: kind,
       });
+      expect(Object.keys(prototype)).toEqual([]);
     });
   });
 
@@ -707,9 +721,12 @@ describe("own properties of a thrown ResolveMessage", () => {
     expect(logs).toHaveLength(1);
     const log: any = logs[0];
     expect(log).toBeInstanceOf(ResolveMessage);
-    expect({ code: log.code, keys: Reflect.ownKeys(log), json: Object.keys(log.toJSON()) }).toEqual({
+    const enumerated: string[] = [];
+    for (const key in log) enumerated.push(key);
+    expect({ code: log.code, keys: Reflect.ownKeys(log), enumerated, json: Object.keys(log.toJSON()) }).toEqual({
       code: "ERR_MODULE_NOT_FOUND",
       keys: [],
+      enumerated: [],
       json: ["name", "position", "message", "level", "specifier", "importKind", "referrer"],
     });
     expect(() => {

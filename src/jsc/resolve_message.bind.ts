@@ -7,8 +7,11 @@ const level = { ...cached, getter: b.any.returning("string") } as const;
 const position = { ...cached, getter: b.any.returning("object", "null") } as const;
 const coordinate = { getter: b.i32, pure: true } as const;
 
-/** Error.prototype in the chain: userland checks `err instanceof Error`. */
-const errorClass = { construct: "illegal", prototypeBase: "Error" } as const;
+/**
+ * Error.prototype in the chain: userland checks `err instanceof Error`. No member is enumerable, as on
+ * Error.prototype: userland copies an error with `for (key in err)`.
+ */
+const errorClass = { construct: "illegal", prototypeBase: "Error", enumerable: false } as const;
 const methods = {
   toJSON: { returns: b.any.returning("object"), ...js },
   toString: { returns: b.any.returning("string"), ...js },

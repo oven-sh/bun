@@ -91,5 +91,7 @@ if (isMainThread) {
   const { exec, dict } = require("python:builtins");
   // A worker that ends by itself waits for the threads that are no daemons, as a process does.
   if (workerData !== "no threads") exec(threads, dict([["daemon", workerData !== "terminated, not daemons"]]));
+  // A worker that is to be terminated does not end by itself meanwhile: terminate() is not heard once it has begun to.
+  if (workerData.startsWith("terminated")) parentPort!.on("message", () => {});
   parentPort!.postMessage("started");
 }

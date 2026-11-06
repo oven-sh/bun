@@ -123,11 +123,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StmtData::STsImportEquals(sr) if TYPESCRIPT => {
                 Self::s_ts_import_equals(p, stmts, stmt, &sr, was_after_after_const_local_prefix)
             }
-            // Only the TypeScript parser makes one.
-            StmtData::STsImportEquals(_) => unreachable!(),
 
-            // Only used by the bundler for lazy export ASTs.
-            StmtData::SLazyExport(_) => unreachable!(),
+            // `SLazyExport` is only used by the bundler for lazy export ASTs, and
+            // only the TypeScript parser makes an `STsImportEquals`.
+            StmtData::SLazyExport(_) | StmtData::STsImportEquals(_) => unreachable!(),
         }
     }
 

@@ -557,6 +557,7 @@ dependencies = [
  "bun_io",
  "bun_paths",
  "bun_ptr",
+ "bun_sema_standalone",
  "bun_wyhash",
  "strum",
  "thiserror",

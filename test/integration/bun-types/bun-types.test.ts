@@ -796,37 +796,45 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  const DOM_LIBS = ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"];
+
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("import.meta.glob", () => {
     // fixture/vite-client/client.d.ts also declares `ImportMeta.glob`, so it needs its own tsc program.
     // tsc loads the declarations in `files` order.
     test.each([
-      ["bun-types", ["bun-types.d.ts", "client.d.ts", "main.ts"]],
-      ["vite-client", ["client.d.ts", "bun-types.d.ts", "main.ts"]],
-    ])("has the type that vite/client declares when %s is loaded first", async (first, files) => {
-      const checkDir = join(TEMP_DIR, `import-meta-glob-check-${first}`);
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.files = files.map(file => `vite-client/${file}`);
-      tsconfig.compilerOptions.skipLibCheck = false;
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await cp(join(FIXTURE_SOURCE_DIR, "vite-client"), join(checkDir, "vite-client"), { recursive: true });
-      await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
-      await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+      ["bun-types", "without", ["bun-types.d.ts", "client.d.ts", "main.ts"], ["ESNext"]],
+      ["vite-client", "without", ["client.d.ts", "bun-types.d.ts", "main.ts"], ["ESNext"]],
+      ["bun-types", "with", ["bun-types.d.ts", "client.d.ts", "main.ts"], DOM_LIBS],
+      ["vite-client", "with", ["client.d.ts", "bun-types.d.ts", "main.ts"], DOM_LIBS],
+    ])(
+      "has the types that vite/client declares when %s is loaded first, %s lib.dom",
+      async (first, dom, files, lib) => {
+        const checkDir = join(TEMP_DIR, `import-meta-glob-check-${first}-${dom}-dom`);
+        const tsconfig = structuredClone(sourceTsconfig);
+        tsconfig.files = files.map(file => `vite-client/${file}`);
+        tsconfig.compilerOptions.lib = lib;
+        tsconfig.compilerOptions.skipLibCheck = false;
+        tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+        await cp(join(FIXTURE_SOURCE_DIR, "vite-client"), join(checkDir, "vite-client"), { recursive: true });
+        await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
+        await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+          env: bunEnv,
+          cwd: checkDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
-    });
+        expect(stderr.trim()).toBe("");
+        expect(stdout.trim()).toBe("");
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   // Runs on debug builds too, same as the Bun.mmap block above.
@@ -834,10 +842,14 @@ describe("@types/bun integration test", () => {
     // vite's node types declare `interface ViteRuntimeImportMeta extends ImportMeta { hot?: ViteHotContext }`.
     // With `skipLibCheck: false`, tsc checks that declaration against bun-types (#48015).
     // fixture/vite-client covers the other way vite declares `hot`: a global `interface ImportMeta` merge.
-    test("accepts vite's optional ViteHotContext on a subtype of ImportMeta", async () => {
-      const checkDir = join(TEMP_DIR, "import-meta-hot-check");
+    test.each([
+      ["without", ["ESNext"]],
+      ["with", DOM_LIBS],
+    ])("accepts vite's optional ViteHotContext on a subtype of ImportMeta %s lib.dom", async (name, lib) => {
+      const checkDir = join(TEMP_DIR, `import-meta-hot-check-${name}-dom`);
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.files = ["vite-runtime/bun-types.d.ts", "vite-runtime/vite.d.ts", "vite-runtime/main.ts"];
+      tsconfig.compilerOptions.lib = lib;
       tsconfig.compilerOptions.skipLibCheck = false;
       tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
       await cp(join(FIXTURE_SOURCE_DIR, "vite-runtime"), join(checkDir, "vite-runtime"), { recursive: true });

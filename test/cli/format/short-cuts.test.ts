@@ -4496,7 +4496,7 @@ describe("JavaScript that is deep, long or full of comments", () => {
           name,
           shapes
             .filter(shape => shape[0] === name)
-            .flatMap(shape => [1, 2, 3, 4, 40].map(count => textOf(shape, count))),
+            .flatMap(shape => [1, 2, 3, 4, 15, 16, 17, 18, 40].map(count => textOf(shape, count))),
           [[], ["--print-width=20"]],
         ),
       );

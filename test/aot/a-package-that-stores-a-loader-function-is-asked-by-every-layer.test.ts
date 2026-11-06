@@ -7,7 +7,8 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // A test is one command. A debug build of Bun takes two minutes for one and holds nearly two gigabytes for it, and bun:test
-// begins five tests at once there. Two at a time end within the limit of a test.
+// begins five tests at once there. Two at a time end within the limit of a test. bun:test takes this number over
+// `--max-concurrency`, which a test file cannot read: where two do not fit, lower it here.
 if (isDebug) vi.setConfig({ maxConcurrency: 2 });
 
 // A package keeps each call: the name that was asked for, and the file whose module object the function was handed.

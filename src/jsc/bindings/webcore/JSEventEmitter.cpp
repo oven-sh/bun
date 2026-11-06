@@ -312,13 +312,15 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_addOnceListener, (JSGlo
     return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_addOnceListenerBody>(*lexicalGlobalObject, *callFrame, "once");
 }
 
-// The limit is `this._maxListeners`, as in node:events. Neither function reads the listeners, so `this` is any value.
+// As in node:events, the limit is `this._maxListeners`, and no native emitter is made for `this`.
+// In a bare call `this` is the caller's scope object. toThis() converts it to undefined, which is what a strict JS callee sees.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_getMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue limit = callFrame->thisValue().get(lexicalGlobalObject, WebCore::builtinNames(vm)._maxListenersPublicName());
+    JSValue emitter = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
+    JSValue limit = emitter.get(lexicalGlobalObject, WebCore::builtinNames(vm)._maxListenersPublicName());
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!limit.isUndefined())
         return JSValue::encode(limit);
@@ -330,7 +332,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_setMaxListeners, (JSGlo
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue emitter = callFrame->thisValue();
+    JSValue emitter = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     JSValue limit = callFrame->argument(0);
     Bun::V::validateNumber(throwScope, lexicalGlobalObject, limit, "setMaxListeners"_s, jsNumber(0), jsUndefined());
     RETURN_IF_EXCEPTION(throwScope, {});

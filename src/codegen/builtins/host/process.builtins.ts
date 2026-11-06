@@ -527,7 +527,8 @@ export default b.declarations(
     "process",
     {
       _exiting: b.property(b.bool, { mutability: "ChangesOnItsOwn" }),
-      _maxListeners: b.property(b.union(b.f64, b.undefined), { mutability: "ChangesOnItsOwn" }),
+      // setMaxListeners stores a number here, and a program stores what it likes, also from code that the compiler does not see.
+      _maxListeners: b.property(b.any, { mutability: "ChangesOnItsOwn" }),
       ...declareEach(setByCommandLineFlag, b.property(b.union(b.bool, b.undefined), { mutability: "ChangesOnItsOwn" })),
       exit: endsProcessUnlessInWorker([formattedInErrorMessage]),
       reallyExit: replaceableFunction(calledWithExitCode, endsProcessUnlessInWorker(b.inspected)),

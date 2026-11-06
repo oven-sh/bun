@@ -43,7 +43,8 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
 
 EventEmitterPrototype.constructor = EventEmitter;
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414
+// Only a limit of undefined means the default: https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414
+// Unlike node, an emitter that is missing answers the default too.
 function _getMaxListeners(emitter) {
   const limit = emitter?._maxListeners;
   return limit === undefined ? defaultMaxListeners : limit;

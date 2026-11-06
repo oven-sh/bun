@@ -1030,6 +1030,18 @@ test("getMaxListeners answers a limit of null", () => {
   expect(emitter.getMaxListeners()).toBe(10);
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L586-L587: the add path reads the limit through the same helper.
+test("a limit of null is no limit when listeners are added", () => {
+  const emitter = new EventEmitter() as EventEmitter & { _maxListeners: unknown; _events: Record<string, object> };
+  emitter._maxListeners = null;
+  for (let i = 0; i < 11; i++) emitter.on("added", () => {});
+  for (let i = 0; i < 11; i++) emitter.prependListener("prepended", () => {});
+  expect([Object.hasOwn(emitter._events.added, "warned"), Object.hasOwn(emitter._events.prepended, "warned")]).toEqual([
+    false,
+    false,
+  ]);
+});
+
 test("setMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);
@@ -1251,6 +1263,8 @@ test("the native setMaxListeners and getMaxListeners keep the limit on their rec
        out.frozen = [native.getMaxListeners.call(frozen), thrownBy(() => native.setMaxListeners.call(frozen, 2))];
        out.number = [native.getMaxListeners.call(5), thrownBy(() => native.setMaxListeners.call(5, 2))];
        out.undefined = [thrownBy(() => native.getMaxListeners.call(undefined)), thrownBy(() => native.setMaxListeners.call(undefined, 2))];
+       const { getMaxListeners, setMaxListeners } = native;
+       out.bare = [thrownBy(() => getMaxListeners()), thrownBy(() => setMaxListeners(2))];
        out.process = [process.getMaxListeners(), Object.hasOwn(process, "_maxListeners"), process._maxListeners === undefined];
        console.log(JSON.stringify(out));`,
     ],
@@ -1277,6 +1291,8 @@ test("the native setMaxListeners and getMaxListeners keep the limit on their rec
     "frozen": [10, "TypeError"],
     "number": [10, "TypeError"],
     "undefined": ["TypeError", "TypeError"],
+    // Called through a variable, the two functions have no `this`.
+    "bare": ["TypeError", "TypeError"],
     "process": [10, true, true],
   });
   expect(exitCode).toBe(0);

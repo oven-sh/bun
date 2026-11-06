@@ -174,13 +174,16 @@ describe("bundler", () => {
         const e = new EventEmitter();
         e._maxListeners = null;
         console.log(String(e.getMaxListeners()), String(getMaxListeners(e)));
+        for (let i = 0; i < 11; i++) e.on("added", () => {});
+        for (let i = 0; i < 11; i++) e.prependListener("prepended", () => {});
+        console.log(String(e._events.added.warned), String(e._events.prepended.warned));
         e._maxListeners = undefined;
         console.log(e.getMaxListeners(), getMaxListeners(e));
       `,
     },
     target: "browser",
     run: {
-      stdout: "null null\n10 10",
+      stdout: "null null\nundefined undefined\n10 10",
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {

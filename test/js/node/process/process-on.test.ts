@@ -205,7 +205,47 @@ describe.concurrent("process max listeners", () => {
   ])("events.defaultMaxListeners reaches process when the global `process` is %s", async how => {
     // For `defaultMaxListeners = 5` and then `setMaxListeners(6)`: [what it threw, the default, getMaxListeners() of the
     // real process, events.getMaxListeners() of it]
-    await expectScenario(["replacedGlobal", how], [null, 5, 5, 5, null, 6, 6, 6]);
+    await expectScenario(["replacedGlobal", how, "loaded"], [null, 5, 5, 5, null, 6, 6, 6]);
+  });
+
+  it.each(["undefined", "an object", "a Proxy of process", "deleted"])(
+    "events.defaultMaxListeners reaches process when the global `process` is %s before node:events is loaded",
+    async how => {
+      await expectScenario(["replacedGlobal", how, "replaced"], [null, 5, 5, 5, null, 6, 6, 6]);
+    },
+  );
+
+  it("a call through a variable has no `this`: it throws and stores nothing", async () => {
+    await expectScenario(["bareCall"], {
+      // [getMaxListeners(), setMaxListeners(2)] through a local and through a global
+      captured: ["TypeError", "TypeError"],
+      byGlobalName: ["TypeError", "TypeError"],
+      // [a variable of the caller named _maxListeners, typeof globalThis._maxListeners, process._maxListeners]
+      stored: ["a variable of the caller", "undefined", "undefined"],
+    });
+  });
+
+  it("setMaxListeners() refuses a count before it reads or writes its receiver", async () => {
+    await expectScenario(["refusedBeforeReceiver"], {
+      // receivers undefined, null, 5, a frozen object (twice), an accessor and a Proxy, then three calls through a variable
+      refused: [
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_OUT_OF_RANGE",
+        "ERR_OUT_OF_RANGE",
+        "ERR_OUT_OF_RANGE",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_OUT_OF_RANGE",
+      ],
+      // which accessors and traps of the receivers ran
+      ranForRefused: "",
+      accepted: "from the setter",
+      ranForAccepted: "set",
+      extraArguments: true,
+    });
   });
 
   // Not node, where process is an emitter of node:events: here the two functions are native and do not load the module.

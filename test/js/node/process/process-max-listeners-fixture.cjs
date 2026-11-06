@@ -1,7 +1,6 @@
 // Runs one scenario and prints what it returns as JSON. process-on.test.ts holds what node v26.3.0 prints for each.
 //   node process-max-listeners-fixture.cjs <scenario> [argument]
 const real = process;
-const write = real.stdout.write.bind(real.stdout);
 const events = () => require("node:events");
 const shown = value => {
   if (Object.is(value, -0)) return "-0";
@@ -141,9 +140,65 @@ const scenarios = {
     );
   },
 
+  // Called through a variable, neither function has a `this`: node throws a TypeError, and nothing is stored anywhere.
+  bareCall() {
+    const { getMaxListeners, setMaxListeners } = process;
+    globalThis.getLimit = getMaxListeners;
+    globalThis.setLimit = setMaxListeners;
+    let _maxListeners = "a variable of the caller";
+    const named = fn => thrownBy(fn)?.[0];
+    return {
+      captured: [named(() => getMaxListeners()), named(() => setMaxListeners(2))],
+      // eslint-disable-next-line no-undef
+      byGlobalName: [named(() => getLimit()), named(() => setLimit(2))],
+      stored: [_maxListeners, typeof globalThis._maxListeners, shown(process._maxListeners)],
+    };
+  },
+
+  // A count that setMaxListeners refuses is refused before the receiver is read or written.
+  refusedBeforeReceiver() {
+    const { setMaxListeners } = process;
+    const ran = [];
+    const withAccessor = {
+      get _maxListeners() {
+        ran.push("get");
+        return 1;
+      },
+      set _maxListeners(value) {
+        ran.push("set");
+        throw new Error("from the setter");
+      },
+    };
+    const proxy = new Proxy({}, { get: () => ran.push("trap get"), set: () => ran.push("trap set") });
+    const code = fn => thrownBy(fn)?.[1];
+    const refused = [
+      code(() => setMaxListeners.call(undefined, "x")),
+      code(() => setMaxListeners.call(null, -1)),
+      code(() => setMaxListeners.call(5, NaN)),
+      code(() => setMaxListeners.call(Object.freeze({}), -1)),
+      code(() => setMaxListeners.call(Object.freeze({}))),
+      code(() => setMaxListeners.call(withAccessor, "1")),
+      code(() => setMaxListeners.call(proxy, 1n)),
+      code(() => setMaxListeners("x")),
+      code(() => setMaxListeners()),
+      code(() => setMaxListeners(-1)),
+    ];
+    const ranForRefused = ran.join();
+    // A count that is accepted reaches the receiver, and more arguments than one are ignored.
+    const accepted = thrownBy(() => setMaxListeners.call(withAccessor, 1, "more"))?.[2];
+    return {
+      refused,
+      ranForRefused,
+      accepted,
+      ranForAccepted: ran.join(),
+      extraArguments: process.setMaxListeners(3, "more", {}) === process,
+    };
+  },
+
   // node:events hands its default to the process object itself, whatever the global `process` is by then.
-  replacedGlobal(how) {
-    const nodeEvents = events();
+  // `order` says which comes first: "loaded" (node:events is evaluated, then the global is replaced) or "replaced".
+  replacedGlobal(how, order) {
+    let nodeEvents = order === "loaded" ? events() : undefined;
     const replace = {
       "undefined": () => (globalThis.process = undefined),
       "null": () => (globalThis.process = null),
@@ -157,6 +212,7 @@ const scenarios = {
       "not extensible": () => Object.preventExtensions(real),
     };
     replace[how]();
+    nodeEvents ??= events();
     const out = [];
     for (const writeDefault of [() => (nodeEvents.defaultMaxListeners = 5), () => nodeEvents.setMaxListeners(6)]) {
       out.push(
@@ -171,4 +227,7 @@ const scenarios = {
   },
 };
 
-Promise.resolve(scenarios[real.argv[2]](real.argv[3])).then(out => write(JSON.stringify(out) + "\n"));
+// The first read of process.stdout evaluates node:events: it is read after the scenario.
+Promise.resolve(scenarios[real.argv[2]](...real.argv.slice(3))).then(out =>
+  real.stdout.write(JSON.stringify(out) + "\n"),
+);

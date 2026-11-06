@@ -330,8 +330,7 @@ void HostClient::handleReply(const Frame& h, Reader r)
         bool endsNavigation = r.u8() != 0;
         view->m_url = url;
         view->m_title = title;
-        // A same-document commit of the page's own (pushState) can land while
-        // the view's navigation loads. Only that navigation's end clears it.
+        // A pushState of the page's own can land while the view's navigation loads; only that navigation's end clears it.
         if (endsNavigation || !view->m_pendingNavigate) view->m_loading = false;
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),

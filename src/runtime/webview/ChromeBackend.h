@@ -235,13 +235,11 @@ enum class Method : uint8_t {
     // User-facing ops — responses settle (or errors reject) a slot.
     PageNavigate,
     PageReload,
-    // Chained from the commit that ends the view's navigation:
-    // Runtime.evaluate("document.title") → set m_title, settle Navigate.
-    // Makes `await navigate(); view.title` work like WKWebView (which packs
-    // title in NavDone).
+    // Chained from the commit that ends a navigation: Runtime.evaluate("document.title")
+    // → set m_title, settle Navigate. Makes `await navigate(); view.title`
+    // work like WKWebView (which packs title in NavDone).
     PageTitle,
-    // The same fetch after a load the view did not ask for (the page's own
-    // link, a redirect): sets m_title and settles nothing.
+    // The same fetch after a load the view did not ask for: sets m_title, settles nothing.
     PageTitleRefresh,
     // goBack/goForward chain: getNavigationHistory → navigateToHistoryEntry.
     // The first picks entries[currentIndex + delta].id; the second navigates.

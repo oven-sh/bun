@@ -87,20 +87,13 @@ public:
     WTF::String m_url;
     WTF::String m_title;
     bool m_loading = false;
-    // Chrome: which commit ends the navigation in the Navigate slot. All clear
-    // when it settles. A same-document commit (Page.navigatedWithinDocument)
-    // ends a #fragment navigate() or a traversal onto such an entry. A load
-    // event ends a document load, once its own commit (Page.frameNavigated)
-    // has been seen. A commit that arrives with neither bit set is the page's own.
+    // Chrome: which commit ends the navigation in the slot; all clear when it settles. A commit with no bit set is the page's own.
     bool m_chromeSettleOnSameDocument = false;
     bool m_chromeSettleOnLoad = false;
     bool m_chromeNavigationCommitted = false;
-    // Chrome: the document's own load ended after a same-document reply, so
-    // the Page.frameStoppedLoading that follows is that load's end, not a
-    // cancelled navigation.
+    // Chrome: the document's own load ended after a same-document reply, so the next Page.frameStoppedLoading is not a cancellation.
     bool m_chromeFrameStopIsLoadEnd = false;
-    // Chrome: the URL of the history entry a goBack()/goForward() asked for.
-    // A same-document commit elsewhere is the page's own.
+    // Chrome: the URL of the entry goBack()/goForward() asked for; a same-document commit elsewhere is the page's own.
     WTF::String m_chromeTraversalUrl;
 
     // Chrome session state. Empty until the Target.createTarget →

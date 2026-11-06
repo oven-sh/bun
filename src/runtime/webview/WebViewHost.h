@@ -59,9 +59,7 @@ public:
     void onNavigationFinished();
     // webView:didStartProvisionalNavigation: — a document load began.
     void onProvisionalNavigationStarted();
-    // _webView:navigation:didSameDocumentNavigation: (a #fragment change,
-    // pushState, replaceState, or a history traversal within the document).
-    // type is a _WKSameDocumentNavigationType.
+    // _webView:navigation:didSameDocumentNavigation:, type is a _WKSameDocumentNavigationType.
     void onSameDocumentNavigation(long type);
     void onNavigationFailed(const WTF::String& err);
     void onEvalComplete(id result, id error);
@@ -85,8 +83,7 @@ private:
     // (INVALID_STATE on overlap), and the block correlation in ObjCRuntime
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
-    // A document load started since navigateIPC: the navigation is not a
-    // same-document one, so didFinishNavigation: ends it.
+    // A document load started since navigateIPC, so didFinishNavigation: ends the navigation.
     bool m_navProvisional = false;
     bool m_evalPending = false;
     bool m_screenshotPending = false;

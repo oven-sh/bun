@@ -697,10 +697,7 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
 // Sending the event first means both are in the same onData batch, processed
 // in order, callback fires before the promise microtask runs.
 
-// NavEvent is unsolicited — fires for back()/forward()/reload() and the page's
-// own commits too, which don't set m_navPending. The parent updates url/title
-// and runs onNavigated from NavEvent; its trailing byte says whether this is
-// the end of the navigate() in the slot, which the NavDone then resolves.
+// NavEvent for every commit; its trailing byte says whether the navigate() in the slot ends here, and NavDone follows then.
 void WebViewHost::reportNavigation(bool endsNavigation)
 {
     auto payload = pack2(url(), title());
@@ -715,14 +712,7 @@ void WebViewHost::onNavigationFinished() { reportNavigation(m_navPending); }
 
 void WebViewHost::onProvisionalNavigationStarted() { m_navProvisional = true; }
 
-// A same-document navigation gets no didFinishNavigation:. WebKit reports every
-// one of them as SessionStatePop (FrameLoader::loadInSameDocument), and the
-// only AnchorNavigation it sends follows that report for the same URL, so the
-// anchor report is dropped. SessionStatePush and SessionStateReplace are the
-// page's own history.pushState()/replaceState(). A report ends the pending
-// navigate() only while no document load has started for it: a document that
-// changes its own #fragment as it loads reports SessionStatePop too, and its
-// didFinishNavigation: ends the navigation.
+// WebKit reports every same-document navigation as SessionStatePop (AnchorNavigation follows it for the same URL); Push/Replace are the page's own; a report ends the navigate() only before a document load started for it.
 void WebViewHost::onSameDocumentNavigation(long type)
 {
     constexpr long anchorNavigation = 0;

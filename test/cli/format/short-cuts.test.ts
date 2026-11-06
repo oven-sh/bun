@@ -6084,6 +6084,13 @@ describe("what the quick way for scripts is asked about, and what is done around
       ["a.ts", "--print-width=21", "a=a.b(f).c(()=>{e},[a,b,c,d,e,f])\n"],
       ["a.ts", "--print-width=21", "x={a:a.b(f).c(()=>{e},[a,b,c,d,e,f])}\n"],
       ["a.ts", "--print-width=21", "a.b(f).c(()=>{e},[a,b,c,d,e,f])\n"],
+      // The other short cut for scripts. A block comment with a `;` behind it doesn't end its line, so it's printed on the line of the
+      // statement that follows, which doesn't start where its line does.
+      ["a.ts", "--print-width=14", "{/**/;\nd(()=>(b?e:x()))\nexport default a?[function(){}]:o}\n"],
+      ["a.js", "--print-width=14", "{/**/;\nd(()=>(b?e:x()))\n}\n"],
+      ["a.js", "--print-width=14", "{/**/;\n\n;\nd(()=>(b?e:x()))\n}\n"],
+      ["a.js", "--print-width=14", "{/**/\nd(()=>(b?e:x()))\n}\n"],
+      ["a.js", "--print-width=18", "{/**/;\nx = d(()=>(b?e:x()))\n}\n"],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

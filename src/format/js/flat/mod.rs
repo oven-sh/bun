@@ -474,12 +474,18 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
 
 /// True if a block comment is before what starts at `start` on its line, so that it doesn't start where its line does.
 /// A `;` between the two is an empty statement, which isn't printed. A comment before the `:` of a `case` is printed behind it.
+/// `/* a */;⏎b`: the comment doesn't end its line, so it's printed on the line of what follows, wherever that is.
 fn is_after_block_comment(source: &[u8], start: u32) -> bool {
     let mut before = source.get(..start as usize).unwrap_or_default();
-    while let [rest @ .., b' ' | b'\t' | b';' | b':' | 0x0B | 0x0C | 0x80..] = before {
-        before = rest;
+    let mut ends_line = false;
+    loop {
+        (before, ends_line) = match before {
+            [rest @ .., b' ' | b'\t' | 0x0B | 0x0C | 0x80..] => (rest, ends_line),
+            [rest @ .., b';' | b':'] => (rest, false),
+            [rest @ .., b'\n' | b'\r'] => (rest, true),
+            _ => return !ends_line && before.ends_with(b"*/"),
+        };
     }
-    before.ends_with(b"*/")
 }
 
 /// By how much the text buffer of a [`Line`] is longer than what's written to it.

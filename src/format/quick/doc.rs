@@ -1427,6 +1427,8 @@ impl Quick {
     }
 
     pub(crate) fn rollback(&mut self, s: i32) {
+        // (whoever calls this goes on, and is told at the next node)
+        let _ = self.waste(self.doc.d_pos - self.doc.es.at(s));
         self.doc.es_pos = s;
         self.doc.d_pos = self.doc.es.at(s);
         self.doc.prop_count = self.doc.es.at(s + 1);
@@ -1546,13 +1548,15 @@ impl Quick {
         self.doc.cache_log_pos += 1;
     }
 
+    /// Forgets the docs that were kept since the log was as long as `to`: they are gone. That there is no doc for a key (-1) stays known: it says something about the
+    /// tree. Otherwise a template that its guest cannot read, in a template that its guest cannot read, and so on, is tried twice at every level.
     pub(crate) fn cache_undo(&mut self, to: i32) {
         while self.doc.cache_log_pos > to {
             self.doc.cache_log_pos -= 1;
-            self.doc.cache.put(
-                self.cache_slot(self.doc.cache_log.at(self.doc.cache_log_pos)) + 1,
-                0,
-            );
+            let slot = self.cache_slot(self.doc.cache_log.at(self.doc.cache_log_pos)) + 1;
+            if self.doc.cache.at(slot) > 0 {
+                self.doc.cache.put(slot, 0);
+            }
         }
     }
 }

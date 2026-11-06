@@ -4609,6 +4609,20 @@ describe("scripts that are too much for the quick way", () => {
         [40, 300].map(depth => `// @flow\n${nest("<T>(a = ", "1", ")", depth)}`),
         [[]],
       ));
+    // A template that its guest cannot read is printed as it is, with what is between its braces printed once more.
+    const templates = (tag: string, text: string, depth: number) =>
+      `x = ${`${tag}\`${text}\${`.repeat(depth)}1${"}`".repeat(depth)};\n`;
+    describe("templates", () =>
+      expectSame(
+        "a.js",
+        [30, 200].flatMap(depth => [
+          templates("html", "</b>", depth),
+          templates("css", "}", depth),
+          templates("gql", "}", depth),
+          templates("markdown", "", depth),
+        ]),
+        [[]],
+      ));
   });
 
   describe("escapes beyond the last character", () =>

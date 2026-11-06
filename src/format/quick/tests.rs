@@ -6,6 +6,8 @@ use crate::{
     grow, has_lost_something, larger, lose, why,
 };
 use bun_sema_standalone as _;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What is printed, or why nothing is.
 fn print_with(
@@ -277,4 +279,41 @@ fn a_trial_in_a_trial_is_not_tried_twice() {
     assert!(printed.is_ok());
     // (the square of the depth, not a power of two)
     assert!(scratch.wasted < 30 * 30 * 32);
+}
+
+/// Stands for a formatter that finds a syntax error in every text.
+struct ReadsNothing {
+    asked: Arc<AtomicUsize>,
+}
+
+impl Guests for ReadsNothing {
+    fn knows(&self, _: Guest) -> bool {
+        true
+    }
+
+    fn format<'q>(&mut self, _: Guest, _: &'q [u8], _: &mut Sink<'q>) -> Answer {
+        self.asked.fetch_add(1, Ordering::Relaxed);
+        Answer::NotRead
+    }
+}
+
+#[test]
+fn a_template_that_its_guest_cannot_read_is_tried_once() {
+    let depth = 20;
+    let text = [
+        &b"x = "[..],
+        &b"css`a${".repeat(depth),
+        b"1",
+        &b"}`".repeat(depth),
+        b";\n",
+    ]
+    .concat();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let mut scratch = Quick::new();
+    scratch.lend_guests(Some(Box::new(ReadsNothing {
+        asked: asked.clone(),
+    })));
+    let printed = print_with(&mut scratch, "a.js", &text, &Options::default());
+    assert_eq!(printed.as_deref(), Ok(&text[..]));
+    assert_eq!(asked.load(Ordering::Relaxed), depth);
 }

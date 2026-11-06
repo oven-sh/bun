@@ -1,0 +1,56 @@
+status: 0
+script: 8b2ea4d8727a4e6d
+---
+a writer over a raw file of the program: status 0: end: Raw.write b'xyz' Raw.close
+text over a writer over a raw file of the program: status 0: end: Raw.write b'xyz' Raw.close
+a writer of the program over a raw file of the program: status 0: end: Writer.close Writer.flush Raw.write b'xyz' Raw.close
+a writer over a plain object over a file: status 0: end: written
+the raw file has a name too, and the earlier one: status 0: end: Raw.close
+three, one in the other: status 0: end: holder child grandchild
+six, one in the other: status 0: end: 0 1 2 3 4 5
+two names: status 0: end: a b
+the name of the child is deleted: status 0: end: holder child
+the child has a name: status 0: end: child holder
+the child has a name and was made later: status 0: end: holder child
+three names, each holds the one before: status 0: end: g c h
+a cycle of two: status 0: end: a b
+a cycle of two, and what hangs off it: status 0: end: a b child
+a cycle of holder and child, entered at the holder: status 0: end: holder child
+a cycle of three, entered at the youngest: status 0: end: c b a
+a cycle of three, entered in the middle: status 0: end: b a c
+a cycle of three, entered at two: status 0: end: a c b
+a writer and a raw file that knows its writer: status 0: end: Raw.write b'xyz' Raw.close
+what hangs off the cycle of a class: status 0: end: holder child
+text over a writer over a raw file that knows the text: status 0: end: Raw.write b'xyz' Raw.close
+a chain with links both ways, entered at the youngest: status 0: end: n3 n2 n1
+a chain with links both ways, entered at the oldest: status 0: end: n1 n2 n3
+a tree with links to the parent, children made first: status 0: end: p a b
+a tree with links to the parent, parent made first: status 0: end: p a b
+what hangs off a cycle of two, entered at the younger: status 0: end: b a below a below that
+a cycle that a holder holds: status 0: end: h c2 c1
+a raw file that knows its writer, and an older holder of the raw file: status 0: end: x Raw.write b'xyz' Raw.close
+the same with plain objects: status 0: end: x h c
+the same, the other holder is in a list: status 0: end: Raw.write b'xyz' Raw.close
+a child that knows its parent, and an older registry that holds the child: status 0: end: registry parent child
+two cycles, one holds the other: status 0: end: top d c a b
+a ring of four entered at the third: status 0: end: r3 r2 r1 r4
+a writer and another over one raw file that knows both: status 0: end: Raw.write b'xyz' Raw.close other
+two writers over one raw file: status 0: end: Raw.write b'aaa' Raw.close
+the second holder is made later: status 0: end: a b child
+two holders of a list: status 0: end: a b child
+two holders: status 0: end: a b child
+a diamond: status 0: end: top left right bottom
+attributes: status 0: end: holder x y
+ten attributes: status 0: end: h 0 1 2 3 4 5 6 7 8 9
+a dict and a list: status 0: end: in the dict in the list
+a dict in an object: status 0: end: holder child
+a list in an object: status 0: end: holder child
+a plain object in an object: status 0: end: holder child
+a closure in an object: status 0: end: holder child
+a deque: status 0: end: 0 1 2
+a deque and a list: status 0: end: in the deque in the list
+a generator and the program share an object: status 0: end: shared b z
+a program without a function: a cycle entered at the holder: status 0: holder child
+a program without a function: the child in a cycle has a name: status 0: child holder
+a program without a function: what hangs off a cycle: status 0: holder child
+a program with a function, and modules with functions: status 0: m1 m2 main.holder main.child

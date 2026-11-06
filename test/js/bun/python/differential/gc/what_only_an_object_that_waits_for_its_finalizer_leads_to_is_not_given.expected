@@ -1,0 +1,28 @@
+status: 0
+script: 75ee63eed872c9de
+---
+a chain of 2 | given: [] | reached through lists that were given: [] | of those finalized while they were held: []
+    finalized in the end: 2 each once: True
+    instances among the referrers of the class: []
+a chain of 3 | given: [] | reached through lists that were given: [] | of those finalized while they were held: []
+    finalized in the end: 3 each once: True
+    instances among the referrers of the class: []
+a chain of 6 | given: [] | reached through lists that were given: [] | of those finalized while they were held: []
+    finalized in the end: 6 each once: True
+    instances among the referrers of the class: []
+a chain of 40 | given: [] | reached through lists that were given: [] | of those finalized while they were held: []
+    finalized in the end: 40 each once: True
+    instances among the referrers of the class: []
+a tree below an object with a finalizer: []
+a cycle with finalizers below an object with a finalizer: ['a', 'b']
+    after a safe point: ['a', 'b'] | finalized so far: ['t']
+a cycle without finalizers below an object with a finalizer: ['a', 'b']
+and what hangs off such a cycle: ['a', 'b', 'below that', 'below the cycle']
+the class of an instance with a finalizer, both dropped: ['Local']
+the referrers of an object that the program holds and a dropped tree refers to: []
+what two objects with finalizers share: []
+what an object with a finalizer shares with the program: ['kept', 'shared']
+what a thread that waits has made, dropped by this one, twice in a row: [] []
+what waits for its finalizer and is held again: []
+the variables of a suspended generator with something to close: []
+a callback of ctypes that has been dropped: given: [] | functions given that lead to the object: 0

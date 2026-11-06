@@ -1,0 +1,7 @@
+status: 0
+script: 244831fa9f2a41b1
+---
+the one that signals comes first | heard by then: ['start', 'stop'] | in the end: ['start', 'stop', 'start', 'stop', 'start', 'stop', 'start', 'stop'] | finalized: 11
+the one that signals comes in the middle | heard by then: ['start', 'stop'] | in the end: ['start', 'stop', 'start', 'stop', 'start', 'stop', 'start', 'stop'] | finalized: 11
+the one that signals comes last | heard by then: ['start', 'stop'] | in the end: ['start', 'stop', 'start', 'stop', 'start', 'stop', 'start', 'stop'] | finalized: 11
+collections counted: 12

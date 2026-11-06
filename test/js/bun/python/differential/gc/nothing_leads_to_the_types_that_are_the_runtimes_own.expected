@@ -1,0 +1,11 @@
+status: 0
+script: 8ae7f09e009e4e31
+---
+by gc.get_objects(): []
+by gc.get_referrers(object): []
+by gc.get_referrers(type): []
+by gc.get_referents(object): []
+by gc.get_referents(), three levels down from gc.get_objects(): []
+a class among the referrers of one that derives from it: False False
+__mro__ and __bases__ of a class among the referrers of the class: True True
+a method descriptor among the referents of the namespace of its class: True

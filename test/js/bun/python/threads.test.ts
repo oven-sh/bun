@@ -806,6 +806,225 @@ console.log((await new ShadowRealm().importValue("./second.py", "look"))());
   expect(exitCode).toBe(0);
 });
 
+it("the lock of imports that a realm that is gone has left held is nothing to a runtime that lives on", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "realm.py": `
+import _imp, _warnings
+
+def take():
+    _imp.acquire_lock()
+    _warnings._acquire_lock()
+    return _imp.lock_held()
+`,
+      "m.py": `
+import _imp, importlib, threading, warnings
+
+def look(name):
+    held = _imp.lock_held()
+    done = []
+    def work():
+        # Not imported so far.
+        done.append(importlib.import_module(name).__name__)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            warnings.warn("a warning")
+        done.append(len(caught))
+    thread = threading.Thread(target=work, daemon=True)
+    thread.start()
+    thread.join(30)
+    return "held: %s; a thread has imported and warned: %s" % (held, done)
+`,
+      "main.js": `
+const { look } = await import("./m.py");
+console.log("before:", look("colorsys"));
+let realm = new ShadowRealm();
+console.log("held in the realm:", (await realm.importValue("./realm.py", "take"))());
+console.log("beside it:", look("stringprep"));
+realm = null;
+for (let i = 0; i < 5; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.log("behind it:", look("quopri"));
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  const fine = (name: string) => `held: False; a thread has imported and warned: ['${name}', 1]\n`;
+  expect(stdout).toBe(
+    "before: " + fine("colorsys") + "held in the realm: true\nbeside it: " + fine("stringprep") + "behind it: " + fine("quopri"),
+  );
+  expect(exitCode).toBe(0);
+}, 180_000);
+
+it("what the handler of a signal raises in the middle of a call that another runtime owes", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      // (It does not import signal: the signals are for the runtime that asks first.)
+      "first.py": `
+import os
+
+class Sends:
+    def __init__(self, number): self.number = number
+    def __del__(self):
+        os.kill(os.getpid(), self.number)
+        for _ in range(1000):
+            pass
+def drop(number):
+    Sends(number)
+`,
+      // (gc.get_objects() collects, and hands out what it finds. Not gc.collect(): in the middle of a call that gc.collect() makes for this
+      // runtime itself, a callback of importlib's weak references, say, what the handler raises is that call's, as in CPython, and
+      // whether there is such a call just then depends on when the collector last came.)
+      "second.py": `
+import gc, signal
+
+class Stop(Exception):
+    pass
+def number():
+    return int(signal.SIGUSR1)
+def wait():
+    def handler(number, frame):
+        raise Stop
+    signal.signal(signal.SIGUSR1, handler)
+    try:
+        gc.get_objects()
+        for _ in range(3000000):
+            pass
+        return "not ended by the signal"
+    except Stop:
+        return "ended by the signal"
+`,
+      "main.js": `
+const { drop } = await import("./first.py");
+const realm = new ShadowRealm();
+const number = await realm.importValue("./second.py", "number");
+const wait = await realm.importValue("./second.py", "wait");
+drop(number());
+console.log(wait());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ended by the signal\n");
+  expect(exitCode).toBe(0);
+});
+
+it("what JS throws in the handler of a signal in the middle of a call that another runtime owes", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "first.py": `
+import os
+
+class Sends:
+    def __init__(self, number): self.number = number
+    def __del__(self):
+        os.kill(os.getpid(), self.number)
+        for _ in range(1000):
+            pass
+def drop(number):
+    Sends(number)
+`,
+      // Each runtime makes an exception of its own of what JS threw.
+      "second.py": `
+import gc, signal
+
+def number():
+    return int(signal.SIGUSR1)
+def wait(throws):
+    signal.signal(signal.SIGUSR1, lambda number, frame: throws())
+    gc.get_objects()
+    for _ in range(3000000):
+        pass
+    return "not ended by the signal"
+`,
+      "main.js": `
+const { drop } = await import("./first.py");
+const realm = new ShadowRealm();
+const number = await realm.importValue("./second.py", "number");
+const wait = await realm.importValue("./second.py", "wait");
+drop(number());
+try {
+  console.log(wait(() => { throw new RangeError("thrown by JS in the handler"); }));
+} catch (error) {
+  console.log("ended by the signal");
+}
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ended by the signal\n");
+  expect(exitCode).toBe(0);
+});
+
+it("a signal ends a wait of a runtime that has not got the signals", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "first.py": `
+import _thread, gc, sys, threading, time
+
+def wait(how, arm):
+    try:
+        number = arm(how)       # (Inside the try: whenever the signal comes from here on, it ends this.)
+        if how == "lock":
+            lock = threading.Lock()
+            lock.acquire()
+            lock.acquire(timeout=3)
+        elif how == "event, and no other thread":
+            threading.Event().wait()
+        elif how == "interrupt_main":
+            _thread.interrupt_main(number)
+            for _ in range(3000000):
+                pass
+        else:
+            time.sleep(3)
+    except:
+        # An exception of the other runtime, in a frame of this one, and nobody has named it.
+        name = sys.exc_info()[0].__name__
+        return "ended by " + name + (" " if gc.get_objects() else "")
+    return "not ended by the signal"
+`,
+      // (An end of its own, which decides nothing: a wait that nothing ends would outlive the test.)
+      "second.py": `
+import faulthandler, signal
+
+faulthandler.dump_traceback_later(60, exit=True)
+class Stop(Exception):
+    pass
+def handler(number, frame):
+    raise Stop
+def arm(how):
+    signal.signal(signal.SIGALRM, signal.default_int_handler if how == "sleep, and a handler that is no Python code" else handler)
+    if how != "interrupt_main":
+        signal.setitimer(signal.ITIMER_REAL, 0.2)
+    return int(signal.SIGALRM)
+`,
+      "main.js": `
+const { wait } = await import("./first.py");
+const arm = await new ShadowRealm().importValue("./second.py", "arm");
+for (const how of ["sleep", "lock", "event, and no other thread", "interrupt_main", "sleep, and a handler that is no Python code"])
+  console.log(how + ": " + wait(how, arm));
+process.exit(0);
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout.split("\n")).toEqual([
+    "sleep: ended by Stop ",
+    "lock: ended by Stop ",
+    "event, and no other thread: ended by Stop ",
+    "interrupt_main: ended by Stop ",
+    "sleep, and a handler that is no Python code: ended by KeyboardInterrupt ",
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 it("the main thread is got out of a system call behind a realm that is gone, too", async () => {
   const { stdout, stderr, exitCode } = await run(
     {

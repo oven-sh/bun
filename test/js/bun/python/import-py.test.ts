@@ -204,3 +204,54 @@ def both():
     exitCode: 0,
   });
 });
+
+test.concurrent("what a module still holds when the program ends is finalized, a holder before what only it holds", async () => {
+  // JavaScript holds on to the module, so none of this ever dies.
+  const result = await run({
+    "m.py": `
+import io, os
+def say(*words): os.write(1, (" ".join(map(str, words)) + "\\n").encode())
+class Raw(io.RawIOBase):
+    def __init__(self, name): self.name = name
+    def writable(self): return True
+    def write(self, data): say(self.name, "write", bytes(data)); return len(data)
+    def close(self): say(self.name, "close"); super().close()
+class T:
+    def __init__(self, name, *holds): self.name = name; self.holds = holds
+    def __del__(self): say(self.name)
+file = io.BufferedWriter(Raw("raw")); file.write(b"xyz")
+holder = T("holder", [T("child", T("grandchild"))])
+child_with_a_name = T("child with a name"); its_holder = T("its holder", child_with_a_name)
+# What holds one another is entered where it has a name.
+raw = Raw("raw that knows its writer"); writer = io.BufferedWriter(raw); raw.owner = writer; del raw; writer.write(b"abc")
+raw = Raw("raw with an older holder"); older = T("older holder", raw); other = io.BufferedWriter(raw); raw.owner = other; del raw; other.write(b"def")
+child = T("child that knows its parent"); registry = T("registry", child); parent = T("parent", child); child.parent = parent; del child
+def hello(): return "hello"
+`,
+    "main.js": `
+      import { hello } from "./m.py";
+      console.log(hello());
+    `,
+  });
+  expect(result.stdout.split("\n")).toEqual([
+    "hello",
+    "raw write b'xyz'",
+    "raw close",
+    "holder",
+    "child",
+    "grandchild",
+    "child with a name",
+    "its holder",
+    "raw that knows its writer write b'abc'",
+    "raw that knows its writer close",
+    "older holder",
+    "raw with an older holder write b'def'",
+    "raw with an older holder close",
+    "registry",
+    "parent",
+    "child that knows its parent",
+    "",
+  ]);
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+});

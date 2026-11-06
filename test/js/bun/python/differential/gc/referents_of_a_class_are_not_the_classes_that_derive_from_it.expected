@@ -1,0 +1,9 @@
+status: 0
+script: 370cdb66954fa5c2
+---
+classes among the referents of Base: ['object']
+weak references among them: 0
+Base.__subclasses__(): ['Derived']
+classes that derive from them among the referents of built-in types: []
+types whose name begins with an underscore and that no module has: []
+instances of such types: []

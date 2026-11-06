@@ -833,3 +833,71 @@ console.log("the realm said", said + "; the flush has collected:", report());
   expect(stdout).toBe("pending; from JS\nthe realm said hello; the flush has collected: true\n");
   expect(exitCode).toBe(0);
 });
+
+// Bun.gc() stands for a collection that the engine makes by itself: gc.callbacks hear of it at the next safe point.
+test.concurrent("gc.collect() tells of what the engine has collected before it tells of itself", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import functools, gc, io, js
+out = io.StringIO()
+collect_by_itself = js.eval("() => Bun.gc(true)")
+gc.collect()
+gc.callbacks.append(functools.partial(print, file=out))     # Not written in Python: there is no safe point on the way in.
+collect_by_itself(); gc.collect()
+print([line.split()[0] for line in out.getvalue().splitlines()])
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("['start', 'stop', 'start', 'stop']\n");
+  expect(exitCode).toBe(0);
+});
+
+(isWindows ? test.skip : test.concurrent)("of two collections that wait to be told, the second waits for the stop of the first, whichever thread comes by", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import gc, js, threading
+collect_by_itself = js.eval("() => Bun.gc(true)")
+heard = []; rounds = {}; done = []
+def listen(phase, info):
+    me = threading.get_ident(); heard.append(phase)
+    if len(heard) > 1: return
+    # Whichever thread this is, it stays here until the other has been through many safe points.
+    other = [thread for thread in rounds if thread != me][0]
+    until = rounds[other] + 2000
+    while rounds[other] < until: pass
+def spin():
+    me = threading.get_ident(); rounds[me] = 0
+    while not done: rounds[me] += 1
+thread = threading.Thread(target=spin); thread.start()
+me = threading.get_ident(); rounds[me] = 0
+while len(rounds) < 2: pass
+gc.collect(); gc.callbacks.append(listen)
+collect_by_itself(); collect_by_itself()
+while len(heard) < 4: rounds[me] += 1
+gc.callbacks.remove(listen)     # A thread that waits collects, and that would be told too.
+done.append(1); thread.join()
+print(heard[:4])
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("['start', 'stop', 'start', 'stop']\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("gc.get_objects() does not give the value of a WeakMap whose key waits for its finalizer", async () => {
+  // No cell says that it refers to the value: it is kept because the key has been.
+  const { stdout, stderr, exitCode } = await run(`
+import gc, js
+log = []
+class N:
+    def __del__(self): log.append("finalized")
+weak_map = js.eval("new WeakMap()")
+key = N(); value = [key]
+weak_map.set(key, value); del key, value
+objects = gc.get_objects()
+lists = [o for o in objects if type(o) is list and len(o) == 1 and type(o[0]) is N]
+del objects
+print("lists given that lead to the object that waits:", len(lists))
+for i in range(3): pass
+print(log)
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("lists given that lead to the object that waits: 0\n['finalized']\n");
+  expect(exitCode).toBe(0);
+});

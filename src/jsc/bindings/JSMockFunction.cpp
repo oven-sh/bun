@@ -464,6 +464,8 @@ public:
     void setName(JSString* name)
     {
         auto& vm = this->vm();
+        // A frame can be named at the end of a collection, where InternalFunction::name() has no way to resolve a rope.
+        ASSERT(!name->isRope());
 
         // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
         m_originalName.set(vm, this, name);
@@ -493,9 +495,45 @@ public:
             this->putDirect(vm, vm.propertyNames->length, length, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
     }
 
+    // Vitest's `original?.name || "Mock"`, read once. Vitest also converts a `name` that is an object, which calls into it.
+    // An RPC client answers every key with a function that sends a request, so here such a name is "Mock".
+    JSString* vitestNameOf(JSGlobalObject* global, JSC::JSValue original)
+    {
+        auto& vm = this->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue name = original.get(global, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (name.isObject() || !name.toBoolean(global))
+            return mockModule().vitestName.getInitializedOnMainThread(globalObject());
+        if (name.isSymbol()) {
+            // What a computed key names a function: "[description]", or "" for a symbol that has none.
+            auto& uid = asSymbol(name)->uid();
+            if (uid.isNullSymbol())
+                return jsEmptyString(vm);
+            String bracketed = tryMakeString('[', String(&uid), ']');
+            if (bracketed.isNull()) [[unlikely]] {
+                throwOutOfMemoryError(global, scope);
+                return nullptr;
+            }
+            return jsString(vm, WTF::move(bracketed));
+        }
+        JSString* string = name.toString(global);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        // The name of a bound function is a rope, which setName() does not take.
+        string->value(global);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return string;
+    }
+
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
+        if (isVitest) {
+            JSString* name = vitestNameOf(global, value);
+            RETURN_IF_EXCEPTION(scope, );
+            setName(name);
+            RELEASE_AND_RETURN(scope, copyLength(vm, global, value));
+        }
         WTF::String nameToUse;
         auto useNameProperty = [&](JSObject* function) {
             JSValue nameValue = function->get(global, vm.propertyNames->name);
@@ -2531,7 +2569,9 @@ struct Automocker {
     JSC::JSMap* replacements;
     // Work list of (original, replacement, AutomockKind) triples.
     JSC::MarkedArgumentBuffer pending {};
-    JSC::JSFunction* accessor { nullptr };
+    // What replaces a getter and a setter. As in Vitest, the getter is named "get" and the setter has no name. A spy on one takes that name.
+    JSC::JSFunction* getter { nullptr };
+    JSC::JSFunction* setter { nullptr };
 
     AutomockKind kindOf(JSValue);
     JSValue replacementFor(JSValue, AutomockRole = AutomockRole::Member);
@@ -2734,12 +2774,15 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
             } else {
                 if (inPlace)
                     continue;
-                if (!spy && !accessor)
-                    accessor = JSC::JSFunction::create(vm, globalObject, 0, String(), jsAutomockedAccessor, ImplementationVisibility::Public);
                 if (!spy) {
-                    descriptor.setGetter(accessor);
+                    auto standIn = [&](JSC::JSFunction*& function, const String& name) {
+                        if (!function)
+                            function = JSC::JSFunction::create(vm, globalObject, 0, name, jsAutomockedAccessor, ImplementationVisibility::Public);
+                        return function;
+                    };
+                    descriptor.setGetter(standIn(getter, "get"_s));
                     if (descriptor.setter().isObject())
-                        descriptor.setSetter(accessor);
+                        descriptor.setSetter(standIn(setter, String()));
                 }
                 putOwnProperty(globalObject, replacement, key, descriptor);
                 RETURN_IF_EXCEPTION(scope, );
@@ -2977,6 +3020,14 @@ enum class SpyAccess : uint8_t {
     Set,
 };
 
+// The getter that a spy on the value of an accessor property puts in place. It returns the spy.
+static bool isGetterOfValueSpy(JSValue getter)
+{
+    auto* bound = dynamicDowncast<JSBoundFunction>(getter);
+    auto* target = bound ? dynamicDowncast<JSFunction>(bound->targetFunction()) : nullptr;
+    return target && target->isHostFunction() && target->nativeFunction() == JSC::toTagged(jsMockFunctionReturnThis);
+}
+
 __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -3155,7 +3206,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             spyAttributes |= JSMockFunction::SpyAttributeOpaque;
 
         if (hasValue && ((slotAttributes & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
-            wrapFunction(globalObject, mock, value);
+            // Vitest names the spy after the function in the descriptor. A Proxy's `get` trap can answer another one, such as a bound copy.
+            JSString* name = nullptr;
+            if (isVitest && isOpaque && descriptor.value() && descriptor.value().isCallable()) {
+                name = mock->vitestNameOf(globalObject, descriptor.value());
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            wrapFunction(globalObject, mock, value, name);
             RETURN_IF_EXCEPTION(scope, {});
 
             ThroughLockOfBuiltins throughLock(vm, isOpaque);
@@ -3234,6 +3291,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (access != SpyAccess::Value) {
+        // Vitest names the spy after the getter or setter it replaces, which wrapFunction() did, or "Mock" where the user has none there.
+        if (!isVitest)
+            mock->setName(makeString(access == SpyAccess::Get ? "get "_s : "set "_s, propertyKeyForFunctionName(propertyKey)));
+        else if (!original.isCallable() || isGetterOfValueSpy(original))
+            mock->setName(globalObject->mockModule.vitestName.getInitializedOnMainThread(globalObject));
+    }
+
     switch (access) {
     case SpyAccess::Value: {
         auto* returnThis = JSC::JSFunction::create(vm, globalObject, 0, String(), jsMockFunctionReturnThis, ImplementationVisibility::Public);
@@ -3242,11 +3307,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         break;
     }
     case SpyAccess::Get:
-        mock->setName(makeString("get "_s, propertyKeyForFunctionName(propertyKey)));
         getter = mock;
         break;
     case SpyAccess::Set:
-        mock->setName(makeString("set "_s, propertyKeyForFunctionName(propertyKey)));
         setter = mock;
         break;
     }

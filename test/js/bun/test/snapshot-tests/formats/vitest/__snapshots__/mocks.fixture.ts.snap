@@ -66,13 +66,37 @@ exports[`mocks > names 1`] = `
   "y",
   "x",
   "vi.fn()",
+  "other",
+  "bound method",
+  "Mock",
+  "Mock",
+  "other",
+  "Mock",
+  "Mock",
+  "bound method",
+  "m",
+  "Mock",
+  "m",
+  "get",
+  "Mock",
 ]
 `;
 
 exports[`mocks > the object spied on 1`] = `
 {
+  "bound": [MockFunction bound method],
+  "emptied": [MockFunction Mock],
+  "klass": [MockFunction Other],
   "m": [MockFunction m],
   "n": 1,
+  "nameless": [MockFunction Mock],
+  "native": [MockFunction max],
+  "noDescription": [MockFunction],
+  "numbered": [MockFunction 5],
+  "other": [MockFunction named],
+  "proxied": [MockFunction method],
+  "renamed": [MockFunction custom],
+  "symbolNamed": [MockFunction [sym]],
 }
 `;
 

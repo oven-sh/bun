@@ -3939,7 +3939,7 @@ if (isBun) {
         "spyOn(symbol)": spyOn(target(), symbol).getMockName(),
       });
 
-      test("vi: 'vi.fn()', and the name of the property for a spy", () => {
+      test("vi: 'vi.fn()', and the name of the replaced function for a spy", () => {
         expect(names(vi.fn, vi.spyOn)).toEqual({
           "fn()": "vi.fn()",
           "fn(function)": "vi.fn()",
@@ -4053,7 +4053,7 @@ if (isBun) {
           "fn().mockName().mockReset()": "mockConstructor",
         };
 
-        test("vi: 'Mock' for anything passed to vi.fn(), and the property name for a spy", () => {
+        test("vi: 'Mock' for anything passed to vi.fn(), and the replaced function's name for a spy", () => {
           const expected = Object.fromEntries(Object.keys(ofImplementation).map(key => [key, "Mock"]));
           expect(names(vi.fn, vi.spyOn)).toEqual({ ...expected, ...ofSpies });
         });
@@ -4147,6 +4147,407 @@ if (isBun) {
             );
           },
         );
+      });
+
+      // Vitest 5.0.3: `original?.name || "Mock"`, read once when the mock is made.
+      describe("vi: a mock is named after the function it replaces", () => {
+        function declared() {}
+        const nameless = () => function () {};
+        const renamed = descriptor =>
+          Object.defineProperty(function other() {}, "name", { configurable: true, ...descriptor });
+        // Unlike `{ key: function () {} }`, an assignment to a member gives the function no name.
+        const holding = value => {
+          const object = {};
+          object.key = value;
+          return object;
+        };
+        const originals = {
+          "a function named other than its key": () => function other() {},
+          "a declared function": () => declared,
+          "a class": () => class Other {},
+          "a nameless function": () => nameless(),
+          "a nameless arrow": () => (() => () => {})(),
+          "a nameless class": () => (() => class {})(),
+          "a bound function": () => declared.bind(null),
+          "a function bound twice": () => declared.bind(null).bind(null),
+          "a bound nameless function": () => nameless().bind(null),
+          "`name` redefined": () => renamed({ value: "custom" }),
+          "`name` emptied": () => renamed({ value: "" }),
+          "`name` deleted": () => {
+            const fn = function other() {};
+            delete fn.name;
+            return fn;
+          },
+          "`name` is a getter": () => renamed({ get: () => "computed" }),
+          "`name` is 5": () => renamed({ value: 5 }),
+          "`name` is 0": () => renamed({ value: 0 }),
+          "`name` is true": () => renamed({ value: true }),
+          "`name` is a symbol": () => renamed({ value: symbol }),
+          "`name` is a symbol without a description": () => renamed({ value: Symbol() }),
+          "a Proxy": () => new Proxy(declared, {}),
+          "a native function": () => Math.max,
+        };
+        const vitestNames = {
+          "a function named other than its key": "other",
+          "a declared function": "declared",
+          "a class": "Other",
+          "a nameless function": "Mock",
+          "a nameless arrow": "Mock",
+          "a nameless class": "Mock",
+          "a bound function": "bound declared",
+          "a function bound twice": "bound bound declared",
+          "a bound nameless function": "bound ",
+          "`name` redefined": "custom",
+          "`name` emptied": "Mock",
+          "`name` deleted": "Mock",
+          "`name` is a getter": "computed",
+          "`name` is 5": "5",
+          "`name` is 0": "Mock",
+          "`name` is true": "true",
+          "`name` is a symbol": "[sym]",
+          "`name` is a symbol without a description": "",
+          "a Proxy": "declared",
+          "a native function": "max",
+        };
+        const each = make =>
+          Object.fromEntries(Object.entries(originals).map(([label, original]) => [label, make(original())]));
+        const both = mocked => [mocked.name, mocked.getMockName()];
+
+        test("vi.spyOn(): `name` and getMockName() are the function's name, or 'Mock' when it has none", () => {
+          const expected = Object.fromEntries(
+            Object.entries(vitestNames).map(([label, name]) => [label, [name, name || "vi.fn()"]]),
+          );
+          expect(each(original => both(vi.spyOn(holding(original), "key")))).toEqual(expected);
+        });
+
+        test("vi.mockObject(): `name` is the function's name, or 'Mock' when it has none", () => {
+          // Vitest also mocks a getter that it finds on a function, `name` included, so that row is left out.
+          const { "`name` is a getter": _, ...rest } = vitestNames;
+          const expected = Object.fromEntries(Object.entries(rest).map(([label, name]) => [label, [name, "vi.fn()"]]));
+          const eachBut = make => {
+            const { "`name` is a getter": _, ...result } = each(make);
+            return result;
+          };
+          expect({
+            "of a member": eachBut(original => both(vi.mockObject(holding(original)).key)),
+            "of a member, with spy": eachBut(original => both(vi.mockObject(holding(original), { spy: true }).key)),
+            "of the function": eachBut(original => both(vi.mockObject(original))),
+          }).toEqual({ "of a member": expected, "of a member, with spy": expected, "of the function": expected });
+        });
+
+        test("vi.spyOn() of a getter or setter: the name of that function, or 'Mock' where there is none", () => {
+          const accessor = (which, fn) => Object.defineProperty({}, "key", { [which]: fn, configurable: true });
+          const literal = () => ({
+            get key() {
+              return 1;
+            },
+            set key(value) {},
+            get [symbol]() {
+              return 1;
+            },
+          });
+          const returning = fn => ({
+            get key() {
+              return fn;
+            },
+          });
+          const spiedByValue = () => {
+            const object = returning(declared);
+            vi.spyOn(object, "key");
+            return object;
+          };
+          expect({
+            "a getter": both(vi.spyOn(literal(), "key", "get")),
+            "a setter": both(vi.spyOn(literal(), "key", "set")),
+            "a getter under a symbol": both(vi.spyOn(literal(), symbol, "get")),
+            "a getter written in a descriptor": both(
+              vi.spyOn(Object.defineProperty({}, "key", { get: function () {}, configurable: true }), "key", "get"),
+            ),
+            "a setter written in a descriptor": both(
+              vi.spyOn(
+                Object.defineProperty({}, "key", { set: function (value) {}, configurable: true }),
+                "key",
+                "set",
+              ),
+            ),
+            "a declared function as the getter": both(vi.spyOn(accessor("get", declared), "key", "get")),
+            "a bound function as the getter": both(vi.spyOn(accessor("get", declared.bind(null)), "key", "get")),
+            "a nameless function as the getter": both(vi.spyOn(accessor("get", nameless()), "key", "get")),
+            "'get' on a value": both(vi.spyOn({ key: 1 }, "key", "get")),
+            "'set' on a value": both(vi.spyOn({ key: 1 }, "key", "set")),
+            "'set' with only a getter": both(vi.spyOn(accessor("get", declared), "key", "set")),
+            "'get' with only a setter": both(vi.spyOn(accessor("set", declared), "key", "get")),
+            "a function that a getter returns": both(vi.spyOn(returning(declared), "key")),
+            "a bound function that a getter returns": both(vi.spyOn(returning(declared.bind(null)), "key")),
+            "a nameless function that a getter returns": both(vi.spyOn(returning(nameless()), "key")),
+            "'get' where a spy already replaced what the getter returns": both(vi.spyOn(spiedByValue(), "key", "get")),
+            "a getter that vi.mockObject() made": both(vi.spyOn(vi.mockObject(literal()), "key", "get")),
+            "a setter that vi.mockObject() made": both(vi.spyOn(vi.mockObject(literal()), "key", "set")),
+          }).toEqual({
+            "a getter": ["get key", "get key"],
+            "a setter": ["set key", "set key"],
+            "a getter under a symbol": ["get [sym]", "get [sym]"],
+            "a getter written in a descriptor": ["get", "get"],
+            "a setter written in a descriptor": ["set", "set"],
+            "a declared function as the getter": ["declared", "declared"],
+            "a bound function as the getter": ["bound declared", "bound declared"],
+            "a nameless function as the getter": ["Mock", "Mock"],
+            "'get' on a value": ["Mock", "Mock"],
+            "'set' on a value": ["Mock", "Mock"],
+            "'set' with only a getter": ["Mock", "Mock"],
+            "'get' with only a setter": ["Mock", "Mock"],
+            "a function that a getter returns": ["declared", "declared"],
+            "a bound function that a getter returns": ["bound declared", "bound declared"],
+            "a nameless function that a getter returns": ["Mock", "Mock"],
+            "'get' where a spy already replaced what the getter returns": ["Mock", "Mock"],
+            "a getter that vi.mockObject() made": ["get", "get"],
+            "a setter that vi.mockObject() made": ["Mock", "Mock"],
+          });
+        });
+
+        test("vi.spyOn() of a Proxy: the name of the function in the descriptor, whatever the `get` trap answers", () => {
+          class Service {
+            method() {}
+          }
+          // As a DOM library's Proxy does for the methods of `localStorage` or `classList`.
+          const binding = target =>
+            new Proxy(target, {
+              get(target, key, receiver) {
+                const value = Reflect.get(target, key, receiver);
+                return typeof value === "function" ? value.bind(target) : value;
+              },
+            });
+          const withTraps = traps => new Proxy({ method() {} }, traps);
+          expect({
+            "`get` binds an inherited method": both(vi.spyOn(binding(new Service()), "method")),
+            "`get` binds an own method": both(vi.spyOn(binding({ method() {} }), "method")),
+            "`get` binds a nameless function": both(vi.spyOn(binding(holding(nameless())), "key")),
+            "`get` answers another function": both(vi.spyOn(withTraps({ get: () => declared }), "method")),
+            "`get` answers a nameless function": both(vi.spyOn(withTraps({ get: () => nameless() }), "method")),
+            "`getOwnPropertyDescriptor` answers another function": both(
+              vi.spyOn(
+                withTraps({
+                  getOwnPropertyDescriptor: (target, key) => ({
+                    ...Reflect.getOwnPropertyDescriptor(target, key),
+                    value: declared,
+                  }),
+                }),
+                "method",
+              ),
+            ),
+            "no trap": both(vi.spyOn(withTraps({}), "method")),
+          }).toEqual({
+            "`get` binds an inherited method": ["method", "method"],
+            "`get` binds an own method": ["method", "method"],
+            "`get` binds a nameless function": ["Mock", "Mock"],
+            "`get` answers another function": ["method", "method"],
+            "`get` answers a nameless function": ["method", "method"],
+            "`getOwnPropertyDescriptor` answers another function": ["declared", "declared"],
+            "no trap": ["method", "method"],
+          });
+        });
+
+        test("mockReset(), mockRestore() and vi.resetAllMocks() go back to that name", () => {
+          const nameAfter = (original, reset) => {
+            const spy = vi.spyOn(holding(original), "key").mockName("given");
+            expect(both(spy)).toEqual([spy.name, "given"]);
+            reset(spy);
+            return both(spy);
+          };
+          for (const reset of [spy => spy.mockReset(), spy => spy.mockRestore(), () => vi.resetAllMocks()]) {
+            expect(nameAfter(nameless(), reset)).toEqual(["Mock", "Mock"]);
+            expect(nameAfter(declared.bind(null), reset)).toEqual(["bound declared", "bound declared"]);
+          }
+          expect(both(vi.spyOn(holding(nameless()), "key").mockName(""))).toEqual(["Mock", "vi.fn()"]);
+        });
+
+        test("reads `name` once, when the mock is made", () => {
+          let reads = 0;
+          const counted = () =>
+            renamed({
+              get() {
+                reads++;
+                return "computed";
+              },
+            });
+          const readsOf = make => {
+            reads = 0;
+            const mocked = make(counted());
+            mocked.getMockName();
+            mocked.mockReset();
+            mocked.mockRestore();
+            return reads;
+          };
+          expect({
+            "vi.spyOn()": readsOf(original => vi.spyOn({ key: original }, "key")),
+            "vi.spyOn() of a getter": readsOf(original =>
+              vi.spyOn(Object.defineProperty({}, "key", { get: original, configurable: true }), "key", "get"),
+            ),
+            "vi.spyOn() of a Proxy": readsOf(original => vi.spyOn(new Proxy({ key: original }, {}), "key")),
+            "vi.mockObject()": readsOf(original => vi.mockObject({ key: original }).key),
+            "vi.fn()": readsOf(original => vi.fn(original)),
+          }).toEqual({
+            "vi.spyOn()": 1,
+            "vi.spyOn() of a getter": 1,
+            "vi.spyOn() of a Proxy": 1,
+            "vi.mockObject()": 1,
+            "vi.fn()": 0,
+          });
+
+          const original = function other() {};
+          const spy = vi.spyOn({ key: original }, "key");
+          Object.defineProperty(original, "name", { value: "later" });
+          expect(both(spy.mockReset())).toEqual(["other", "other"]);
+        });
+
+        test("a `name` getter that throws: the error comes out, and the property is left alone", () => {
+          const original = renamed({
+            get() {
+              throw new Error("from the getter");
+            },
+          });
+          const object = { key: original };
+          expect(() => vi.spyOn(object, "key")).toThrow("from the getter");
+          expect(object.key).toBe(original);
+
+          const accessors = Object.defineProperty({}, "key", { get: original, configurable: true });
+          expect(() => vi.spyOn(accessors, "key", "get")).toThrow("from the getter");
+          expect(Object.getOwnPropertyDescriptor(accessors, "key").get).toBe(original);
+
+          expect(() => vi.mockObject({ key: original })).toThrow("from the getter");
+        });
+
+        test("an instance of an automocked class: the mock of a nameless method is 'Mock'", () => {
+          class K {
+            method() {}
+          }
+          K.prototype.nameless = nameless();
+          const Mocked = vi.mockObject(K);
+          const instance = new Mocked();
+          expect([Mocked.prototype.nameless.name, instance.nameless.name]).toEqual(["Mock", "Mock"]);
+          expect(instance.nameless.getMockName()).toBe("vi.fn()");
+        });
+
+        // Vitest converts such a name, which calls into it. An RPC client then sends a request, or throws.
+        test("a `name` that is an object is not converted: the mock is 'Mock', and nothing is called", () => {
+          const calls = [];
+          const remote = path =>
+            new Proxy(function () {}, {
+              get: (_, key) => (typeof key === "string" ? remote([...path, key]) : undefined),
+              apply() {
+                calls.push(path.join("."));
+                throw new Error("called " + path.join("."));
+              },
+            });
+          const converted = () =>
+            renamed({
+              value: {
+                toString() {
+                  calls.push("toString");
+                  return "converted";
+                },
+              },
+            });
+          class Other {
+            static name() {}
+          }
+          expect({
+            "vi.spyOn() of a Proxy that answers every key": both(vi.spyOn({ key: remote([]) }, "key")),
+            "vi.mockObject() of a Proxy that answers every key": both(vi.mockObject({ key: remote([]) }).key),
+            "vi.spyOn() where `name` has a toString()": both(vi.spyOn({ key: converted() }, "key")),
+            "vi.mockObject() where `name` has a toString()": both(vi.mockObject({ key: converted() }).key),
+            "vi.spyOn() of a class with a static method called name": both(vi.spyOn({ key: Other }, "key")),
+          }).toEqual({
+            "vi.spyOn() of a Proxy that answers every key": ["Mock", "Mock"],
+            "vi.mockObject() of a Proxy that answers every key": ["Mock", "vi.fn()"],
+            "vi.spyOn() where `name` has a toString()": ["Mock", "Mock"],
+            "vi.mockObject() where `name` has a toString()": ["Mock", "vi.fn()"],
+            "vi.spyOn() of a class with a static method called name": ["Mock", "Mock"],
+          });
+          expect(calls).toEqual([]);
+        });
+
+        test("an automock is a vi mock whichever of `vi` and `jest` made it, so it is named the same way", async () => {
+          const names = mocked =>
+            Object.fromEntries(["named", "bound", "nameless"].map(key => [key, both(mocked[key])]));
+          const expected = {
+            named: ["named", "vi.fn()"],
+            bound: ["bound named", "vi.fn()"],
+            nameless: ["Mock", "vi.fn()"],
+          };
+          expect({
+            "jest.createMockFromModule()": names(jest.createMockFromModule("./mock-fn-names-fixture.js")),
+            "jest.requireMock()": names(jest.requireMock("./mock-fn-names-fixture.js")),
+            "vi.importMock()": names(await vi.importMock("./mock-fn-names-fixture.js")),
+          }).toEqual({
+            "jest.createMockFromModule()": expected,
+            "jest.requireMock()": expected,
+            "vi.importMock()": expected,
+          });
+        });
+
+        test("where the name of a spy on a nameless function is printed", () => {
+          const spy = vi.spyOn(holding(nameless()), "key");
+          const constructed = {};
+          constructed.constructor = nameless();
+          vi.spyOn(constructed, "constructor");
+          expect({
+            inspect: Bun.inspect(spy),
+            "util.inspect": util.inspect(spy),
+            string: String(spy).replace(/\s+/g, " "),
+            "an object whose constructor is the spy": Bun.inspect(constructed),
+          }).toEqual({
+            inspect: "[class Mock]",
+            "util.inspect": "[Function: Mock] [Mock]",
+            string: "function Mock() { [native code] }",
+            "an object whose constructor is the spy": "Mock {}",
+          });
+        });
+
+        test("jest and bun:test: the names are as they were, and `name` is not read", () => {
+          let reads = 0;
+          const counted = () =>
+            renamed({
+              get() {
+                reads++;
+                return "computed";
+              },
+            });
+          for (const [fn, spyOnOf] of [
+            [jest.fn, jest.spyOn],
+            [mock, spyOn],
+          ]) {
+            const nameOfSpy = original => spyOnOf(holding(original), "key").name;
+            const expected = {
+              ...vitestNames,
+              "a nameless function": "",
+              "a nameless arrow": "",
+              "a nameless class": "",
+              "a bound function": "declared",
+              "a function bound twice": "bound declared",
+              "`name` redefined": "other",
+              "`name` emptied": "other",
+              "`name` deleted": "other",
+              "`name` is a getter": "other",
+              "`name` is 5": "other",
+              "`name` is 0": "other",
+              "`name` is true": "other",
+              "`name` is a symbol": "other",
+              "`name` is a symbol without a description": "other",
+              "a Proxy": "mockConstructor",
+            };
+            expect(each(nameOfSpy)).toEqual(expected);
+            expect(each(original => fn(original).name)).toEqual(expected);
+            expect(
+              spyOnOf(Object.defineProperty({}, "key", { get: declared, configurable: true }), "key", "get").name,
+            ).toBe("get key");
+            expect(spyOnOf({ key: 1 }, "key", "get").name).toBe("get key");
+
+            spyOnOf({ key: counted() }, "key");
+            fn(counted());
+            expect(reads).toBe(0);
+          }
+        });
       });
 
       test("the mocks that an automocked class gives its instances", () => {

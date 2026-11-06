@@ -123,6 +123,10 @@ declare module "vitest" {
 
   /** A mock's methods. `vi.fn()` and `vi.spyOn()` return a {@link Mock}, which is also callable. */
   export interface MockInstance<T extends Procedure | Constructable = Procedure> extends Disposable {
+    /**
+     * Returns the name that `mockName()` set. Without one, a `vi.fn()` mock returns `"vi.fn()"`. A `vi.spyOn()` spy
+     * returns the `name` of the function it replaced, or `"Mock"` if that function has no name.
+     */
     getMockName(): string;
     /** Sets the name shown for this mock in failure messages. */
     mockName(name: string): this;

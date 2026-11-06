@@ -92,7 +92,7 @@ test("console._stderr", () => {
 
 // Node's global console writes through the live process.stdout.write and
 // process.stderr.write, so a replaced `write` sees every message.
-describe("global console writes through a replaced process.stdout.write", () => {
+describe.concurrent("global console writes through a replaced process.stdout.write", () => {
   async function run(source: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", source],
@@ -172,14 +172,14 @@ describe("global console writes through a replaced process.stdout.write", () => 
   test("console.trace goes to the replaced stdout write", async () => {
     const { stdout, stderr, exitCode } = await run(`
       const ow = process.stdout.write;
-      let seen = "";
-      process.stdout.write = function (chunk) { seen += chunk; return true; };
+      const seen = [];
+      process.stdout.write = function (chunk) { seen.push(chunk); return true; };
       console.trace("tr");
       process.stdout.write = ow;
-      console.log(JSON.stringify(seen.split("\\n")[0]));
+      console.log(seen.length, JSON.stringify(seen[0].split("\\n").slice(0, 2)));
     `);
     expect(stderr).toBe("");
-    expect(stdout).toBe('"tr"\n');
+    expect(stdout).toMatch(/^1 \["tr","      at .*"\]\n$/);
     expect(exitCode).toBe(0);
   });
 
@@ -232,6 +232,7 @@ describe("global console writes through a replaced process.stdout.write", () => 
       console.log("after-end");
       process.stderr.write("alive\\n");
     `);
+    expect(afterEnd.stdout).toBe("");
     expect(afterEnd.stderr).toBe("alive\n");
     expect(afterEnd.exitCode).toBe(0);
   });
@@ -244,6 +245,19 @@ describe("global console writes through a replaced process.stdout.write", () => 
     expect(stdout).toBe("");
     expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
     expect(exitCode).toBe(1);
+  });
+
+  test("an error thrown while a message is formatted is not dropped", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      process.stdout.write = function () { return true; };
+      process.stderr.write = function () { return true; };
+      const bad = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("from inspect"); } };
+      console.time("t");
+      try { console.timeLog("t", bad); } catch (e) { process.exitCode = e.message === "from inspect" ? 3 : 1; }
+    `);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(3);
   });
 
   test("console.clear and a coloured console.count reach the replaced write", async () => {

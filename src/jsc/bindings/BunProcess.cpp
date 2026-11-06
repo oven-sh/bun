@@ -4066,8 +4066,17 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, jsUndefined());
-    if (JSObject* streamObject = stream.getObject())
-        uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject);
+    if (JSObject* streamObject = stream.getObject()) {
+        auto* process = uncheckedDowncast<Process>(processObject);
+        process->setStdioWriteStream(vm, fd, streamObject);
+#if OS(WINDOWS)
+        if (!forceSync) {
+            JSValue sink = resultObject->getIndex(globalObject, 1);
+            RETURN_IF_EXCEPTION(scope, jsUndefined());
+            process->m_stdioSink[static_cast<unsigned>(fd) - 1].set(vm, process, sink);
+        }
+#endif
+    }
     return stream;
 }
 
@@ -4120,7 +4129,8 @@ bool Process::isStdioWriteReplaced(JSC::VM& vm, int fd)
     JSValue current = stream->structure() == m_stdioWriteStructure[slot].get()
         ? stream->getDirect(m_stdioWriteOffset[slot])
         : resolveStdioWrite(vm, slot);
-    return current && current != m_pristineStdioWrite[slot].get();
+    JSValue pristine = m_pristineStdioWrite[slot].get();
+    return pristine && current != pristine;
 }
 
 // Console write path (src/jsc/ConsoleObject.rs). No throw scope: nothing here runs user code.
@@ -4180,9 +4190,10 @@ void Process::addNoopErrorListener(Zig::GlobalObject* globalObject, JSObject* st
     name.append(jsString(vm, String("error"_s)));
     JSValue count = callMethod(globalObject, stream, "listenerCount"_s, name);
     RETURN_IF_EXCEPTION(scope, );
-    if (count.toNumber(globalObject) != 0)
-        return;
+    double listeners = count.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, );
+    if (listeners != 0)
+        return;
     JSC::MarkedArgumentBuffer args;
     args.append(jsString(vm, String("error"_s)));
     args.append(m_consoleNoop.getInitializedOnMainThread(this));
@@ -4199,6 +4210,11 @@ extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::Global
     JSObject* stream = process->stdioWriteStream(fd);
     if (!stream)
         return JSValue::encode(jsUndefined());
+#if OS(WINDOWS)
+    // A terminal's sink is not synchronous on Windows. The native console was: keep that for the output it hands on.
+    process->forceStdioSinkSynchronous(globalObject, fd);
+    RETURN_IF_EXCEPTION(scope, {});
+#endif
     process->addNoopErrorListener(globalObject, stream);
     if (!scope.exception()) {
         JSC::MarkedArgumentBuffer args;
@@ -4206,10 +4222,13 @@ extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::Global
         args.append(process->consoleWriteFailed(fd));
         callMethod(globalObject, stream, "write"_s, args);
     }
+    JSC::Exception* kept = nullptr;
     if (auto* exception = scope.exception()) {
-        auto* error = dynamicDowncast<JSC::ErrorInstance>(exception->value());
-        if (vm.isTerminationException(exception) || (error && error->isStackOverflowError()))
+        if (vm.isTerminationException(exception))
             return {};
+        auto* error = dynamicDowncast<JSC::ErrorInstance>(exception->value());
+        if (error && error->isStackOverflowError())
+            kept = exception;
         (void)scope.tryClearException();
     }
     JSC::MarkedArgumentBuffer args;
@@ -4217,8 +4236,24 @@ extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::Global
     args.append(process->consoleNoop());
     callMethod(globalObject, stream, "removeListener"_s, args);
     RETURN_IF_EXCEPTION(scope, {});
+    if (kept) {
+        scope.throwException(globalObject, kept);
+        return {};
+    }
     return JSValue::encode(jsUndefined());
 }
+
+#if OS(WINDOWS)
+void Process::forceStdioSinkSynchronous(Zig::GlobalObject* globalObject, int fd)
+{
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSValue sink = m_stdioSink[slot].get();
+    if (!sink)
+        return;
+    m_stdioSink[slot].clear();
+    Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
+}
+#endif
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
@@ -5007,6 +5042,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(thisObject->m_stdioWriteStream[i]);
         visitor.append(thisObject->m_pristineStdioWrite[i]);
         visitor.append(thisObject->m_stdioWriteStructure[i]);
+        visitor.append(thisObject->m_stdioSink[i]);
     }
 
     thisObject->m_cpuUsageStructure.visit(visitor);

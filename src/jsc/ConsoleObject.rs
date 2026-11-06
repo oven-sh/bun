@@ -592,13 +592,13 @@ fn write_message(
             let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
             table_printer.value_formatter.indent += u32::from(default_indent);
 
-            if enable_colors {
-                let _ = table_printer.print_table::<true>(writer);
+            let printed = if enable_colors {
+                table_printer.print_table::<true>(writer)
             } else {
-                let _ = table_printer.print_table::<false>(writer);
-            }
+                table_printer.print_table::<false>(writer)
+            };
             let _ = writer.flush();
-            return Ok(());
+            return printed;
         }
     }
 
@@ -5968,9 +5968,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
             let tag = formatter::Tag::get(arg, global)?;
             let _ = writer.write_all(b" ");
             if Output::enable_ansi_colors_stderr() {
-                let _ = fmt.format::<true>(tag, writer, arg, global);
+                fmt.format::<true>(tag, writer, arg, global)?;
             } else {
-                let _ = fmt.format::<false>(tag, writer, arg, global);
+                fmt.format::<false>(tag, writer, arg, global)?;
             }
         }
         let _ = writer.write_all(b"\n");

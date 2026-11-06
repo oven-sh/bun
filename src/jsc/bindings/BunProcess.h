@@ -58,6 +58,9 @@ public:
     JSFunction* consoleNoop() { return m_consoleNoop.getInitializedOnMainThread(this); }
     JSFunction* consoleWriteFailed(int fd) { return (fd == 1 ? m_consoleStdoutWriteFailed : m_consoleStderrWriteFailed).getInitializedOnMainThread(this); }
     void addNoopErrorListener(Zig::GlobalObject*, JSObject* stream);
+    // The sink of the stream for fd while it is not synchronous (a terminal on Windows). Cleared once it is made so.
+    WriteBarrier<Unknown> m_stdioSink[2];
+    void forceStdioSinkSynchronous(Zig::GlobalObject*, int fd);
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

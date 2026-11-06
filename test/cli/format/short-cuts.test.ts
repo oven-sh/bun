@@ -5224,6 +5224,28 @@ describe("JavaScript and TypeScript in a host", () => {
           [0, 3, 5, 1, 9, 14, 2].flatMap(count => [unformatted.repeat(count) || "a\n", ...blocks]),
           [[]],
         ));
+
+      // A statement fits where it is in the source, and doesn't where it is printed: the file is formatted again. After two such
+      // files guesses leave some columns free, after two more nothing is guessed. One of the three statements is as wide as
+      // it takes for both, with each set of options below.
+      const nest = (length: number) =>
+        `foo(function () {\n  foo(function () {\n    foo(function () {\n      return ${"a".repeat(36)} + ${"b".repeat(length)};\n    }, function () {});\n  }, function () {});\n}, function () {});\n`;
+      const wrongGuess = `${nest(23)}${nest(12)}${nest(19)}`.repeat(4);
+      const probes = [
+        `import { ${"a".repeat(20)}, ${"b".repeat(20)}, ${"c".repeat(20)} } from "d";\nimport { ${"a".repeat(20)}, ${"b".repeat(20)}, ${"c".repeat(18)} } from "d";\nimport {\n  ${"a".repeat(20)},\n  ${"b".repeat(20)},\n  ${"c".repeat(18)},\n} from "d";\n`,
+        ...[70, 72, 74, 75, 76, 77, 78].map(
+          width =>
+            `function f() {\n  if (a) {\n    const b = ${"c".repeat(width - 14)};\n    d(\n      ${"e".repeat(30)},\n      ${"f".repeat(width - 44)},\n    );\n  }\n}\n`,
+        ),
+        `x = (\n  <a b="c">\n    <d e="${"f".repeat(60)}" />\n    <g>${"h ".repeat(36)}</g>\n    {i}\n  </a>\n);\n`,
+        `class A {\n  b(\n    ${"c".repeat(34)},\n    ${"d".repeat(34)},\n  ) {\n    e;\n  }\n\n  f = {\n    g: ${"h".repeat(67)},\n    i: 1,\n  };\n}\n`,
+      ];
+      describe("scripts after wrong guesses", () =>
+        expectSameInOrder(
+          "a.jsx",
+          [...probes, wrongGuess, wrongGuess, ...probes, wrongGuess, wrongGuess, ...probes, wrongGuess, ...probes],
+          [[], ["--tab-width=4"], ["--print-width=76"]],
+        ));
     });
   });
 });

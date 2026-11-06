@@ -276,26 +276,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The `#private` field for the value of `accessor`, under a name that reaches it from every place that reaches `accessor`.
-    fn accessor_storage_field(
-        &mut self,
-        accessor: Ref,
-        is_static: bool,
-        taken: &mut BumpVec<'a, &'a [u8]>,
-    ) -> Ref {
+    fn accessor_storage_field(&mut self, accessor: Ref, taken: &mut BumpVec<'a, &'a [u8]>) -> Ref {
         let accessor_name: &'a [u8] = self.symbols[accessor.inner_index() as usize]
             .original_name
             .slice();
         let mut listed = self.plain_accessors.iter();
         let listed = listed.find(|listed| listed.name.eql(accessor)).copied();
-        debug_assert!(
-            listed.is_some(),
-            "the parser lists every undecorated `accessor #x`"
-        );
+        let listed = listed.expect("the parser lists every undecorated `accessor #x`");
         let mut name = self.bump_name3(accessor_name, b"_accessor_storage", b"");
         let mut suffix = 1u32;
         while taken.contains(&name)
             || self.enclosing_scope_declares(name)
-            || listed.is_some_and(|listed| self.scope_below_declares(listed.class_body, name))
+            || self.scope_below_declares(listed.class_body, name)
         {
             suffix += 1;
             name = bun_alloc::arena_format!(
@@ -308,14 +300,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes();
         }
         taken.push(name);
-        let Some(listed) = listed else {
-            let kind = if is_static {
-                js_ast::symbol::Kind::PrivateStaticField
-            } else {
-                js_ast::symbol::Kind::PrivateField
-            };
-            return self.new_sym(kind, name);
-        };
         self.symbols[listed.storage.inner_index() as usize].original_name =
             js_ast::StoreStr::new(name);
         listed.storage
@@ -359,8 +343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let accessor_name: &'a [u8] = self.symbols[accessor.ref_.inner_index() as usize]
             .original_name
             .slice();
-        let is_static = prop.flags.contains(Flags::Property::IsStatic);
-        let storage = self.accessor_storage_field(accessor.ref_, is_static, taken);
+        let storage = self.accessor_storage_field(accessor.ref_, taken);
 
         // The field would name an anonymous function after itself.
         let accessor_name = self.new_expr(E::EString::init(accessor_name), loc);

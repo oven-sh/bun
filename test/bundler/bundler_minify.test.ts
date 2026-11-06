@@ -1082,6 +1082,10 @@ describe("bundler", () => {
         });
         capture(import.meta.hot.data);
         capture(import.meta.hot.data.value ??= "hello");
+        // The non-null assertion from the types is stripped before the fold.
+        import.meta.hot!.accept(() => {"FAIL";value});
+        capture(import.meta.hot!.data);
+        capture(import.meta.hot!.data.value ??= "hello");
       `,
       "other.ts": `
         capture("hello");
@@ -1089,7 +1093,7 @@ describe("bundler", () => {
       `,
     },
     outfile: "/out.js",
-    capture: ['"hello"', "void 0", "void 0", '"This should remain"', "{}", '"hello"'],
+    capture: ['"hello"', "void 0", "void 0", '"This should remain"', "{}", '"hello"', "{}", '"hello"'],
     minifySyntax: true,
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("FAIL");

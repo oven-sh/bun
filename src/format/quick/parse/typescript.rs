@@ -416,7 +416,7 @@ impl Quick {
                 }
             }
         }
-        self.restore(saved);
+        self.restore_from_afar(saved)?;
         return Ok(result);
     }
 
@@ -2922,7 +2922,7 @@ impl Quick {
             self.parse_typescript.no_end_from = from;
             self.parse_typescript.no_end_to = self.lexer.tok_start;
         }
-        self.restore(saved);
+        self.restore_from_afar(saved)?;
         return Ok(result);
     }
 

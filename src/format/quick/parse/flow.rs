@@ -2774,14 +2774,14 @@ impl Quick {
                     break;
                 }
             } else if self.lexer.tok == tk::EOF {
-                self.restore(saved);
+                self.restore_from_afar(saved)?;
                 return Ok(0);
             }
             self.next()?;
         }
         self.next()?;
         let is_match = self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0;
-        self.restore(saved);
+        self.restore_from_afar(saved)?;
         if !is_match {
             return Ok(0);
         }

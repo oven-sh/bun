@@ -4600,13 +4600,19 @@ describe("scripts that are too much for the quick way", () => {
           `type A = ${"T extends (infer U extends ".repeat(depth)}X${" ? 1 : 2) ? 1 : 2".repeat(depth)};\n`,
           `x = [${"a < b, ".repeat(depth * 40)}];\n`,
           `x = ${"a < ".repeat(depth * 40)}b;\n`,
+          // a look ahead from each `(` to the end of what may be a pattern
+          `type A = ${"({ a: ".repeat(depth * 13)}1${" })".repeat(depth * 13)};\n`,
+          `type A = ${"([".repeat(depth * 13)}1${"])".repeat(depth * 13)};\n`,
         ]),
         [[]],
       ));
     describe("Flow", () =>
       expectSame(
         "a.js",
-        [40, 300].map(depth => `// @flow\n${nest("<T>(a = ", "1", ")", depth)}`),
+        [40, 300].flatMap(depth => [
+          `// @flow\n${nest("<T>(a = ", "1", ")", depth)}`,
+          `// @flow\n${nest("match (", "a", ") { _ => 1 }", depth * 4)}`,
+        ]),
         [[]],
       ));
     // A template that its guest cannot read is printed as it is, with what is between its braces printed once more.

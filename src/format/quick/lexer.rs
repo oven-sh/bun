@@ -340,6 +340,14 @@ impl Quick {
         self.lexer.c_count = saved.comments;
     }
 
+    /// restore() behind a look ahead that goes as far as it takes: to the end of a pattern, to the parenthesis that closes. One of these can start inside of another, so
+    /// what has been read counts as work that was for nothing.
+    pub(crate) fn restore_from_afar(&mut self, saved: Saved) -> R<()> {
+        let read = self.lexer.pos - saved.pos;
+        self.restore(saved);
+        self.waste(read)
+    }
+
     /// The current token starts with `<` or `>`: takes that one character for the token and reads the next token behind it.
     pub(crate) fn next_after_first_character(&mut self) -> R<()> {
         self.lexer.tok_end = self.lexer.tok_start + 1;

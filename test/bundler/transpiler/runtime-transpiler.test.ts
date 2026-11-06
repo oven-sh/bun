@@ -302,7 +302,7 @@ test.skipIf(isDebug || isASAN)(
 // `new.target` outside a function "is intentionally not emitted" (src/js_parser/visit/visit_expr.rs). A change that
 // reports one of these errors moves its lines to "is reported".
 describe("an early error in code that nothing runs", () => {
-  // By outcome, then by rule and extension. A `.cjs` file is CommonJS. Any other file is a module.
+  // By outcome, then by rule and extension: `.js` or `.ts` for a module, `.cjs` for CommonJS.
   const table: Record<string, Record<string, string[]>> = {
     // Both files have a SyntaxError.
     "is reported": {
@@ -393,11 +393,10 @@ describe("an early error in code that nothing runs", () => {
       "strict-code.cjs": ['"use strict"; x = 010;', 'function f() { "use strict"; with ({}) {} }'],
       "using.js": ["await\nusing a = b;"],
     },
-    // Both files load, and the engine accepts the first one as it is written, or can't read it.
+    // Both files load, and the engine accepts the first one as it is written.
     "has no early error": {
       "modules.js": ["await 1;"],
       "sloppy-code.cjs": ["var a; delete a;", "new.target;", "return;"],
-      "typescript.ts": ["enum E { A }"],
     },
   };
 
@@ -408,12 +407,19 @@ describe("an early error in code that nothing runs", () => {
     return `${head && head + "\n"}if (${condition}) {\n${program.slice(head.length)}\n}\n`;
   };
 
-  // The engine reads a `.cjs` text as the body of a CommonJS function and a `.js` text as a module. It doesn't read
-  // TypeScript.
+  // How the engine reads the text of a file as it is written. It doesn't read TypeScript.
+  const readers: Record<string, ((text: string) => void) | undefined> = {
+    js: text => void new vm.SourceTextModule(text),
+    cjs: text => void new Function("exports", "require", "module", "__filename", "__dirname", text),
+    ts: undefined,
+  };
   const isRefusedAsWritten = (extension: string, text: string) => {
+    const read = readers[extension];
+    // Nothing says whether such a program has an early error, so the table can't hold it.
+    if (!read)
+      throw new Error(`Both files load, and the engine can't read a .${extension} file: ${JSON.stringify(text)}`);
     try {
-      if (extension === "cjs") new Function("exports", "require", "module", "__filename", "__dirname", text);
-      else if (extension === "js") new vm.SourceTextModule(text);
+      read(text);
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
       return true;
@@ -422,10 +428,12 @@ describe("an early error in code that nothing runs", () => {
   };
 
   test("is reported or erased as the table says", async () => {
-    const rows = Object.entries(table).flatMap(([, lists]) =>
-      Object.entries(lists).flatMap(([list, programs]) =>
-        programs.map(program => ({ list, program, extension: list.slice(list.lastIndexOf(".") + 1) })),
-      ),
+    const rows = Object.values(table).flatMap(lists =>
+      Object.entries(lists).flatMap(([list, programs]) => {
+        const extension = list.slice(list.lastIndexOf(".") + 1);
+        if (!(extension in readers)) throw new Error(`${list}: this test can't load a .${extension} file`);
+        return programs.map(program => ({ list, program, extension }));
+      }),
     );
     const files: Record<string, string> = {};
     rows.forEach(({ program, extension }, index) => {

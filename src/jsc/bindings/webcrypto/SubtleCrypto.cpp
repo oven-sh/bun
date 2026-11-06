@@ -1166,56 +1166,46 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
-// Node's aliasKeyFormat maps raw-secret and raw-public to raw for these
-// algorithms and rejects the seed/public formats everywhere else; only the
-// ML algorithms consume them directly (lib/internal/crypto/webcrypto.js).
+// raw-public stands for raw where the key is public and raw-secret where it is secret. The ML
+// algorithms take the three formats themselves, and the other secret keys take raw-secret.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/webcrypto.js#L955-L1116
 // Shared by importKey and unwrapKey; returns false after rejecting the promise.
 static bool aliasImportKeyFormat(CryptoAlgorithmIdentifier identifier, SubtleCrypto::KeyFormat& format, DeferredPromise& promise)
 {
     using KeyFormat = SubtleCrypto::KeyFormat;
+    if (format != KeyFormat::RawSecret && format != KeyFormat::RawPublic && format != KeyFormat::RawSeed)
+        return true;
+
+    std::optional<KeyFormat> alias;
     switch (identifier) {
     case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSA_PSS:
     case CryptoAlgorithmIdentifier::RSA_OAEP:
+        break;
     case CryptoAlgorithmIdentifier::ECDSA:
     case CryptoAlgorithmIdentifier::ECDH:
     case CryptoAlgorithmIdentifier::Ed25519:
     case CryptoAlgorithmIdentifier::X25519:
+        alias = KeyFormat::RawPublic;
+        break;
     case CryptoAlgorithmIdentifier::HKDF:
     case CryptoAlgorithmIdentifier::PBKDF2:
-        if (format == KeyFormat::RawSecret)
-            format = KeyFormat::Raw;
+        alias = KeyFormat::RawSecret;
         break;
     default:
+        if (isAkpAlgorithm(identifier) || format == KeyFormat::RawSecret)
+            return true;
         break;
     }
-    if (!isAkpAlgorithm(identifier) && (format == KeyFormat::RawPublic || format == KeyFormat::RawSeed)) {
-        bool aliasesRawPublic = false;
-        switch (identifier) {
-        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
-        case CryptoAlgorithmIdentifier::RSA_PSS:
-        case CryptoAlgorithmIdentifier::RSA_OAEP:
-        case CryptoAlgorithmIdentifier::ECDSA:
-        case CryptoAlgorithmIdentifier::ECDH:
-        case CryptoAlgorithmIdentifier::Ed25519:
-        case CryptoAlgorithmIdentifier::X25519:
-        case CryptoAlgorithmIdentifier::HKDF:
-        case CryptoAlgorithmIdentifier::PBKDF2:
-            aliasesRawPublic = true;
-            break;
-        default:
-            break;
-        }
-        if (format == KeyFormat::RawPublic && aliasesRawPublic)
-            format = KeyFormat::Raw;
-        else {
-            promise.reject(NotSupportedError, makeString("Unable to import "_s, CryptoAlgorithmRegistry::singleton().name(identifier), " using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));
-            return false;
-        }
+    if (format == alias) {
+        format = KeyFormat::Raw;
+        return true;
     }
-    return true;
+    auto formatName = format == KeyFormat::RawSecret ? "raw-secret"_s : format == KeyFormat::RawPublic ? "raw-public"_s
+                                                                                                       : "raw-seed"_s;
+    promise.reject(NotSupportedError, makeString("Unable to import "_s, CryptoAlgorithmRegistry::singleton().name(identifier), " using "_s, formatName, " format"_s));
+    return false;
 }
 
 // Export-side twin of aliasImportKeyFormat, shared by exportKey and wrapKey.
@@ -1229,14 +1219,18 @@ static bool aliasExportKeyFormat(const CryptoKey& key, SubtleCrypto::KeyFormat& 
         case CryptoAlgorithmIdentifier::ECDH:
         case CryptoAlgorithmIdentifier::Ed25519:
         case CryptoAlgorithmIdentifier::X25519:
-            aliasesRawPublic = key.type() == CryptoKeyType::Public;
+            aliasesRawPublic = true;
             break;
         default:
             break;
         }
-        if (format == KeyFormat::RawPublic && aliasesRawPublic)
+        if (format == KeyFormat::RawPublic && aliasesRawPublic) {
+            if (key.type() != CryptoKeyType::Public) {
+                promise.reject(InvalidAccessError, "Key must be a public key"_s);
+                return false;
+            }
             format = KeyFormat::Raw;
-        else {
+        } else {
             auto type = key.type() == CryptoKeyType::Private ? "private"_s : key.type() == CryptoKeyType::Public ? "public"_s
                                                                                                                  : "secret"_s;
             promise.reject(NotSupportedError, makeString("Unable to export "_s, CryptoAlgorithmRegistry::singleton().name(key.algorithmIdentifier()), ' ', type, " key using "_s, format == KeyFormat::RawPublic ? "raw-public"_s : "raw-seed"_s, " format"_s));

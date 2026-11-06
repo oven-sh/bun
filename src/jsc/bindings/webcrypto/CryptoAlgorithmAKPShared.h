@@ -97,6 +97,8 @@ inline void importAkpKey(CryptoAlgorithmIdentifier identifier, const AkpAlgorith
         break;
     case CryptoKeyFormat::Jwk: {
         auto& jwk = std::get<JsonWebKey>(data);
+        if (unsupportedUsage(jwk.priv.isNull()))
+            return;
         if (jwk.kty.isNull()) {
             exceptionCallback(DataError, "Invalid keyData"_s);
             return;
@@ -129,8 +131,6 @@ inline void importAkpKey(CryptoAlgorithmIdentifier identifier, const AkpAlgorith
             exceptionCallback(DataError, "JWK \"alg\" Parameter and algorithm name mismatch"_s);
             return;
         }
-        if (unsupportedUsage(jwk.priv.isNull()))
-            return;
         result = CryptoKeyAKP::importJwk(parameters.identifier, WTF::move(jwk), extractable, usages);
         break;
     }
@@ -169,7 +169,7 @@ inline void exportAkpKey(CryptoAlgorithmIdentifier identifier, CryptoKeyFormat f
     }
     case CryptoKeyFormat::Spki: {
         if (akpKey.type() != CryptoKeyType::Public) {
-            unableToExport("spki"_s);
+            exceptionCallback(InvalidAccessError, "Key must be a public key"_s);
             return;
         }
         auto spki = akpKey.exportSpki();
@@ -182,7 +182,7 @@ inline void exportAkpKey(CryptoAlgorithmIdentifier identifier, CryptoKeyFormat f
     }
     case CryptoKeyFormat::Pkcs8: {
         if (akpKey.type() != CryptoKeyType::Private) {
-            unableToExport("pkcs8"_s);
+            exceptionCallback(InvalidAccessError, "Key must be a private key"_s);
             return;
         }
         auto pkcs8 = akpKey.exportPkcs8();
@@ -195,7 +195,7 @@ inline void exportAkpKey(CryptoAlgorithmIdentifier identifier, CryptoKeyFormat f
     }
     case CryptoKeyFormat::RawPublic: {
         if (akpKey.type() != CryptoKeyType::Public) {
-            unableToExport("raw-public"_s);
+            exceptionCallback(InvalidAccessError, "Key must be a public key"_s);
             return;
         }
         auto raw = akpKey.exportRawPublic();
@@ -208,7 +208,7 @@ inline void exportAkpKey(CryptoAlgorithmIdentifier identifier, CryptoKeyFormat f
     }
     case CryptoKeyFormat::RawSeed: {
         if (akpKey.type() != CryptoKeyType::Private) {
-            unableToExport("raw-seed"_s);
+            exceptionCallback(InvalidAccessError, "Key must be a private key"_s);
             return;
         }
         auto seed = akpKey.exportRawSeed();

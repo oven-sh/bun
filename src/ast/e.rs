@@ -1274,6 +1274,8 @@ pub struct Object {
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
+    /// `{ key: value }` as the source has it, where the key names `value`, an anonymous function or class.
+    pub key_names_value: bool,
 
     pub close_brace_loc: crate::Loc,
 }
@@ -1285,6 +1287,7 @@ impl Default for Object {
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
+            key_names_value: false,
             close_brace_loc: crate::Loc::EMPTY,
         }
     }
@@ -1332,6 +1335,7 @@ impl Object {
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
+        key_names_value: false,
         close_brace_loc: crate::Loc::EMPTY,
     };
 

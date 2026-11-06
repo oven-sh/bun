@@ -875,6 +875,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self_errors.merge_into(errors.unwrap());
         }
 
+        // Noted here: a visit can leave a function bare that the key does not name, `{ f: (0, () => {}) }`.
+        let key_names_value = matches!(
+            properties.as_slice(),
+            [property] if property.value.is_some_and(|value| value.is_anonymous_named())
+        );
         // BumpVec → Vec via arena slice; see pfx_t_open_bracket.
         let properties_list = G::PropertyList::from_bump_vec(properties);
         Ok(p.new_expr(
@@ -882,6 +887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 properties: properties_list,
                 comma_after_spread,
                 is_single_line,
+                key_names_value,
                 close_brace_loc,
                 ..Default::default()
             },

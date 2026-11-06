@@ -583,7 +583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         )
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
-                                        && !identifier_opts.target_names_value()
+                                        && !obj.key_names_value
                                     {
                                         return Some(value);
                                     }

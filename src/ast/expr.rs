@@ -50,19 +50,6 @@ impl Expr {
         }
     }
 
-    /// `{ key: value }` where the key names `value`, an anonymous function or class.
-    pub fn names_its_one_value(&self) -> bool {
-        match &self.data {
-            Data::EObject(object) => match object.properties.slice() {
-                [property] => property
-                    .value
-                    .is_some_and(|value| value.is_anonymous_named()),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
     pub fn can_be_inlined_from_property_access(&self) -> bool {
         match self.data {
             // if the array has a spread we must keep it
@@ -1950,6 +1937,7 @@ impl Data {
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     was_originally_macro: el.was_originally_macro,
+                    key_names_value: el.key_names_value,
                     close_brace_loc: el.close_brace_loc,
                 });
                 Ok(Data::EObject(StoreRef::from_bump(item)))

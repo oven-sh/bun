@@ -1653,6 +1653,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::Object {
                         properties,
                         is_single_line: true,
+                        key_names_value: true,
                         ..Default::default()
                     },
                     value.loc,

@@ -1,0 +1,1554 @@
+status: 0
+script: fba20562397e6377
+source: 90e8ad4d2b538f22
+---
+text [c='set', f='F(x for x in src())', place='module'] => set(x for x in src())
+| place [c='set', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='set', f='F(x for x in src())', place='module'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in src())', place='function'] => set(x for x in src())
+| place [c='set', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='set', f='F(x for x in src())', place='function'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in src())', place='loop'] => set(x for x in src())
+| place [c='set', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F(x for x in src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='F(x for x in src())', place='with'] => set(x for x in src())
+| place [c='set', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='set', f='F(x for x in src())', place='with'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in src())', place='generator'] => set(x for x in src())
+| place [c='set', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F(x for x in src())', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='F(x for y in (1,) for x in src())', place='module'] => set(x for y in (1,) for x in src())
+| place [c='set', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='set', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; caught hash ; after
+text [c='set', f='F(x for y in (1,) for x in src())', place='function'] => set(x for y in (1,) for x in src())
+| place [c='set', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='set', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; caught hash ; after
+text [c='set', f='F(x for y in (1,) for x in src())', place='loop'] => set(x for y in (1,) for x in src())
+| place [c='set', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='F(x for y in (1,) for x in src())', place='with'] => set(x for y in (1,) for x in src())
+| place [c='set', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='set', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; caught hash ; after
+text [c='set', f='F(x for y in (1,) for x in src())', place='generator'] => set(x for y in (1,) for x in src())
+| place [c='set', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in (z for z in src()))', place='module'] => set(x for x in (z for z in src()))
+| place [c='set', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='set', f='F(x for x in (z for z in src()))', place='module'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in (z for z in src()))', place='function'] => set(x for x in (z for z in src()))
+| place [c='set', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='set', f='F(x for x in (z for z in src()))', place='function'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in (z for z in src()))', place='loop'] => set(x for x in (z for z in src()))
+| place [c='set', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='F(x for x in (z for z in src()))', place='with'] => set(x for x in (z for z in src()))
+| place [c='set', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='set', f='F(x for x in (z for z in src()))', place='with'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in (z for z in src()))', place='generator'] => set(x for x in (z for z in src()))
+| place [c='set', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='F((x for x in src()))', place='module'] => set((x for x in src()))
+| place [c='set', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='set', f='F((x for x in src()))', place='module'] => closed src ; caught hash ; after
+text [c='set', f='F((x for x in src()))', place='function'] => set((x for x in src()))
+| place [c='set', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='set', f='F((x for x in src()))', place='function'] => closed src ; caught hash ; after
+text [c='set', f='F((x for x in src()))', place='loop'] => set((x for x in src()))
+| place [c='set', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F((x for x in src()))', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='F((x for x in src()))', place='with'] => set((x for x in src()))
+| place [c='set', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='set', f='F((x for x in src()))', place='with'] => closed src ; caught hash ; after
+text [c='set', f='F((x for x in src()))', place='generator'] => set((x for x in src()))
+| place [c='set', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F((x for x in src()))', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='r = F(x for x in src())', place='module'] => r = set(x for x in src())
+| place [c='set', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='set', f='r = F(x for x in src())', place='module'] => closed src ; caught hash ; after
+text [c='set', f='r = F(x for x in src())', place='function'] => r = set(x for x in src())
+| place [c='set', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='set', f='r = F(x for x in src())', place='function'] => closed src ; caught hash ; after
+text [c='set', f='r = F(x for x in src())', place='loop'] => r = set(x for x in src())
+| place [c='set', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='r = F(x for x in src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='r = F(x for x in src())', place='with'] => r = set(x for x in src())
+| place [c='set', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='set', f='r = F(x for x in src())', place='with'] => closed src ; caught hash ; after
+text [c='set', f='r = F(x for x in src())', place='generator'] => r = set(x for x in src())
+| place [c='set', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='r = F(x for x in src())', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='[F(x for x in src())]', place='module'] => [set(x for x in src())]
+| place [c='set', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='set', f='[F(x for x in src())]', place='module'] => closed src ; caught hash ; after
+text [c='set', f='[F(x for x in src())]', place='function'] => [set(x for x in src())]
+| place [c='set', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='set', f='[F(x for x in src())]', place='function'] => closed src ; caught hash ; after
+text [c='set', f='[F(x for x in src())]', place='loop'] => [set(x for x in src())]
+| place [c='set', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='[F(x for x in src())]', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='[F(x for x in src())]', place='with'] => [set(x for x in src())]
+| place [c='set', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='set', f='[F(x for x in src())]', place='with'] => closed src ; caught hash ; after
+text [c='set', f='[F(x for x in src())]', place='generator'] => [set(x for x in src())]
+| place [c='set', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='[F(x for x in src())]', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='len([F(x for x in src())])', place='module'] => len([set(x for x in src())])
+| place [c='set', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='set', f='len([F(x for x in src())])', place='module'] => closed src ; caught hash ; after
+text [c='set', f='len([F(x for x in src())])', place='function'] => len([set(x for x in src())])
+| place [c='set', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='set', f='len([F(x for x in src())])', place='function'] => closed src ; caught hash ; after
+text [c='set', f='len([F(x for x in src())])', place='loop'] => len([set(x for x in src())])
+| place [c='set', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='len([F(x for x in src())])', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='len([F(x for x in src())])', place='with'] => len([set(x for x in src())])
+| place [c='set', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='set', f='len([F(x for x in src())])', place='with'] => closed src ; caught hash ; after
+text [c='set', f='len([F(x for x in src())])', place='generator'] => len([set(x for x in src())])
+| place [c='set', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='len([F(x for x in src())])', place='generator'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => set(x for x in src("a")) or set(x for x in src("b"))
+| place [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => set(x for x in src("a")) or set(x for x in src("b"))
+| place [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => set(x for x in src("a")) or set(x for x in src("b"))
+| place [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; caught hash ; after ; closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => set(x for x in src("a")) or set(x for x in src("b"))
+| place [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => set(x for x in src("a")) or set(x for x in src("b"))
+| place [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a") for y in src("b"))', place='module'] => set(x for x in src("a") for y in src("b"))
+| place [c='set', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='set', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a") for y in src("b"))', place='function'] => set(x for x in src("a") for y in src("b"))
+| place [c='set', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='set', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a") for y in src("b"))', place='loop'] => set(x for x in src("a") for y in src("b"))
+| place [c='set', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed a ; caught hash ; after ; closed b ; closed b ; closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a") for y in src("b"))', place='with'] => set(x for x in src("a") for y in src("b"))
+| place [c='set', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='set', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='set', f='F(x for x in src("a") for y in src("b"))', place='generator'] => set(x for x in src("a") for y in src("b"))
+| place [c='set', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='set', f='F(x for x in\n        src())', place='module'] => set(x for x in
+        src())
+| place [c='set', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='set', f='F(x for x in\n        src())', place='module'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in\n        src())', place='function'] => set(x for x in
+        src())
+| place [c='set', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='set', f='F(x for x in\n        src())', place='function'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in\n        src())', place='loop'] => set(x for x in
+        src())
+| place [c='set', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='set', f='F(x for x in\n        src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='set', f='F(x for x in\n        src())', place='with'] => set(x for x in
+        src())
+| place [c='set', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='set', f='F(x for x in\n        src())', place='with'] => closed src ; caught hash ; after
+text [c='set', f='F(x for x in\n        src())', place='generator'] => set(x for x in
+        src())
+| place [c='set', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='set', f='F(x for x in\n        src())', place='generator'] => closed src ; caught hash ; after
+text [c='all', f='F(x for x in src())', place='module'] => all(x for x in src())
+| place [c='all', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='all', f='F(x for x in src())', place='module'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in src())', place='function'] => all(x for x in src())
+| place [c='all', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='all', f='F(x for x in src())', place='function'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in src())', place='loop'] => all(x for x in src())
+| place [c='all', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F(x for x in src())', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='F(x for x in src())', place='with'] => all(x for x in src())
+| place [c='all', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='all', f='F(x for x in src())', place='with'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in src())', place='generator'] => all(x for x in src())
+| place [c='all', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F(x for x in src())', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='F(x for y in (1,) for x in src())', place='module'] => all(x for y in (1,) for x in src())
+| place [c='all', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='all', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; caught bool ; after
+text [c='all', f='F(x for y in (1,) for x in src())', place='function'] => all(x for y in (1,) for x in src())
+| place [c='all', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='all', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; caught bool ; after
+text [c='all', f='F(x for y in (1,) for x in src())', place='loop'] => all(x for y in (1,) for x in src())
+| place [c='all', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='F(x for y in (1,) for x in src())', place='with'] => all(x for y in (1,) for x in src())
+| place [c='all', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='all', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; caught bool ; after
+text [c='all', f='F(x for y in (1,) for x in src())', place='generator'] => all(x for y in (1,) for x in src())
+| place [c='all', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in (z for z in src()))', place='module'] => all(x for x in (z for z in src()))
+| place [c='all', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='all', f='F(x for x in (z for z in src()))', place='module'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in (z for z in src()))', place='function'] => all(x for x in (z for z in src()))
+| place [c='all', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='all', f='F(x for x in (z for z in src()))', place='function'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in (z for z in src()))', place='loop'] => all(x for x in (z for z in src()))
+| place [c='all', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='F(x for x in (z for z in src()))', place='with'] => all(x for x in (z for z in src()))
+| place [c='all', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='all', f='F(x for x in (z for z in src()))', place='with'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in (z for z in src()))', place='generator'] => all(x for x in (z for z in src()))
+| place [c='all', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='F((x for x in src()))', place='module'] => all((x for x in src()))
+| place [c='all', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='all', f='F((x for x in src()))', place='module'] => closed src ; caught bool ; after
+text [c='all', f='F((x for x in src()))', place='function'] => all((x for x in src()))
+| place [c='all', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='all', f='F((x for x in src()))', place='function'] => closed src ; caught bool ; after
+text [c='all', f='F((x for x in src()))', place='loop'] => all((x for x in src()))
+| place [c='all', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F((x for x in src()))', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='F((x for x in src()))', place='with'] => all((x for x in src()))
+| place [c='all', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='all', f='F((x for x in src()))', place='with'] => closed src ; caught bool ; after
+text [c='all', f='F((x for x in src()))', place='generator'] => all((x for x in src()))
+| place [c='all', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F((x for x in src()))', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='r = F(x for x in src())', place='module'] => r = all(x for x in src())
+| place [c='all', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='all', f='r = F(x for x in src())', place='module'] => closed src ; caught bool ; after
+text [c='all', f='r = F(x for x in src())', place='function'] => r = all(x for x in src())
+| place [c='all', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='all', f='r = F(x for x in src())', place='function'] => closed src ; caught bool ; after
+text [c='all', f='r = F(x for x in src())', place='loop'] => r = all(x for x in src())
+| place [c='all', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='r = F(x for x in src())', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='r = F(x for x in src())', place='with'] => r = all(x for x in src())
+| place [c='all', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='all', f='r = F(x for x in src())', place='with'] => closed src ; caught bool ; after
+text [c='all', f='r = F(x for x in src())', place='generator'] => r = all(x for x in src())
+| place [c='all', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='r = F(x for x in src())', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='[F(x for x in src())]', place='module'] => [all(x for x in src())]
+| place [c='all', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='all', f='[F(x for x in src())]', place='module'] => closed src ; caught bool ; after
+text [c='all', f='[F(x for x in src())]', place='function'] => [all(x for x in src())]
+| place [c='all', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='all', f='[F(x for x in src())]', place='function'] => closed src ; caught bool ; after
+text [c='all', f='[F(x for x in src())]', place='loop'] => [all(x for x in src())]
+| place [c='all', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='[F(x for x in src())]', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='[F(x for x in src())]', place='with'] => [all(x for x in src())]
+| place [c='all', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='all', f='[F(x for x in src())]', place='with'] => closed src ; caught bool ; after
+text [c='all', f='[F(x for x in src())]', place='generator'] => [all(x for x in src())]
+| place [c='all', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='[F(x for x in src())]', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='len([F(x for x in src())])', place='module'] => len([all(x for x in src())])
+| place [c='all', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='all', f='len([F(x for x in src())])', place='module'] => closed src ; caught bool ; after
+text [c='all', f='len([F(x for x in src())])', place='function'] => len([all(x for x in src())])
+| place [c='all', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='all', f='len([F(x for x in src())])', place='function'] => closed src ; caught bool ; after
+text [c='all', f='len([F(x for x in src())])', place='loop'] => len([all(x for x in src())])
+| place [c='all', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='len([F(x for x in src())])', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='len([F(x for x in src())])', place='with'] => len([all(x for x in src())])
+| place [c='all', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='all', f='len([F(x for x in src())])', place='with'] => closed src ; caught bool ; after
+text [c='all', f='len([F(x for x in src())])', place='generator'] => len([all(x for x in src())])
+| place [c='all', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='len([F(x for x in src())])', place='generator'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => all(x for x in src("a")) or all(x for x in src("b"))
+| place [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => all(x for x in src("a")) or all(x for x in src("b"))
+| place [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => all(x for x in src("a")) or all(x for x in src("b"))
+| place [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; caught bool ; after ; closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => all(x for x in src("a")) or all(x for x in src("b"))
+| place [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => all(x for x in src("a")) or all(x for x in src("b"))
+| place [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a") for y in src("b"))', place='module'] => all(x for x in src("a") for y in src("b"))
+| place [c='all', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='all', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a") for y in src("b"))', place='function'] => all(x for x in src("a") for y in src("b"))
+| place [c='all', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='all', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a") for y in src("b"))', place='loop'] => all(x for x in src("a") for y in src("b"))
+| place [c='all', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed a ; caught bool ; after ; closed b ; closed b ; closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a") for y in src("b"))', place='with'] => all(x for x in src("a") for y in src("b"))
+| place [c='all', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='all', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed a ; caught bool ; after
+text [c='all', f='F(x for x in src("a") for y in src("b"))', place='generator'] => all(x for x in src("a") for y in src("b"))
+| place [c='all', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed a ; caught bool ; after
+text [c='all', f='F(x for x in\n        src())', place='module'] => all(x for x in
+        src())
+| place [c='all', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='all', f='F(x for x in\n        src())', place='module'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in\n        src())', place='function'] => all(x for x in
+        src())
+| place [c='all', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='all', f='F(x for x in\n        src())', place='function'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in\n        src())', place='loop'] => all(x for x in
+        src())
+| place [c='all', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='all', f='F(x for x in\n        src())', place='loop'] => closed src ; caught bool ; after ; closed src ; caught bool ; after
+text [c='all', f='F(x for x in\n        src())', place='with'] => all(x for x in
+        src())
+| place [c='all', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='all', f='F(x for x in\n        src())', place='with'] => closed src ; caught bool ; after
+text [c='all', f='F(x for x in\n        src())', place='generator'] => all(x for x in
+        src())
+| place [c='all', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='all', f='F(x for x in\n        src())', place='generator'] => closed src ; caught bool ; after
+text [c='any', f='F(x for x in src())', place='module'] => any(x for x in src())
+| place [c='any', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='any', f='F(x for x in src())', place='module'] => closed src ; after
+text [c='any', f='F(x for x in src())', place='function'] => any(x for x in src())
+| place [c='any', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='any', f='F(x for x in src())', place='function'] => closed src ; after
+text [c='any', f='F(x for x in src())', place='loop'] => any(x for x in src())
+| place [c='any', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F(x for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='F(x for x in src())', place='with'] => any(x for x in src())
+| place [c='any', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='any', f='F(x for x in src())', place='with'] => closed src ; after
+text [c='any', f='F(x for x in src())', place='generator'] => any(x for x in src())
+| place [c='any', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F(x for x in src())', place='generator'] => closed src ; after
+text [c='any', f='F(x for y in (1,) for x in src())', place='module'] => any(x for y in (1,) for x in src())
+| place [c='any', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='any', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; after
+text [c='any', f='F(x for y in (1,) for x in src())', place='function'] => any(x for y in (1,) for x in src())
+| place [c='any', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='any', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; after
+text [c='any', f='F(x for y in (1,) for x in src())', place='loop'] => any(x for y in (1,) for x in src())
+| place [c='any', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='F(x for y in (1,) for x in src())', place='with'] => any(x for y in (1,) for x in src())
+| place [c='any', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='any', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; after
+text [c='any', f='F(x for y in (1,) for x in src())', place='generator'] => any(x for y in (1,) for x in src())
+| place [c='any', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; after
+text [c='any', f='F(x for x in (z for z in src()))', place='module'] => any(x for x in (z for z in src()))
+| place [c='any', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='any', f='F(x for x in (z for z in src()))', place='module'] => closed src ; after
+text [c='any', f='F(x for x in (z for z in src()))', place='function'] => any(x for x in (z for z in src()))
+| place [c='any', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='any', f='F(x for x in (z for z in src()))', place='function'] => closed src ; after
+text [c='any', f='F(x for x in (z for z in src()))', place='loop'] => any(x for x in (z for z in src()))
+| place [c='any', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='F(x for x in (z for z in src()))', place='with'] => any(x for x in (z for z in src()))
+| place [c='any', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='any', f='F(x for x in (z for z in src()))', place='with'] => closed src ; after
+text [c='any', f='F(x for x in (z for z in src()))', place='generator'] => any(x for x in (z for z in src()))
+| place [c='any', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; after
+text [c='any', f='F((x for x in src()))', place='module'] => any((x for x in src()))
+| place [c='any', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='any', f='F((x for x in src()))', place='module'] => closed src ; after
+text [c='any', f='F((x for x in src()))', place='function'] => any((x for x in src()))
+| place [c='any', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='any', f='F((x for x in src()))', place='function'] => closed src ; after
+text [c='any', f='F((x for x in src()))', place='loop'] => any((x for x in src()))
+| place [c='any', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F((x for x in src()))', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='F((x for x in src()))', place='with'] => any((x for x in src()))
+| place [c='any', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='any', f='F((x for x in src()))', place='with'] => closed src ; after
+text [c='any', f='F((x for x in src()))', place='generator'] => any((x for x in src()))
+| place [c='any', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F((x for x in src()))', place='generator'] => closed src ; after
+text [c='any', f='r = F(x for x in src())', place='module'] => r = any(x for x in src())
+| place [c='any', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='any', f='r = F(x for x in src())', place='module'] => closed src ; after
+text [c='any', f='r = F(x for x in src())', place='function'] => r = any(x for x in src())
+| place [c='any', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='any', f='r = F(x for x in src())', place='function'] => closed src ; after
+text [c='any', f='r = F(x for x in src())', place='loop'] => r = any(x for x in src())
+| place [c='any', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='r = F(x for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='r = F(x for x in src())', place='with'] => r = any(x for x in src())
+| place [c='any', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='any', f='r = F(x for x in src())', place='with'] => closed src ; after
+text [c='any', f='r = F(x for x in src())', place='generator'] => r = any(x for x in src())
+| place [c='any', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='r = F(x for x in src())', place='generator'] => closed src ; after
+text [c='any', f='[F(x for x in src())]', place='module'] => [any(x for x in src())]
+| place [c='any', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='any', f='[F(x for x in src())]', place='module'] => closed src ; after
+text [c='any', f='[F(x for x in src())]', place='function'] => [any(x for x in src())]
+| place [c='any', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='any', f='[F(x for x in src())]', place='function'] => closed src ; after
+text [c='any', f='[F(x for x in src())]', place='loop'] => [any(x for x in src())]
+| place [c='any', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='[F(x for x in src())]', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='[F(x for x in src())]', place='with'] => [any(x for x in src())]
+| place [c='any', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='any', f='[F(x for x in src())]', place='with'] => closed src ; after
+text [c='any', f='[F(x for x in src())]', place='generator'] => [any(x for x in src())]
+| place [c='any', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='[F(x for x in src())]', place='generator'] => closed src ; after
+text [c='any', f='len([F(x for x in src())])', place='module'] => len([any(x for x in src())])
+| place [c='any', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='any', f='len([F(x for x in src())])', place='module'] => closed src ; after
+text [c='any', f='len([F(x for x in src())])', place='function'] => len([any(x for x in src())])
+| place [c='any', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='any', f='len([F(x for x in src())])', place='function'] => closed src ; after
+text [c='any', f='len([F(x for x in src())])', place='loop'] => len([any(x for x in src())])
+| place [c='any', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='len([F(x for x in src())])', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='len([F(x for x in src())])', place='with'] => len([any(x for x in src())])
+| place [c='any', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='any', f='len([F(x for x in src())])', place='with'] => closed src ; after
+text [c='any', f='len([F(x for x in src())])', place='generator'] => len([any(x for x in src())])
+| place [c='any', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='len([F(x for x in src())])', place='generator'] => closed src ; after
+text [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => any(x for x in src("a")) or any(x for x in src("b"))
+| place [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; after
+text [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => any(x for x in src("a")) or any(x for x in src("b"))
+| place [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; after
+text [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => any(x for x in src("a")) or any(x for x in src("b"))
+| place [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; after ; closed a ; after
+text [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => any(x for x in src("a")) or any(x for x in src("b"))
+| place [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; after
+text [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => any(x for x in src("a")) or any(x for x in src("b"))
+| place [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; after
+text [c='any', f='F(x for x in src("a") for y in src("b"))', place='module'] => any(x for x in src("a") for y in src("b"))
+| place [c='any', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='any', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed a ; after
+text [c='any', f='F(x for x in src("a") for y in src("b"))', place='function'] => any(x for x in src("a") for y in src("b"))
+| place [c='any', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='any', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed a ; after
+text [c='any', f='F(x for x in src("a") for y in src("b"))', place='loop'] => any(x for x in src("a") for y in src("b"))
+| place [c='any', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed a ; after ; closed b ; closed a ; after
+text [c='any', f='F(x for x in src("a") for y in src("b"))', place='with'] => any(x for x in src("a") for y in src("b"))
+| place [c='any', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='any', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed a ; after
+text [c='any', f='F(x for x in src("a") for y in src("b"))', place='generator'] => any(x for x in src("a") for y in src("b"))
+| place [c='any', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed a ; after
+text [c='any', f='F(x for x in\n        src())', place='module'] => any(x for x in
+        src())
+| place [c='any', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='any', f='F(x for x in\n        src())', place='module'] => closed src ; after
+text [c='any', f='F(x for x in\n        src())', place='function'] => any(x for x in
+        src())
+| place [c='any', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='any', f='F(x for x in\n        src())', place='function'] => closed src ; after
+text [c='any', f='F(x for x in\n        src())', place='loop'] => any(x for x in
+        src())
+| place [c='any', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='any', f='F(x for x in\n        src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='any', f='F(x for x in\n        src())', place='with'] => any(x for x in
+        src())
+| place [c='any', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='any', f='F(x for x in\n        src())', place='with'] => closed src ; after
+text [c='any', f='F(x for x in\n        src())', place='generator'] => any(x for x in
+        src())
+| place [c='any', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='any', f='F(x for x in\n        src())', place='generator'] => closed src ; after
+text [c='frozenset', f='F(x for x in src())', place='module'] => frozenset(x for x in src())
+| place [c='frozenset', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src())', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in src())', place='function'] => frozenset(x for x in src())
+| place [c='frozenset', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src())', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in src())', place='loop'] => frozenset(x for x in src())
+| place [c='frozenset', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in src())', place='with'] => frozenset(x for x in src())
+| place [c='frozenset', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src())', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in src())', place='generator'] => frozenset(x for x in src())
+| place [c='frozenset', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src())', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for y in (1,) for x in src())', place='module'] => frozenset(x for y in (1,) for x in src())
+| place [c='frozenset', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for y in (1,) for x in src())', place='function'] => frozenset(x for y in (1,) for x in src())
+| place [c='frozenset', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for y in (1,) for x in src())', place='loop'] => frozenset(x for y in (1,) for x in src())
+| place [c='frozenset', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='F(x for y in (1,) for x in src())', place='with'] => frozenset(x for y in (1,) for x in src())
+| place [c='frozenset', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for y in (1,) for x in src())', place='generator'] => frozenset(x for y in (1,) for x in src())
+| place [c='frozenset', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in (z for z in src()))', place='module'] => frozenset(x for x in (z for z in src()))
+| place [c='frozenset', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F(x for x in (z for z in src()))', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in (z for z in src()))', place='function'] => frozenset(x for x in (z for z in src()))
+| place [c='frozenset', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F(x for x in (z for z in src()))', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in (z for z in src()))', place='loop'] => frozenset(x for x in (z for z in src()))
+| place [c='frozenset', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in (z for z in src()))', place='with'] => frozenset(x for x in (z for z in src()))
+| place [c='frozenset', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F(x for x in (z for z in src()))', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in (z for z in src()))', place='generator'] => frozenset(x for x in (z for z in src()))
+| place [c='frozenset', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='F((x for x in src()))', place='module'] => frozenset((x for x in src()))
+| place [c='frozenset', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F((x for x in src()))', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='F((x for x in src()))', place='function'] => frozenset((x for x in src()))
+| place [c='frozenset', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F((x for x in src()))', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='F((x for x in src()))', place='loop'] => frozenset((x for x in src()))
+| place [c='frozenset', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F((x for x in src()))', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='F((x for x in src()))', place='with'] => frozenset((x for x in src()))
+| place [c='frozenset', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F((x for x in src()))', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='F((x for x in src()))', place='generator'] => frozenset((x for x in src()))
+| place [c='frozenset', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F((x for x in src()))', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='r = F(x for x in src())', place='module'] => r = frozenset(x for x in src())
+| place [c='frozenset', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='r = F(x for x in src())', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='r = F(x for x in src())', place='function'] => r = frozenset(x for x in src())
+| place [c='frozenset', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='r = F(x for x in src())', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='r = F(x for x in src())', place='loop'] => r = frozenset(x for x in src())
+| place [c='frozenset', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='r = F(x for x in src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='r = F(x for x in src())', place='with'] => r = frozenset(x for x in src())
+| place [c='frozenset', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='r = F(x for x in src())', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='r = F(x for x in src())', place='generator'] => r = frozenset(x for x in src())
+| place [c='frozenset', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='r = F(x for x in src())', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='[F(x for x in src())]', place='module'] => [frozenset(x for x in src())]
+| place [c='frozenset', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='[F(x for x in src())]', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='[F(x for x in src())]', place='function'] => [frozenset(x for x in src())]
+| place [c='frozenset', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='[F(x for x in src())]', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='[F(x for x in src())]', place='loop'] => [frozenset(x for x in src())]
+| place [c='frozenset', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='[F(x for x in src())]', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='[F(x for x in src())]', place='with'] => [frozenset(x for x in src())]
+| place [c='frozenset', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='[F(x for x in src())]', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='[F(x for x in src())]', place='generator'] => [frozenset(x for x in src())]
+| place [c='frozenset', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='[F(x for x in src())]', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='len([F(x for x in src())])', place='module'] => len([frozenset(x for x in src())])
+| place [c='frozenset', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='len([F(x for x in src())])', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='len([F(x for x in src())])', place='function'] => len([frozenset(x for x in src())])
+| place [c='frozenset', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='len([F(x for x in src())])', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='len([F(x for x in src())])', place='loop'] => len([frozenset(x for x in src())])
+| place [c='frozenset', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='len([F(x for x in src())])', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='len([F(x for x in src())])', place='with'] => len([frozenset(x for x in src())])
+| place [c='frozenset', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='len([F(x for x in src())])', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='len([F(x for x in src())])', place='generator'] => len([frozenset(x for x in src())])
+| place [c='frozenset', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='len([F(x for x in src())])', place='generator'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => frozenset(x for x in src("a")) or frozenset(x for x in src("b"))
+| place [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => frozenset(x for x in src("a")) or frozenset(x for x in src("b"))
+| place [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => frozenset(x for x in src("a")) or frozenset(x for x in src("b"))
+| place [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; caught hash ; after ; closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => frozenset(x for x in src("a")) or frozenset(x for x in src("b"))
+| place [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => frozenset(x for x in src("a")) or frozenset(x for x in src("b"))
+| place [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='module'] => frozenset(x for x in src("a") for y in src("b"))
+| place [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='function'] => frozenset(x for x in src("a") for y in src("b"))
+| place [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='loop'] => frozenset(x for x in src("a") for y in src("b"))
+| place [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed a ; caught hash ; after ; closed b ; closed b ; closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='with'] => frozenset(x for x in src("a") for y in src("b"))
+| place [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='generator'] => frozenset(x for x in src("a") for y in src("b"))
+| place [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed a ; caught hash ; after
+text [c='frozenset', f='F(x for x in\n        src())', place='module'] => frozenset(x for x in
+        src())
+| place [c='frozenset', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='frozenset', f='F(x for x in\n        src())', place='module'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in\n        src())', place='function'] => frozenset(x for x in
+        src())
+| place [c='frozenset', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='frozenset', f='F(x for x in\n        src())', place='function'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in\n        src())', place='loop'] => frozenset(x for x in
+        src())
+| place [c='frozenset', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='frozenset', f='F(x for x in\n        src())', place='loop'] => closed src ; caught hash ; after ; closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in\n        src())', place='with'] => frozenset(x for x in
+        src())
+| place [c='frozenset', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='frozenset', f='F(x for x in\n        src())', place='with'] => closed src ; caught hash ; after
+text [c='frozenset', f='F(x for x in\n        src())', place='generator'] => frozenset(x for x in
+        src())
+| place [c='frozenset', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='frozenset', f='F(x for x in\n        src())', place='generator'] => closed src ; caught hash ; after
+text [c='sum', f='F(x for x in src())', place='module'] => sum(x for x in src())
+| place [c='sum', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F(x for x in src())', place='module'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in src())', place='function'] => sum(x for x in src())
+| place [c='sum', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F(x for x in src())', place='function'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in src())', place='loop'] => sum(x for x in src())
+| place [c='sum', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F(x for x in src())', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='F(x for x in src())', place='with'] => sum(x for x in src())
+| place [c='sum', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F(x for x in src())', place='with'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in src())', place='generator'] => sum(x for x in src())
+| place [c='sum', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F(x for x in src())', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='F(x for y in (1,) for x in src())', place='module'] => sum(x for y in (1,) for x in src())
+| place [c='sum', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; caught add ; after
+text [c='sum', f='F(x for y in (1,) for x in src())', place='function'] => sum(x for y in (1,) for x in src())
+| place [c='sum', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; caught add ; after
+text [c='sum', f='F(x for y in (1,) for x in src())', place='loop'] => sum(x for y in (1,) for x in src())
+| place [c='sum', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='F(x for y in (1,) for x in src())', place='with'] => sum(x for y in (1,) for x in src())
+| place [c='sum', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; caught add ; after
+text [c='sum', f='F(x for y in (1,) for x in src())', place='generator'] => sum(x for y in (1,) for x in src())
+| place [c='sum', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in (z for z in src()))', place='module'] => sum(x for x in (z for z in src()))
+| place [c='sum', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F(x for x in (z for z in src()))', place='module'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in (z for z in src()))', place='function'] => sum(x for x in (z for z in src()))
+| place [c='sum', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F(x for x in (z for z in src()))', place='function'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in (z for z in src()))', place='loop'] => sum(x for x in (z for z in src()))
+| place [c='sum', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='F(x for x in (z for z in src()))', place='with'] => sum(x for x in (z for z in src()))
+| place [c='sum', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F(x for x in (z for z in src()))', place='with'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in (z for z in src()))', place='generator'] => sum(x for x in (z for z in src()))
+| place [c='sum', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='F((x for x in src()))', place='module'] => sum((x for x in src()))
+| place [c='sum', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F((x for x in src()))', place='module'] => closed src ; caught add ; after
+text [c='sum', f='F((x for x in src()))', place='function'] => sum((x for x in src()))
+| place [c='sum', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F((x for x in src()))', place='function'] => closed src ; caught add ; after
+text [c='sum', f='F((x for x in src()))', place='loop'] => sum((x for x in src()))
+| place [c='sum', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F((x for x in src()))', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='F((x for x in src()))', place='with'] => sum((x for x in src()))
+| place [c='sum', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F((x for x in src()))', place='with'] => closed src ; caught add ; after
+text [c='sum', f='F((x for x in src()))', place='generator'] => sum((x for x in src()))
+| place [c='sum', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F((x for x in src()))', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='r = F(x for x in src())', place='module'] => r = sum(x for x in src())
+| place [c='sum', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='sum', f='r = F(x for x in src())', place='module'] => closed src ; caught add ; after
+text [c='sum', f='r = F(x for x in src())', place='function'] => r = sum(x for x in src())
+| place [c='sum', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='sum', f='r = F(x for x in src())', place='function'] => closed src ; caught add ; after
+text [c='sum', f='r = F(x for x in src())', place='loop'] => r = sum(x for x in src())
+| place [c='sum', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='r = F(x for x in src())', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='r = F(x for x in src())', place='with'] => r = sum(x for x in src())
+| place [c='sum', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='sum', f='r = F(x for x in src())', place='with'] => closed src ; caught add ; after
+text [c='sum', f='r = F(x for x in src())', place='generator'] => r = sum(x for x in src())
+| place [c='sum', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='r = F(x for x in src())', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='[F(x for x in src())]', place='module'] => [sum(x for x in src())]
+| place [c='sum', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='sum', f='[F(x for x in src())]', place='module'] => closed src ; caught add ; after
+text [c='sum', f='[F(x for x in src())]', place='function'] => [sum(x for x in src())]
+| place [c='sum', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='sum', f='[F(x for x in src())]', place='function'] => closed src ; caught add ; after
+text [c='sum', f='[F(x for x in src())]', place='loop'] => [sum(x for x in src())]
+| place [c='sum', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='[F(x for x in src())]', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='[F(x for x in src())]', place='with'] => [sum(x for x in src())]
+| place [c='sum', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='sum', f='[F(x for x in src())]', place='with'] => closed src ; caught add ; after
+text [c='sum', f='[F(x for x in src())]', place='generator'] => [sum(x for x in src())]
+| place [c='sum', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='[F(x for x in src())]', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='len([F(x for x in src())])', place='module'] => len([sum(x for x in src())])
+| place [c='sum', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='sum', f='len([F(x for x in src())])', place='module'] => closed src ; caught add ; after
+text [c='sum', f='len([F(x for x in src())])', place='function'] => len([sum(x for x in src())])
+| place [c='sum', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='sum', f='len([F(x for x in src())])', place='function'] => closed src ; caught add ; after
+text [c='sum', f='len([F(x for x in src())])', place='loop'] => len([sum(x for x in src())])
+| place [c='sum', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='len([F(x for x in src())])', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='len([F(x for x in src())])', place='with'] => len([sum(x for x in src())])
+| place [c='sum', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='sum', f='len([F(x for x in src())])', place='with'] => closed src ; caught add ; after
+text [c='sum', f='len([F(x for x in src())])', place='generator'] => len([sum(x for x in src())])
+| place [c='sum', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='len([F(x for x in src())])', place='generator'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => sum(x for x in src("a")) or sum(x for x in src("b"))
+| place [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => sum(x for x in src("a")) or sum(x for x in src("b"))
+| place [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => sum(x for x in src("a")) or sum(x for x in src("b"))
+| place [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; caught add ; after ; closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => sum(x for x in src("a")) or sum(x for x in src("b"))
+| place [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => sum(x for x in src("a")) or sum(x for x in src("b"))
+| place [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a") for y in src("b"))', place='module'] => sum(x for x in src("a") for y in src("b"))
+| place [c='sum', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a") for y in src("b"))', place='function'] => sum(x for x in src("a") for y in src("b"))
+| place [c='sum', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a") for y in src("b"))', place='loop'] => sum(x for x in src("a") for y in src("b"))
+| place [c='sum', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed a ; caught add ; after ; closed b ; closed b ; closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a") for y in src("b"))', place='with'] => sum(x for x in src("a") for y in src("b"))
+| place [c='sum', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed a ; caught add ; after
+text [c='sum', f='F(x for x in src("a") for y in src("b"))', place='generator'] => sum(x for x in src("a") for y in src("b"))
+| place [c='sum', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed a ; caught add ; after
+text [c='sum', f='F(x for x in\n        src())', place='module'] => sum(x for x in
+        src())
+| place [c='sum', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='sum', f='F(x for x in\n        src())', place='module'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in\n        src())', place='function'] => sum(x for x in
+        src())
+| place [c='sum', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='sum', f='F(x for x in\n        src())', place='function'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in\n        src())', place='loop'] => sum(x for x in
+        src())
+| place [c='sum', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='sum', f='F(x for x in\n        src())', place='loop'] => closed src ; caught add ; after ; closed src ; caught add ; after
+text [c='sum', f='F(x for x in\n        src())', place='with'] => sum(x for x in
+        src())
+| place [c='sum', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='sum', f='F(x for x in\n        src())', place='with'] => closed src ; caught add ; after
+text [c='sum', f='F(x for x in\n        src())', place='generator'] => sum(x for x in
+        src())
+| place [c='sum', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='sum', f='F(x for x in\n        src())', place='generator'] => closed src ; caught add ; after
+text [c='sorted', f='F(x for x in src())', place='module'] => sorted(x for x in src())
+| place [c='sorted', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F(x for x in src())', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in src())', place='function'] => sorted(x for x in src())
+| place [c='sorted', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F(x for x in src())', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in src())', place='loop'] => sorted(x for x in src())
+| place [c='sorted', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F(x for x in src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in src())', place='with'] => sorted(x for x in src())
+| place [c='sorted', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F(x for x in src())', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in src())', place='generator'] => sorted(x for x in src())
+| place [c='sorted', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F(x for x in src())', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for y in (1,) for x in src())', place='module'] => sorted(x for y in (1,) for x in src())
+| place [c='sorted', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for y in (1,) for x in src())', place='function'] => sorted(x for y in (1,) for x in src())
+| place [c='sorted', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for y in (1,) for x in src())', place='loop'] => sorted(x for y in (1,) for x in src())
+| place [c='sorted', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='F(x for y in (1,) for x in src())', place='with'] => sorted(x for y in (1,) for x in src())
+| place [c='sorted', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for y in (1,) for x in src())', place='generator'] => sorted(x for y in (1,) for x in src())
+| place [c='sorted', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in (z for z in src()))', place='module'] => sorted(x for x in (z for z in src()))
+| place [c='sorted', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F(x for x in (z for z in src()))', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in (z for z in src()))', place='function'] => sorted(x for x in (z for z in src()))
+| place [c='sorted', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F(x for x in (z for z in src()))', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in (z for z in src()))', place='loop'] => sorted(x for x in (z for z in src()))
+| place [c='sorted', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in (z for z in src()))', place='with'] => sorted(x for x in (z for z in src()))
+| place [c='sorted', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F(x for x in (z for z in src()))', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in (z for z in src()))', place='generator'] => sorted(x for x in (z for z in src()))
+| place [c='sorted', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='F((x for x in src()))', place='module'] => sorted((x for x in src()))
+| place [c='sorted', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F((x for x in src()))', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='F((x for x in src()))', place='function'] => sorted((x for x in src()))
+| place [c='sorted', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F((x for x in src()))', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='F((x for x in src()))', place='loop'] => sorted((x for x in src()))
+| place [c='sorted', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F((x for x in src()))', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='F((x for x in src()))', place='with'] => sorted((x for x in src()))
+| place [c='sorted', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F((x for x in src()))', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='F((x for x in src()))', place='generator'] => sorted((x for x in src()))
+| place [c='sorted', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F((x for x in src()))', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='r = F(x for x in src())', place='module'] => r = sorted(x for x in src())
+| place [c='sorted', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='r = F(x for x in src())', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='r = F(x for x in src())', place='function'] => r = sorted(x for x in src())
+| place [c='sorted', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='r = F(x for x in src())', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='r = F(x for x in src())', place='loop'] => r = sorted(x for x in src())
+| place [c='sorted', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='r = F(x for x in src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='r = F(x for x in src())', place='with'] => r = sorted(x for x in src())
+| place [c='sorted', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='r = F(x for x in src())', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='r = F(x for x in src())', place='generator'] => r = sorted(x for x in src())
+| place [c='sorted', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='r = F(x for x in src())', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='[F(x for x in src())]', place='module'] => [sorted(x for x in src())]
+| place [c='sorted', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='[F(x for x in src())]', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='[F(x for x in src())]', place='function'] => [sorted(x for x in src())]
+| place [c='sorted', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='[F(x for x in src())]', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='[F(x for x in src())]', place='loop'] => [sorted(x for x in src())]
+| place [c='sorted', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='[F(x for x in src())]', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='[F(x for x in src())]', place='with'] => [sorted(x for x in src())]
+| place [c='sorted', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='[F(x for x in src())]', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='[F(x for x in src())]', place='generator'] => [sorted(x for x in src())]
+| place [c='sorted', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='[F(x for x in src())]', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='len([F(x for x in src())])', place='module'] => len([sorted(x for x in src())])
+| place [c='sorted', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='len([F(x for x in src())])', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='len([F(x for x in src())])', place='function'] => len([sorted(x for x in src())])
+| place [c='sorted', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='len([F(x for x in src())])', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='len([F(x for x in src())])', place='loop'] => len([sorted(x for x in src())])
+| place [c='sorted', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='len([F(x for x in src())])', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='len([F(x for x in src())])', place='with'] => len([sorted(x for x in src())])
+| place [c='sorted', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='len([F(x for x in src())])', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='len([F(x for x in src())])', place='generator'] => len([sorted(x for x in src())])
+| place [c='sorted', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='len([F(x for x in src())])', place='generator'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => sorted(x for x in src("a")) or sorted(x for x in src("b"))
+| place [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => sorted(x for x in src("a")) or sorted(x for x in src("b"))
+| place [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => sorted(x for x in src("a")) or sorted(x for x in src("b"))
+| place [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; caught lt ; after ; closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => sorted(x for x in src("a")) or sorted(x for x in src("b"))
+| place [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => sorted(x for x in src("a")) or sorted(x for x in src("b"))
+| place [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='module'] => sorted(x for x in src("a") for y in src("b"))
+| place [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed b ; closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='function'] => sorted(x for x in src("a") for y in src("b"))
+| place [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed b ; closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='loop'] => sorted(x for x in src("a") for y in src("b"))
+| place [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed b ; closed a ; caught lt ; after ; closed b ; closed b ; closed b ; closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='with'] => sorted(x for x in src("a") for y in src("b"))
+| place [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed b ; closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='generator'] => sorted(x for x in src("a") for y in src("b"))
+| place [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed b ; closed a ; caught lt ; after
+text [c='sorted', f='F(x for x in\n        src())', place='module'] => sorted(x for x in
+        src())
+| place [c='sorted', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='sorted', f='F(x for x in\n        src())', place='module'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in\n        src())', place='function'] => sorted(x for x in
+        src())
+| place [c='sorted', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='sorted', f='F(x for x in\n        src())', place='function'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in\n        src())', place='loop'] => sorted(x for x in
+        src())
+| place [c='sorted', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='sorted', f='F(x for x in\n        src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in\n        src())', place='with'] => sorted(x for x in
+        src())
+| place [c='sorted', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='sorted', f='F(x for x in\n        src())', place='with'] => closed src ; caught lt ; after
+text [c='sorted', f='F(x for x in\n        src())', place='generator'] => sorted(x for x in
+        src())
+| place [c='sorted', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='sorted', f='F(x for x in\n        src())', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in src())', place='module'] => min(x for x in src())
+| place [c='min', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='min', f='F(x for x in src())', place='module'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in src())', place='function'] => min(x for x in src())
+| place [c='min', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='min', f='F(x for x in src())', place='function'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in src())', place='loop'] => min(x for x in src())
+| place [c='min', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F(x for x in src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='F(x for x in src())', place='with'] => min(x for x in src())
+| place [c='min', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='min', f='F(x for x in src())', place='with'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in src())', place='generator'] => min(x for x in src())
+| place [c='min', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F(x for x in src())', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='F(x for y in (1,) for x in src())', place='module'] => min(x for y in (1,) for x in src())
+| place [c='min', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='min', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; caught lt ; after
+text [c='min', f='F(x for y in (1,) for x in src())', place='function'] => min(x for y in (1,) for x in src())
+| place [c='min', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='min', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; caught lt ; after
+text [c='min', f='F(x for y in (1,) for x in src())', place='loop'] => min(x for y in (1,) for x in src())
+| place [c='min', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='F(x for y in (1,) for x in src())', place='with'] => min(x for y in (1,) for x in src())
+| place [c='min', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='min', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; caught lt ; after
+text [c='min', f='F(x for y in (1,) for x in src())', place='generator'] => min(x for y in (1,) for x in src())
+| place [c='min', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in (z for z in src()))', place='module'] => min(x for x in (z for z in src()))
+| place [c='min', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='min', f='F(x for x in (z for z in src()))', place='module'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in (z for z in src()))', place='function'] => min(x for x in (z for z in src()))
+| place [c='min', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='min', f='F(x for x in (z for z in src()))', place='function'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in (z for z in src()))', place='loop'] => min(x for x in (z for z in src()))
+| place [c='min', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='F(x for x in (z for z in src()))', place='with'] => min(x for x in (z for z in src()))
+| place [c='min', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='min', f='F(x for x in (z for z in src()))', place='with'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in (z for z in src()))', place='generator'] => min(x for x in (z for z in src()))
+| place [c='min', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='F((x for x in src()))', place='module'] => min((x for x in src()))
+| place [c='min', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='min', f='F((x for x in src()))', place='module'] => closed src ; caught lt ; after
+text [c='min', f='F((x for x in src()))', place='function'] => min((x for x in src()))
+| place [c='min', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='min', f='F((x for x in src()))', place='function'] => closed src ; caught lt ; after
+text [c='min', f='F((x for x in src()))', place='loop'] => min((x for x in src()))
+| place [c='min', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F((x for x in src()))', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='F((x for x in src()))', place='with'] => min((x for x in src()))
+| place [c='min', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='min', f='F((x for x in src()))', place='with'] => closed src ; caught lt ; after
+text [c='min', f='F((x for x in src()))', place='generator'] => min((x for x in src()))
+| place [c='min', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F((x for x in src()))', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='r = F(x for x in src())', place='module'] => r = min(x for x in src())
+| place [c='min', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='min', f='r = F(x for x in src())', place='module'] => closed src ; caught lt ; after
+text [c='min', f='r = F(x for x in src())', place='function'] => r = min(x for x in src())
+| place [c='min', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='min', f='r = F(x for x in src())', place='function'] => closed src ; caught lt ; after
+text [c='min', f='r = F(x for x in src())', place='loop'] => r = min(x for x in src())
+| place [c='min', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='r = F(x for x in src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='r = F(x for x in src())', place='with'] => r = min(x for x in src())
+| place [c='min', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='min', f='r = F(x for x in src())', place='with'] => closed src ; caught lt ; after
+text [c='min', f='r = F(x for x in src())', place='generator'] => r = min(x for x in src())
+| place [c='min', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='r = F(x for x in src())', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='[F(x for x in src())]', place='module'] => [min(x for x in src())]
+| place [c='min', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='min', f='[F(x for x in src())]', place='module'] => closed src ; caught lt ; after
+text [c='min', f='[F(x for x in src())]', place='function'] => [min(x for x in src())]
+| place [c='min', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='min', f='[F(x for x in src())]', place='function'] => closed src ; caught lt ; after
+text [c='min', f='[F(x for x in src())]', place='loop'] => [min(x for x in src())]
+| place [c='min', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='[F(x for x in src())]', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='[F(x for x in src())]', place='with'] => [min(x for x in src())]
+| place [c='min', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='min', f='[F(x for x in src())]', place='with'] => closed src ; caught lt ; after
+text [c='min', f='[F(x for x in src())]', place='generator'] => [min(x for x in src())]
+| place [c='min', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='[F(x for x in src())]', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='len([F(x for x in src())])', place='module'] => len([min(x for x in src())])
+| place [c='min', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='min', f='len([F(x for x in src())])', place='module'] => closed src ; caught lt ; after
+text [c='min', f='len([F(x for x in src())])', place='function'] => len([min(x for x in src())])
+| place [c='min', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='min', f='len([F(x for x in src())])', place='function'] => closed src ; caught lt ; after
+text [c='min', f='len([F(x for x in src())])', place='loop'] => len([min(x for x in src())])
+| place [c='min', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='len([F(x for x in src())])', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='len([F(x for x in src())])', place='with'] => len([min(x for x in src())])
+| place [c='min', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='min', f='len([F(x for x in src())])', place='with'] => closed src ; caught lt ; after
+text [c='min', f='len([F(x for x in src())])', place='generator'] => len([min(x for x in src())])
+| place [c='min', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='len([F(x for x in src())])', place='generator'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => min(x for x in src("a")) or min(x for x in src("b"))
+| place [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => min(x for x in src("a")) or min(x for x in src("b"))
+| place [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => min(x for x in src("a")) or min(x for x in src("b"))
+| place [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; caught lt ; after ; closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => min(x for x in src("a")) or min(x for x in src("b"))
+| place [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => min(x for x in src("a")) or min(x for x in src("b"))
+| place [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a") for y in src("b"))', place='module'] => min(x for x in src("a") for y in src("b"))
+| place [c='min', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='min', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a") for y in src("b"))', place='function'] => min(x for x in src("a") for y in src("b"))
+| place [c='min', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='min', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a") for y in src("b"))', place='loop'] => min(x for x in src("a") for y in src("b"))
+| place [c='min', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed a ; caught lt ; after ; closed b ; closed b ; closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a") for y in src("b"))', place='with'] => min(x for x in src("a") for y in src("b"))
+| place [c='min', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='min', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed a ; caught lt ; after
+text [c='min', f='F(x for x in src("a") for y in src("b"))', place='generator'] => min(x for x in src("a") for y in src("b"))
+| place [c='min', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed a ; caught lt ; after
+text [c='min', f='F(x for x in\n        src())', place='module'] => min(x for x in
+        src())
+| place [c='min', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='min', f='F(x for x in\n        src())', place='module'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in\n        src())', place='function'] => min(x for x in
+        src())
+| place [c='min', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='min', f='F(x for x in\n        src())', place='function'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in\n        src())', place='loop'] => min(x for x in
+        src())
+| place [c='min', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='min', f='F(x for x in\n        src())', place='loop'] => closed src ; caught lt ; after ; closed src ; caught lt ; after
+text [c='min', f='F(x for x in\n        src())', place='with'] => min(x for x in
+        src())
+| place [c='min', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='min', f='F(x for x in\n        src())', place='with'] => closed src ; caught lt ; after
+text [c='min', f='F(x for x in\n        src())', place='generator'] => min(x for x in
+        src())
+| place [c='min', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='min', f='F(x for x in\n        src())', place='generator'] => closed src ; caught lt ; after
+text [c='max', f='F(x for x in src())', place='module'] => max(x for x in src())
+| place [c='max', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='max', f='F(x for x in src())', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in src())', place='function'] => max(x for x in src())
+| place [c='max', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='max', f='F(x for x in src())', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in src())', place='loop'] => max(x for x in src())
+| place [c='max', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F(x for x in src())', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in src())', place='with'] => max(x for x in src())
+| place [c='max', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='max', f='F(x for x in src())', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in src())', place='generator'] => max(x for x in src())
+| place [c='max', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F(x for x in src())', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for y in (1,) for x in src())', place='module'] => max(x for y in (1,) for x in src())
+| place [c='max', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='max', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for y in (1,) for x in src())', place='function'] => max(x for y in (1,) for x in src())
+| place [c='max', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='max', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for y in (1,) for x in src())', place='loop'] => max(x for y in (1,) for x in src())
+| place [c='max', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for y in (1,) for x in src())', place='with'] => max(x for y in (1,) for x in src())
+| place [c='max', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='max', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for y in (1,) for x in src())', place='generator'] => max(x for y in (1,) for x in src())
+| place [c='max', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in (z for z in src()))', place='module'] => max(x for x in (z for z in src()))
+| place [c='max', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='max', f='F(x for x in (z for z in src()))', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in (z for z in src()))', place='function'] => max(x for x in (z for z in src()))
+| place [c='max', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='max', f='F(x for x in (z for z in src()))', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in (z for z in src()))', place='loop'] => max(x for x in (z for z in src()))
+| place [c='max', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in (z for z in src()))', place='with'] => max(x for x in (z for z in src()))
+| place [c='max', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='max', f='F(x for x in (z for z in src()))', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in (z for z in src()))', place='generator'] => max(x for x in (z for z in src()))
+| place [c='max', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='F((x for x in src()))', place='module'] => max((x for x in src()))
+| place [c='max', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='max', f='F((x for x in src()))', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='F((x for x in src()))', place='function'] => max((x for x in src()))
+| place [c='max', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='max', f='F((x for x in src()))', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='F((x for x in src()))', place='loop'] => max((x for x in src()))
+| place [c='max', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F((x for x in src()))', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='F((x for x in src()))', place='with'] => max((x for x in src()))
+| place [c='max', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='max', f='F((x for x in src()))', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='F((x for x in src()))', place='generator'] => max((x for x in src()))
+| place [c='max', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F((x for x in src()))', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='r = F(x for x in src())', place='module'] => r = max(x for x in src())
+| place [c='max', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='max', f='r = F(x for x in src())', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='r = F(x for x in src())', place='function'] => r = max(x for x in src())
+| place [c='max', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='max', f='r = F(x for x in src())', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='r = F(x for x in src())', place='loop'] => r = max(x for x in src())
+| place [c='max', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='r = F(x for x in src())', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='r = F(x for x in src())', place='with'] => r = max(x for x in src())
+| place [c='max', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='max', f='r = F(x for x in src())', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='r = F(x for x in src())', place='generator'] => r = max(x for x in src())
+| place [c='max', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='r = F(x for x in src())', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='[F(x for x in src())]', place='module'] => [max(x for x in src())]
+| place [c='max', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='max', f='[F(x for x in src())]', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='[F(x for x in src())]', place='function'] => [max(x for x in src())]
+| place [c='max', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='max', f='[F(x for x in src())]', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='[F(x for x in src())]', place='loop'] => [max(x for x in src())]
+| place [c='max', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='[F(x for x in src())]', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='[F(x for x in src())]', place='with'] => [max(x for x in src())]
+| place [c='max', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='max', f='[F(x for x in src())]', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='[F(x for x in src())]', place='generator'] => [max(x for x in src())]
+| place [c='max', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='[F(x for x in src())]', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='len([F(x for x in src())])', place='module'] => len([max(x for x in src())])
+| place [c='max', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='max', f='len([F(x for x in src())])', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='len([F(x for x in src())])', place='function'] => len([max(x for x in src())])
+| place [c='max', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='max', f='len([F(x for x in src())])', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='len([F(x for x in src())])', place='loop'] => len([max(x for x in src())])
+| place [c='max', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='len([F(x for x in src())])', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='len([F(x for x in src())])', place='with'] => len([max(x for x in src())])
+| place [c='max', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='max', f='len([F(x for x in src())])', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='len([F(x for x in src())])', place='generator'] => len([max(x for x in src())])
+| place [c='max', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='len([F(x for x in src())])', place='generator'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => max(x for x in src("a")) or max(x for x in src("b"))
+| place [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => max(x for x in src("a")) or max(x for x in src("b"))
+| place [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => max(x for x in src("a")) or max(x for x in src("b"))
+| place [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => max(x for x in src("a")) or max(x for x in src("b"))
+| place [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => max(x for x in src("a")) or max(x for x in src("b"))
+| place [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a") for y in src("b"))', place='module'] => max(x for x in src("a") for y in src("b"))
+| place [c='max', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='max', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a") for y in src("b"))', place='function'] => max(x for x in src("a") for y in src("b"))
+| place [c='max', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='max', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a") for y in src("b"))', place='loop'] => max(x for x in src("a") for y in src("b"))
+| place [c='max', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a") for y in src("b"))', place='with'] => max(x for x in src("a") for y in src("b"))
+| place [c='max', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='max', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed a ; LEFT TypeError
+text [c='max', f='F(x for x in src("a") for y in src("b"))', place='generator'] => max(x for x in src("a") for y in src("b"))
+| place [c='max', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed a ; LEFT TypeError
+text [c='max', f='F(x for x in\n        src())', place='module'] => max(x for x in
+        src())
+| place [c='max', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='max', f='F(x for x in\n        src())', place='module'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in\n        src())', place='function'] => max(x for x in
+        src())
+| place [c='max', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='max', f='F(x for x in\n        src())', place='function'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in\n        src())', place='loop'] => max(x for x in
+        src())
+| place [c='max', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='max', f='F(x for x in\n        src())', place='loop'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in\n        src())', place='with'] => max(x for x in
+        src())
+| place [c='max', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='max', f='F(x for x in\n        src())', place='with'] => closed src ; LEFT TypeError
+text [c='max', f='F(x for x in\n        src())', place='generator'] => max(x for x in
+        src())
+| place [c='max', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='max', f='F(x for x in\n        src())', place='generator'] => closed src ; LEFT TypeError
+text [c='tuple', f='F(x for x in src())', place='module'] => tuple(x for x in src())
+| place [c='tuple', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F(x for x in src())', place='module'] => closed src ; after
+text [c='tuple', f='F(x for x in src())', place='function'] => tuple(x for x in src())
+| place [c='tuple', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F(x for x in src())', place='function'] => closed src ; after
+text [c='tuple', f='F(x for x in src())', place='loop'] => tuple(x for x in src())
+| place [c='tuple', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F(x for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='F(x for x in src())', place='with'] => tuple(x for x in src())
+| place [c='tuple', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F(x for x in src())', place='with'] => closed src ; after
+text [c='tuple', f='F(x for x in src())', place='generator'] => tuple(x for x in src())
+| place [c='tuple', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F(x for x in src())', place='generator'] => closed src ; after
+text [c='tuple', f='F(x for y in (1,) for x in src())', place='module'] => tuple(x for y in (1,) for x in src())
+| place [c='tuple', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; after
+text [c='tuple', f='F(x for y in (1,) for x in src())', place='function'] => tuple(x for y in (1,) for x in src())
+| place [c='tuple', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; after
+text [c='tuple', f='F(x for y in (1,) for x in src())', place='loop'] => tuple(x for y in (1,) for x in src())
+| place [c='tuple', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='F(x for y in (1,) for x in src())', place='with'] => tuple(x for y in (1,) for x in src())
+| place [c='tuple', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; after
+text [c='tuple', f='F(x for y in (1,) for x in src())', place='generator'] => tuple(x for y in (1,) for x in src())
+| place [c='tuple', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; after
+text [c='tuple', f='F(x for x in (z for z in src()))', place='module'] => tuple(x for x in (z for z in src()))
+| place [c='tuple', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F(x for x in (z for z in src()))', place='module'] => closed src ; after
+text [c='tuple', f='F(x for x in (z for z in src()))', place='function'] => tuple(x for x in (z for z in src()))
+| place [c='tuple', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F(x for x in (z for z in src()))', place='function'] => closed src ; after
+text [c='tuple', f='F(x for x in (z for z in src()))', place='loop'] => tuple(x for x in (z for z in src()))
+| place [c='tuple', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='F(x for x in (z for z in src()))', place='with'] => tuple(x for x in (z for z in src()))
+| place [c='tuple', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F(x for x in (z for z in src()))', place='with'] => closed src ; after
+text [c='tuple', f='F(x for x in (z for z in src()))', place='generator'] => tuple(x for x in (z for z in src()))
+| place [c='tuple', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; after
+text [c='tuple', f='F((x for x in src()))', place='module'] => tuple((x for x in src()))
+| place [c='tuple', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F((x for x in src()))', place='module'] => closed src ; after
+text [c='tuple', f='F((x for x in src()))', place='function'] => tuple((x for x in src()))
+| place [c='tuple', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F((x for x in src()))', place='function'] => closed src ; after
+text [c='tuple', f='F((x for x in src()))', place='loop'] => tuple((x for x in src()))
+| place [c='tuple', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F((x for x in src()))', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='F((x for x in src()))', place='with'] => tuple((x for x in src()))
+| place [c='tuple', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F((x for x in src()))', place='with'] => closed src ; after
+text [c='tuple', f='F((x for x in src()))', place='generator'] => tuple((x for x in src()))
+| place [c='tuple', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F((x for x in src()))', place='generator'] => closed src ; after
+text [c='tuple', f='r = F(x for x in src())', place='module'] => r = tuple(x for x in src())
+| place [c='tuple', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='r = F(x for x in src())', place='module'] => closed src ; after
+text [c='tuple', f='r = F(x for x in src())', place='function'] => r = tuple(x for x in src())
+| place [c='tuple', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='r = F(x for x in src())', place='function'] => closed src ; after
+text [c='tuple', f='r = F(x for x in src())', place='loop'] => r = tuple(x for x in src())
+| place [c='tuple', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='r = F(x for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='r = F(x for x in src())', place='with'] => r = tuple(x for x in src())
+| place [c='tuple', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='r = F(x for x in src())', place='with'] => closed src ; after
+text [c='tuple', f='r = F(x for x in src())', place='generator'] => r = tuple(x for x in src())
+| place [c='tuple', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='r = F(x for x in src())', place='generator'] => closed src ; after
+text [c='tuple', f='[F(x for x in src())]', place='module'] => [tuple(x for x in src())]
+| place [c='tuple', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='[F(x for x in src())]', place='module'] => closed src ; after
+text [c='tuple', f='[F(x for x in src())]', place='function'] => [tuple(x for x in src())]
+| place [c='tuple', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='[F(x for x in src())]', place='function'] => closed src ; after
+text [c='tuple', f='[F(x for x in src())]', place='loop'] => [tuple(x for x in src())]
+| place [c='tuple', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='[F(x for x in src())]', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='[F(x for x in src())]', place='with'] => [tuple(x for x in src())]
+| place [c='tuple', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='[F(x for x in src())]', place='with'] => closed src ; after
+text [c='tuple', f='[F(x for x in src())]', place='generator'] => [tuple(x for x in src())]
+| place [c='tuple', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='[F(x for x in src())]', place='generator'] => closed src ; after
+text [c='tuple', f='len([F(x for x in src())])', place='module'] => len([tuple(x for x in src())])
+| place [c='tuple', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='len([F(x for x in src())])', place='module'] => closed src ; after
+text [c='tuple', f='len([F(x for x in src())])', place='function'] => len([tuple(x for x in src())])
+| place [c='tuple', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='len([F(x for x in src())])', place='function'] => closed src ; after
+text [c='tuple', f='len([F(x for x in src())])', place='loop'] => len([tuple(x for x in src())])
+| place [c='tuple', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='len([F(x for x in src())])', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='len([F(x for x in src())])', place='with'] => len([tuple(x for x in src())])
+| place [c='tuple', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='len([F(x for x in src())])', place='with'] => closed src ; after
+text [c='tuple', f='len([F(x for x in src())])', place='generator'] => len([tuple(x for x in src())])
+| place [c='tuple', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='len([F(x for x in src())])', place='generator'] => closed src ; after
+text [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => tuple(x for x in src("a")) or tuple(x for x in src("b"))
+| place [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; after
+text [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => tuple(x for x in src("a")) or tuple(x for x in src("b"))
+| place [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; after
+text [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => tuple(x for x in src("a")) or tuple(x for x in src("b"))
+| place [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; after ; closed a ; after
+text [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => tuple(x for x in src("a")) or tuple(x for x in src("b"))
+| place [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; after
+text [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => tuple(x for x in src("a")) or tuple(x for x in src("b"))
+| place [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; after
+text [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='module'] => tuple(x for x in src("a") for y in src("b"))
+| place [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='function'] => tuple(x for x in src("a") for y in src("b"))
+| place [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='loop'] => tuple(x for x in src("a") for y in src("b"))
+| place [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed b ; closed a ; after ; closed b ; closed b ; closed b ; closed a ; after
+text [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='with'] => tuple(x for x in src("a") for y in src("b"))
+| place [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='generator'] => tuple(x for x in src("a") for y in src("b"))
+| place [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='tuple', f='F(x for x in\n        src())', place='module'] => tuple(x for x in
+        src())
+| place [c='tuple', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='tuple', f='F(x for x in\n        src())', place='module'] => closed src ; after
+text [c='tuple', f='F(x for x in\n        src())', place='function'] => tuple(x for x in
+        src())
+| place [c='tuple', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='tuple', f='F(x for x in\n        src())', place='function'] => closed src ; after
+text [c='tuple', f='F(x for x in\n        src())', place='loop'] => tuple(x for x in
+        src())
+| place [c='tuple', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='tuple', f='F(x for x in\n        src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='tuple', f='F(x for x in\n        src())', place='with'] => tuple(x for x in
+        src())
+| place [c='tuple', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='tuple', f='F(x for x in\n        src())', place='with'] => closed src ; after
+text [c='tuple', f='F(x for x in\n        src())', place='generator'] => tuple(x for x in
+        src())
+| place [c='tuple', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='tuple', f='F(x for x in\n        src())', place='generator'] => closed src ; after
+text [c='list', f='F(x for x in src())', place='module'] => list(x for x in src())
+| place [c='list', f='F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='list', f='F(x for x in src())', place='module'] => closed src ; after
+text [c='list', f='F(x for x in src())', place='function'] => list(x for x in src())
+| place [c='list', f='F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='list', f='F(x for x in src())', place='function'] => closed src ; after
+text [c='list', f='F(x for x in src())', place='loop'] => list(x for x in src())
+| place [c='list', f='F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F(x for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='F(x for x in src())', place='with'] => list(x for x in src())
+| place [c='list', f='F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='list', f='F(x for x in src())', place='with'] => closed src ; after
+text [c='list', f='F(x for x in src())', place='generator'] => list(x for x in src())
+| place [c='list', f='F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F(x for x in src())', place='generator'] => closed src ; after
+text [c='list', f='F(x for y in (1,) for x in src())', place='module'] => list(x for y in (1,) for x in src())
+| place [c='list', f='F(x for y in (1,) for x in src())', place='module'] => module
+| ' ; '.join(log) [c='list', f='F(x for y in (1,) for x in src())', place='module'] => closed src ; after
+text [c='list', f='F(x for y in (1,) for x in src())', place='function'] => list(x for y in (1,) for x in src())
+| place [c='list', f='F(x for y in (1,) for x in src())', place='function'] => function
+| ' ; '.join(log) [c='list', f='F(x for y in (1,) for x in src())', place='function'] => closed src ; after
+text [c='list', f='F(x for y in (1,) for x in src())', place='loop'] => list(x for y in (1,) for x in src())
+| place [c='list', f='F(x for y in (1,) for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F(x for y in (1,) for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='F(x for y in (1,) for x in src())', place='with'] => list(x for y in (1,) for x in src())
+| place [c='list', f='F(x for y in (1,) for x in src())', place='with'] => with
+| ' ; '.join(log) [c='list', f='F(x for y in (1,) for x in src())', place='with'] => closed src ; after
+text [c='list', f='F(x for y in (1,) for x in src())', place='generator'] => list(x for y in (1,) for x in src())
+| place [c='list', f='F(x for y in (1,) for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F(x for y in (1,) for x in src())', place='generator'] => closed src ; after
+text [c='list', f='F(x for x in (z for z in src()))', place='module'] => list(x for x in (z for z in src()))
+| place [c='list', f='F(x for x in (z for z in src()))', place='module'] => module
+| ' ; '.join(log) [c='list', f='F(x for x in (z for z in src()))', place='module'] => closed src ; after
+text [c='list', f='F(x for x in (z for z in src()))', place='function'] => list(x for x in (z for z in src()))
+| place [c='list', f='F(x for x in (z for z in src()))', place='function'] => function
+| ' ; '.join(log) [c='list', f='F(x for x in (z for z in src()))', place='function'] => closed src ; after
+text [c='list', f='F(x for x in (z for z in src()))', place='loop'] => list(x for x in (z for z in src()))
+| place [c='list', f='F(x for x in (z for z in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F(x for x in (z for z in src()))', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='F(x for x in (z for z in src()))', place='with'] => list(x for x in (z for z in src()))
+| place [c='list', f='F(x for x in (z for z in src()))', place='with'] => with
+| ' ; '.join(log) [c='list', f='F(x for x in (z for z in src()))', place='with'] => closed src ; after
+text [c='list', f='F(x for x in (z for z in src()))', place='generator'] => list(x for x in (z for z in src()))
+| place [c='list', f='F(x for x in (z for z in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F(x for x in (z for z in src()))', place='generator'] => closed src ; after
+text [c='list', f='F((x for x in src()))', place='module'] => list((x for x in src()))
+| place [c='list', f='F((x for x in src()))', place='module'] => module
+| ' ; '.join(log) [c='list', f='F((x for x in src()))', place='module'] => closed src ; after
+text [c='list', f='F((x for x in src()))', place='function'] => list((x for x in src()))
+| place [c='list', f='F((x for x in src()))', place='function'] => function
+| ' ; '.join(log) [c='list', f='F((x for x in src()))', place='function'] => closed src ; after
+text [c='list', f='F((x for x in src()))', place='loop'] => list((x for x in src()))
+| place [c='list', f='F((x for x in src()))', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F((x for x in src()))', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='F((x for x in src()))', place='with'] => list((x for x in src()))
+| place [c='list', f='F((x for x in src()))', place='with'] => with
+| ' ; '.join(log) [c='list', f='F((x for x in src()))', place='with'] => closed src ; after
+text [c='list', f='F((x for x in src()))', place='generator'] => list((x for x in src()))
+| place [c='list', f='F((x for x in src()))', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F((x for x in src()))', place='generator'] => closed src ; after
+text [c='list', f='r = F(x for x in src())', place='module'] => r = list(x for x in src())
+| place [c='list', f='r = F(x for x in src())', place='module'] => module
+| ' ; '.join(log) [c='list', f='r = F(x for x in src())', place='module'] => closed src ; after
+text [c='list', f='r = F(x for x in src())', place='function'] => r = list(x for x in src())
+| place [c='list', f='r = F(x for x in src())', place='function'] => function
+| ' ; '.join(log) [c='list', f='r = F(x for x in src())', place='function'] => closed src ; after
+text [c='list', f='r = F(x for x in src())', place='loop'] => r = list(x for x in src())
+| place [c='list', f='r = F(x for x in src())', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='r = F(x for x in src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='r = F(x for x in src())', place='with'] => r = list(x for x in src())
+| place [c='list', f='r = F(x for x in src())', place='with'] => with
+| ' ; '.join(log) [c='list', f='r = F(x for x in src())', place='with'] => closed src ; after
+text [c='list', f='r = F(x for x in src())', place='generator'] => r = list(x for x in src())
+| place [c='list', f='r = F(x for x in src())', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='r = F(x for x in src())', place='generator'] => closed src ; after
+text [c='list', f='[F(x for x in src())]', place='module'] => [list(x for x in src())]
+| place [c='list', f='[F(x for x in src())]', place='module'] => module
+| ' ; '.join(log) [c='list', f='[F(x for x in src())]', place='module'] => closed src ; after
+text [c='list', f='[F(x for x in src())]', place='function'] => [list(x for x in src())]
+| place [c='list', f='[F(x for x in src())]', place='function'] => function
+| ' ; '.join(log) [c='list', f='[F(x for x in src())]', place='function'] => closed src ; after
+text [c='list', f='[F(x for x in src())]', place='loop'] => [list(x for x in src())]
+| place [c='list', f='[F(x for x in src())]', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='[F(x for x in src())]', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='[F(x for x in src())]', place='with'] => [list(x for x in src())]
+| place [c='list', f='[F(x for x in src())]', place='with'] => with
+| ' ; '.join(log) [c='list', f='[F(x for x in src())]', place='with'] => closed src ; after
+text [c='list', f='[F(x for x in src())]', place='generator'] => [list(x for x in src())]
+| place [c='list', f='[F(x for x in src())]', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='[F(x for x in src())]', place='generator'] => closed src ; after
+text [c='list', f='len([F(x for x in src())])', place='module'] => len([list(x for x in src())])
+| place [c='list', f='len([F(x for x in src())])', place='module'] => module
+| ' ; '.join(log) [c='list', f='len([F(x for x in src())])', place='module'] => closed src ; after
+text [c='list', f='len([F(x for x in src())])', place='function'] => len([list(x for x in src())])
+| place [c='list', f='len([F(x for x in src())])', place='function'] => function
+| ' ; '.join(log) [c='list', f='len([F(x for x in src())])', place='function'] => closed src ; after
+text [c='list', f='len([F(x for x in src())])', place='loop'] => len([list(x for x in src())])
+| place [c='list', f='len([F(x for x in src())])', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='len([F(x for x in src())])', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='len([F(x for x in src())])', place='with'] => len([list(x for x in src())])
+| place [c='list', f='len([F(x for x in src())])', place='with'] => with
+| ' ; '.join(log) [c='list', f='len([F(x for x in src())])', place='with'] => closed src ; after
+text [c='list', f='len([F(x for x in src())])', place='generator'] => len([list(x for x in src())])
+| place [c='list', f='len([F(x for x in src())])', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='len([F(x for x in src())])', place='generator'] => closed src ; after
+text [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => list(x for x in src("a")) or list(x for x in src("b"))
+| place [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='module'] => closed a ; after
+text [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => list(x for x in src("a")) or list(x for x in src("b"))
+| place [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='function'] => closed a ; after
+text [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => list(x for x in src("a")) or list(x for x in src("b"))
+| place [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='loop'] => closed a ; after ; closed a ; after
+text [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => list(x for x in src("a")) or list(x for x in src("b"))
+| place [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='with'] => closed a ; after
+text [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => list(x for x in src("a")) or list(x for x in src("b"))
+| place [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F(x for x in src("a")) or F(x for x in src("b"))', place='generator'] => closed a ; after
+text [c='list', f='F(x for x in src("a") for y in src("b"))', place='module'] => list(x for x in src("a") for y in src("b"))
+| place [c='list', f='F(x for x in src("a") for y in src("b"))', place='module'] => module
+| ' ; '.join(log) [c='list', f='F(x for x in src("a") for y in src("b"))', place='module'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='list', f='F(x for x in src("a") for y in src("b"))', place='function'] => list(x for x in src("a") for y in src("b"))
+| place [c='list', f='F(x for x in src("a") for y in src("b"))', place='function'] => function
+| ' ; '.join(log) [c='list', f='F(x for x in src("a") for y in src("b"))', place='function'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='list', f='F(x for x in src("a") for y in src("b"))', place='loop'] => list(x for x in src("a") for y in src("b"))
+| place [c='list', f='F(x for x in src("a") for y in src("b"))', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F(x for x in src("a") for y in src("b"))', place='loop'] => closed b ; closed b ; closed b ; closed a ; after ; closed b ; closed b ; closed b ; closed a ; after
+text [c='list', f='F(x for x in src("a") for y in src("b"))', place='with'] => list(x for x in src("a") for y in src("b"))
+| place [c='list', f='F(x for x in src("a") for y in src("b"))', place='with'] => with
+| ' ; '.join(log) [c='list', f='F(x for x in src("a") for y in src("b"))', place='with'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='list', f='F(x for x in src("a") for y in src("b"))', place='generator'] => list(x for x in src("a") for y in src("b"))
+| place [c='list', f='F(x for x in src("a") for y in src("b"))', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F(x for x in src("a") for y in src("b"))', place='generator'] => closed b ; closed b ; closed b ; closed a ; after
+text [c='list', f='F(x for x in\n        src())', place='module'] => list(x for x in
+        src())
+| place [c='list', f='F(x for x in\n        src())', place='module'] => module
+| ' ; '.join(log) [c='list', f='F(x for x in\n        src())', place='module'] => closed src ; after
+text [c='list', f='F(x for x in\n        src())', place='function'] => list(x for x in
+        src())
+| place [c='list', f='F(x for x in\n        src())', place='function'] => function
+| ' ; '.join(log) [c='list', f='F(x for x in\n        src())', place='function'] => closed src ; after
+text [c='list', f='F(x for x in\n        src())', place='loop'] => list(x for x in
+        src())
+| place [c='list', f='F(x for x in\n        src())', place='loop'] => loop
+| ' ; '.join(log) [c='list', f='F(x for x in\n        src())', place='loop'] => closed src ; after ; closed src ; after
+text [c='list', f='F(x for x in\n        src())', place='with'] => list(x for x in
+        src())
+| place [c='list', f='F(x for x in\n        src())', place='with'] => with
+| ' ; '.join(log) [c='list', f='F(x for x in\n        src())', place='with'] => closed src ; after
+text [c='list', f='F(x for x in\n        src())', place='generator'] => list(x for x in
+        src())
+| place [c='list', f='F(x for x in\n        src())', place='generator'] => generator
+| ' ; '.join(log) [c='list', f='F(x for x in\n        src())', place='generator'] => closed src ; after

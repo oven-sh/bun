@@ -1057,32 +1057,17 @@ impl BunTest {
         Ok(())
     }
 
-    /// Returns whether it queued something for the runner to act on.
-    fn handle_timeout(&mut self, global_this: &JSGlobalObject, pass: &Timespec) -> bool {
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
-        let judged = Execution::Execution::judge(self, &Timespec::now_force_real_time());
-        if judged.lone_entry_timed_out {
+        if Execution::Execution::judge(self, &Timespec::now_force_real_time()) {
             Execution::Execution::kill_dangling_processes(global_this);
         }
-        if !judged.next_deadline.eql(&Timespec::EPOCH) {
-            // `All::next` can take timers as due up to 1 ms early. Armed for a time inside this pass, the timer would
-            // fire in it again and again, until the clock is past that time.
-            let next = if judged.next_deadline.greater(pass) {
-                judged.next_deadline
-            } else if pass.nsec < 999_999_999 {
-                Timespec { sec: pass.sec, nsec: pass.nsec + 1 }
-            } else {
-                Timespec { sec: pass.sec + 1, nsec: 0 }
-            };
-            self.update_min_timeout(global_this, &next);
-        }
-        judged.queued
+        self.add_result(RefDataValue::Start);
     }
 
-    /// `pass` is the time up to which the caller took deadlines as due.
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
-        pass: &Timespec,
+        _ts: &Timespec,
         vm: &VirtualMachine,
     ) {
         let _g = group_begin!();
@@ -1090,20 +1075,18 @@ impl BunTest {
         let global = vm.global();
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
-        let queued = unsafe {
+        unsafe {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
 
             match (*this).phase {
-                Phase::Collection => false,
-                Phase::Execution => (*this).handle_timeout(global, pass),
-                Phase::Done => false,
+                Phase::Collection => {}
+                Phase::Execution => (*this).handle_timeout(global),
+                Phase::Done => {}
             }
-        };
-        // Not run inline, because `Bun.spawnSync()` can fire this timer with the timed-out test still on the stack.
-        if queued {
-            Self::run_next_tick(&Rc::downgrade(this_strong), global, RefDataValue::Done);
         }
+        // Not run inline, because `Bun.spawnSync()` can fire this timer with the timed-out test still on the stack.
+        Self::run_next_tick(&Rc::downgrade(this_strong), global, RefDataValue::Done);
     }
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {

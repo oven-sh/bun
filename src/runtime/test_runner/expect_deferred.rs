@@ -118,20 +118,10 @@ impl Unclaimed {
         }
     }
 
-    /// For `Execution::judge`, about the wait in `ExpectDeferred::step_file_end`: the deadline if it is still ahead
-    /// (else `EPOCH`), and whether this call found the wait over.
-    pub(crate) fn judge_file_end(&mut self, now: &Timespec) -> (Timespec, bool) {
-        match self.deadline {
-            Some(deadline) if self.of_file > 0 && !deadline.eql(&Timespec::EPOCH) => {
-                if deadline.greater(now) {
-                    (deadline, false)
-                } else {
-                    self.timed_out = true;
-                    (Timespec::EPOCH, true)
-                }
-            }
-            _ => (Timespec::EPOCH, false),
-        }
+    /// For `Execution::judge`: whether the wait of `ExpectDeferred::step_file_end` is past its deadline at `now`.
+    pub(crate) fn judge_file_end(&mut self, now: &Timespec) {
+        self.timed_out = self.of_file > 0
+            && self.deadline.is_some_and(|deadline| !deadline.eql(&Timespec::EPOCH) && !deadline.greater(now));
     }
 }
 
@@ -208,21 +198,15 @@ impl RunningEntry {
             .is_some_and(|buntest| self.pending_matchers(&buntest).is_some())
     }
 
-    /// Checks the clock directly, because the runner only notices a timeout after the microtask queue drains.
+    /// Checks the clock directly, because the runner's timer can't fire before the microtask queue drains.
     fn has_timed_out(&self) -> bool {
         let Some(buntest) = self.buntest.upgrade() else {
             return false;
         };
         // SAFETY: as in `pending_matchers`; an entry outlives the sequences that run it.
-        let limit = self.sequence(&buntest).and_then(|sequence| unsafe {
-            Some(sequence.as_ref().active_entry?.as_ref().timespec)
-        });
-        limit.is_some_and(|limit| {
-            !limit.eql(&Timespec::EPOCH)
-                && limit
-                    .order(&Timespec::now(TimespecMockMode::ForceRealTime))
-                    .is_lt()
-        })
+        let entry = self.sequence(&buntest).and_then(|sequence| unsafe { sequence.as_ref().active_entry });
+        // SAFETY: as above.
+        entry.is_some_and(|entry| unsafe { entry.as_ref() }.is_overdue(&Timespec::now(TimespecMockMode::ForceRealTime)))
     }
 
     fn hold(mut self, global: &JSGlobalObject, deferred: JSValue) -> Self {
@@ -669,8 +653,8 @@ impl ExpectDeferred {
                 let buntest = held.buntest.upgrade();
                 return this.abandon(global, deferred, buntest.as_ref());
             }
-            // The runner is about to time the entry out, and `settle_ended` will then abandon this call.
-            if held.has_timed_out() {
+            // A call that keeps finding promises replays without a turn of the event loop, so only the clock can stop it. The runner's timer then times the entry out.
+            if this.replays.get() > 0 && held.has_timed_out() {
                 return Ok(());
             }
         }

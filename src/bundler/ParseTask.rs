@@ -178,6 +178,9 @@ pub(crate) struct WatcherData {
     pub(crate) dir_fd: Fd,
     /// True if the receiver must close `fd` when the watcher doesn't take it.
     pub(crate) owns_fd: bool,
+    /// The source was read from its file, which is to be watched: with `fd`, or by path
+    /// (and `fd` closed) on Windows.
+    pub(crate) watch: bool,
 }
 
 impl WatcherData {
@@ -186,6 +189,7 @@ impl WatcherData {
         fd: Fd::INVALID,
         dir_fd: Fd::INVALID,
         owns_fd: false,
+        watch: false,
     };
 }
 
@@ -2231,10 +2235,42 @@ pub mod parse_worker {
             &mut loader,
             &mut contents_came_from_plugin,
         );
-        if result.is_err() {
-            transpiler.reset_store();
+        let mut entry = match result {
+            Ok(entry) => entry,
+            Err(e) => {
+                transpiler.reset_store();
+                return Err(e);
+            }
+        };
+        let worker_ctx = this.ctx;
+
+        // Right after the read, before the task waits in the parse queue.
+        // Only close a descriptor this task opened. A valid `file` was borrowed
+        // from the resolver's entry cache (symlink-resolved files cache their fd
+        // there); closing it leaves a stale fd for the next in-process build.
+        let opened_own_fd =
+            matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
+        // Not kept open for the watcher on Windows, which watches by path: a file held open
+        // there cannot be replaced by a rename, so an editor saving that way (write a temp
+        // file, rename it over) failed with EPERM. Elsewhere the watcher keeps it, as before.
+        let will_close_file_descriptor = opened_own_fd
+            && entry.fd.is_valid()
+            && entry.fd.stdio_tag().is_none()
+            && (worker_ctx.bun_watcher.is_none() || cfg!(windows));
+        if will_close_file_descriptor {
+            let _ = entry.close_fd();
+            task.contents_or_fd = ContentsOrFd::Fd {
+                file: Fd::INVALID,
+                dir: Fd::INVALID,
+            };
+        } else if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
+            task.contents_or_fd = ContentsOrFd::Fd {
+                file: entry.fd,
+                dir: Fd::INVALID,
+            };
+            task.opened_own_fd = opened_own_fd && entry.fd.stdio_tag().is_none();
         }
-        result
+        Ok(entry)
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -2309,28 +2345,6 @@ pub mod parse_worker {
         // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
         let worker_ctx = unsafe { (*worker_raw).ctx };
 
-        // Only close a descriptor this task opened. A valid `file` was borrowed
-        // from the resolver's entry cache (symlink-resolved files cache their fd
-        // there); closing it leaves a stale fd for the next in-process build.
-        let opened_own_fd =
-            matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
-        let will_close_file_descriptor = opened_own_fd
-            && entry.fd.is_valid()
-            && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
-        if will_close_file_descriptor {
-            let _ = entry.close_fd();
-            task.contents_or_fd = ContentsOrFd::Fd {
-                file: Fd::INVALID,
-                dir: Fd::INVALID,
-            };
-        } else if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
-            task.contents_or_fd = ContentsOrFd::Fd {
-                file: entry.fd,
-                dir: Fd::INVALID,
-            };
-            task.opened_own_fd = opened_own_fd && entry.fd.stdio_tag().is_none();
-        }
         *step = Step::Parse;
 
         let entry_contents: &[u8] = entry.contents.as_slice();
@@ -2842,6 +2856,7 @@ pub mod parse_worker {
                     fd: file,
                     dir_fd: dir,
                     owns_fd: this.opened_own_fd,
+                    watch: file.is_valid() || cfg!(windows),
                 },
                 ContentsOrFd::Contents(_) => WatcherData::NONE,
             },

@@ -263,6 +263,16 @@ impl SSLConfig {
         copy
     }
 
+    pub(crate) fn without_client_identity(&self) -> SSLConfig {
+        let mut config = self.clone();
+        free_string(&mut config.cert_file_name);
+        free_string(&mut config.key_file_name);
+        free_string(&mut config.passphrase);
+        free_strings(&mut config.cert);
+        free_strings(&mut config.key);
+        config
+    }
+
     pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         macro_rules! eq_cstr {
             ($f:ident) => {

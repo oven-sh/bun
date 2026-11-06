@@ -522,6 +522,7 @@ impl<'a> AsyncHTTP<'a> {
         http_proxy: Option<URL<'a>>,
         proxy_settings: Option<Box<crate::ProxySettings>>,
         redirect_type: FetchRedirect,
+        tls_props: Option<SSLConfigSharedPtr>,
     ) -> AsyncHTTP<'a> {
         Self::init(
             method,
@@ -534,6 +535,7 @@ impl<'a> AsyncHTTP<'a> {
             Options {
                 http_proxy,
                 proxy_settings,
+                tls_props,
                 ..Options::default()
             },
         )

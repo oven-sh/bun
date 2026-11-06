@@ -167,8 +167,14 @@ pub(crate) fn load_npmrc<'a>(
                 b"default_registry_auth",
                 self.default_registry_auth.to_js(global)?,
             )?;
-            put(b"default_registry_certfile", self.default_registry_certfile.to_js(global)?)?;
-            put(b"default_registry_keyfile", self.default_registry_keyfile.to_js(global)?)?;
+            put(
+                b"default_registry_certfile",
+                self.default_registry_certfile.to_js(global)?,
+            )?;
+            put(
+                b"default_registry_keyfile",
+                self.default_registry_keyfile.to_js(global)?,
+            )?;
             put(b"ignore_scripts", optional_bool(self.ignore_scripts))?;
             put(
                 b"link_workspace_packages",

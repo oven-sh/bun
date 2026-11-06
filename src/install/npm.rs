@@ -96,8 +96,14 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let url = URL::parse(&print_buf);
     let header_buf: &[u8] = headers.content.written_slice();
 
-    let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"", registry::registry_tls_config(registry));
+    let mut req = manager.registry_request(
+        http::Method::GET,
+        url,
+        headers.entries,
+        header_buf,
+        b"",
+        manager.registry_tls_config(registry),
+    );
 
     let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) => res,
@@ -385,7 +391,9 @@ pub mod registry {
         }
 
         pub(crate) fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.auth.is_empty() || (!self.certfile.is_empty() && !self.keyfile.is_empty())
+            !self.token.is_empty()
+                || !self.auth.is_empty()
+                || (!self.certfile.is_empty() && !self.keyfile.is_empty())
         }
 
         pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
@@ -589,20 +597,6 @@ pub mod registry {
             scope.set_url(final_href);
             Ok(scope)
         }
-    }
-
-    pub fn registry_tls_config(registry: &Scope) -> Option<http::ssl_config::SharedPtr> {
-        if registry.certfile.is_empty() && registry.keyfile.is_empty() {
-            return None;
-        }
-        let mut config = http::ssl_config::SSLConfig::default();
-        if !registry.certfile.is_empty() {
-            config.cert_file_name = bun_core::dupe_z(&registry.certfile);
-        }
-        if !registry.keyfile.is_empty() {
-            config.key_file_name = bun_core::dupe_z(&registry.keyfile);
-        }
-        Some(http::ssl_config::SharedPtr::new(config))
     }
 
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.

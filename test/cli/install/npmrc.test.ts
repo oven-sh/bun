@@ -5,6 +5,7 @@ import { rm } from "fs/promises";
 import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
 import { createServer as createTlsServer } from "node:tls";
 import { dirname, join } from "path";
+import { once } from "node:events";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -472,10 +473,91 @@ registry=http://localhost:\${PORT}/
     expect(result.default_registry_url).toEqual(`http://localhost:${registry.port}/`);
   });
 
+  test.each(["default", "scoped"])("%s registry uses certfile and keyfile for mTLS", async kind => {
+    const name = kind === "scoped" ? "@mtls/pkg" : "pkg";
+    const tarball = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name, version: "1.0.0" }),
+    }).bytes("gzip");
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: true },
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        requests.push(path);
+        if (path === "/pkg.tgz") return new Response(tarball);
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name, version: "1.0.0", dist: { tarball: `https://localhost:${server.port}/pkg.tgz` } },
+          },
+        });
+      },
+    });
+    const registry = `https://localhost:${server.port}/`;
+    using dir = tempDir("npmrc-mtls", {
+      "home/.npmrc":
+        `${kind === "scoped" ? "@mtls:registry" : "registry"}=${registry}\n` +
+        `//localhost:${server.port}/:certfile=client.pem\n//localhost:${server.port}/:keyfile=client.key\ncafile=client.pem\n`,
+      "home/client.pem": tls.cert,
+      "home/client.key": tls.key,
+      "project/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { [name]: "1.0.0" } }),
+    });
+    const home = join(String(dir), "home");
+    const installEnv = {
+      ...env,
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: undefined,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+    };
+    await using view = Bun.spawn({
+      cmd: [bunExe(), "pm", "view", name, "version"],
+      cwd: join(String(dir), "project"),
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [viewOut, viewErr, viewCode] = await Promise.all([view.stdout.text(), view.stderr.text(), view.exited]);
+    expect({ stdout: viewOut.trim(), stderr: viewErr, exitCode: viewCode }).toEqual({
+      stdout: "1.0.0",
+      stderr: "",
+      exitCode: 0,
+    });
+    requests.length = 0;
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), "project"),
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain(`+ ${name}@1.0.0`);
+    expect(requests).toEqual([kind === "scoped" ? "/@mtls%2fpkg" : "/pkg", "/pkg.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("certfile and keyfile are parsed for the default registry", () => {
-    const result = loadNpmrc(`//registry.npmjs.org/:certfile=/path/to/cert.pem\n//registry.npmjs.org/:keyfile=/path/to/key.pem`);
+    const result = loadNpmrc(
+      `//registry.npmjs.org/:certfile=/path/to/cert.pem\n//registry.npmjs.org/:keyfile=/path/to/key.pem`,
+    );
     expect(result.default_registry_certfile).toBe("/path/to/cert.pem");
     expect(result.default_registry_keyfile).toBe("/path/to/key.pem");
+  });
+
+  test.each(["certfile", "keyfile"])("a lone %s does not select credentials", option => {
+    const result = loadNpmrc(`//registry.npmjs.org/:${option}=/path/to/file.pem`);
+    expect(result.default_registry_certfile).toBe("");
+    expect(result.default_registry_keyfile).toBe("");
   });
 
   test("certfile and keyfile are empty by default", () => {
@@ -1927,12 +2009,12 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
       expect(auth).toBe(`Bearer ${token}`);
     });
 
-    it("a complete pair leaves the registry URL's userinfo intact", async () => {
+    it("a complete pair replaces the registry URL's userinfo", async () => {
       const auth = await probeAuthorization(
         host => `//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
         { registry: "default", userinfo: "user:pass@" },
       );
-      expect(auth).toBe(`Basic ${Buffer.from("user:pass").toString("base64")}`);
+      expect(auth).toBe(null);
     });
 
     it("a complete pair on a shallower path leaves a bunfig.toml token intact", async () => {
@@ -6179,13 +6261,267 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
     ]);
     expect(exitCode).toBe(1);
   });
+});
 
-  test("keyfile without certfile is parsed", () => {
-    const ini = `
-//registry.npmjs.org/:keyfile=/path/to/key.pem
-`;
-    const result = loadNpmrc(ini);
-    expect(result.default_registry_certfile).toEqual("");
-    expect(result.default_registry_keyfile).toEqual("/path/to/key.pem");
+describe.concurrent("npmrc client TLS identity", () => {
+  type Seen = { certificate: boolean; authorization: string | null };
+  const manifest = {
+    name: "pkg",
+    "dist-tags": { latest: "1.0.0" },
+    versions: { "1.0.0": { name: "pkg", version: "1.0.0" } },
+  };
+  async function certificateServer(
+    redirect?: (path: string) => string | undefined,
+    response: object | Uint8Array = manifest,
+  ) {
+    const seen: Seen[] = [];
+    const sockets = new Set<import("node:tls").TLSSocket>();
+    const instance = createTlsServer({ ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: false }, socket => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      let head = "";
+      let answered = false;
+      socket.on("data", data => {
+        head += data.toString();
+        if (answered || !head.includes("\r\n\r\n")) return;
+        answered = true;
+        seen.push({
+          certificate: !!socket.getPeerCertificate().raw,
+          authorization: /\r\nauthorization: ([^\r]*)/i.exec(head)?.[1] ?? null,
+        });
+        const location = redirect?.(head.split(" ")[1]);
+        if (location)
+          socket.end(`HTTP/1.1 302 Found\r\nLocation: ${location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+        else {
+          const body = response instanceof Uint8Array ? response : Buffer.from(JSON.stringify(response));
+          socket.end(
+            Buffer.concat([
+              Buffer.from(
+                `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+              ),
+              body,
+            ]),
+          );
+        }
+      });
+    });
+    instance.listen(0, "127.0.0.1");
+    await once(instance, "listening");
+    const port = (instance.address() as { port: number }).port;
+    return {
+      seen,
+      port,
+      url: `https://localhost:${port}/`,
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve, reject) => instance.close(err => (err ? reject(err) : resolve())));
+      },
+    };
+  }
+
+  async function view(
+    port: number,
+    kind: "default" | "scoped",
+    source: "npmrc" | "bunfig" | "basic" | "env" | "cli" = "npmrc",
+    h2 = false,
+  ) {
+    const url = `HTTPS://LOCALHOST:${port}/`;
+    const scoped = kind === "scoped";
+    const explicit = source === "bunfig" || source === "basic";
+    using dir = tempDir("npmrc-mtls-identity", {
+      "home/.npmrc":
+        `${explicit ? "" : `${scoped ? "@mtls:registry" : "registry"}=${url}\n`}` +
+        `//localhost:${port}/:certfile=\${MTLS_CERTFILE}\n//localhost:${port}/:keyfile=\${MTLS_KEYFILE}\ncafile=client.pem\n` +
+        (source === "npmrc" ? `//localhost:${port}/:_authToken=identity-token\n` : ""),
+      "home/client.pem": tls.cert,
+      "home/client.key": tls.key,
+      "project/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      ...(explicit
+        ? {
+            "project/bunfig.toml": Bun.TOML.stringify({
+              install: scoped
+                ? {
+                    scopes: {
+                      mtls: {
+                        url,
+                        ...(source === "basic" ? { username: "user", password: "pass" } : { token: "identity-token" }),
+                      },
+                    },
+                  }
+                : {
+                    registry: {
+                      url,
+                      ...(source === "basic" ? { username: "user", password: "pass" } : { token: "identity-token" }),
+                    },
+                  },
+            }),
+          }
+        : {}),
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "pm",
+        "view",
+        scoped ? "@mtls/pkg" : "pkg",
+        "version",
+        ...(source === "cli" ? ["--registry", `https://:identity-token@localhost:${port}/`] : []),
+      ],
+      cwd: join(String(dir), "project"),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+        MTLS_CERTFILE: "client.pem",
+        MTLS_KEYFILE: "client.key",
+        ...(source === "env" ? { BUN_CONFIG_TOKEN: "identity-token" } : {}),
+        ...(h2 ? { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: "1" } : {}),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "1.0.0", stderr: "", exitCode: 0 });
+  }
+
+  test.each([
+    ["default", "npmrc"],
+    ["scoped", "npmrc"],
+    ["default", "bunfig"],
+    ["scoped", "bunfig"],
+    ["default", "basic"],
+    ["scoped", "basic"],
+    ["default", "env"],
+    ["default", "cli"],
+  ] as const)("%s registry combines mTLS with %s credentials", async (kind, source) => {
+    await using registry = await certificateServer();
+    await view(registry.port, kind, source);
+    expect(registry.seen).toEqual([
+      {
+        certificate: true,
+        authorization:
+          source === "basic" ? `Basic ${Buffer.from("user:pass").toString("base64")}` : "Bearer identity-token",
+      },
+    ]);
+  });
+
+  test("a same-origin redirect retains the client identity", async () => {
+    await using registry = await certificateServer(path => (path === "/pkg" ? `${registry.url}final` : undefined));
+    await view(registry.port, "default");
+    expect(registry.seen).toEqual([
+      { certificate: true, authorization: "Bearer identity-token" },
+      { certificate: true, authorization: "Bearer identity-token" },
+    ]);
+  });
+
+  test("a cross-origin redirect strips the client identity and keeps the CA", async () => {
+    await using target = await certificateServer();
+    await using registry = await certificateServer(() => `${target.url}pkg`);
+    await view(registry.port, "default");
+    expect(registry.seen).toEqual([{ certificate: true, authorization: "Bearer identity-token" }]);
+    expect(target.seen).toEqual([{ certificate: false, authorization: null }]);
+  });
+
+  test("returning to the original origin does not restore the client identity", async () => {
+    await using target = await certificateServer(() => `${registry.url}final`);
+    await using registry = await certificateServer(path => (path === "/pkg" ? `${target.url}pkg` : undefined));
+    await view(registry.port, "default");
+    expect(registry.seen).toEqual([
+      { certificate: true, authorization: "Bearer identity-token" },
+      { certificate: false, authorization: null },
+    ]);
+    expect(target.seen).toEqual([{ certificate: false, authorization: null }]);
+  });
+  test.each([true, false])("tarball mTLS follows project trust (project names URL: %s)", async trusted => {
+    const leaf = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name: "leaf", version: "1.0.0" }),
+    }).bytes("gzip");
+    await using cdn = await certificateServer(undefined, leaf);
+    const leafUrl = `${cdn.url}leaf.tgz`;
+    const parent = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name: "parent", version: "1.0.0", dependencies: { leaf: leafUrl } }),
+    }).bytes("gzip");
+    await using registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith(".tgz")) return new Response(parent);
+        return Response.json({
+          name: "parent",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "parent",
+              version: "1.0.0",
+              dependencies: { leaf: leafUrl },
+              dist: { tarball: `http://127.0.0.1:${registry.port}/parent.tgz` },
+            },
+          },
+        });
+      },
+    });
+    using dir = tempDir("pr31000-trust", {
+      "home/.npmrc": `registry=http://127.0.0.1:${registry.port}/\n//localhost:${cdn.port}/:certfile=client.pem\n//localhost:${cdn.port}/:keyfile=client.key\ncafile=client.pem\n`,
+      "home/client.pem": tls.cert,
+      "home/client.key": tls.key,
+      "project/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: trusted ? { leaf: leafUrl } : { parent: "1.0.0" },
+      }),
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), "project"),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(cdn.seen).toEqual([{ certificate: trusted, authorization: null }]);
+    expect(stdout).toContain("installed");
+    expect(exitCode).toBe(0);
+  });
+  test("HTTP2 cross-origin redirect strips the client identity", async () => {
+    const { createSecureServer } = await import("node:http2");
+    await using target = await certificateServer();
+    const first: unknown[] = [];
+    const registry = createSecureServer({ ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: false });
+    const sessions = new Set<import("node:http2").ServerHttp2Session>();
+    registry.on("session", session => {
+      sessions.add(session);
+      session.on("close", () => sessions.delete(session));
+    });
+    registry.on("stream", (stream, headers) => {
+      first.push({
+        protocol: stream.session!.alpnProtocol,
+        certificate: !!(stream.session!.socket as import("node:tls").TLSSocket).getPeerCertificate().raw,
+        authorization: headers.authorization ?? null,
+      });
+      stream.respond({ ":status": 302, location: `${target.url}pkg` });
+      stream.end();
+    });
+    registry.listen(0, "127.0.0.1");
+    await once(registry, "listening");
+    try {
+      await view((registry.address() as import("node:net").AddressInfo).port, "default", "npmrc", true);
+      expect(first).toEqual([{ protocol: "h2", certificate: true, authorization: "Bearer identity-token" }]);
+      expect(target.seen).toEqual([{ certificate: false, authorization: null }]);
+    } finally {
+      for (const session of sessions) session.destroy();
+      await new Promise<void>((resolve, reject) => registry.close(err => (err ? reject(err) : resolve())));
+    }
   });
 });

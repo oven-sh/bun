@@ -531,6 +531,38 @@ describe("own properties of a thrown ResolveMessage", () => {
     expect(error).not.toEqual(await thrownBy(() => import(missing.builtin)));
   });
 
+  // Vite does this to the error of a PostCSS config that fails to load (resolvePostcssConfig).
+  describe.each(["ResolveMessage", "BuildMessage"])("a thrown %s", kind => {
+    async function thrown() {
+      using dir = tempDir("resolve-error-name", { "syntax-error.cjs": "module.exports = ;" });
+      const specifier = kind === "ResolveMessage" ? missing.file : path.join(String(dir), "syntax-error.cjs");
+      const error = await thrownBy(() => require(specifier));
+      expect(error.constructor.name).toBe(kind);
+      return error;
+    }
+
+    it("takes a name, a message and a stack", async () => {
+      const error = await thrown();
+      const { name, message, stack } = error;
+      error.name = "Failed to load PostCSS config";
+      error.message = `Failed to load PostCSS config: [${name}] ${message}\n${stack}`;
+      error.stack = "";
+      expect({ name: error.name, message: error.message, stack: error.stack }).toEqual({
+        name: "Failed to load PostCSS config",
+        message: `Failed to load PostCSS config: [${kind}] ${message}\n${stack}`,
+        stack: "",
+      });
+    });
+
+    it("has the name of its class as Error.prototype has its name", async () => {
+      const prototype = Object.getPrototypeOf(await thrown());
+      expect(Object.getOwnPropertyDescriptor(prototype, "name")).toEqual({
+        ...Object.getOwnPropertyDescriptor(Error.prototype, "name"),
+        value: kind,
+      });
+    });
+  });
+
   // What fails while a module is transpiled is thrown as one AggregateError when it is more than one message.
   it.each<[string, string, (file: string) => unknown, string[]]>([
     [

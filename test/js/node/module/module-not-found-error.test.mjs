@@ -63,12 +63,13 @@ describe("the error of a failed require()", () => {
     const error = thrownByRequire();
     error.code = "PLUGIN_ERROR";
     error.plugin = "a plugin";
+    error.name = "Failed to load PostCSS config";
     error.message = "a message";
     error.stack = "";
     error.requireStack = [];
     assert.deepStrictEqual(
-      [error.code, error.plugin, error.message, error.stack, error.requireStack],
-      ["PLUGIN_ERROR", "a plugin", "a message", "", []],
+      [error.code, error.plugin, error.name, error.message, error.stack, error.requireStack],
+      ["PLUGIN_ERROR", "a plugin", "Failed to load PostCSS config", "a message", "", []],
     );
     assert.deepStrictEqual(Object.getOwnPropertyDescriptor(error, "code"), data("PLUGIN_ERROR"));
   });

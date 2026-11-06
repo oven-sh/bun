@@ -3303,7 +3303,7 @@ export interface ClassOptions extends ClassTableColumns {
   protoCaller?: string;
   /** Traits to bring into scope, for members that are trait methods. */
   rustTraits?: readonly string[];
-  /** The prototype inherits from `Error.prototype` instead of `Object.prototype`, and its `name` is the class's. */
+  /** The prototype inherits from `Error.prototype` instead of `Object.prototype`. Its `name` is the class's, with the attributes of `Error.prototype.name`. */
   prototypeBase?: "Error";
   /** `true`: native properties are configurable. */
   configurable?: boolean;

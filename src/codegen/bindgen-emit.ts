@@ -1493,7 +1493,7 @@ ${privateFunctions
     )
     .join("")}${
     type.prototypeBase === "Error"
-      ? `    prototype->putDirectWithoutTransition(vm, vm.propertyNames->name, JSC::jsString(vm, WTF::String(${asciiLiteral(name)})), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));\n`
+      ? `    prototype->putDirectWithoutTransition(vm, vm.propertyNames->name, JSC::jsString(vm, WTF::String(${asciiLiteral(name)})), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));\n`
       : ""
   }    Bun::putToStringTagWithoutTransition(vm, prototype, ${type.cpp}::info());
     init.setPrototype(prototype);
@@ -2560,7 +2560,7 @@ ${[
         : member(builtin.name, false, "(...args: any[]) => any"),
     ),
   ...type.constants.map(constant => `    readonly ${JSON.stringify(constant.name)}: ${constant.value};`),
-  ...(type.prototypeBase === "Error" ? [`    readonly "name": ${JSON.stringify(type.name)};`] : []),
+  ...(type.prototypeBase === "Error" ? [`    "name": string;`] : []),
 ].join("\n")}
   }${
     type.construct
